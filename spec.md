@@ -1552,6 +1552,169 @@ apps = ["liquid-terminal", "firefox", "code"]   # pinned app IDs in display orde
 - `.liquid-launcher .context-menu` — right-click context menu.
 - Full CSS reference in [spec-design.md](spec-design.md).
 
+### Shell Keyboard Shortcuts
+
+LiquidDE provides familiar keyboard shortcuts inspired by Windows, GNOME, and macOS conventions. All shortcuts are reconfigurable via `keybindings.toml` or Settings → Keyboard → Shortcuts. Shortcuts marked **(custom)** are LiquidDE-specific additions to the familiar set.
+
+#### System & Session
+
+| Shortcut | Action |
+|----------|--------|
+| `Super` (tap) | Open/close app launcher |
+| `Super+L` | Lock session |
+| `Super+D` | Show desktop (minimize/restore all windows) |
+| `Ctrl+Alt+Del` | Open session menu (Lock, Log Out, Shut Down, Task Manager) |
+| `Ctrl+Shift+Esc` | Open system monitor / task manager |
+| `Super+I` | Open Settings |
+| `Super+E` | Open file manager |
+| `Super+T` | Open terminal **(custom)** |
+| `Super+.` | Open emoji picker **(custom)** |
+| `Super+;` | Open emoji picker (alias) **(custom)** |
+| `Super+V` | Open clipboard history |
+| `Super+A` | Open notification center / action center **(custom)** |
+| `Super+N` | Open notification center (alias) **(custom)** |
+| `Super+K` | Open quick settings flyout (Wi-Fi, Bluetooth, audio, brightness) **(custom)** |
+
+#### Window Management
+
+| Shortcut | Action |
+|----------|--------|
+| `Alt+Tab` | Switch windows (forward) |
+| `Alt+Shift+Tab` | Switch windows (backward) |
+| `Super+Tab` | Task overview / exposé (all windows with thumbnails) |
+| `Alt+F4` | Close focused window |
+| `Super+Up` | Maximize focused window |
+| `Super+Down` | Restore / minimize focused window (toggle) |
+| `Super+Left` | Tile window to left half |
+| `Super+Right` | Tile window to right half |
+| `Super+Shift+Left` | Move window to left monitor (or prev workspace if single monitor) |
+| `Super+Shift+Right` | Move window to right monitor (or next workspace if single monitor) |
+| `Super+Shift+Up` | Tile window to top half **(custom)** |
+| `Super+Shift+Down` | Tile window to bottom half **(custom)** |
+| `Super+Enter` | Toggle focused window fullscreen |
+| `Super+M` | Minimize focused window **(custom)** |
+| `Super+Home` | Minimize all except focused window **(custom)** |
+| `Alt+Space` | Open window title bar menu (move, resize, minimize, close) |
+| `Super+Shift+Arrow` | Swap tiled window position |
+
+#### Workspaces & Virtual Desktops
+
+| Shortcut | Action |
+|----------|--------|
+| `Super+Ctrl+Left` | Switch to previous workspace |
+| `Super+Ctrl+Right` | Switch to next workspace |
+| `Super+Ctrl+Up` | Workspace overview **(custom)** |
+| `Super+Ctrl+D` | Add new workspace **(custom)** |
+| `Super+Ctrl+F4` | Close current workspace (moves windows to adjacent) **(custom)** |
+| `Super+Ctrl+Shift+Left` | Move focused window to previous workspace |
+| `Super+Ctrl+Shift+Right` | Move focused window to next workspace |
+| `Super+Ctrl+[1-9]` | Switch to workspace N |
+| `Super+Ctrl+Shift+[1-9]` | Move focused window to workspace N |
+
+#### Dock & Taskbar
+
+| Shortcut | Action |
+|----------|--------|
+| `Super+[1-9]` | Launch or switch to Nth dock app |
+| `Super+Shift+[1-9]` | Open new instance of Nth dock app |
+| `Super+Alt+[1-9]` | Open Nth dock app's jump list / actions menu **(custom)** |
+| `Super+0` | Launch or switch to 10th dock app |
+
+#### Screenshot & Screen Recording
+
+| Shortcut | Action |
+|----------|--------|
+| `Print Screen` | Screenshot full desktop (save to file) |
+| `Alt+Print Screen` | Screenshot active window (save to file) |
+| `Super+Shift+S` | Screenshot region select (interactive snipping tool) |
+| `Super+Shift+R` | Toggle screen recording **(custom)** |
+| `Super+Print Screen` | Screenshot full desktop (copy to clipboard) **(custom)** |
+
+#### Accessibility
+
+| Shortcut | Action |
+|----------|--------|
+| `Super+Alt+S` | Toggle screen reader |
+| `Super+Alt+M` | Toggle magnifier |
+| `Super+=` / `Super+-` | Zoom in / out |
+| `Super+Alt+0` | Reset zoom to 1× |
+| `Super+Shift+F` | Toggle focus/distraction-free mode |
+| `Ctrl` (press and release) | Cursor locator (if enabled) |
+
+#### Text Editing (Global)
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / Cut / Paste |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / Redo |
+| `Ctrl+A` | Select all |
+| `Ctrl+F` | Find (in-app) |
+
+#### Shortcut Configuration
+
+```toml
+# ~/.config/liquidde/keybindings.toml
+
+[system]
+lock = "Super+L"
+show_desktop = "Super+D"
+session_menu = "Ctrl+Alt+Delete"
+task_manager = "Ctrl+Shift+Escape"
+settings = "Super+I"
+file_manager = "Super+E"
+terminal = "Super+T"
+emoji_picker = "Super+period"
+clipboard_history = "Super+V"
+notification_center = "Super+A"
+quick_settings = "Super+K"
+launcher = "Super"
+
+[window]
+close = "Alt+F4"
+maximize = "Super+Up"
+restore_minimize = "Super+Down"
+tile_left = "Super+Left"
+tile_right = "Super+Right"
+tile_top = "Super+Shift+Up"
+tile_bottom = "Super+Shift+Down"
+fullscreen = "Super+Return"
+minimize = "Super+M"
+minimize_others = "Super+Home"
+move_to_monitor_left = "Super+Shift+Left"
+move_to_monitor_right = "Super+Shift+Right"
+switch_forward = "Alt+Tab"
+switch_backward = "Alt+Shift+Tab"
+overview = "Super+Tab"
+title_bar_menu = "Alt+space"
+
+[workspace]
+prev = "Super+Ctrl+Left"
+next = "Super+Ctrl+Right"
+overview = "Super+Ctrl+Up"
+add = "Super+Ctrl+D"
+close = "Super+Ctrl+F4"
+move_window_prev = "Super+Ctrl+Shift+Left"
+move_window_next = "Super+Ctrl+Shift+Right"
+# workspace_1..9 = "Super+Ctrl+1" .. "Super+Ctrl+9"
+
+[screenshot]
+full = "Print"
+window = "Alt+Print"
+region = "Super+Shift+S"
+screen_record = "Super+Shift+R"
+full_to_clipboard = "Super+Print"
+
+[accessibility]
+screen_reader = "Super+Alt+S"
+magnifier = "Super+Alt+M"
+zoom_in = "Super+equal"
+zoom_out = "Super+minus"
+zoom_reset = "Super+Alt+0"
+focus_mode = "Super+Shift+F"
+```
+
+All shortcuts can be disabled by setting the value to `""`. Conflicts between user shortcuts and system shortcuts are flagged in the Settings UI. System shortcuts take precedence unless explicitly overridden.
+
 ### Window Management
 - Tiling and floating hybrid (configurable default).
 - Snap to edges/corners.
