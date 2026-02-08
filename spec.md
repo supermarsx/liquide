@@ -2,7 +2,7 @@
 
 > **Language**: Rust
 > **License**: MIT
-> **Related specs**: [Client](spec-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
+> **Related specs**: [Client](spec-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Protocol](spec-protocol-formal.md) · [Rendering](spec-rendering-software.md) · [Performance](spec-performance.md) · [Observability](spec-observability.md) · [Build](spec-build.md) · [Threat Model](spec-threat-model.md) · [Normative](spec-normative.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
 
 ---
 
