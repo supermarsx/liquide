@@ -885,6 +885,15 @@ log_level = "info"
 format = "text"
 max_file_size_mb = 50
 max_files = 5
+
+# ─── Crash Screen ─────────────────────────────────────────
+[crash_screen]
+show_stack_trace = true              # show technical stack trace on crash screen
+show_technical_details = true        # show session ID, uptime, error code
+auto_reconnect_on_restart = true     # auto-connect after session restart succeeds
+crash_report_download = true         # allow downloading crash report JSON
+emergency_renderer = true            # enable software fallback if GPU rendering fails
+error_sound = true                   # play error sound on crash screen display
 ```
 
 ---
@@ -1378,6 +1387,89 @@ max_delay_ms = 30000
 show_last_frame = true             # keep last frame visible during reconnect
 ```
 
+### Crash Screen
+
+When a fatal error occurs that prevents session continuation, the client renders a **full-screen crash screen** locally. The crash screen is never streamed from the server — the client has all the data it needs from a `crash_info` message sent by the server supervisor or from local error detection.
+
+#### Crash Screen Types
+
+| Type | Trigger | Accent Color | Description |
+|------|---------|-------------|-------------|
+| **Session Crash** | Server sends `crash_info` with session process crash details | Red (`--liquid-crash-accent: #FF453A`) | Session process crashed; supervisor may restart it |
+| **Connection Fatal** | Unrecoverable transport error after reconnect attempts exhausted | Amber (`--liquid-crash-accent: #FFD60A`) | Connection permanently lost |
+| **Server Unreachable** | Server not responding, supervisor connection lost | Dark red (`--liquid-crash-accent: #8B0000`) | Server may be down or network partitioned |
+
+#### Visual Layout
+
+The crash screen follows the Liquid Glass design language (see [spec-design.md](spec-design.md) §7.14 for full CSS specification):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    [frosted glass backdrop]                   │
+│                                                              │
+│                       ⚠ (error icon)                         │
+│                                                              │
+│               ERROR_CODE_HERE                                │
+│                                                              │
+│     Human-readable description of what went wrong            │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐     │
+│  │  stack trace line 1                                 │     │
+│  │  stack trace line 2                                 │     │
+│  │  stack trace line 3                                 │     │
+│  └─────────────────────────────────────────────────────┘     │
+│                                                              │
+│     Session: s-001 · User: alice · Uptime: 2h 15m 42s       │
+│     2025-01-15 16:22:31 UTC                                  │
+│                                                              │
+│   [ Restart Session ]   [ Download Report ]   [ Disconnect ] │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Crash Data
+
+The server supervisor (or session panic handler) sends a `crash_info` message to the client:
+- `error_code` — machine-readable code (e.g., `SESSION_PROCESS_CRASH`, `CONNECTION_TIMEOUT`, `SERVER_UNREACHABLE`).
+- `description` — human-readable explanation.
+- `stack_trace` — symbolized stack frames (optional, configurable).
+- `session_id`, `user`, `uptime_seconds` — session context.
+- `crash_report_id` — for downloading the full report.
+- `recovery_options` — available actions (`restart_session`, `download_report`, `disconnect`).
+- `restart_available` — whether the supervisor can restart the session.
+
+For connection-fatal and server-unreachable types, the client generates the crash data locally based on the transport error.
+
+#### Recovery Actions
+
+| Action | Behavior |
+|--------|----------|
+| **Restart Session** | Client sends restart request to supervisor. Shows loading spinner. On success, crash screen dissolves into resumed session. On failure, shows "session could not be restarted" message. |
+| **Download Report** | Generates a crash report file (JSON) and offers it for download/save. Report includes error code, stack trace, session metadata, system info. Sanitized — no screen content, no credentials. |
+| **Disconnect** | Returns to the client connection dialog. Session remains in `failed` state on server until admin intervenes or TTL expires. |
+
+#### Rendering
+
+- **Normal path**: Client GPU renders the crash screen using the Liquid Glass CSS theme. Full glass effects, blur backdrop, accent-colored elements.
+- **Emergency fallback**: If the client rendering engine itself fails, a **software-rendered fallback** activates:
+  - Solid dark background (type-appropriate color: dark red, dark amber, or near-black).
+  - System monospace font, white text.
+  - Minimal layout: error code, description, "Press Enter to disconnect."
+  - No animations, no blur, no glass effects, no network-dependent resources.
+
+#### Animations
+
+- **Appear**: crash screen fades in over 300ms with backdrop blur intensifying. Content elements cascade in with 50ms stagger.
+- **Restart success**: crash screen dissolves (200ms fade out) while the session fades in behind.
+- **All animations respect `prefers-reduced-motion`**: instant cuts when enabled.
+
+#### Accessibility
+
+- Full keyboard navigation: Tab cycles between action buttons, Enter activates.
+- Focus ring clearly visible on all interactive elements.
+- Screen reader support: all elements have ARIA labels. Error code and description announced on display.
+- High-contrast mode: glass effects replaced with solid backgrounds, thicker borders.
+
 ---
 
 ## 26) Deliverables
@@ -1389,6 +1481,7 @@ show_last_frame = true             # keep last frame visible during reconnect
   - **Linux**: AppImage, .deb, .rpm, Flatpak.
 - Configuration file templates.
 - man page / help documentation.
+- Crash screen assets (icon set, emergency fallback font).
 
 ---
 
@@ -1424,3 +1517,15 @@ show_last_frame = true             # keep last frame visible during reconnect
 - **Windows**: Direct3D decode, system shortcut capture, MSI installation.
 - **macOS**: Metal decode, traffic light positioning, DMG installation.
 - **Linux**: Wayland and X11 display, VAAPI decode, AppImage portability.
+
+### Crash Screen
+- Crash screen renders correctly on all platforms (Windows, macOS, Linux).
+- All three crash screen variants display properly (session crash, connection fatal, server unreachable).
+- Recovery actions work: restart session, download report, disconnect.
+- Emergency software-rendered fallback activates when GPU rendering fails.
+- Crash screen respects theme (glass effects, accent colors).
+- Crash screen respects `prefers-reduced-motion` and high-contrast modes.
+- Stack trace display is correctly formatted and scrollable.
+- Crash report download produces valid, sanitized JSON.
+- Auto-reconnect-on-restart option works when enabled.
+- Crash screen keyboard navigation (Tab between buttons, Enter to activate).

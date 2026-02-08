@@ -1951,6 +1951,307 @@ When enabled (`prefers-reduced-motion` or DE setting):
 }
 ```
 
+### 7.14 Crash Screen
+
+The crash screen is a client-rendered full-viewport overlay that displays when a fatal error occurs. It uses the Liquid Glass design language with type-specific accent colors.
+
+**CSS Custom Properties (Crash Screen)**
+
+```css
+:root {
+  --liquid-crash-accent: #FF453A;                  /* default: session crash red */
+  --liquid-crash-blur: 30px;
+  --liquid-crash-panel-bg: rgba(30, 30, 30, 0.85);
+  --liquid-crash-trace-bg: rgba(0, 0, 0, 0.6);
+  --liquid-crash-text: #FFFFFF;
+  --liquid-crash-text-muted: rgba(255, 255, 255, 0.5);
+}
+
+/* Type-specific accent overrides */
+.liquid-crash.crash-session   { --liquid-crash-accent: #FF453A; }   /* red */
+.liquid-crash.crash-connection { --liquid-crash-accent: #FFD60A; }  /* amber */
+.liquid-crash.crash-server    { --liquid-crash-accent: #8B0000; }   /* dark red */
+```
+
+**Layout**
+
+```css
+.liquid-crash {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: crash-appear 300ms var(--liquid-ease-default) both;
+}
+
+.liquid-crash .crash-backdrop {
+  position: absolute;
+  inset: 0;
+  backdrop-filter: blur(var(--liquid-crash-blur));
+  -webkit-backdrop-filter: blur(var(--liquid-crash-blur));
+  background: rgba(0, 0, 0, 0.4);
+  animation: crash-backdrop-blur 300ms var(--liquid-ease-default) both;
+}
+
+.liquid-crash .crash-panel {
+  position: relative;
+  z-index: 1;
+  max-width: 640px;
+  width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 48px 40px;
+  background: var(--liquid-crash-panel-bg);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  text-align: center;
+  color: var(--liquid-crash-text);
+}
+```
+
+**Content Elements**
+
+```css
+.liquid-crash .crash-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 24px;
+  color: var(--liquid-crash-accent);
+}
+
+.liquid-crash .crash-code {
+  font-family: var(--liquid-font-mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--liquid-crash-accent);
+  margin-bottom: 12px;
+}
+
+.liquid-crash .crash-description {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--liquid-crash-text);
+  margin-bottom: 24px;
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.liquid-crash .crash-trace {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 24px;
+  border-radius: 12px;
+  background: var(--liquid-crash-trace-bg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: left;
+}
+
+.liquid-crash .crash-trace pre {
+  font-family: var(--liquid-font-mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  padding: 16px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.liquid-crash .crash-meta {
+  font-size: 0.8rem;
+  color: var(--liquid-crash-text-muted);
+  margin-bottom: 32px;
+  font-family: var(--liquid-font-mono);
+}
+```
+
+**Action Buttons**
+
+```css
+.liquid-crash .crash-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.liquid-crash .crash-actions button {
+  padding: 10px 24px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms var(--liquid-ease-default);
+  border: 1px solid transparent;
+}
+
+.liquid-crash .crash-actions .btn-restart {
+  background: var(--liquid-crash-accent);
+  color: #FFFFFF;
+}
+
+.liquid-crash .crash-actions .btn-restart:hover {
+  filter: brightness(1.15);
+  transform: scale(1.02);
+}
+
+.liquid-crash .crash-actions .btn-download {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--liquid-crash-text);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.liquid-crash .crash-actions .btn-download:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.liquid-crash .crash-actions .btn-disconnect {
+  background: transparent;
+  color: var(--liquid-crash-text-muted);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.liquid-crash .crash-actions .btn-disconnect:hover {
+  color: var(--liquid-crash-text);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.liquid-crash .crash-actions button:focus-visible {
+  outline: 2px solid var(--liquid-crash-accent);
+  outline-offset: 2px;
+}
+```
+
+**Animations**
+
+```css
+@keyframes crash-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes crash-backdrop-blur {
+  from { backdrop-filter: blur(0); }
+  to { backdrop-filter: blur(var(--liquid-crash-blur)); }
+}
+
+@keyframes crash-panel-in {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.liquid-crash .crash-panel {
+  animation: crash-panel-in 300ms var(--liquid-ease-default) 100ms both;
+}
+
+.liquid-crash .crash-icon,
+.liquid-crash .crash-code,
+.liquid-crash .crash-description,
+.liquid-crash .crash-trace,
+.liquid-crash .crash-meta,
+.liquid-crash .crash-actions {
+  animation: crash-panel-in 250ms var(--liquid-ease-default) both;
+}
+
+/* Stagger content elements */
+.liquid-crash .crash-icon        { animation-delay: 150ms; }
+.liquid-crash .crash-code        { animation-delay: 200ms; }
+.liquid-crash .crash-description { animation-delay: 250ms; }
+.liquid-crash .crash-trace       { animation-delay: 300ms; }
+.liquid-crash .crash-meta        { animation-delay: 350ms; }
+.liquid-crash .crash-actions     { animation-delay: 400ms; }
+
+/* Restart success — dissolve out */
+.liquid-crash.crash-dismissing {
+  animation: crash-appear 200ms var(--liquid-ease-default) reverse both;
+}
+```
+
+**Emergency Fallback**
+
+```css
+.liquid-crash.crash-emergency {
+  background: #1a0000;   /* solid dark red-black */
+  backdrop-filter: none;
+}
+
+.liquid-crash.crash-emergency .crash-backdrop { display: none; }
+
+.liquid-crash.crash-emergency .crash-panel {
+  background: transparent;
+  backdrop-filter: none;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  animation: none;
+  max-width: 80ch;
+  text-align: left;
+  font-family: monospace;
+}
+
+.liquid-crash.crash-emergency .crash-trace {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.liquid-crash.crash-emergency .crash-actions button {
+  border-radius: 0;
+  backdrop-filter: none;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
+}
+
+.liquid-crash.crash-emergency * {
+  animation: none !important;
+}
+```
+
+**Reduced Motion & Accessibility**
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  .liquid-crash,
+  .liquid-crash .crash-backdrop,
+  .liquid-crash .crash-panel,
+  .liquid-crash .crash-icon,
+  .liquid-crash .crash-code,
+  .liquid-crash .crash-description,
+  .liquid-crash .crash-trace,
+  .liquid-crash .crash-meta,
+  .liquid-crash .crash-actions,
+  .liquid-crash.crash-dismissing {
+    animation: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .liquid-crash .crash-panel {
+    background: rgba(0, 0, 0, 0.95);
+    backdrop-filter: none;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+  }
+
+  .liquid-crash .crash-trace {
+    background: #000000;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+  }
+
+  .liquid-crash .crash-actions button {
+    border-width: 2px;
+  }
+}
+```
+
 ---
 
 ## 8) Iconography
@@ -2298,6 +2599,28 @@ Example — "Flat Minimal" theme (no glass):
 | `.liquid-login .login-banner` | Legal/compliance banner text |
 | `.liquid-login.auth-success` | Login screen dissolving after auth success |
 
+**Crash Screen**
+
+| Class | Description |
+|-------|-------------|
+| `.liquid-crash` | Root crash screen container (full viewport) |
+| `.liquid-crash.crash-session` | Session crash variant (red accent) |
+| `.liquid-crash.crash-connection` | Connection fatal variant (amber accent) |
+| `.liquid-crash.crash-server` | Server unreachable variant (dark red accent) |
+| `.liquid-crash .crash-backdrop` | Frosted glass backdrop layer |
+| `.liquid-crash .crash-panel` | Centered content panel (glass background) |
+| `.liquid-crash .crash-icon` | Error icon (SVG, accent-colored) |
+| `.liquid-crash .crash-code` | Error code text (large monospace) |
+| `.liquid-crash .crash-description` | Human-readable error description |
+| `.liquid-crash .crash-trace` | Stack trace scrollable container |
+| `.liquid-crash .crash-trace pre` | Stack trace preformatted text |
+| `.liquid-crash .crash-meta` | Session metadata line (ID, user, uptime) |
+| `.liquid-crash .crash-actions` | Action buttons container |
+| `.liquid-crash .crash-actions .btn-restart` | "Restart Session" primary button |
+| `.liquid-crash .crash-actions .btn-download` | "Download Report" secondary button |
+| `.liquid-crash .crash-actions .btn-disconnect` | "Disconnect" ghost/outline button |
+| `.liquid-crash.crash-emergency` | Emergency fallback mode (no glass effects) |
+
 ### 11.4 Custom Properties Reference (Complete)
 
 | Property | Default | Description |
@@ -2359,6 +2682,12 @@ Example — "Flat Minimal" theme (no glass):
 | `--liquid-tablet-dock-icon-size` | `56px` | Dock icon size in tablet mode |
 | `--liquid-login-blur` | `40px` | Login screen frosted glass blur intensity |
 | `--liquid-login-avatar-size` | `120px` | Login screen avatar diameter |
+| `--liquid-crash-accent` | `#FF453A` | Crash screen accent color (varies by type) |
+| `--liquid-crash-blur` | `30px` | Crash screen frosted glass blur intensity |
+| `--liquid-crash-panel-bg` | `rgba(30,30,30,0.85)` | Crash screen content panel background |
+| `--liquid-crash-trace-bg` | `rgba(0,0,0,0.6)` | Crash screen stack trace container background |
+| `--liquid-crash-text` | `#FFFFFF` | Crash screen primary text color |
+| `--liquid-crash-text-muted` | `rgba(255,255,255,0.5)` | Crash screen secondary/metadata text |
 
 ---
 
@@ -2391,6 +2720,19 @@ The LiquidClient application uses the same Liquid Glass design language:
 - Sectioned with tabs.
 - Glass-themed throughout.
 
+### 12.6 Crash Screen
+- Full-viewport overlay rendered entirely by the client (never streamed from server).
+- Frosted glass backdrop with type-specific accent coloring (red, amber, dark red).
+- Centered content panel with glass background, rounded corners, subtle shadow.
+- Error icon (SVG, accent-colored) at top center.
+- Error code in large monospace font, description in standard font below.
+- Stack trace in a scrollable `<pre>` container with dark glass background and monospace font.
+- Session metadata line (session ID, user, uptime, timestamp) in muted secondary text.
+- Action buttons row: "Restart Session" (primary accent), "Download Report" (secondary), "Disconnect" (ghost/outline).
+- **Emergency fallback**: solid dark background, system monospace font, white text, no effects. Activates when the client rendering engine itself fails.
+- All animations respect `prefers-reduced-motion`.
+- Full keyboard navigation and screen reader support (see §7.14 CSS spec).
+
 ---
 
 ## 13) Performance Considerations for Design
@@ -2407,6 +2749,8 @@ The LiquidClient application uses the same Liquid Glass design language:
 | Launcher | Heavy | Computed | Yes | None | Medium (on-demand) |
 | Notification | Standard | Computed | Yes | None | Low (small area) |
 | Modal backdrop | None | None | None | None | Zero (solid overlay) |
+| Crash screen | Standard | Computed | Yes | None | Low (on-demand, client-side) |
+| Crash screen (emergency) | None | None | None | None | Near zero (software-rendered) |
 
 ### 13.2 Cache Strategy
 - **Always cached**: wallpaper blur, status bar, dock background.

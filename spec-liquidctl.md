@@ -1033,6 +1033,123 @@ Toggle RDP compatibility without editing config files.
 
 ---
 
+### 3.12 `liquidctl plugins` — WASM Plugin Management
+
+#### `liquidctl plugins list [--session <id>] [--format json|table|csv]`
+
+List installed plugins and their status.
+
+```
+$ liquidctl plugins list
+PLUGIN ID              VERSION   STATUS    MEMORY    CPU       EXTENSION POINTS
+clipboard-transform    1.2.0     active    4.2 MB    0.3%      clipboard-transformer
+custom-panel           0.8.1     active    8.1 MB    1.2%      panel-widget
+shell-ext-git          2.0.0     suspended 0.0 MB    0.0%      shell-extension
+theme-gen-solarized    1.0.0     active    2.1 MB    0.1%      theme-generator
+```
+
+#### `liquidctl plugins info <plugin-id> [--session <id>]`
+
+Show detailed plugin information: manifest, resource usage, fault history, configuration.
+
+#### `liquidctl plugins install <source> [--signature-check] [--dry-run]`
+
+Install a plugin from a local `.wasm` file, directory, or registry URL.
+- `--signature-check` — require Ed25519 signature validation (overrides server config).
+- `--dry-run` — validate manifest and signature without installing.
+
+#### `liquidctl plugins uninstall <plugin-id> [--purge]`
+
+Remove an installed plugin. `--purge` removes plugin configuration and stored data.
+
+#### `liquidctl plugins enable <plugin-id> [--session <id>]`
+
+Enable a plugin for the specified session (or all sessions if `--session` omitted).
+
+#### `liquidctl plugins disable <plugin-id> [--session <id>]`
+
+Disable a plugin. The plugin is deactivated and unloaded from any running sessions.
+
+#### `liquidctl plugins reload <plugin-id> [--session <id>]`
+
+Hot-reload a plugin: suspend → unload old → load new → resume. State is preserved if the plugin supports it.
+
+#### `liquidctl plugins config <plugin-id> [key] [value]`
+
+Get or set per-plugin configuration values.
+
+```bash
+# List all plugin config
+liquidctl plugins config clipboard-transform
+
+# Set a value
+liquidctl plugins config clipboard-transform strip_formatting true
+```
+
+---
+
+### 3.13 `liquidctl crash` — Crash Report Management
+
+#### `liquidctl crash list [--limit N] [--session <id>] [--since <date>] [--format json|table|csv]`
+
+List crash reports.
+
+```
+$ liquidctl crash list --limit 5
+REPORT ID    SESSION    USER     TIMESTAMP                ERROR CODE               EXIT
+cr-001       s-042      alice    2025-01-15T16:22:31Z     SESSION_PROCESS_CRASH     SIGSEGV
+cr-002       s-038      bob      2025-01-15T14:01:12Z     SESSION_OOM              OOM
+cr-003       s-042      alice    2025-01-15T12:55:48Z     SESSION_PROCESS_CRASH     SIGABRT
+```
+
+#### `liquidctl crash show <report-id> [--format json|text]`
+
+Display full crash report details: error code, stack trace, session metadata, system info, last log lines.
+
+#### `liquidctl crash export <report-id> [--output <path>] [--include-coredump]`
+
+Export a crash report to a file. JSON by default. `--include-coredump` bundles the coredump in a `.tar.gz` archive.
+
+#### `liquidctl crash delete <report-id> [--all] [--older-than <days>]`
+
+Delete crash reports. `--all` deletes all reports. `--older-than` deletes reports older than N days.
+
+#### `liquidctl crash stats [--since <date>]`
+
+Show crash statistics: total crashes, crashes by error code, mean time between failures, sessions affected.
+
+---
+
+### 3.14 `liquidctl supervisor` — Session Supervisor Management
+
+#### `liquidctl supervisor status [--format json|table]`
+
+Show supervisor status and all managed session processes.
+
+```
+$ liquidctl supervisor status
+SUPERVISOR: running (PID 1234, uptime 14d 3h 22m)
+
+SESSION    USER     PID      STATE      UPTIME       RESTARTS   MEMORY     CPU
+s-042      alice    5678     running    2h 15m       0          312 MB     4.2%
+s-038      bob      5901     running    6h 02m       1          256 MB     2.1%
+s-051      charlie  —        failed     —            5/5        —          —
+```
+
+#### `liquidctl supervisor restart <session-id> [--force]`
+
+Request the supervisor to restart a session process. `--force` kills the current process immediately (SIGKILL) before restarting.
+
+#### `liquidctl supervisor reset-restarts <session-id>`
+
+Reset the restart counter for a session, allowing it to be restarted again after hitting the maximum.
+
+#### `liquidctl supervisor logs [--session <id>] [--lines N] [--follow]`
+
+View supervisor logs. `--session` filters to a specific session. `--follow` tails the log in real-time.
+
+---
+
 ## 4) Shell Completion
 
 `liquidctl` generates shell completions:
@@ -1066,6 +1183,9 @@ liquidctl completions powershell > $PROFILE/liquidctl.ps1
 | 6 | Resource not found (session, user, etc.) |
 | 7 | Operation cancelled by user |
 | 8 | Timeout |
+| 9 | Plugin error (install failed, invalid manifest, signature mismatch) |
+| 10 | Supervisor error (session process management failure) |
+| 11 | Crash report error (report not found, export failed) |
 
 ---
 
@@ -1123,3 +1243,11 @@ Use remote profiles: `liquidctl --server @prod sessions list`.
 - `liquidctl policy set` affects active sessions in real-time.
 - `liquidctl transport switch` performs seamless switch.
 - `liquidctl sessions disconnect` cleanly terminates sessions.
+- `liquidctl plugins install` downloads and installs a plugin.
+- `liquidctl plugins enable`/`disable` toggles plugin state for a session.
+- `liquidctl plugins info` shows accurate resource usage and status.
+- `liquidctl crash list` shows recent crash reports with correct metadata.
+- `liquidctl crash show` displays full crash report details.
+- `liquidctl crash export` produces valid, importable JSON/tar archives.
+- `liquidctl supervisor status` reports accurate session process states.
+- `liquidctl supervisor restart` successfully restarts a failed session.

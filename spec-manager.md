@@ -190,6 +190,49 @@ The management server is a **simple Node.js application** that is **disabled by 
   - Modify lock escalation timers per session (override policy temporarily).
   - View lock screen appearance preview.
 
+### Plugin Management
+- **Plugin list**: table of all installed plugins with columns: name, ID, version, status (active/suspended/faulted/disabled), memory usage, CPU usage, extension points.
+- **Plugin details**: expanded view showing:
+  - Full manifest (name, version, author, description, ABI version, capabilities, extension points).
+  - Resource usage graphs (memory, CPU over time).
+  - Fault history with timestamps and error details.
+  - Configuration editor (per-plugin settings).
+- **Actions**:
+  - Install plugin (upload `.wasm` file or provide registry URL).
+  - Uninstall plugin (with confirmation, option to purge config/data).
+  - Enable / disable plugin (per-session or globally).
+  - Hot-reload plugin (with rollback indicator on failure).
+  - Edit plugin configuration.
+  - View plugin logs (filtered by plugin ID).
+- **Signature verification status**: badge showing whether plugin is signed, unsigned, or signature invalid.
+- **Resource limit overrides**: per-plugin memory and CPU limit adjustments (within server-configured maximums).
+
+### Crash Reports & Session Supervisor
+- **Crash report list**: table of recent crashes with columns: report ID, session, user, timestamp, error code, exit signal, severity.
+  - Filterable by user, session, error code, date range.
+  - Sortable by any column.
+- **Crash report detail view**:
+  - Error code and human-readable description.
+  - Stack trace (syntax-highlighted, collapsible).
+  - Session metadata (ID, user, uptime, restart count at time of crash).
+  - System info (OS, kernel, memory, CPU at time of crash).
+  - Last N log lines (configurable).
+  - Download button (JSON export, optional coredump inclusion).
+- **Crash statistics dashboard**:
+  - Total crashes over time (line chart).
+  - Crashes by error code (pie/bar chart).
+  - Mean time between failures (MTBF) per session, per user.
+  - Most affected sessions/users.
+- **Supervisor status panel**:
+  - Supervisor process status (PID, uptime).
+  - Per-session table: session ID, user, PID, state (running/failed/restarting), uptime, restart count, memory, CPU.
+  - Real-time updates via WebSocket.
+- **Supervisor actions**:
+  - Restart a session (with optional force kill).
+  - Reset restart counter for a session.
+  - View supervisor logs.
+  - Adjust session resource limits (cgroup overrides).
+
 ---
 
 ## 4) Authentication & Security
@@ -344,6 +387,26 @@ The management server exposes its own API (used by the web frontend and optional
 | `POST` | `/api/v1/sessions/lock-all` | Lock all sessions |
 | `GET` | `/api/v1/lock/policies` | Get lock policies |
 | `PUT` | `/api/v1/lock/policies` | Update lock policies |
+| `GET` | `/api/v1/plugins` | List all installed plugins |
+| `GET` | `/api/v1/plugins/{id}` | Get plugin details (manifest, status, resource usage) |
+| `POST` | `/api/v1/plugins/install` | Install a plugin (multipart upload or URL) |
+| `DELETE` | `/api/v1/plugins/{id}` | Uninstall a plugin |
+| `POST` | `/api/v1/plugins/{id}/enable` | Enable a plugin |
+| `POST` | `/api/v1/plugins/{id}/disable` | Disable a plugin |
+| `POST` | `/api/v1/plugins/{id}/reload` | Hot-reload a plugin |
+| `GET` | `/api/v1/plugins/{id}/config` | Get plugin configuration |
+| `PUT` | `/api/v1/plugins/{id}/config` | Update plugin configuration |
+| `GET` | `/api/v1/plugins/{id}/faults` | Get plugin fault history |
+| `GET` | `/api/v1/crashes` | List crash reports (filterable) |
+| `GET` | `/api/v1/crashes/{id}` | Get full crash report details |
+| `GET` | `/api/v1/crashes/{id}/download` | Download crash report (JSON or tar.gz with coredump) |
+| `DELETE` | `/api/v1/crashes/{id}` | Delete a crash report |
+| `GET` | `/api/v1/crashes/stats` | Crash statistics (counts, MTBF, breakdown by code) |
+| `GET` | `/api/v1/supervisor/status` | Supervisor status and all managed sessions |
+| `POST` | `/api/v1/supervisor/sessions/{id}/restart` | Restart a session process |
+| `POST` | `/api/v1/supervisor/sessions/{id}/reset-restarts` | Reset restart counter |
+| `GET` | `/api/v1/supervisor/sessions/{id}/resources` | Session resource usage (cgroup stats) |
+| `WS` | `/ws/v1/supervisor` | WebSocket stream of supervisor events (crashes, restarts, health) |
 
 ---
 
@@ -368,6 +431,9 @@ The management server exposes its own API (used by the web frontend and optional
 10. **Audit** — audit log viewer with integrity verification.
 11. **Honeypot** — honeypot/tarpit dashboard, attacker table, IOC management.
 12. **Settings** — management UI settings, user account.
+13. **Plugins** — plugin management dashboard (install, enable/disable, resource monitoring, fault history).
+14. **Crash Reports** — crash report viewer, timeline, statistics, export tools.
+15. **Supervisor** — session supervisor status, process health, restart controls.
 
 ### UX Principles
 - Real-time updates (no manual refresh needed).

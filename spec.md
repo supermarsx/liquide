@@ -133,11 +133,16 @@ Worker Thread Pool
 ├── USB/IP Worker — USB device forwarding (dedicated channel, disabled by default)
 ├── Media Worker — camera passthrough
 ├── Policy Engine — evaluates client/server policy rules
+├── Plugin Worker (1–N) — WASM plugin host, sandbox execution, plugin lifecycle
 ├── Logging Worker — async structured log writing
 └── Metrics Worker — telemetry collection, stream analysis
 ```
 
 The main thread **never** performs blocking work. It runs an async event loop (tokio or equivalent) that dispatches work items to worker threads via lock-free channels. If any worker thread hangs or exceeds a deadline, the orchestrator can kill and restart it without crashing the session.
+
+The Plugin Worker hosts WASM plugin sandboxes via wasmtime. Each plugin runs in its own isolated WASM instance with independent memory and CPU fuel budgets. Plugin faults (traps, timeouts, OOM) are caught at the sandbox boundary — a crashing plugin never affects the session or other plugins.
+
+Above the session process, a **supervisor process** (`liquid-desktopd`) manages session lifecycle. Each user session runs as a separate `liquid-session` child process. The supervisor monitors sessions via heartbeat IPC, detects crashes, captures diagnostics, and manages restart policies (see §13 Session Supervisor & Process Model).
 
 ### Layer Architecture
 
@@ -174,6 +179,11 @@ The main thread **never** performs blocking work. It runs an async event loop (t
 7. **Policy Engine**
    - Server-side and client-side policy evaluation.
    - Per-user, per-group, per-session granularity.
+
+8. **Plugin Engine**
+   - WASM-based plugin runtime (wasmtime).
+   - Sandboxed execution with memory and CPU limits.
+   - 9 extension points for shell, widgets, input, themes, and more (see §14b).
 
 ### High-Level Data Flow
 
@@ -1205,6 +1215,78 @@ generate_initials_fallback = true        # generate initials avatar when none up
 default_avatar = ""                      # path to server-wide default avatar (blank = initials)
 ```
 
+### Session Supervisor & Process Model
+
+LiquidDE uses a **supervisor process model** for session isolation. The server daemon (`liquid-desktopd`) never runs user session code directly — it spawns a separate `liquid-session` child process for each authenticated user.
+
+#### Process Hierarchy
+
+```
+liquid-desktopd (supervisor daemon)
+├── liquid-session (user: alice, session: s-001)
+│   ├── Worker threads (render, encode, transport, audio, input, plugin, ...)
+│   └── Child processes (XWayland, user applications)
+├── liquid-session (user: bob, session: s-002)
+│   └── ...
+└── Supervisor thread pool
+    ├── Heartbeat monitor
+    ├── Resource monitor (cgroups)
+    └── Crash handler
+```
+
+#### Session Process Isolation
+
+- Each `liquid-session` runs as the target user's UID/GID.
+- cgroup v2 is used for resource containment per session:
+  - CPU quota (shares or hard limit).
+  - Memory limit (hard + soft, OOM events monitored).
+  - I/O bandwidth limits.
+  - Process count limits (pids.max).
+- Crash of one session **never** affects other sessions or the supervisor daemon.
+- The supervisor daemon runs as a privileged service (root or `liquidde` service user) and handles process lifecycle only — it never touches user data directly.
+
+#### Heartbeat Monitoring
+
+- Each `liquid-session` sends periodic heartbeat messages to the supervisor via a Unix domain socket IPC channel.
+- Default: heartbeat every 5 seconds.
+- If the supervisor misses `heartbeat_timeout_count` consecutive heartbeats (default: 3), the session is declared hung.
+- Hung session handling:
+  1. Send `SIGTERM` to session process (grace period: 10 seconds).
+  2. If still alive, send `SIGKILL`.
+  3. Capture crash context (same as crash path).
+  4. Notify client.
+  5. Attempt restart per restart policy.
+
+#### Crash Capture
+
+When a session process terminates unexpectedly (non-zero exit, signal):
+1. Supervisor detects exit via `waitpid()` / `SIGCHLD`.
+2. Exit code and signal number are recorded.
+3. If `coredump_enabled = true` and a coredump exists, its path is recorded.
+4. Last `crash_log_lines` (default: 100) lines from the session's log file are captured.
+5. Session metadata is recorded: user, session ID, uptime, last known state, resource usage at time of crash.
+6. A crash report is written to `crash_report_dir` (see §25).
+7. Client is notified via `crash_info` message (see §25 BSOD).
+
+#### Restart Policy
+
+- **Immediate restart** on first crash (no delay).
+- **Exponential backoff** on subsequent crashes: `restart_backoff_base_ms` × 2^(N-1), capped at 30 seconds.
+- **Maximum restarts**: `max_restarts` (default: 5) within `restart_window_sec` (default: 600 seconds / 10 minutes).
+- After exhausting restarts: session enters `failed` state. Client shows persistent crash screen. Admin can force restart via `liquidctl supervisor restart <session-id>`.
+- Restart counter resets after `restart_window_sec` without a crash.
+- On restart, the supervisor starts a fresh `liquid-session` process. If session state was persisted (compositor state, window list), the new process can resume from it — otherwise it starts a new session.
+
+#### Resource Monitoring
+
+- Supervisor periodically checks session resource usage via cgroup v2 interfaces:
+  - `memory.current` / `memory.max` — detect approaching OOM before the kernel kills the process.
+  - `memory.events` — detect OOM killer invocations.
+  - `pids.current` — process/thread count.
+  - `cpu.stat` — CPU usage tracking.
+- When a session approaches resource limits (>90% memory, >95% PIDs), a warning is sent to the client.
+- The supervisor itself has minimal resource footprint — it performs no rendering, encoding, or heavy computation.
+
 ---
 
 ## 14) Desktop Environment: Shell & Dock
@@ -1496,6 +1578,371 @@ shell_as_window = false                   # show dock/status bar as separate nat
 - "Stacking" to avoid animation storms.
 - Do-not-disturb mode.
 - Notification history panel.
+
+---
+
+## 14b) WASM Plugin & Extension System
+
+### Overview
+
+LiquidDE provides a comprehensive **WebAssembly (WASM)-based plugin system** that allows third-party and user-created extensions to augment the desktop environment. Plugins run in sandboxed WASM runtimes with strict memory and CPU resource limits, ensuring that no plugin can crash, hang, or compromise the host session.
+
+The plugin system is designed for:
+- **Performance**: Near-native execution speed via ahead-of-time compiled WASM. Minimal overhead per call. Memory-pooled allocations.
+- **Safety**: Complete isolation — plugins cannot access host memory, other plugins, or the filesystem beyond what is explicitly granted via host functions.
+- **Stability**: Versioned ABIs ensure plugins remain compatible across LiquidDE updates. Deprecation policy gives plugin authors time to migrate.
+- **Extensibility**: Nine distinct extension points cover shell UI, input processing, notifications, file handling, theming, and more.
+
+### Plugin Architecture
+
+#### WASM Runtime
+
+LiquidDE uses **wasmtime** as its WASM runtime:
+- Rust-native, no FFI overhead.
+- Ahead-of-time (AOT) compilation for near-native performance.
+- **Fuel-based CPU metering**: each WASM instruction consumes fuel, providing precise CPU time quotas without relying on wall-clock timers.
+- **Memory limiter**: per-instance hard memory caps enforced by the runtime.
+- **Async host functions**: plugins can call host functions that perform async I/O without blocking other plugins.
+- **Module caching**: compiled WASM modules are cached to avoid recompilation on restart.
+- **WASI preview 2**: plugins get a minimal WASI environment (clock, random) but **no filesystem, network, or environment variable access** unless explicitly granted.
+
+#### ABI Versioning
+
+| ABI Version | Status | Introduced | Deprecated | Removed |
+|-------------|--------|------------|------------|---------|
+| v1 | Active | v0.1.0 | — | — |
+
+- Plugins declare their target ABI version in `plugin.toml` (`abi_version = "v1"`).
+- The host checks compatibility at load time. Incompatible plugins are rejected with a clear error message.
+- **Forward compatibility**: new host functions can be added to an ABI version without breaking existing plugins (plugins that don't call the new functions continue to work).
+- **Breaking changes** require a new ABI version. The host can support multiple ABI versions concurrently.
+- **Deprecation policy**: deprecated ABI versions are supported for at least 2 major releases before removal.
+
+### Extension Points
+
+LiquidDE provides **nine extension points** that plugins can register for. A plugin may register for one or more extension points.
+
+#### 1. Shell Extensions
+Modify dock behavior, add status bar items, custom workspace behaviors.
+- **Entry**: `on_shell_event(event: ShellEvent) -> ShellAction`
+- **Events**: dock_item_click, workspace_switch, session_focus, status_bar_tick
+- **Host functions available**: UI API, Session API, Theme API
+
+#### 2. Panel Widgets
+Small UI components rendered into status bar widget slots.
+- **Entry**: `render_widget(width: u32, height: u32) -> WidgetRenderResult`
+- **Trigger**: periodic (configurable interval, default 1s) or on event
+- **Host functions available**: UI API, Session API, Timer API, Theme API
+- **Output**: structured render commands (text, icon, progress bar, sparkline) — **not** raw pixels
+
+#### 3. Notification Handlers
+Intercept, filter, modify, or suppress notifications before they are displayed.
+- **Entry**: `on_notification(notification: Notification) -> NotificationAction`
+- **Actions**: pass_through, suppress, modify(fields), defer(duration)
+- **Host functions available**: Notification API, Config API, Storage API
+
+#### 4. File Type Handlers
+Custom preview and thumbnail generation for the file manager.
+- **Entry**: `generate_preview(file_info: FileInfo, max_size: Size) -> PreviewResult`
+- **Input**: file metadata and a read-only byte slice of file content (capped at configurable size)
+- **Output**: image data (PNG/RGBA), text preview, or "unsupported" signal
+- **Host functions available**: Storage API (read-only), Logging API
+
+#### 5. Input Preprocessors
+Intercept and transform input events before they reach the compositor.
+- **Entry**: `on_input(event: InputEvent) -> InputAction`
+- **Actions**: pass_through, consume, replace(new_event), emit_multiple([events])
+- **Use cases**: custom gesture recognition, key remapping, macro expansion, accessibility input transforms
+- **Host functions available**: Input API, Config API, Timer API
+- **Performance**: input preprocessors must return within 2ms (reduced fuel allocation)
+
+#### 6. Theme Generators
+Programmatic theme generation — wallpaper-adaptive color extraction, time-of-day theme shifting, dynamic accent colors.
+- **Entry**: `generate_theme(context: ThemeContext) -> ThemeOverrides`
+- **Trigger**: on wallpaper change, on time interval, on user event
+- **Output**: set of CSS custom property overrides (`--liquid-accent`, `--liquid-bg-desktop`, etc.)
+- **Host functions available**: Theme API, Timer API, Config API
+
+#### 7. Launcher Result Providers
+Provide custom search results in the app launcher. **Supersedes** the legacy stdin/stdout launcher plugin system described in §14 — legacy plugins continue to work via a compatibility shim that wraps them as WASM-equivalent providers.
+- **Entry**: `on_query(query: string, max_results: u32) -> QueryResults`
+- **Output**: array of `{title, description, icon, action, relevance_score}`
+- **Actions**: `open_url`, `run_command`, `copy_text`, `insert_text`, `custom(data)`
+- **Host functions available**: Config API, Storage API, Logging API
+- **Performance**: queries must return within 100ms; partial results supported via streaming callback
+
+#### 8. Session Lifecycle Hooks
+Run logic on session lifecycle events.
+- **Entry**: `on_session_event(event: SessionEvent)`
+- **Events**: session_start, session_stop, session_lock, session_unlock, session_suspend, session_resume, theme_change, monitor_change
+- **Host functions available**: Session API, Config API, Storage API, Logging API, Notification API
+
+#### 9. Clipboard Transformers
+Transform clipboard content during sync between server and client.
+- **Entry**: `on_clipboard(content: ClipboardContent, direction: Direction) -> ClipboardAction`
+- **Directions**: server_to_client, client_to_server
+- **Actions**: pass_through, replace(new_content), block(reason)
+- **Use cases**: format conversion, PII redaction, content sanitization, URL shortening
+- **Host functions available**: Clipboard API, Config API, Logging API
+
+### Plugin Manifest Format
+
+Each plugin is a directory containing `plugin.toml` and `plugin.wasm`:
+
+```toml
+[plugin]
+id = "com.example.weather-widget"
+name = "Weather Widget"
+description = "Shows current weather in the status bar"
+version = "1.2.0"
+author = "Example Corp"
+license = "MIT"
+abi_version = "v1"
+entry_module = "plugin.wasm"
+
+[plugin.requirements]
+liquidde_min_version = "0.1.0"
+capabilities = ["ui", "timers", "storage", "notifications"]
+
+[plugin.resources]
+max_memory_mb = 16                       # plugin requests up to 16 MB (< server max of 256 MB)
+max_cpu_fuel = 10_000_000                # lower than default — this plugin is lightweight
+
+[plugin.extension_points]
+panel_widget = { slot = "status-bar-right", interval_ms = 60000 }
+session_lifecycle = { events = ["session_start", "session_stop"] }
+
+[plugin.config]
+# Plugin-specific config keys with defaults
+api_key = ""
+city = "auto"
+units = "metric"                         # metric, imperial
+```
+
+### Plugin Lifecycle
+
+```
+    ┌─────────┐
+    │  LOAD   │  wasmtime compiles .wasm, validates manifest, checks ABI version
+    └────┬────┘
+         ▼
+    ┌─────────┐
+    │  INIT   │  host calls plugin's init(config) export with plugin config
+    └────┬────┘
+         ▼
+    ┌──────────┐
+    │ ACTIVATE │  plugin starts receiving events, rendering widgets, etc.
+    └────┬─────┘
+         │
+    ┌────▼─────┐  ◄── on idle/lock: host calls suspend() — plugin serializes state
+    │ SUSPEND  │
+    └────┬─────┘
+         │
+    ┌────▼─────┐  ◄── on resume: host calls resume(state) — plugin restores
+    │  RESUME  │
+    └────┬─────┘
+         │
+    ┌────▼──────────┐
+    │  DEACTIVATE   │  host calls deactivate() — plugin cleans up
+    └────┬──────────┘
+         ▼
+    ┌─────────┐
+    │ UNLOAD  │  WASM instance dropped, memory freed
+    └─────────┘
+```
+
+- **Fault during any phase**: plugin is moved to `FAULTED` state. The session continues without the plugin. Watchdog may attempt restart depending on configuration.
+- **Hot-reload**: triggers `DEACTIVATE → UNLOAD → LOAD (new binary) → INIT → ACTIVATE`. State is preserved via `suspend()`/`resume()` if supported.
+
+### Plugin Registry & Discovery
+
+- **System plugins**: `/etc/liquidde/plugins/<plugin-id>/plugin.toml` + `plugin.wasm`
+- **User plugins**: `~/.config/liquidde/plugins/<plugin-id>/plugin.toml` + `plugin.wasm`
+- **Discovery**: directories are scanned at session start. When `hot_reload = true`, inotify/kqueue watches detect changes.
+- **Conflicts**: if system and user plugins share the same ID, the user plugin takes precedence (user can override system plugins).
+- **Signature verification**: if `[plugins] signature_required = true`, each `plugin.wasm` must have a detached signature file `plugin.wasm.sig` (Ed25519).
+
+### Host Functions (ABI v1)
+
+Plugins call host functions to interact with the desktop environment. Functions are grouped by capability:
+
+#### UI API (`capability: ui`)
+| Function | Description |
+|----------|-------------|
+| `ui_show_toast(message, duration_ms)` | Show a temporary toast message |
+| `ui_set_badge(target, count)` | Set a badge count on a dock item |
+| `ui_request_attention(target)` | Request attention (bouncing dock icon) |
+| `ui_get_active_window() -> WindowInfo` | Get info about the active window |
+| `ui_get_monitor_info() -> [MonitorInfo]` | Get monitor layout and resolution |
+
+#### Session API (`capability: session`)
+| Function | Description |
+|----------|-------------|
+| `session_get_user() -> string` | Get current username |
+| `session_get_uptime() -> u64` | Get session uptime in seconds |
+| `session_get_state() -> SessionState` | Get session state (active, locked, etc.) |
+| `session_get_locale() -> string` | Get session locale |
+
+#### Notification API (`capability: notifications`)
+| Function | Description |
+|----------|-------------|
+| `notification_send(title, body, icon, urgency)` | Send a notification |
+| `notification_cancel(id)` | Cancel a pending notification |
+
+#### Clipboard API (`capability: clipboard`)
+| Function | Description |
+|----------|-------------|
+| `clipboard_read_text() -> string` | Read text from clipboard |
+| `clipboard_write_text(text)` | Write text to clipboard |
+| `clipboard_get_formats() -> [string]` | List available clipboard formats |
+
+#### Config API (`capability: config`)
+| Function | Description |
+|----------|-------------|
+| `config_get(key) -> string` | Read plugin config value |
+| `config_set(key, value)` | Write plugin config value (persisted) |
+| `config_get_all() -> Map<string, string>` | Read all plugin config values |
+
+#### Storage API (`capability: storage`)
+| Function | Description |
+|----------|-------------|
+| `storage_read(key) -> bytes` | Read from plugin-scoped persistent storage |
+| `storage_write(key, value)` | Write to plugin-scoped persistent storage |
+| `storage_delete(key)` | Delete a key from storage |
+| `storage_list_keys() -> [string]` | List all keys in plugin storage |
+
+Storage is plugin-scoped (isolated per plugin) and stored at `~/.config/liquidde/plugin-data/<plugin-id>/`.
+
+#### Logging API (no capability required)
+| Function | Description |
+|----------|-------------|
+| `log(level, message)` | Write to plugin log subsystem |
+
+#### Timer API (`capability: timers`)
+| Function | Description |
+|----------|-------------|
+| `timer_set(duration_ms, repeat) -> timer_id` | Schedule a timer callback |
+| `timer_cancel(timer_id)` | Cancel a timer |
+
+#### Theme API (`capability: theme`)
+| Function | Description |
+|----------|-------------|
+| `theme_get_property(name) -> string` | Read a CSS custom property value |
+| `theme_set_overrides(overrides: Map)` | Set CSS custom property overrides |
+| `theme_get_type() -> string` | Get active theme type (dark/light) |
+
+#### IPC API (`capability: ipc`)
+| Function | Description |
+|----------|-------------|
+| `ipc_send(target_plugin_id, message)` | Send message to another plugin |
+| `ipc_broadcast(channel, message)` | Broadcast message on a named channel |
+| `ipc_subscribe(channel)` | Subscribe to messages on a named channel |
+
+### Inter-Plugin Communication
+
+- Plugins communicate via **typed message passing** through the IPC API — no shared memory between plugins.
+- Messages are serialized (MessagePack) at the plugin boundary and deserialized by the recipient.
+- **Directed messages**: `ipc_send(target_id, message)` — delivery guaranteed if target is active, dropped if target is faulted/unloaded.
+- **Broadcast channels**: `ipc_broadcast(channel, message)` — all subscribers receive the message.
+- **Built-in channels**: `theme_changed`, `session_event`, `locale_changed` (plugins can subscribe to system events via IPC).
+
+### Hot-Reload
+
+When a plugin's `.wasm` file changes on disk (detected via inotify/kqueue):
+
+1. **Current instance**: `deactivate()` → `suspend()` → serialize state → `unload()`.
+2. **New instance**: `load()` new binary → `init(config)` → `resume(saved_state)` → `activate()`.
+3. **Rollback**: if the new instance fails to load or init, the old binary is re-loaded and the plugin is restored to its previous state. An error notification is shown to the user.
+4. **No-state plugins**: if a plugin does not export `suspend()`/`resume()`, it is simply restarted fresh.
+
+Hot-reload happens with **zero downtime** for other plugins and the session.
+
+### Plugin Development SDK
+
+The primary SDK is a Rust crate: `liquidde-plugin-sdk`.
+
+```rust
+use liquidde_plugin_sdk::prelude::*;
+
+#[liquid_plugin]
+struct WeatherWidget {
+    api_key: String,
+    city: String,
+}
+
+impl PanelWidget for WeatherWidget {
+    fn render(&self, width: u32, height: u32) -> WidgetRenderResult {
+        let temp = self.fetch_temperature();
+        WidgetRenderResult::text(format!("{}°C", temp))
+    }
+}
+
+impl SessionLifecycle for WeatherWidget {
+    fn on_session_start(&mut self) {
+        log_info!("Weather widget started");
+    }
+}
+```
+
+**Language support**: Plugins can be written in any language that compiles to WASM:
+- **Rust** (primary, first-class SDK).
+- **C/C++** (via wasi-sdk).
+- **AssemblyScript** (TypeScript-like, compiles to WASM).
+- **Go** (via TinyGo).
+- **Zig** (native WASM target).
+
+### Plugin Sandboxing & Resource Limits
+
+#### Memory Limits
+- Each plugin declares its maximum memory in `plugin.toml` (default: 32 MB, max: 256 MB).
+- The wasmtime memory limiter enforces this at the WASM level — allocations beyond the limit cause a trap.
+- **Total plugin memory budget**: `max_plugins_per_session × default_memory_limit_mb` gives a worst-case upper bound. In practice, most plugins use far less.
+
+#### CPU Time Quotas
+- Each host→plugin call is allocated fuel proportional to the expected execution time.
+- Default: 50 million fuel units (~50ms of CPU time on typical hardware).
+- Input preprocessors run with reduced fuel (2ms equivalent) for latency sensitivity.
+- Launcher query handlers run with a 100ms fuel budget.
+- **Fuel calibration**: the host benchmarks fuel-to-wall-clock ratio at startup and adjusts fuel allocations accordingly.
+
+#### Fault Trapping
+- All WASM traps are caught at the host boundary. The plugin is marked `FAULTED`.
+- The extension point gracefully degrades:
+  - Shell extension fault → shell reverts to default behavior.
+  - Panel widget fault → widget slot shows a small error indicator (red dot).
+  - Notification handler fault → notifications pass through unmodified.
+  - Input preprocessor fault → input events pass through unmodified.
+  - Clipboard transformer fault → clipboard content passes through unmodified.
+
+#### Plugin Watchdog
+- The Plugin Worker runs a watchdog timer that monitors all active plugins.
+- **Fault tracking**: each plugin maintains a fault counter. Faults within the restart window increment the counter.
+- **Auto-restart**: on fault, the plugin is automatically restarted (deactivate → unload → load → init → activate).
+- **Backoff**: restart delays increase exponentially (1s, 2s, 4s, 8s...).
+- **Permanent disable**: after `max_restarts` within `restart_window_sec`, the plugin is permanently disabled for the session. Admin can re-enable via `liquidctl plugins enable <id>`.
+
+#### Graceful Degradation
+When a plugin is disabled (manually or by watchdog), its extension points revert to default behavior. The session continues normally. A notification is shown to the user: "Plugin <name> has been disabled due to repeated errors."
+
+### Plugin Configuration
+
+#### Server-Side (`server.toml`)
+See §19 `[plugins]` and `[plugins.resources]` configuration sections.
+
+#### User-Side (`~/.config/liquidde/session.toml`)
+```toml
+[plugins]
+enabled_plugins = []                     # empty = all installed; list IDs to restrict
+disabled_plugins = ["com.example.broken-plugin"]  # explicitly disabled
+```
+
+#### Per-Plugin (`~/.config/liquidde/plugins/<id>/config.toml`)
+```toml
+# Plugin-specific config (schema defined by plugin.toml [plugin.config])
+api_key = "user-api-key"
+city = "London"
+units = "metric"
+```
 
 ---
 
@@ -1929,6 +2376,47 @@ Policies enforced on the client side:
   - Memory limit (hard and soft).
   - I/O bandwidth limits.
   - Process count limits.
+
+### WASM Plugin Security & Sandboxing
+
+LiquidDE's WASM plugin system (§14b) introduces a controlled extension surface that must be secured against both malicious and buggy plugins. The following security properties are enforced:
+
+#### Threat Model
+- **Malicious plugin**: A plugin that attempts to exfiltrate data, escalate privileges, or disrupt the session.
+- **Buggy plugin**: A plugin that has memory safety issues, infinite loops, or excessive resource consumption.
+- **Supply chain attack**: A compromised plugin binary distributed through untrusted channels.
+
+#### Memory Isolation
+- Each WASM plugin runs in its own isolated linear memory space — it has **zero access** to host memory, other plugins' memory, or session state beyond what is explicitly passed through host function calls.
+- Memory limit per plugin is enforced by wasmtime's memory limiter. Exceeding the limit triggers a WASM trap caught at the host boundary.
+- Plugins cannot allocate memory beyond their declared maximum (`max_memory_mb` in plugin manifest, capped by `[plugins.resources] max_memory_limit_mb`).
+
+#### CPU Quota Enforcement
+- Each plugin call is metered using wasmtime's **fuel system**. A plugin call that exhausts its fuel allocation is terminated with a trap.
+- A wall-clock timeout acts as a backstop for cases where fuel metering cannot catch (e.g., host function calls that block).
+- Plugins that repeatedly exhaust CPU quotas are flagged and may be disabled by the watchdog.
+
+#### Fault Boundary Guarantees
+- WASM traps (out-of-bounds memory access, stack overflow, unreachable, division by zero) are **always** caught at the host boundary.
+- A plugin trap **never** propagates to the session process — the plugin is marked as faulted, the session continues.
+- Host function calls from plugins are validated: invalid arguments, out-of-range values, and excessive sizes are rejected with error codes, never causing host panics.
+
+#### Plugin Signing & Verification
+- Plugins can optionally be cryptographically signed (Ed25519).
+- When `[plugins] signature_required = true`, unsigned or invalid-signature plugins are rejected at load time.
+- Signature covers the WASM binary and the `plugin.toml` manifest.
+- Key management: server administrator distributes the signing public key in server configuration.
+
+#### Capability-Based Permissions
+- Plugins declare required capabilities in their manifest (`[plugin.requirements] capabilities`).
+- Host functions are gated by capability — a plugin that does not declare `clipboard` capability cannot call clipboard host functions.
+- Available capabilities: `ui`, `session`, `notifications`, `clipboard`, `config`, `storage`, `timers`, `theme`, `ipc`, `input`.
+- Administrator can further restrict capabilities per-plugin via server configuration.
+
+#### Audit Logging
+- Plugin load, unload, enable, disable, fault, and restart events are logged to the `plugin` log subsystem.
+- Host function calls from plugins can optionally be logged at `debug` level for forensic analysis.
+- Plugin-initiated actions that affect user-visible state (e.g., clipboard write, notification display) are logged at `info` level.
 
 ### Service Obfuscation
 - LiquidDE supports hiding its identity from network scanners and unauthorized probes.
@@ -2588,6 +3076,48 @@ lock_screen_message = ""
 lock_pause_clipboard = true
 lock_pause_camera = true
 
+# ─── Plugins (WASM Extension System) ──────────────────────────
+[plugins]
+enabled = true                           # enable the WASM plugin system
+plugin_dirs = ["/etc/liquidde/plugins", "~/.config/liquidde/plugins"]
+signature_required = false               # require cryptographic signature on plugins
+signature_public_key = ""                # path to public key for plugin verification
+hot_reload = true                        # watch plugin directories for changes
+max_plugins_per_session = 20             # maximum loaded plugins per session
+abi_versions = ["v1"]                    # supported ABI versions
+
+[plugins.resources]
+default_memory_limit_mb = 32             # per-plugin WASM linear memory cap
+default_cpu_fuel = 50_000_000            # fuel units per plugin call (~50ms CPU equivalent)
+default_wall_timeout_ms = 250            # wall-clock timeout per call (backstop)
+max_memory_limit_mb = 256                # absolute maximum any plugin can request
+max_cpu_fuel = 500_000_000               # absolute maximum fuel any plugin can request
+watchdog_interval_ms = 1000              # how often to check plugin health
+max_restarts = 5                         # max auto-restarts before permanent disable
+restart_backoff_base_ms = 1000           # exponential backoff base for restarts
+restart_window_sec = 600                 # restart counter resets after this window
+
+# ─── Session Supervisor ────────────────────────────────────────
+[supervisor]
+enabled = true                           # enable supervisor process model
+heartbeat_interval_ms = 5000             # session→supervisor heartbeat frequency
+heartbeat_timeout_count = 3              # missed heartbeats before declaring hang
+max_restarts = 5                         # max session restarts within window
+restart_window_sec = 600                 # restart counter reset window (10 min)
+restart_backoff_base_ms = 1000           # exponential backoff base
+coredump_enabled = true                  # capture coredumps on crash
+coredump_max_size_mb = 512               # max coredump file size
+crash_log_lines = 100                    # number of session log lines to capture
+
+# ─── Crash Screen ──────────────────────────────────────────────
+[crash_screen]
+crash_report_dir = "/var/log/liquidde/crashes"
+crash_report_retention_days = 30         # auto-delete old crash reports
+crash_report_max_count = 1000            # max stored crash reports
+telemetry_upload_enabled = false         # upload crash reports to endpoint
+telemetry_upload_url = ""                # crash telemetry endpoint URL
+include_coredump_in_report = false       # include coredump path in client-visible report
+
 # ─── Logging ───────────────────────────────────────────────
 [logging]
 base_dir = "/var/log/liquidde"
@@ -2604,6 +3134,9 @@ auth = "info"
 render = "warn"
 encode = "warn"
 transport = "info"
+plugin = "info"
+supervisor = "info"
+crash = "warn"
 
 # ─── Metrics ────────────────────────────────────────────────
 [metrics]
@@ -2628,12 +3161,16 @@ max_resolution = "3840x2160"
 max_fps = 60
 allowed_encoders = ["h264", "h265", "av1"]
 allowed_transports = ["quic", "tls-tcp"]
+plugins_enabled = true                   # allow WASM plugins for sessions in this policy
+allowed_plugins = []                     # empty = all installed plugins allowed; list plugin IDs to restrict
+plugin_install = "admin-only"            # admin-only, user, disabled
 
 # Group overrides
 [group.developers]
 clipboard = "bidirectional"
 file_transfer = true
 max_sessions = 5
+plugin_install = "user"                  # developers can install their own plugins
 
 [group.guests]
 clipboard = "server-to-client"
@@ -2641,6 +3178,7 @@ file_transfer = false
 usb_redirection = false
 max_resolution = "1920x1080"
 max_fps = 30
+plugins_enabled = false                  # guests cannot use plugins
 
 # User overrides
 [user.admin]
@@ -2814,6 +3352,10 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 - OIDC authentication.
 - Management UI.
 - Client rendering offload (full).
+- WASM plugin system (runtime, ABI v1, 9 extension points).
+- Plugin SDK and documentation.
+- Session supervisor process model.
+- BSOD crash screen (client-rendered).
 
 ---
 
@@ -2882,6 +3424,167 @@ This DE is explicitly designed to avoid common remote-desktop pain:
 - **Transport resilience**: automatic failover between transport strategies.
 - **Cache corruption recovery**: if any cache is detected as corrupted, it's rebuilt automatically.
 - **Graceful degradation**: if CPU budget is exceeded, effects degrade gracefully rather than dropping frames.
+- **Plugin isolation**: WASM plugin faults never crash the host session (see §14b).
+- **Session isolation**: individual session process crashes never bring down the server daemon (see §13).
+
+### Crash Categories
+
+| Category | Severity | Detection | Automatic Response |
+|----------|----------|-----------|-------------------|
+| Worker thread hang | Low | Deadline exceeded (orchestrator health monitor) | Kill and restart worker thread |
+| Worker thread panic | Low | Rust panic hook in worker | Catch at thread boundary, restart worker |
+| WASM plugin fault | Low | Trap at WASM sandbox boundary | Disable plugin, notify user, session continues |
+| Plugin resource exhaustion | Low | Fuel exhaustion / memory limit | Trap and terminate plugin call, session continues |
+| Session process crash | Medium | Supervisor detects child exit (non-zero status) | Capture crash context, notify client, attempt restart |
+| Session process OOM | Medium | cgroup OOM killer / supervisor watchdog | Capture context, notify client, restart with reduced limits |
+| Session process hang | Medium | Heartbeat timeout (supervisor IPC) | SIGKILL after grace period, restart |
+| Resource exhaustion (FDs, disk) | Medium | Periodic resource checks in supervisor | Log warning, attempt cleanup, restart session if unrecoverable |
+| GPU driver fault | Medium | Render worker crash isolation | Fall back to CPU rendering, notify user |
+| Server daemon crash | Critical | systemd watchdog / process exit | systemd restarts daemon, clients see "Server Unreachable" crash screen |
+| Hardware fault | Critical | Kernel panic / hardware error | Out of scope — handled by OS |
+
+### Session Supervisor Behavior
+
+The `liquid-desktopd` daemon acts as a supervisor for `liquid-session` child processes (see §13 Session Supervisor & Process Model). When a session process crashes:
+
+1. **Detection**: Supervisor receives `SIGCHLD` or heartbeat timeout.
+2. **Classification**: Exit code, signal number, and coredump presence determine crash category.
+3. **Context capture**:
+   - Coredump (if enabled and available).
+   - Last 100 log lines from session log.
+   - Session metadata (user, uptime, last active window, resource usage).
+   - Stack trace from coredump (symbolized if debug info available).
+4. **Client notification**: Supervisor sends a `crash_info` message to the client via the transport connection (or via a dedicated supervisor-to-client notification channel if the session transport is lost).
+5. **Restart policy**:
+   - Immediate restart on first crash.
+   - Exponential backoff on subsequent crashes: 1s, 2s, 4s, 8s, 16s, 30s max.
+   - Maximum 5 restarts within a 10-minute window.
+   - After exhaustion: session enters `failed` state, client shows persistent crash screen.
+   - Admin can force restart via `liquidctl supervisor restart <session-id>`.
+6. **Crash report**: Generated and stored in `/var/log/liquidde/crashes/crash-<session-id>-<timestamp>.json`.
+
+### Crash Detection & Classification
+
+- **Signal-based**: `SIGSEGV`, `SIGABRT`, `SIGBUS`, `SIGFPE`, `SIGILL` → session process crash.
+- **Heartbeat timeout**: Session sends heartbeat to supervisor every 5 seconds. Miss 3 consecutive → supervisor assumes hang.
+- **OOM killer**: cgroup v2 `memory.events` monitored for OOM events.
+- **Rust panic handler**: Custom panic hook in `liquid-session` that logs panic info, flushes logs, and exits with a distinguishable exit code (exit code 101).
+- **Resource exhaustion**: File descriptor count, /tmp disk usage, and thread count monitored periodically.
+
+### BSOD-Like Crash Screen
+
+When a fatal error prevents session continuation, the **client** renders a full-screen crash screen locally (not streamed as video frames — similar to the login screen rendering approach).
+
+#### Crash Screen Data Format
+
+The supervisor (or the session process's panic handler, if it can still communicate) sends a `crash_info` message to the client:
+
+```json
+{
+  "type": "crash_info",
+  "error_code": "SESSION_PROCESS_CRASH",
+  "signal": 11,
+  "description": "Session process terminated unexpectedly (SIGSEGV)",
+  "stack_trace": [
+    "liquid_session::compositor::render_frame+0x1a4",
+    "liquid_session::compositor::compose_surfaces+0x892",
+    "liquid_session::main_loop::tick+0x3f1"
+  ],
+  "session_id": "s-001",
+  "user": "alice",
+  "uptime_seconds": 8142,
+  "timestamp": "2025-01-15T16:22:31.847Z",
+  "server_version": "0.1.0",
+  "crash_report_id": "crash-s001-20250115T162231",
+  "recovery_options": ["restart_session", "download_report", "disconnect"],
+  "restart_available": true
+}
+```
+
+#### Crash Screen Visual Layout
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    [frosted dark-red glass]                  │
+│                                                             │
+│                       ⚠ (error icon)                        │
+│                                                             │
+│               SESSION_PROCESS_CRASH                         │
+│                                                             │
+│     Session process terminated unexpectedly (SIGSEGV)       │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  liquid_session::compositor::render_frame+0x1a4     │    │
+│  │  liquid_session::compositor::compose_surfaces+0x892 │    │
+│  │  liquid_session::main_loop::tick+0x3f1              │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                             │
+│     Session: s-001 · User: alice · Uptime: 2h 15m 42s      │
+│     2025-01-15 16:22:31 UTC                                 │
+│                                                             │
+│   [ Restart Session ]   [ Download Report ]   [ Disconnect ]│
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+The crash screen is rendered using the Liquid Glass design language (see [spec-design.md](spec-design.md) §7.14 for full CSS specification). Three visual variants exist based on crash type:
+- **Session crash** (`.type-session`) — red accent.
+- **Connection fatal** (`.type-connection`) — amber accent.
+- **Server unreachable** (`.type-server`) — dark red accent.
+
+#### Recovery Options
+
+| Action | Behavior |
+|--------|----------|
+| **Restart Session** | Client sends restart request to supervisor. Shows loading spinner. On success, crash screen dissolves into resumed session. On failure (restart limit exhausted), shows "session could not be restarted" message. |
+| **Download Report** | Generates a crash report file (JSON) and offers it for download/save. Report includes: error code, stack trace, session metadata, system info, last 100 log lines. Sanitized — no screen content, no user files, no credentials. |
+| **Disconnect** | Returns to the client connection dialog. Session remains in `failed` state on server until admin intervenes or TTL expires. |
+
+### Crash Reporting & Telemetry
+
+Crash reports are stored server-side in `/var/log/liquidde/crashes/`:
+
+```json
+{
+  "crash_id": "crash-s001-20250115T162231",
+  "timestamp": "2025-01-15T16:22:31.847Z",
+  "error_code": "SESSION_PROCESS_CRASH",
+  "signal": 11,
+  "exit_code": null,
+  "stack_trace": ["..."],
+  "session_id": "s-001",
+  "user": "alice",
+  "uptime_seconds": 8142,
+  "system_info": {
+    "server_version": "0.1.0",
+    "os": "Ubuntu 24.04",
+    "kernel": "6.8.0-generic",
+    "cpu": "AMD EPYC 7763",
+    "memory_total_mb": 8192,
+    "memory_used_mb": 6144
+  },
+  "last_log_lines": ["...last 100 lines from session log..."],
+  "active_plugins": ["widget-clock", "clipboard-sanitizer"],
+  "coredump_path": "/var/log/liquidde/crashes/core.s001.20250115T162231"
+}
+```
+
+- **Retention**: Configurable, default 30 days.
+- **Prometheus metrics**: `liquidde_crashes_total{type="session_crash"}`, `liquidde_crash_restarts_total`, `liquidde_session_uptime_at_crash_seconds` (histogram).
+- **Optional telemetry upload**: Disabled by default. If enabled, crash reports (without coredumps or user data) are sent to a configurable endpoint.
+
+### Crash Screen Rendering
+
+The crash screen is rendered **client-side** using the same infrastructure as the login screen:
+
+- **Normal path**: Client GPU renders the crash screen using the Liquid Glass CSS theme. Full glass effects, animations, and theme colors.
+- **Emergency path**: If the client rendering engine itself is compromised, a software-rendered fallback activates:
+  - Solid dark red background (`#1A0808`), no glass effects.
+  - System monospace font, white text.
+  - Minimal layout: error code, description, and "Press Enter to disconnect" prompt.
+  - No animations, no blur, no network-dependent resources.
+
+The crash screen is **never** streamed as encoded video frames from the server. The client has all the information it needs from the `crash_info` message to render it locally.
 
 ---
 
@@ -2909,6 +3612,15 @@ This DE is explicitly designed to avoid common remote-desktop pain:
   - CSS theming guide.
   - Troubleshooting playbook.
   - API reference.
+  - Plugin development guide.
+
+- **Plugin SDK**:
+  - `liquidde-plugin-sdk` — Rust crate for developing WASM plugins.
+  - Sample plugins (status bar widget, clipboard transformer, theme generator).
+
+- **Crash Reporting**:
+  - Crash report format specification.
+  - Crash collection and analysis tooling.
 
 ---
 
