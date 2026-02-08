@@ -753,19 +753,186 @@ The gateway exposes a REST API for management and monitoring:
 
 ---
 
-## 14) High Availability
+## 14) High Availability & Clustering
 
-### Multi-Gateway Deployment
-- Multiple gateway instances can run behind a load balancer.
-- Shared state (server registry, sticky sessions) via:
-  - Redis.
-  - Embedded distributed KV (e.g., etcd-like, raft-based).
-  - Or stateless mode (no sticky sessions, DNS-based server registry).
+### 14.1 Architecture Overview
 
-### Failover
-- If a gateway instance fails, clients reconnect to another instance.
-- Server re-registration happens automatically.
-- Active relay sessions are dropped (client auto-reconnects through surviving gateway).
+```
+                    ┌───────────────────────────────┐
+                    │       Load Balancer            │
+                    │  (HAProxy / cloud LB / DNS)    │
+                    └───────┬───────┬───────┬────────┘
+                            │       │       │
+                    ┌───────▼──┐ ┌──▼───────┐ ┌──▼───────┐
+                    │Gateway-1 │ │Gateway-2 │ │Gateway-3 │
+                    │(active)  │ │(active)  │ │(active)  │
+                    └───┬──┬───┘ └───┬──┬───┘ └───┬──┬───┘
+                        │  │         │  │         │  │
+                    ┌───▼──▼─────────▼──▼─────────▼──▼───┐
+                    │        Shared State Store           │
+                    │   (Redis / etcd / embedded raft)    │
+                    └───────┬───────────────┬─────────────┘
+                            │               │
+                    ┌───────▼───────┐ ┌─────▼───────────┐
+                    │  Server-A     │ │  Server-B        │
+                    │  (sessions    │ │  (sessions       │
+                    │   s-001,      │ │   s-003,         │
+                    │   s-002)      │ │   s-004)         │
+                    └───────────────┘ └─────────────────┘
+```
+
+All gateway instances are **active-active** — every instance can accept client connections and route them to any backend server. There is no leader/follower distinction among gateways.
+
+### 14.2 Shared State
+
+Gateways must share three categories of state for correct routing:
+
+| State Category | Contents | Consistency Requirement |
+|---------------|----------|----------------------|
+| **Server Registry** | Backend server addresses, health status, capabilities, capacity, tags | Eventually consistent (seconds-scale) |
+| **Session Routing Table** | session_id → server mapping, session state (running/suspended/disconnected) | Strongly consistent (reads after writes) |
+| **Sticky Session Bindings** | client_id → gateway_id affinity (for relay mode) | Eventually consistent |
+
+#### State Store Options
+
+| Option | Consistency | Latency | Ops Complexity | Recommended For |
+|--------|------------|---------|---------------|----------------|
+| **Redis** (external) | Strong (single node) or eventual (cluster) | <1ms | Low (existing infrastructure) | Most deployments |
+| **Redis Sentinel** | Strong (with failover) | <1ms | Medium | Production HA |
+| **Embedded Raft** (built-in) | Strong (Raft consensus) | 1–5ms | Zero (self-contained) | Edge deployments, air-gapped |
+| **Stateless (DNS + server-side routing)** | N/A | N/A | Lowest | Single-server, no sessions crossing gateways |
+
+Configuration:
+
+```toml
+[cluster]
+enabled = true
+mode = "redis"                       # redis, redis_sentinel, embedded_raft, stateless
+
+[cluster.redis]
+url = "redis://redis-host:6379/0"
+password = ""
+key_prefix = "liquide:gw:"
+connection_pool_size = 8
+
+[cluster.redis_sentinel]
+sentinels = ["sentinel1:26379", "sentinel2:26379", "sentinel3:26379"]
+master_name = "liquide-gateway"
+password = ""
+
+[cluster.embedded_raft]
+node_id = "gw-1"                     # unique per gateway instance
+peers = ["gw-2:4001", "gw-3:4001"]  # other gateway Raft peers
+data_dir = "/var/lib/liquide/gateway/raft"
+listen = "0.0.0.0:4001"             # Raft peer communication port
+```
+
+### 14.3 Session Affinity
+
+Client-to-gateway affinity is maintained to optimize relay performance and reduce state lookups:
+
+| Strategy | How | Benefits | Limitations |
+|----------|-----|----------|-------------|
+| **Cookie-based** | Gateway sets a cookie with its instance ID. LB routes by cookie. | Zero-state LB | Requires L7 LB |
+| **IP hash** | LB routes by client source IP | Simple, stateless LB | Breaks with NAT/VPN |
+| **Token-embedded** | Session token includes the preferred gateway ID. Client sends token in initial message. | Works with L4 LB | Requires token parsing |
+| **None** | Any gateway handles any request. Session table consulted on every connection. | Maximum resilience | Higher state lookup overhead |
+
+Default: **cookie-based** when behind an L7 load balancer, **token-embedded** otherwise.
+
+### 14.4 Failure Modes & Recovery
+
+#### Gateway Instance Failure
+
+| Scenario | Detection | Client Impact | Recovery |
+|----------|-----------|---------------|----------|
+| Gateway process crash | LB health check fails (HTTP `/healthz` returns 5xx or timeout) | Active relay connections drop. Clients reconnect through another gateway. | LB removes failed instance. Clients auto-reconnect. Session routing table in shared state is still valid. |
+| Gateway network partition (from LB) | LB health check timeout | Same as crash from client perspective | LB removes instance. When partition heals, instance re-joins. |
+| Gateway network partition (from state store) | State store operations fail | Gateway continues operating with stale state. New sessions may route incorrectly. | Gateway enters degraded mode: only routes sessions it already knows about. Logs warn. When connectivity restores, full state is re-synced. |
+| Gateway network partition (from backend servers) | Server health checks fail | Sessions on affected servers show as unavailable | Gateway marks servers unhealthy. Routes new connections to healthy servers. When connectivity restores, servers are re-registered. |
+
+#### Backend Server Failure
+
+| Scenario | Detection | Client Impact | Recovery |
+|----------|-----------|---------------|----------|
+| Server process crash | Health check failure (TCP or HTTP) | Active sessions on that server are lost. Clients see crash screen. | Gateway marks server unhealthy. Removes from routing. Server restarts and re-registers. |
+| Server graceful shutdown | Server sends deregistration + session migration intent | Sessions can be migrated (if supported) or disconnected with "server shutting down" message | Gateway removes server, routes new connections elsewhere. |
+| Server overloaded | Health check latency exceeds threshold, or server reports capacity full | New sessions routed elsewhere. Existing sessions may degrade. | Gateway reduces server weight in load balancing. Server recovers and weight restores. |
+
+#### Complete State Store Failure
+
+If the shared state store becomes unavailable:
+
+1. **Gateway continues with cached state** — last-known server registry and session table are held in memory.
+2. **New session creation is degraded** — sessions can still route to known servers but affinity is not guaranteed.
+3. **Writes are queued** — session table updates are queued locally and flushed when state store recovers.
+4. **Alert emitted** — `liquide_gateway_cluster_state_store_errors_total` increments, log `error`.
+5. **Recovery** — when state store reconnects, gateway performs a full state reconciliation.
+
+### 14.5 Gateway-to-Gateway Communication
+
+For embedded Raft mode, gateway instances communicate directly:
+
+| Message | Purpose |
+|---------|---------|
+| `AppendEntries` | Raft log replication |
+| `RequestVote` | Raft leader election |
+| `ServerRegistration` | Broadcast server join/leave |
+| `SessionRouteUpdate` | Broadcast session routing changes |
+| `HealthSync` | Exchange server health status |
+
+Communication uses mTLS on a dedicated cluster port (default: `4001`).
+
+### 14.6 Multi-Node Consistency Guarantees
+
+| Operation | Consistency | Notes |
+|-----------|------------|-------|
+| Server registration | Acknowledged only after state store write succeeds | Gateway confirms registration to server only after the server entry is persisted. |
+| Session creation (routing) | Linearizable (single writer) | Only one gateway processes a given session creation at a time (distributed lock on session ID). |
+| Session resume | Read-after-write | The gateway that wrote the session route must see it immediately. Other gateways see it within the replication window (typically < 100ms for Redis, < 5ms for Raft). |
+| Server health status | Eventually consistent | Health check results propagate within 2× health check interval. |
+| Capacity metrics | Eventually consistent | Server load metrics refresh on health check interval. |
+
+### 14.7 Scaling Considerations
+
+| Dimension | Recommendation | Limit |
+|-----------|---------------|-------|
+| Gateway instances | 2–5 per site | No hard limit; state store may become bottleneck >10 |
+| Backend servers per gateway cluster | 1–100 | Registry lookups are O(1) hash table |
+| Concurrent sessions per gateway | 10,000+ (relay mode: limited by bandwidth and FDs) | Depends on hardware. Broker mode: minimal overhead. |
+| Clients per second (connection rate) | 500+ | TLS handshake is the bottleneck. Increase gateway count. |
+
+### 14.8 Cluster Management
+
+```bash
+# View cluster status
+liquidctl gateway cluster status
+# Output:
+# Cluster: 3 gateways, 5 servers, 847 active sessions
+# State store: redis (redis-host:6379) — connected
+#
+# Gateway  | Status  | Connections | Sessions Routed
+# gw-1    | active  | 312         | 289
+# gw-2    | active  | 298         | 271
+# gw-3    | active  | 287         | 287
+#
+# Server   | Status  | Sessions | CPU  | Memory
+# srv-a   | healthy | 423      | 62%  | 78%
+# srv-b   | healthy | 312      | 45%  | 56%
+# srv-c   | healthy | 112      | 18%  | 34%
+# srv-d   | warning | 0        | 92%  | 89%
+# srv-e   | healthy | 0        | 5%   | 12%
+
+# Drain a gateway for maintenance
+liquidctl gateway cluster drain gw-2
+# New connections stop routing to gw-2. Existing connections finish naturally.
+
+# Remove a server from the cluster
+liquidctl gateway cluster remove-server srv-d
+
+# Force session migration (if supported)
+liquidctl gateway cluster migrate-sessions srv-d srv-e
+```
 
 ---
 
@@ -807,6 +974,13 @@ The gateway exposes a REST API for management and monitoring:
 - Server disconnect/reconnect during active sessions.
 - Network partition between gateway and server.
 - Load balancer failover between gateway instances.
+- State store failure: verify gateway continues with cached state.
+- State store recovery: verify full reconciliation succeeds.
+- Gateway drain: verify new connections stop, existing finish.
+- Embedded Raft: verify leader election after leader crash.
+- Embedded Raft: verify state consistency across 3-node cluster with one node down.
+- Session affinity: verify client reconnects to same gateway (cookie/token).
+- Backend server failure mid-relay: verify client receives crash notification and auto-reconnects.
 
 ### Security
 - TLS enforcement.
