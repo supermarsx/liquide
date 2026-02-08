@@ -1,7 +1,7 @@
 # LiquiDE — Protocol Formal Specification
 
-> **Status**: Draft
-> **Depends on**: [spec.md](spec.md) (core server), [spec-client.md](spec-client.md) (client)
+> **Status**: Living document (wire format frozen at `proto/1`)
+> **Depends on**: [spec.md](spec.md) (core server), [spec-client.md](spec-client.md) (client), [Normative Conventions](spec-normative.md)
 
 ---
 
@@ -1206,9 +1206,270 @@ The `0xE000–0xEFFF` message type range is reserved for vendor-specific extensi
 
 ---
 
-## 13) Operational SLOs & Performance Targets
+## 13) Canonical Schema (CDDL)
 
-### 13.1 Latency Budgets
+The LiquiDE protocol uses **CBOR (RFC 8949)** as its payload encoding format. All message schemas are formally defined using **CDDL (RFC 8610)** — the Concise Data Definition Language. The CDDL source files are the **authoritative** schema definition; the prose descriptions in §5 and §8 are informative.
+
+### 13.1 Schema Files
+
+The canonical schemas live in the repository at `crates/liquide-protocol/schema/`:
+
+| File | Contents |
+|------|----------|
+| `control.cddl` | Control channel messages (ClientHello, ServerHello, LoginPrompt, etc.) |
+| `video.cddl` | Video channel messages (FrameHeader, FrameData, FrameAck) |
+| `tile.cddl` | Tile channel messages (TileConfig, TileBatch, TileUpdate, etc.) |
+| `cursor.cddl` | Cursor channel messages (CursorShape, CursorPosition) |
+| `audio.cddl` | Audio channel messages (AudioConfig, AudioData) |
+| `clipboard.cddl` | Clipboard channel messages (ClipboardOffer, ClipboardData, etc.) |
+| `input.cddl` | Input channel messages (KeyEvent, MouseEvent, TouchEvent, etc.) |
+| `emergency.cddl` | Emergency channel messages (EmergencyHello, CrashInfo, CrashLog) |
+| `common.cddl` | Shared type definitions (session_id, error codes, enums) |
+
+### 13.2 Schema Conventions
+
+| Convention | Rule |
+|-----------|------|
+| **Integer keys** | CBOR maps use integer keys (not string keys) on the wire for compactness. String key names in CDDL are documentation only — the encoded form uses the integer mappings defined in each schema. |
+| **Optional fields** | Optional fields (`? key`) MUST be omitted (not set to null) when absent. Receivers MUST accept both omission and explicit null for optional fields. |
+| **Unknown fields** | Receivers MUST ignore unknown integer keys in CBOR maps (forward compatibility). Senders MUST NOT send fields not defined in the current protocol version's schema. |
+| **Enums** | Enum values are encoded as unsigned integers, not strings. Mapping tables are defined per schema. |
+| **Byte strings** | Binary data (frame payloads, tile pixels, audio samples) uses CBOR byte strings (`bstr`), not base64-encoded text. |
+| **Timestamps** | All timestamps are `uint` microseconds since session start. Absolute timestamps (audit, logs) use ISO 8601 text strings. |
+
+### 13.3 Schema Excerpt: Control Channel
+
+```cddl
+; common.cddl — shared types
+session-id = tstr .size (1..64)
+error-code = uint
+protocol-version = tstr           ; e.g., "proto/1"
+
+; control.cddl — control channel messages
+ClientHello = {
+    0: protocol-version,           ; protocol_version
+    1: [+ tstr],                   ; supported_transports
+    2: [+ tstr],                   ; supported_codecs
+    3: {* tstr => any},            ; client_capabilities
+    4: tstr,                       ; client_version
+    5: tstr,                       ; client_platform ("linux-x86_64", "windows-x86_64", etc.)
+    ? 6: bstr,                     ; session_resume_token (for reconnect)
+}
+
+ServerHello = {
+    0: protocol-version,           ; selected protocol version
+    1: tstr,                       ; selected_transport
+    2: session-id,                 ; session_id
+    3: {* tstr => any},            ; server_capabilities
+    4: tstr,                       ; server_version
+    ? 5: bstr,                     ; session_resume_token
+    ? 6: uint,                     ; heartbeat_interval_ms
+}
+
+LoginPrompt = {
+    0: [+ tstr],                   ; available_methods ("password", "totp", "fido2", etc.)
+    ? 1: bstr,                     ; avatar_png (JPEG/PNG image bytes, ≤ 32KB)
+    ? 2: bool,                     ; session_resume_available
+    ? 3: tstr,                     ; server_greeting
+}
+
+LoginResponse = {
+    0: tstr,                       ; method ("password", "totp", "fido2", etc.)
+    1: bstr,                       ; credential (encrypted under TLS)
+    ? 2: bstr,                     ; mfa_token (second-factor response)
+}
+
+LoginSuccess = {
+    0: session-id,
+    1: bstr,                       ; session_token
+    2: {* tstr => any},            ; session_features (negotiated capabilities)
+    ? 3: uint,                     ; token_lifetime_sec
+}
+
+LoginFailure = {
+    0: error-code,
+    1: tstr,                       ; reason ("invalid_credentials", "account_locked", "mfa_required")
+    ? 2: uint,                     ; retry_after_sec
+    ? 3: uint,                     ; remaining_attempts
+}
+
+Disconnect = {
+    0: error-code,
+    1: tstr,                       ; reason
+    ? 2: bool,                     ; reconnect_allowed
+}
+```
+
+### 13.4 Decode Strictness
+
+Implementations MUST follow these decode rules:
+
+| Rule | Strict Mode (default) | Lax Mode (optional, config) |
+|------|----------------------|---------------------------|
+| Unknown CBOR map keys | Silently ignored | Silently ignored |
+| Missing required field | Reject message, emit error metric | Reject message |
+| Wrong field type | Reject message | Attempt coercion (uint↔int), reject if impossible |
+| Duplicate map keys | Reject message | Last value wins |
+| Trailing bytes after CBOR | Reject message | Ignore trailing bytes |
+| Indefinite-length CBOR | Reject (not supported) | Reject |
+| CBOR tags | Ignored (strip) | Ignored (strip) |
+| Nested depth > 8 | Reject message | Reject message |
+| Single value > 16 MB | Reject message | Reject message |
+
+Strict mode is the default for all production deployments. Lax mode MAY be enabled for interoperability testing with third-party clients. Lax mode MUST NOT be used in production as it masks protocol violations.
+
+### 13.5 Schema Validation Tooling
+
+```bash
+# Validate a CBOR capture against the canonical schemas
+liquide-conformance --validate-capture capture.bin --schema crates/liquide-protocol/schema/
+
+# Generate Rust encode/decode code from CDDL schemas
+cargo run --bin gen-protocol -- --schema crates/liquide-protocol/schema/ --output crates/liquide-protocol/src/generated/
+
+# Validate that generated code matches the schema (CI check)
+cargo test --package liquide-protocol -- schema_roundtrip
+```
+
+---
+
+## 14) Test Vectors & Golden Captures
+
+Test vectors provide known-good protocol message sequences that implementations MUST parse correctly. Golden captures provide known-good byte sequences for specific messages.
+
+### 14.1 Golden Captures
+
+Each message type has a canonical byte sequence stored in `crates/liquide-protocol/test-vectors/`:
+
+| File | Contents | Format |
+|------|----------|--------|
+| `clienthello_basic.bin` | Minimal ClientHello with proto/1, QUIC, H.264 | Raw frame (header + CBOR payload) |
+| `serverhello_basic.bin` | ServerHello response | Raw frame |
+| `login_password_flow.bin` | LoginPrompt → LoginResponse → LoginSuccess | Concatenated frames |
+| `login_failure.bin` | LoginPrompt → LoginResponse → LoginFailure | Concatenated frames |
+| `tile_batch_mixed.bin` | TileBatch with skip, full, delta, copy, solid tiles | Raw frame |
+| `tile_keyframe_1080p.bin` | TileKeyFrame for 1920×1080 at 64×64 tiles | Raw frame |
+| `clipboard_text_roundtrip.bin` | ClipboardOffer → Request → Data → DataEnd | Concatenated frames |
+| `disconnect_clean.bin` | Graceful Disconnect | Raw frame |
+| `capability_negotiation.bin` | Client advertise → Server confirm | Concatenated frames |
+| `emergency_crash.bin` | EmergencyHello → CrashInfo → CrashLogRequest → CrashLogChunk | Concatenated frames |
+| `reconnect_resume.bin` | ClientHello with resume token → ServerHello → SessionInfo | Concatenated frames |
+
+### 14.2 Golden Capture Format
+
+Each `.bin` file is accompanied by a `.json` description file:
+
+```json
+{
+    "vector_id": "clienthello_basic",
+    "protocol_version": "proto/1",
+    "description": "Minimal ClientHello with default options",
+    "frames": [
+        {
+            "offset": 0,
+            "length": 142,
+            "channel": "0x00",
+            "message_type": "0x0001",
+            "description": "ClientHello",
+            "decoded": {
+                "protocol_version": "proto/1",
+                "supported_transports": ["quic", "tcp"],
+                "supported_codecs": ["h264", "tile-zstd"],
+                "client_capabilities": {},
+                "client_version": "0.3.0",
+                "client_platform": "linux-x86_64"
+            }
+        }
+    ],
+    "sha256": "a1b2c3d4..."
+}
+```
+
+### 14.3 Test Vector Requirements
+
+| Requirement | Description |
+|-------------|-------------|
+| **Platform-independent** | Test vectors use fixed byte order (network byte order), fixed timestamps (0), and deterministic CBOR encoding (canonical form per RFC 8949 §4.2). |
+| **Version-tagged** | Each vector specifies the minimum protocol version that supports it. |
+| **CI-gated** | `cargo test --package liquide-protocol -- test_vector` runs all test vectors. New vectors MUST be added when new message types are introduced. |
+| **Cross-platform** | Test vectors MUST produce identical parse results on all target platforms (x86_64, ARM64, WASM). |
+| **Fuzz corpus seed** | Golden captures are automatically added to the fuzz corpus for frame parser and CBOR decoder targets. |
+
+### 14.4 Compatibility Test Matrix
+
+Client-server combinations tested with test vectors:
+
+| Client Version | Server Version | Expected Behavior |
+|---------------|----------------|-------------------|
+| Current | Current | Full feature set, all vectors pass |
+| Current | Current - 1 minor | Full feature set, server ignores unknown client capabilities |
+| Current - 1 minor | Current | Full feature set, client ignores unknown server capabilities |
+| Current | Current + 1 minor (future) | Server ignores unknown fields/capabilities from client |
+| proto/1 client | proto/2 server (future) | Version negotiation falls back to proto/1 |
+
+---
+
+## 15) Wire Compatibility Policy
+
+### 15.1 Protocol Version Contract
+
+| Property | Rule |
+|----------|------|
+| **Frame header format** | Frozen. The 20/24-byte frame header (§4) MUST NOT change within a major protocol version. Adding fields requires a new major version. |
+| **Magic number** | `0x4C44` is permanent. A different magic indicates a non-LiquiDE protocol. |
+| **Channel IDs** | Channel ID assignments (§3.1) are frozen within a major protocol version. New channels use reserved IDs (§12.3). Existing channel IDs MUST NOT be reassigned. |
+| **Message type codes** | Existing type codes are frozen. New message types use unallocated codes from reserved ranges (§12.3). Existing codes MUST NOT be reassigned or change semantics. |
+| **CBOR field numbering** | Existing integer keys in CBOR maps are frozen. New optional fields use the next available integer key. Existing keys MUST NOT change meaning. |
+
+### 15.2 Version Negotiation Rules
+
+1. Client sends `ClientHello` with its highest supported protocol version.
+2. Server selects the highest version it supports that is ≤ the client's version.
+3. If no compatible version exists, server sends `LoginFailure` with reason `"version_incompatible"` and its supported version range.
+4. The selected version applies to all channels for the session duration.
+5. Mid-session version changes are NOT supported. Upgrade requires reconnect.
+
+### 15.3 Forward Compatibility Rules
+
+| Sender Action | Receiver Behavior |
+|--------------|-------------------|
+| Sends unknown CBOR field | Receiver ignores it |
+| Sends unknown message type on known channel | Receiver silently discards message |
+| Sends unknown capability key | Receiver responds with `false` or omits from confirm |
+| Sends ChannelOpen for unknown channel | Receiver sends ChannelOpenReject |
+| Uses a new compression algorithm ID | Receiver falls back to uncompressed and logs warning |
+
+### 15.4 Breaking Change Policy
+
+A protocol **major version bump** (`proto/1` → `proto/2`) is required for:
+
+- Removing or changing the semantics of an existing message type.
+- Removing or retyping an existing CBOR field.
+- Changing the frame header layout.
+- Changing the semantics of an existing flag bit.
+- Reassigning a channel ID.
+
+A protocol major version bump is **NOT** required for:
+
+- Adding new optional CBOR fields to existing messages.
+- Adding new message types in reserved ranges.
+- Adding new channels in reserved ranges.
+- Adding new capability keys.
+- Adding new compression algorithm IDs.
+- Adding new values to existing enums.
+
+### 15.5 Deprecation Process
+
+1. **Announce**: deprecated feature is documented in release notes with the version where it will be removed.
+2. **Warn**: server and client emit `warn`-level log when a deprecated feature is used. Deprecation warning is included in `ServerHello.server_capabilities["deprecated_features"]`.
+3. **Grace period**: minimum 2 minor versions between announcement and removal.
+4. **Remove**: feature removed in the announced version. Clients using the deprecated feature receive a clear error.
+
+---
+
+## 16) Operational SLOs & Performance Targets
+
+### 16.1 Latency Budgets
 
 | Metric | Target (1080p, same-datacenter) | Target (1080p, WAN 50ms RTT) | Target (4K, same-datacenter) |
 |--------|-------------------------------|------------------------------|------------------------------|
@@ -1224,7 +1485,7 @@ The `0xE000–0xEFFF` message type range is reserved for vendor-specific extensi
 | Cursor update | < 5ms | < 5ms + RTT | < 5ms |
 | Audio end-to-end | < 30ms | < 30ms + RTT | < 30ms |
 
-### 13.2 Throughput Targets
+### 16.2 Throughput Targets
 
 | Metric | Target  |
 |--------|---------|
@@ -1238,7 +1499,7 @@ The `0xE000–0xEFFF` message type range is reserved for vendor-specific extensi
 | Clipboard (text, < 1MB) | < 100ms end-to-end |
 | File transfer | Limited by network bandwidth |
 
-### 13.3 Resource Budget (Server, per session)
+### 16.3 Resource Budget (Server, per session)
 
 | Resource | Target | Maximum |
 |----------|--------|---------|
@@ -1252,7 +1513,7 @@ The `0xE000–0xEFFF` message type range is reserved for vendor-specific extensi
 | Network (4K, 30fps, balanced) | 8–20 Mbps | 50 Mbps |
 | Network (idle) | < 10 Kbps | — |
 
-### 13.4 CI Regression Thresholds
+### 16.4 CI Regression Thresholds
 
 Automated performance tests run in CI. A regression is flagged if:
 
@@ -1266,7 +1527,7 @@ Automated performance tests run in CI. A regression is flagged if:
 | Binary size | > 10% increase |
 | Startup time (session ready) | > 15% increase |
 
-### 13.5 Network Emulation Scenarios
+### 16.5 Network Emulation Scenarios
 
 Release gating includes tests under simulated network conditions:
 
@@ -1289,7 +1550,7 @@ For each scenario, verify:
 
 ---
 
-## 14) Fuzzing Targets
+## 17) Fuzzing Targets
 
 The following components are fuzzing targets for security and robustness:
 
@@ -1303,7 +1564,7 @@ The following components are fuzzing targets for security and robustness:
 | TLS handshake | Malformed TLS records | No crash, correct TLS error |
 | Session resume token | Malformed tokens | No bypass, correct auth error |
 
-### 14.1 Fuzzing Infrastructure
+### 17.1 Fuzzing Infrastructure
 
 - Fuzzing uses `cargo-fuzz` (libFuzzer) for Rust components.
 - Corpus seeded from protocol conformance test recordings.
@@ -1312,9 +1573,9 @@ The following components are fuzzing targets for security and robustness:
 
 ---
 
-## 15) Conformance Tests
+## 18) Conformance Tests
 
-### 15.1 Test Categories
+### 18.1 Test Categories
 
 | Category | Description | Pass Criteria |
 |----------|-------------|---------------|
@@ -1354,7 +1615,7 @@ The following components are fuzzing targets for security and robustness:
 | Unknown channel | ChannelOpen for unrecognized channel ID | ChannelOpenReject with unsupported_channel |
 | Vendor extension | Negotiate vendor cap, send vendor messages | Messages processed only after capability confirmed |
 
-### 15.2 Conformance Test Runner
+### 18.2 Conformance Test Runner
 
 A standalone conformance test tool (`liquide-conformance`) can be run against any LiquiDE server to verify protocol compliance:
 
@@ -1366,7 +1627,7 @@ Outputs a pass/fail report per test case.
 
 ---
 
-## 16) Test Plan
+## 19) Test Plan
 
 ### Protocol Correctness
 - Frame parsing: all field combinations, max sizes, truncated frames.
@@ -1386,8 +1647,8 @@ Outputs a pass/fail report per test case.
 - Emergency channel: verify it cannot be used to bypass authentication.
 
 ### Performance
-- All SLOs (§13) met under each network scenario (§13.5).
-- Regression thresholds (§13.4) enforced in CI.
+- All SLOs (§16) met under each network scenario (§16.5).
+- Regression thresholds (§16.4) enforced in CI.
 
 ### Interoperability
 - Conformance tests pass for: Linux client, Windows client, macOS client, browser client.
@@ -1395,3 +1656,5 @@ Outputs a pass/fail report per test case.
 - Backpressure: verify all channels respect flow control limits (§11).
 - Extension negotiation: verify unknown capabilities are ignored, known capabilities activate features.
 - Unknown messages: verify unknown message types are silently discarded (§12).
+- Test vectors: verify all golden captures (§14) decode correctly on all client platforms.
+- Compatibility: verify version negotiation rules (§15) are enforced.

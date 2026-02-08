@@ -2,7 +2,7 @@
 
 > **Language**: Rust
 > **License**: MIT
-> **Related specs**: [Client](spec-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Protocol](spec-protocol-formal.md) · [Rendering](spec-rendering-software.md) · [Performance](spec-performance.md) · [Observability](spec-observability.md) · [Build](spec-build.md) · [Threat Model](spec-threat-model.md) · [Normative](spec-normative.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
+> **Related specs**: [Client](spec-client.md) · [Web Client](spec-web-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Protocol](spec-protocol-formal.md) · [Rendering](spec-rendering-software.md) · [Performance](spec-performance.md) · [Observability](spec-observability.md) · [Build](spec-build.md) · [Threat Model](spec-threat-model.md) · [Normative](spec-normative.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
 
 ---
 
@@ -138,7 +138,7 @@ Worker Thread Pool
 └── Metrics Worker — telemetry collection, stream analysis
 ```
 
-The main thread **never** performs blocking work. It runs an async event loop (tokio or equivalent) that dispatches work items to worker threads via lock-free channels. If any worker thread hangs or exceeds a deadline, the orchestrator can kill and restart it without crashing the session.
+The main thread **never** performs blocking work. It runs an async event loop (tokio) that dispatches work items to worker tasks via channels. Workers are implemented as **structured async tasks** (tokio tasks), not OS threads — this enables cooperative cancellation via `CancellationToken`. If any worker task exceeds a deadline, the orchestrator cancels its token and spawns a replacement task. For CPU-bound workers (render, encode), work is dispatched to a dedicated `tokio::task::spawn_blocking` thread pool; the orchestrator monitors liveness via heartbeat channels and drops the work handle on timeout — the blocking thread completes its current unit of work and then exits when it finds its channel closed. This is a **crash-only worker** model: workers are never forcibly killed mid-operation; they are canceled at natural yield points and allowed to clean up. If a blocking worker truly hangs (no yield within 2× the deadline), the session process itself is considered hung and the supervisor terminates it via `SIGKILL` (see §13).
 
 The Plugin Worker hosts WASM plugin sandboxes via wasmtime. Each plugin runs in its own isolated WASM instance with independent memory and CPU fuel budgets. Plugin faults (traps, timeouts, OOM) are caught at the sandbox boundary — a crashing plugin never affects the session or other plugins.
 
@@ -1034,6 +1034,193 @@ Configurable per session/user/group with extensive options:
 - **Dead keys and compose sequences** supported.
 - **Input method framework**: built-in lightweight IME framework for CJK and complex script input, with support for external IBus/Fcitx protocol bridging.
 
+### Input Method Editor (IME) & Text Input
+
+LiquiDE implements full Wayland text-input and input-method protocols for complex script input (CJK, Indic, Arabic, compose sequences, dead keys). The session compositor acts as the text-input hub between Wayland client applications and the active input method engine.
+
+#### Wayland Protocol Support
+
+| Protocol | Version | Role | Description |
+|----------|---------|------|-------------|
+| `zwp_text_input_v3` | v3 (stable) | Client → Compositor | Applications report text input state (cursor rect, surrounding text, content type). Compositor forwards events to the active input method. |
+| `zwp_input_method_v2` | v2 (stable) | Compositor → IME | Input method engine receives keystroke events, produces preedit (composition) strings and commit strings. |
+| `zwp_input_method_keyboard_grab_v2` | v2 | IME → Compositor | IME grabs physical keyboard events for filtering/interception before they reach the client application. |
+| `zwp_input_popup_surface_v2` | v2 | IME → Compositor | IME creates popup surfaces (candidate window, status indicator) positioned relative to the text cursor. |
+| `zwp_virtual_keyboard_v1` | v1 | OSK → Compositor | On-screen keyboard synthesizes virtual key events. |
+
+#### Architecture
+
+```
+┌────────────────────────────────────┐
+│  Wayland Client Application        │
+│  (terminal, text editor, browser)  │
+│                                    │
+│  zwp_text_input_v3                 │
+│  - enable/disable                  │
+│  - set surrounding text            │
+│  - set content type                │
+│  - set cursor rectangle            │
+└──────────────┬─────────────────────┘
+               │
+               ▼
+┌────────────────────────────────────┐
+│  LiquiDE Compositor (text-input    │
+│  manager / seat-level hub)         │
+│                                    │
+│  Routes text-input state to the    │
+│  active input method per seat.     │
+│  Manages focus transitions.        │
+└──────────┬──────────┬──────────────┘
+           │          │
+           ▼          ▼
+┌─────────────────┐  ┌────────────────────────┐
+│  Built-in IME   │  │  External IME Process   │
+│  Engine         │  │  (IBus/Fcitx bridge)    │
+│                 │  │                          │
+│  zwp_input_     │  │  zwp_input_method_v2    │
+│  method_v2      │  │  zwp_input_popup_       │
+│                 │  │  surface_v2             │
+└─────────────────┘  └────────────────────────┘
+```
+
+#### Built-in IME Engine
+
+LiquiDE includes a lightweight built-in input method engine that handles the most common input scenarios without requiring external software:
+
+| Feature | Support |
+|---------|---------|
+| **Dead keys** | Full. Compose sequences via XKB dead key tables. `dead_acute` + `e` → `é`, `dead_diaeresis` + `u` → `ü`, etc. |
+| **Compose key** (Multi_key) | Full. XKB Compose file support (`~/.XCompose` or system Compose). `Compose` + `o` + `c` → `©`. |
+| **CJK — Pinyin (Chinese Simplified)** | Built-in. Dictionary-based Pinyin → Hanzi conversion. Candidate window with 9 candidates per page. |
+| **CJK — Bopomofo (Chinese Traditional)** | Built-in. Zhuyin to Hanzi conversion. |
+| **CJK — Romaji/Kana (Japanese)** | Built-in. Romaji → Hiragana → Kanji conversion with candidate selection. |
+| **CJK — Hangul (Korean)** | Built-in. Jamo composition (2-Set Dubeolsik, 3-Set Sebeolsik). |
+| **Arabic / Hebrew / RTL** | Handled by XKB layout + BiDi algorithm (no IME needed for character input; direction handled by Pango/HarfBuzz). |
+| **Indic scripts** | XKB Inscript/phonetic layouts. Complex shaping handled by HarfBuzz at the rendering layer. |
+
+#### External IME Bridge (IBus / Fcitx5)
+
+For users requiring advanced input methods, language-specific dictionaries, or specialized engines (e.g., Mozc for Japanese, libchewing for Traditional Chinese, ibus-rime for Chinese), LiquiDE supports bridging to external IME frameworks via a D-Bus adapter:
+
+| Framework | Bridge Mechanism | Status |
+|-----------|-----------------|--------|
+| **IBus** | D-Bus: `org.freedesktop.IBus` → `zwp_input_method_v2` adapter | Supported |
+| **Fcitx5** | D-Bus: `org.fcitx.Fcitx5` → `zwp_input_method_v2` adapter | Supported |
+| **Direct `zwp_input_method_v2` clients** | Native protocol — no bridge needed | Supported |
+
+When an external IME is configured, the built-in engine is deactivated for the configured input types. The external IME process runs inside the session's cgroup and namespace.
+
+```toml
+[input.ime]
+engine = "builtin"                     # "builtin", "ibus", "fcitx5", "external"
+# For ibus/fcitx5:
+# engine = "ibus"
+# ibus_daemon = true                   # auto-start ibus-daemon in session
+# default_method = "pinyin"            # default input method name
+```
+
+#### Preedit (Composition) Rendering
+
+When the user is composing text (e.g., typing Pinyin before committing Hanzi), the compositor must render the preedit string inline in the application's text field:
+
+1. **Application-side preedit** (preferred): The application receives `preedit_string` events via `zwp_text_input_v3` and renders the preedit inline using its own text rendering. This is the standard Wayland approach and works well with text editors and terminals.
+2. **Compositor-side preedit** (fallback): If the application does not implement `zwp_text_input_v3` (e.g., legacy X11 applications under XWayland), the compositor renders a floating preedit overlay near the cursor position.
+
+Preedit attributes supported:
+
+| Attribute | Description |
+|-----------|-------------|
+| `underline` | Single underline (default for active composition) |
+| `highlight` | Background highlight for the currently converting segment |
+| `cursor` | Cursor position within the preedit string |
+
+#### Candidate Window
+
+The IME's candidate selection window is rendered as a popup surface via `zwp_input_popup_surface_v2`:
+
+- Positioned relative to the text cursor (cursor rectangle reported by `zwp_text_input_v3`).
+- Styled with the Liquid Glass design language (glass panel, blur backdrop, themed text).
+- CSS class: `.liquid-ime-popup`.
+- Follows the cursor across screen edges (repositions if clipped).
+- Supports mouse and keyboard selection of candidates.
+- Page navigation (PageUp/PageDown or arrow keys) for long candidate lists.
+- Numbers 1-9 as candidate selection shortcuts.
+
+#### Remote IME Forwarding
+
+When a remote client (native or web) connects, IME events follow this path:
+
+```
+Client keyboard event
+    │
+    ▼
+Client sends KeyDown/KeyUp on input channel (§5.8)
+    │
+    ▼
+Server input processing
+    │
+    ▼
+IME intercepts via zwp_input_method_keyboard_grab_v2
+    │
+    ▼
+IME produces preedit + commit events
+    │
+    ▼
+Application receives text via zwp_text_input_v3
+    │
+    ▼
+Application renders updated content
+    │
+    ▼
+Compositor captures damage → encode → transport → client display
+```
+
+For the **native client**: key events are forwarded as raw scancodes + keysyms. The IME runs server-side. Preedit and candidates are rendered server-side and streamed as part of the session video/tile output. The client has no awareness of IME state.
+
+For the **web client**: key events during composition are handled differently — see [spec-web-client.md](spec-web-client.md) §7.4. The web client's browser-side IME handles composition locally and sends committed text to the server.
+
+#### Right-to-Left (RTL) Text Support
+
+| Feature | Implementation |
+|---------|---------------|
+| **BiDi algorithm** | Unicode BiDi Algorithm (UAX #9) applied by HarfBuzz/Pango at the text shaping layer. |
+| **Paragraph direction** | Determined by the application (explicit `dir="rtl"` or first-strong-character heuristic). |
+| **Cursor movement** | Visual cursor movement (left arrow moves left on screen) is the default. Logical movement available via setting. |
+| **Text selection** | Selection follows visual order by default. |
+| **Mixed LTR/RTL** | Correctly shaped and ordered within a single text run. |
+| **Shell UI direction** | DE shell follows locale direction. Arabic/Hebrew locale → full RTL shell layout (dock on right, status bar text RTL, notification panel on left). |
+| **CSS `direction` property** | Honored by the compositor's CSS layout engine for built-in UI elements. |
+
+Configuration:
+```toml
+[input.bidi]
+default_direction = "auto"             # "auto", "ltr", "rtl"
+cursor_movement = "visual"             # "visual" or "logical"
+shell_direction = "auto"               # "auto" (follows locale), "ltr", "rtl"
+```
+
+#### Keyboard Layout Switching
+
+Users can switch between multiple keyboard layouts at runtime:
+
+| Method | Trigger |
+|--------|---------|
+| Keyboard shortcut | `Super+Space` (default, configurable) |
+| Status bar indicator | Click the layout indicator in the status bar |
+| Per-window layout | Optional: each window remembers its last-used layout |
+| Auto-switch | Optional: switch layout based on text field language hint (`content_type` from `zwp_text_input_v3`) |
+
+Layout switching is instantaneous (XKB keymap switch) and does not require re-negotiation with the client.
+
+```toml
+[input.keyboard]
+layouts = ["us", "de", "jp"]           # configured layouts
+switch_shortcut = "Super+Space"
+per_window_layout = false
+auto_switch = false
+layout_indicator = true                # show in status bar
+```
+
 ### Mouse
 - Relative and absolute mode.
 - High-precision scroll (smooth scrolling).
@@ -1687,6 +1874,165 @@ crash_log_lines = 100
 safe_mode_after_restart = 3          # enter safe mode after 3rd restart
 plugin_quarantine_enabled = true
 ```
+
+### State & Storage Contract
+
+All persistent and ephemeral state across LiquiDE components follows a unified storage model with defined ownership, atomic write guarantees, and migration semantics.
+
+#### Directory Layout
+
+```
+/etc/liquide/                           # System configuration (root-owned, 0755)
+├── server.toml                         # Main server configuration
+├── policies/                           # Policy files (§15)
+│   ├── server.toml                     # Server-wide policy
+│   ├── groups/                         # Per-group policies
+│   │   └── <group>.toml
+│   └── users/                          # Per-user policies
+│       └── <user>.toml
+├── certs/                              # TLS certificates and keys
+│   ├── server.crt                      # Server certificate (0644)
+│   ├── server.key                      # Server private key (0600, liquide:liquide)
+│   └── client-ca.pem                   # Client CA for mTLS (0644)
+├── plugins/                            # Plugin management
+│   ├── trusted-keys/                   # Ed25519 public keys for plugin signing
+│   └── config/                         # Per-plugin configuration overrides
+├── codecs/                             # Codec module configuration
+└── gateway-psk                         # Gateway pre-shared key (0600)
+
+/var/lib/liquide/                       # Persistent runtime state (liquide:liquide, 0750)
+├── db/                                 # Embedded database
+│   └── state.sqlite3                   # SQLite database (WAL mode)
+├── codecs/                             # Downloaded codec binaries (OpenH264)
+├── plugins/                            # Installed plugin .wasm files
+├── rollback/                           # Rollback binaries for previous version
+└── assets/                             # Cached processed assets (generated icons, etc.)
+
+/var/log/liquide/                       # Logs (liquide:liquide, 0750)
+├── server.log                          # Main server log
+├── auth.log                            # Authentication events (fail2ban reads this)
+├── audit.log                           # Audit events
+├── session-<id>.log                    # Per-session logs
+└── crashes/                            # Crash reports
+    ├── crash-<session>-<timestamp>.json
+    └── core.<session>.<timestamp>      # Coredumps (0600)
+
+/run/liquide/                           # Ephemeral runtime (tmpfs, liquide:liquide, 0750)
+├── supervisor.sock                     # Supervisor IPC socket
+├── session-<id>.sock                   # Per-session IPC socket
+├── session-<id>.pid                    # Per-session PID file
+└── metrics/                            # Shared memory for hot metrics
+
+~/.config/liquide/                      # Per-user DE configuration (user-owned)
+├── theme.css                           # User theme overrides
+├── session.toml                        # Session preferences
+├── keybindings.toml                    # Keyboard shortcuts
+├── keyboard-layout.toml                # Layout preferences
+└── avatar.png                          # User avatar
+
+~/.local/state/liquide/                 # Per-user state (user-owned)
+├── session-state.json                  # Last session state (window positions, workspace)
+├── clipboard-history.json              # Clipboard history ring buffer
+└── recent-files.json                   # Recent files list
+
+~/.local/share/liquide/                 # Per-user data (user-owned)
+├── plugins/                            # User-installed plugins
+├── themes/                             # User-installed themes
+└── fonts/                              # User-installed fonts
+```
+
+#### Embedded Database
+
+LiquiDE uses **SQLite 3** (WAL mode) as its single embedded database:
+
+| Property | Specification |
+|----------|--------------|
+| **Location** | `/var/lib/liquide/db/state.sqlite3` |
+| **Engine** | SQLite 3.40+ with WAL (Write-Ahead Logging) mode |
+| **Access** | Single writer (supervisor daemon), multiple readers (session processes via shared-memory) |
+| **Contents** | Session metadata, user attributes (cached from LDAP/OIDC), plugin registry, schema version, crash history, policy cache |
+| **Size** | Typically < 50 MB for 1000 users. `VACUUM` runs weekly (configurable). |
+| **Backup** | `liquidctl db backup` creates a consistent snapshot. Automatic pre-migration backup. |
+| **No user data** | The database stores metadata only — never user files, screen content, clipboard, or session buffers. |
+
+Why SQLite over alternatives:
+
+| Considered | Rejected Because |
+|-----------|-----------------|
+| RocksDB | Overkill — LiquiDE's database is metadata-only, not a high-throughput KV store |
+| PostgreSQL/MySQL | External dependency — LiquiDE should be self-contained |
+| JSON files | No concurrent access safety, no transactions, no schema migration |
+| Sled | Unmaintained, less mature than SQLite |
+
+#### Schema Migration
+
+Database migrations run automatically on daemon startup:
+
+| Property | Specification |
+|----------|--------------|
+| **Migration format** | Embedded SQL files in the binary (`migrations/V001__initial.sql`, `V002__add_plugin_registry.sql`, ...). |
+| **Versioning** | `schema_version` table tracks current version. Each migration has a monotonic version number and SHA-256 hash. |
+| **Execution** | Forward-only by default. Each migration runs in a single SQLite transaction. On failure, the transaction rolls back and the daemon refuses to start. |
+| **Down-migrations** | Paired `down_V002__remove_plugin_registry.sql` files exist for each migration. Run via `liquidctl db migrate --down --to V001`. Down-migrations are for rollback only, not for production use. |
+| **Idempotency** | Checked by version number. A migration that has already run (version exists in `schema_version`) is skipped. |
+| **Pre-migration backup** | Before any migration, the daemon creates `state.sqlite3.pre-migration-VN.bak`. Kept for 7 days. |
+| **Large migrations** | Migrations that touch > 10,000 rows use batched updates (1000 per transaction) to avoid long locks. |
+| **Dry-run** | `liquidctl db migrate --dry-run` shows pending migrations without applying them. |
+| **CI validation** | CI runs `migrate up` then `migrate down` for every PR that touches migration files. |
+
+```bash
+# Check current schema version
+liquidctl db status
+
+# Run pending migrations (automatic on daemon start)
+liquidctl db migrate
+
+# Rollback to a specific version
+liquidctl db migrate --down --to V005
+
+# Create a consistent backup
+liquidctl db backup /tmp/liquide-db-backup.sqlite3
+
+# Show migration history
+liquidctl db history
+```
+
+#### Atomic Write Rules
+
+All file writes in LiquiDE follow these safety rules:
+
+| Rule | Description |
+|------|-------------|
+| **Write-rename** | Configuration files and state files are written to a temporary file in the same directory, then atomically renamed (`rename(2)`) to the target path. This prevents partial reads. |
+| **SQLite WAL** | Database writes use WAL mode for crash safety. A crash mid-write cannot corrupt the database. |
+| **Fsync for durability** | After rename, `fsync` is called on the target file and its parent directory. |
+| **Lock files** | Multi-process writes to the same file use advisory locks (`flock`). Only the supervisor writes to `/var/lib/liquide/db/`; session processes read. |
+| **No partial config** | Configuration is loaded atomically on daemon start and on `SIGHUP` reload. A parse failure in the new config leaves the old config active. |
+
+#### Ownership & Quotas
+
+| Path | Owner | Permissions | Quota |
+|------|-------|-------------|-------|
+| `/etc/liquide/` | `root:root` | `0755` (dirs), `0644` (files), `0600` (keys) | N/A |
+| `/var/lib/liquide/` | `liquide:liquide` | `0750` | Configurable, default 1 GB |
+| `/var/log/liquide/` | `liquide:liquide` | `0750` | Log rotation: 50 MB × 5 files per log |
+| `/run/liquide/` | `liquide:liquide` | `0750` | tmpfs, ephemeral |
+| `~/.config/liquide/` | user | `0700` | Per-user quota: configurable, default 50 MB |
+| `~/.local/state/liquide/` | user | `0700` | Per-user quota: configurable, default 100 MB |
+| `~/.local/share/liquide/` | user | `0700` | Per-user quota: configurable, default 500 MB |
+
+#### Cache Invalidation
+
+| Cache | Location | Invalidation Trigger | Recovery |
+|-------|----------|---------------------|----------|
+| Glyph atlas | Session process memory | Font config change, DPI change | Rebuild from FreeType |
+| Shadow cache | Session process memory | Window geometry change | Recompute shadow (LRU eviction) |
+| Blur cache | Session process memory | Background content change | Recompute blur |
+| Tile hash cache | Session process memory | Session restart | Full key frame rebuild |
+| Asset cache (client) | Client-side storage | `AssetManifest` hash mismatch | Re-download from server |
+| Plugin WASM cache | `/var/lib/liquide/plugins/` | Plugin update, `liquidctl plugins reload` | Recompile from source .wasm |
+| OIDC JWKS cache | Supervisor memory | TTL expiry (default 1h) | Re-fetch from IdP |
+| LDAP directory cache | SQLite | Sync interval expiry | Re-sync from LDAP |
 
 ---
 
@@ -2583,6 +2929,198 @@ units = "metric"
   username_field = "CN"                # CN, SAN:email, SAN:upn
   ```
 
+#### Enterprise Identity Architecture
+
+LiquiDE supports a layered identity integration model. The architecture is designed so that the auth stack can be composed from independent modules — each deployment chooses the combination that fits its identity infrastructure.
+
+##### Identity Provider Hierarchy
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                    LiquiDE Auth Subsystem                       │
+│                                                               │
+│  ┌─────────┐  ┌─────────┐  ┌──────────┐  ┌───────────────┐  │
+│  │  Local   │  │   PAM   │  │  OIDC /  │  │    SAML 2.0   │  │
+│  │ Accounts │  │ (system)│  │  OAuth2  │  │  (optional)   │  │
+│  └────┬─────┘  └────┬────┘  └────┬─────┘  └──────┬────────┘  │
+│       │             │            │               │            │
+│       └─────────────┴────────┬───┴───────────────┘            │
+│                              │                                 │
+│                     ┌────────▼────────┐                        │
+│                     │  Identity       │                        │
+│                     │  Resolution     │                        │
+│                     │  (username →    │                        │
+│                     │   uid, groups,  │                        │
+│                     │   attributes)   │                        │
+│                     └────────┬────────┘                        │
+│                              │                                 │
+│  ┌───────────────────────────▼───────────────────────────┐    │
+│  │              MFA Layer (always after primary auth)      │    │
+│  │  TOTP · FIDO2/WebAuthn · Smart Card · Biometric        │    │
+│  └───────────────────────────┬───────────────────────────┘    │
+│                              │                                 │
+│  ┌───────────────────────────▼───────────────────────────┐    │
+│  │         Session Binding (token + claims)                │    │
+│  │  session_token bound to: user, session_id, IP (opt),   │    │
+│  │  device_id (opt), MFA assertion, expiry                 │    │
+│  └────────────────────────────────────────────────────────┘    │
+└───────────────────────────────────────────────────────────────┘
+```
+
+##### OIDC / OAuth 2.0 (Recommended for Enterprise SSO)
+
+OIDC is the **recommended** enterprise identity integration. LiquiDE acts as an OIDC Relying Party (RP).
+
+| Property | Specification |
+|----------|--------------|
+| **Supported flows** | Authorization Code with PKCE (for interactive login), Device Authorization Grant (for headless), Client Credentials (for service accounts / gateway-to-server) |
+| **Discovery** | OpenID Connect Discovery 1.0 (`.well-known/openid-configuration`). Auto-configures endpoints from issuer URL. |
+| **Token validation** | ID token validated locally (JWT signature verification using JWKS endpoint). Access token used for UserInfo endpoint calls. |
+| **Claims mapping** | Configurable mapping from OIDC claims to LiquiDE identity: `sub` → uid, `preferred_username` → username, `groups` → group membership, `email` → contact |
+| **Group sync** | Groups from the `groups` claim (array of strings) are synced to LiquiDE's group-based policy system at login. |
+| **Token refresh** | Refresh tokens stored server-side (in-memory). Session remains valid as long as the refresh token is valid. Token refresh happens transparently. |
+| **Logout** | OIDC Back-Channel Logout 1.0 (server receives logout token → terminates session). Front-Channel Logout as fallback. |
+| **Session binding** | The OIDC `sub` + `iss` pair is the canonical user identity. Session tokens reference this pair. |
+| **Tested providers** | Microsoft Entra ID (Azure AD), Okta, Auth0, Keycloak, Google Workspace, AWS IAM Identity Center, Authentik, Zitadel |
+
+Configuration:
+
+```toml
+[auth.oidc]
+enabled = false
+issuer = "https://auth.example.com/realms/company"
+client_id = "liquide-server"
+client_secret_file = "/etc/liquide/oidc-client-secret"  # or use client_secret env var
+scopes = ["openid", "profile", "groups", "email"]
+# Claims mapping (OIDC claim → LiquiDE field)
+username_claim = "preferred_username"  # or "sub", "email", "upn"
+groups_claim = "groups"                # claim containing group membership array
+uid_claim = "sub"                      # stable unique identifier
+display_name_claim = "name"
+email_claim = "email"
+# Advanced
+audience = ""                          # expected 'aud' claim (default: client_id)
+token_endpoint_auth_method = "client_secret_post"  # client_secret_post, client_secret_basic, private_key_jwt
+allowed_issuers = []                   # restrict to specific issuers (empty = issuer config only)
+jwks_cache_ttl_sec = 3600             # JWKS cache duration
+back_channel_logout_enabled = true
+back_channel_logout_path = "/auth/oidc/logout"
+```
+
+##### SAML 2.0 (Optional, for Legacy Enterprise)
+
+SAML is supported for organizations that have not migrated to OIDC.
+
+| Property | Specification |
+|----------|--------------|
+| **Role** | Service Provider (SP) |
+| **Bindings** | HTTP-POST (assertions), HTTP-Redirect (requests) |
+| **Assertion** | Signed (required), optionally encrypted |
+| **NameID** | `urn:oasis:names:tc:SAML:2.0:nameid-format:persistent` (preferred), `emailAddress`, `unspecified` |
+| **Attribute mapping** | Configurable: SAML attributes → LiquiDE identity fields |
+| **Single Logout** | SAML SLO (HTTP-Redirect binding) |
+| **Metadata** | SP metadata served at `/auth/saml/metadata`. IdP metadata imported from URL or file. |
+
+Configuration:
+
+```toml
+[auth.saml]
+enabled = false
+idp_metadata_url = "https://idp.example.com/metadata"  # or idp_metadata_file
+sp_entity_id = "https://liquide.example.com/auth/saml"
+sp_acs_url = "https://liquide.example.com/auth/saml/acs"
+sp_slo_url = "https://liquide.example.com/auth/saml/slo"
+sp_private_key_file = "/etc/liquide/saml-sp.key"
+sp_certificate_file = "/etc/liquide/saml-sp.crt"
+username_attribute = "uid"
+groups_attribute = "memberOf"
+sign_requests = true
+want_assertions_signed = true
+want_assertions_encrypted = false
+```
+
+##### LDAP / Active Directory Sync
+
+LDAP is used for **directory synchronization** (user and group information), not as a primary authentication protocol. Authentication goes through PAM (which itself may use LDAP) or OIDC.
+
+| Property | Specification |
+|----------|--------------|
+| **Purpose** | User enumeration (for admin UI), group membership sync, attribute lookup |
+| **Protocol** | LDAP v3 over TLS (LDAPS) or StartTLS. Plaintext LDAP is rejected. |
+| **Bind** | Service account bind DN + password. Supports SASL (GSSAPI for Kerberos environments). |
+| **Sync schedule** | Periodic (default: every 15 minutes) + on-demand via `liquidctl directory sync` |
+| **User search** | Configurable base DN, filter, attribute mappings |
+| **Group search** | Nested group resolution (AD `memberOf:1.2.840.113556.1.4.1941:=`) supported |
+| **SCIM** | SCIM 2.0 endpoint (`/scim/v2/`) for push-based directory updates from identity providers that support SCIM (Okta, Azure AD, OneLogin). SCIM provisioning creates/updates/deactivates user records. |
+
+Configuration:
+
+```toml
+[directory]
+enabled = false
+type = "ldap"                          # ldap, active_directory, scim
+
+[directory.ldap]
+url = "ldaps://ldap.example.com:636"
+bind_dn = "cn=liquide-svc,ou=services,dc=example,dc=com"
+bind_password_file = "/etc/liquide/ldap-password"
+user_base_dn = "ou=users,dc=example,dc=com"
+user_filter = "(&(objectClass=posixAccount)(uid={username}))"
+user_attributes = { username = "uid", display_name = "cn", email = "mail", uid_number = "uidNumber" }
+group_base_dn = "ou=groups,dc=example,dc=com"
+group_filter = "(objectClass=posixGroup)"
+group_member_attribute = "memberUid"
+sync_interval_sec = 900               # 15 minutes
+tls_ca_file = ""                       # custom CA for LDAPS (default: system CA)
+connection_pool_size = 5
+timeout_sec = 10
+
+[directory.scim]
+enabled = false
+listen = "127.0.0.1:9405/scim/v2"
+auth_token = ""                        # bearer token for SCIM requests
+auto_create_users = false              # create local user on SCIM provision
+auto_deactivate = true                 # deactivate user on SCIM deprovision
+```
+
+##### Device Posture Assessment (Optional)
+
+For high-security deployments, the server can evaluate client device posture before granting full access.
+
+| Check | Source | Action on Failure |
+|-------|--------|-------------------|
+| Client version minimum | ClientHello `client_version` | Warn or deny (configurable) |
+| OS version minimum | ClientHello `client_platform` | Warn or deny |
+| Encryption at rest | Client-reported attestation | Reduce clipboard/file transfer permissions |
+| MDM enrollment | Client-reported attestation or external MDM API | Deny connectivity or restrict features |
+| Certificate compliance | mTLS certificate attributes | Deny if cert doesn't meet policy |
+
+Device posture is evaluated after authentication and affects the effective policy for the session. Posture checks are **optional** and disabled by default.
+
+```toml
+[auth.device_posture]
+enabled = false
+min_client_version = ""                # e.g., "0.3.0" — reject older clients
+min_client_version_action = "warn"     # warn, deny
+require_encryption_attestation = false
+require_mdm_enrollment = false
+mdm_api_url = ""                       # external MDM check endpoint
+mdm_api_token_file = ""
+posture_refresh_interval_sec = 3600    # re-check posture periodically
+```
+
+##### Auth Method Priority & Fallback
+
+When multiple auth methods are configured, the server evaluates them in priority order:
+
+1. **Certificate-based (mTLS)** — if the client presents a valid client certificate, it is used as the primary identity. MFA may still be required.
+2. **OIDC** — redirect to IdP for authentication.
+3. **SAML** — redirect to IdP for authentication.
+4. **PAM** — system-level authentication (password, Kerberos, LDAP via PAM modules).
+5. **Local accounts** — server-local user database.
+
+The first method that the client supports and that succeeds is used. Admins can restrict available methods per group or globally.
+
 ### Login Screen
 
 The login screen is the first visual experience a user has with LiquiDE. It is a full-screen, Liquid Glass themed interface that presents authentication options with elegance and clarity.
@@ -2993,7 +3531,183 @@ liquidctl policy effective --user alice --show-sources
 liquidctl policy effective --user alice --add-group contractors
 ```
 
-### Audit Logging
+#### Formal Policy Schema
+
+Every policy key is formally defined in a schema that governs validation, resolution, and audit behavior. The policy engine rejects keys not present in the schema and values that fail type/range validation.
+
+**Policy Key Schema Definition:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | dotted path | Qualified key name (e.g., `clipboard.enabled`) |
+| `type` | enum | `bool`, `uint`, `string`, `string_list`, `enum` |
+| `resolution_rule` | enum | How conflicts resolve: `deny_overrides` (bool), `min` (uint), `intersection` (list), `highest_precedence` (string/enum) |
+| `default` | any | Default value when no source defines the key |
+| `range` | optional | For `uint`: `[min, max]`. For `enum`: `[allowed values]`. For `string_list`: `[allowed items]`. |
+| `audited` | bool | Whether changes to this key emit an audit event |
+| `locked` | bool | If `true`, only server policy can set this key (user/group overrides ignored) |
+| `description` | text | Human-readable purpose |
+
+**Complete Policy Key Catalog:**
+
+| Key | Type | Resolution | Default | Range | Audited | Description |
+|-----|------|-----------|---------|-------|---------|-------------|
+| `clipboard.enabled` | bool | deny_overrides | `true` | — | Yes | Enable clipboard sync |
+| `clipboard.direction` | enum | highest_precedence | `"both"` | `both`, `s2c`, `c2s` | Yes | Allowed clipboard direction |
+| `clipboard.max_size` | uint | min | `52428800` | [0, 1073741824] | No | Max clipboard size (bytes) |
+| `clipboard.allowed_mime_types` | string_list | intersection | `["text/*", "image/png", "image/jpeg"]` | — | No | Allowed MIME types |
+| `audio.enabled` | bool | deny_overrides | `true` | — | Yes | Enable audio |
+| `audio.direction` | enum | highest_precedence | `"both"` | `both`, `playback`, `capture` | Yes | Audio direction |
+| `usb.enabled` | bool | deny_overrides | `false` | — | Yes | Enable USB redirect |
+| `usb.allowed_classes` | string_list | intersection | `[]` | — | Yes | Allowed USB device classes |
+| `usb.allowed_devices` | string_list | intersection | `[]` | — | Yes | Allowed USB VID:PID pairs |
+| `usb.blocked_devices` | string_list | intersection | `[]` | — | Yes | Blocked USB VID:PID pairs |
+| `file_transfer.enabled` | bool | deny_overrides | `true` | — | Yes | Enable file transfer |
+| `file_transfer.max_size` | uint | min | `1073741824` | [0, 10737418240] | No | Max file size (bytes) |
+| `file_transfer.direction` | enum | highest_precedence | `"both"` | `both`, `upload`, `download` | Yes | Transfer direction |
+| `camera.enabled` | bool | deny_overrides | `false` | — | Yes | Enable camera passthrough |
+| `session.max_per_user` | uint | min | `3` | [1, 100] | No | Max concurrent sessions |
+| `session.max_duration_sec` | uint | min | `86400` | [300, 604800] | No | Max session duration |
+| `session.max_idle_sec` | uint | min | `3600` | [60, 86400] | No | Max idle time before disconnect |
+| `session.token_lifetime_sec` | uint | min | `86400` | [300, 604800] | No | Session token lifetime |
+| `rendering.max_resolution_width` | uint | min | `7680` | [640, 15360] | No | Max horizontal resolution |
+| `rendering.max_resolution_height` | uint | min | `4320` | [480, 8640] | No | Max vertical resolution |
+| `rendering.max_fps` | uint | min | `60` | [1, 240] | No | Max frame rate |
+| `rendering.profile` | enum | highest_precedence | `"balanced"` | `minimal`, `performance`, `balanced`, `quality` | No | Rendering quality profile |
+| `transport.allowed` | string_list | intersection | `["quic", "tcp", "udp", "websocket"]` | — | No | Allowed transports |
+| `plugins.enabled` | bool | deny_overrides | `true` | — | Yes | Enable WASM plugins |
+| `plugins.require_signatures` | bool | deny_overrides | `false` | — | Yes | Require signed plugins |
+| `plugins.allowed_plugins` | string_list | intersection | `[]` (empty = all) | — | Yes | Allowed plugin IDs |
+| `plugins.blocked_plugins` | string_list | intersection | `[]` | — | Yes | Blocked plugin IDs |
+| `plugins.install` | enum | highest_precedence | `"admin-only"` | `admin-only`, `user`, `disabled` | Yes | Plugin install permission |
+
+New policy keys MAY be added in minor versions. Unknown keys in policy files MUST be logged as warnings and ignored (forward compatibility). The policy schema is the authoritative definition — the prose descriptions in this section are informative.
+
+**Policy schema file location:** `crates/liquide-policy/schema/policy_schema.toml`
+
+#### Evaluation Semantics
+
+The policy engine evaluates the effective policy for a session at two points:
+
+1. **Session creation** — the full effective policy is computed and frozen for the session lifetime (except for session overrides).
+2. **Runtime policy check** — individual policy keys are checked during operations (e.g., clipboard paste checks `clipboard.enabled` and `clipboard.direction`).
+
+**Evaluation algorithm (pseudocode):**
+
+```
+function evaluate_effective_policy(user, groups) -> EffectivePolicy:
+    effective = {}
+
+    for key in POLICY_SCHEMA:
+        sources = []
+
+        # Collect values from all sources
+        if server_policy.has(key):
+            sources.push({value: server_policy[key], precedence: 1, source: "server"})
+
+        for group in sort(groups):  # alphabetical for tie-breaking
+            if group_policy[group].has(key):
+                sources.push({value: group_policy[group][key], precedence: 2, source: "group:" + group})
+
+        if user_policy[user].has(key):
+            sources.push({value: user_policy[user][key], precedence: 3, source: "user:" + user})
+
+        if session_override.has(key):
+            sources.push({value: session_override[key], precedence: 4, source: "session_override"})
+
+        # Resolve based on schema rule
+        match POLICY_SCHEMA[key].resolution_rule:
+            deny_overrides:
+                # Any source setting false → false. All true → true.
+                if any(s.value == false for s in sources):
+                    effective[key] = {value: false, source: first_deny_source}
+                elif sources:
+                    effective[key] = {value: true, source: highest_precedence_source}
+                else:
+                    effective[key] = {value: POLICY_SCHEMA[key].default, source: "default"}
+
+            min:
+                # Lowest numeric value wins
+                if sources:
+                    winner = min(sources, key=s.value)
+                    effective[key] = {value: winner.value, source: winner.source}
+                else:
+                    effective[key] = {value: POLICY_SCHEMA[key].default, source: "default"}
+
+            intersection:
+                # Intersection of all lists
+                if sources:
+                    result = sources[0].value
+                    for s in sources[1:]:
+                        if s.value:  # non-empty list restricts
+                            result = intersect(result, s.value)
+                    effective[key] = {value: result, source: "intersection"}
+                else:
+                    effective[key] = {value: POLICY_SCHEMA[key].default, source: "default"}
+
+            highest_precedence:
+                # Highest precedence source wins
+                if sources:
+                    winner = max(sources, key=s.precedence)
+                    effective[key] = {value: winner.value, source: winner.source}
+                else:
+                    effective[key] = {value: POLICY_SCHEMA[key].default, source: "default"}
+
+        # Validate
+        validate_range(key, effective[key].value)
+
+    return effective
+```
+
+**Key invariants:**
+
+| Invariant | Description |
+|-----------|-------------|
+| **Deny is irrevocable** | A `deny_overrides` key set to `false` at **any** level cannot be overridden to `true` by a higher-precedence source. Exception: session overrides (admin `liquidctl` command) can override deny — this is intentional for break-glass scenarios and is audit-logged. |
+| **Empty list means "all allowed"** | For `string_list` keys, an empty list (`[]`) at any source means "no restriction from this source". A non-empty list restricts. The intersection of an empty list with any list is the non-empty list. |
+| **Locked keys** | If the schema marks a key as `locked: true`, only the server policy source is considered. Group, user, and session override sources are ignored. |
+| **Schema validation** | Values that fail range/type validation are rejected at policy load time (the policy file fails to load). Runtime policy checks never encounter invalid values. |
+| **Deterministic** | For the same set of policy files and user/group membership, the evaluation always produces the same effective policy. No randomness, no time-dependence. |
+
+#### Policy Change Notification
+
+When a policy file is modified on disk (detected via `inotify`/`kqueue`):
+
+1. Policy engine reloads the changed file.
+2. For each active session affected by the change, the new effective policy is computed.
+3. Changed keys are compared against the previous effective policy.
+4. For each changed key:
+   - If the key is `audited`: emit an audit event (`policy_change`, old value, new value, source).
+   - If the key affects an active operation (e.g., `clipboard.enabled` toggled to `false` during an active clipboard transfer): the operation is canceled gracefully.
+5. The session receives a `PolicyUpdate` control message (see spec-protocol-formal.md §5.1) notifying it of the changed keys.
+6. The client receives a `ConfigUpdate` if the change affects client-visible behavior.
+
+Policy changes take effect **within 5 seconds** of the file modification. No session restart required.
+
+#### Audit Emission Rules
+
+Policy-related audit events follow a strict emission contract:
+
+| Event | Trigger | Required Fields | Log Level |
+|-------|---------|----------------|-----------|
+| `policy.load` | Policy file loaded/reloaded | `file_path`, `key_count`, `errors` | `info` |
+| `policy.load_error` | Policy file fails validation | `file_path`, `error`, `line` | `error` |
+| `policy.change` | Effective policy key changed for session | `session_id`, `user`, `key`, `old_value`, `new_value`, `source` | `info` |
+| `policy.deny` | Operation blocked by policy | `session_id`, `user`, `key`, `attempted_action`, `source` | `warn` |
+| `policy.override` | Session override applied (via `liquidctl`) | `session_id`, `admin_user`, `key`, `value` | `warn` |
+| `policy.evaluation` | Effective policy computed for new session | `session_id`, `user`, `groups`, `key_count` | `debug` |
+
+All audit events are structured JSON (see spec-observability.md §4) and are always emitted regardless of log level configuration — the audit subsystem has its own output path:
+
+```toml
+[audit]
+enabled = true
+output = "/var/log/liquide/audit.log"    # dedicated audit log file
+format = "json"                           # json or cef (Common Event Format)
+retention_days = 90
+max_size_mb = 500
+sign_entries = false                      # optional: cryptographic signing of audit entries
+```
 - Log:
   - Login success/failure with source IP.
   - Session start/stop with duration.
@@ -4021,7 +4735,7 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 
 ### Language
 - **Everything in Rust**: server, compositor, shell, renderer, encoder bindings, transport, CLI tools.
-- C FFI bindings for: FreeType, HarfBuzz, Fontconfig, codec libraries (x264, x265, SVT-AV1, etc.).
+- C FFI bindings for: FreeType, HarfBuzz, Fontconfig, codec libraries (see Codec Legal & Packaging Policy below).
 - Client also in Rust (see [spec-client.md](spec-client.md)).
 
 ### Platform Support
@@ -4060,7 +4774,7 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 - Gateway support.
 
 ### vNext
-- Web client (WebRTC).
+- Web client (WebRTC) — see [spec-web-client.md](spec-web-client.md).
 - Camera passthrough.
 - USB redirection.
 - RDP compatibility layer.
@@ -4071,6 +4785,61 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 - Plugin SDK and documentation.
 - Session supervisor process model.
 - BSOD crash screen (client-rendered).
+
+### Codec Legal & Packaging Policy
+
+Video codecs carry licensing and patent obligations that affect how LiquiDE is packaged and distributed.
+
+#### Codec Classification
+
+| Codec | License of Reference Impl | Patent Status | LiquiDE Default | Distribution Strategy |
+|-------|--------------------------|---------------|-----------------|----------------------|
+| **H.264 / AVC** | OpenH264 (BSD-2-Clause, Cisco covers MPEG-LA royalties) | Patented (MPEG-LA pool). Cisco's OpenH264 binary distribution includes royalty coverage. | **Default encoder** | Ship OpenH264 binary module (auto-downloaded like Firefox). NOT x264 (GPL). |
+| **H.265 / HEVC** | kvazaar (LGPL-2.1, dynamically linked) | Patented (MPEG-LA + HEVC Advance + Velos Media — fragmented pools) | Optional | **Do not ship by default.** Provide as a "bring-your-own" codec module. User installs system FFmpeg or vendor-provided encoder. |
+| **AV1** | SVT-AV1 (BSD-2-Clause + Patent Grant), dav1d (BSD-2-Clause) | Royalty-free (AOMedia patent grant) | Supported | Ship SVT-AV1 (encode) + dav1d (decode). Safe to distribute. |
+| **VP8** | libvpx (BSD-3-Clause) | Royalty-free (Google patent pledge) | Supported | Ship libvpx. Safe to distribute. |
+| **VP9** | libvpx (BSD-3-Clause) | Royalty-free (Google patent pledge) | Supported | Ship libvpx. Safe to distribute. |
+| **MJPEG** | libjpeg-turbo (BSD-3-Clause + IJG) | No active patent barriers | Supported | Ship libjpeg-turbo. Safe to distribute. |
+
+#### Distribution Rules
+
+| Rule | Description |
+|------|-------------|
+| **Never ship GPL codec libraries** | x264 (GPL-2.0) and x265 (GPL-2.0) MUST NOT be linked into LiquiDE binaries. LiquiDE is MIT-licensed and cannot statically or dynamically link GPL libraries. |
+| **LGPL is acceptable via dynamic linking only** | Libraries under LGPL (e.g., kvazaar, FFmpeg's LGPL build) MAY be used via dynamic linking as system dependencies. They MUST NOT be statically linked. |
+| **OpenH264 model** | H.264 encoding uses Cisco's OpenH264, which includes MPEG-LA patent royalty coverage when distributed as Cisco's binary. LiquiDE downloads OpenH264 at install time or first use (similar to Firefox's model). The download URL and SHA-256 hash are pinned in configuration. |
+| **Bring-your-own codec module** | For patented codecs where LiquiDE cannot distribute a licensed binary (HEVC), users install the encoder separately. LiquiDE discovers codecs at runtime via a plugin interface (`/usr/lib/liquide/codecs/` or `codec_search_paths` config). |
+| **Hardware encoders are unaffected** | VAAPI, NVENC, AMF, and V4L2 M2M interfaces call into the GPU driver's encoder, which is licensed by the hardware vendor. LiquiDE only uses the OS-level API. No additional patent licensing applies to LiquiDE. |
+| **Flatpak client** | The Flatpak client bundles only royalty-free codecs (AV1, VP8/9, MJPEG) and OpenH264. Additional codecs are available via the `org.freedesktop.Platform.ffmpeg-full` extension. |
+
+#### Codec Module Interface
+
+External codec modules are loaded at runtime:
+
+```toml
+[codecs]
+# Paths searched for codec modules (shared libraries)
+search_paths = ["/usr/lib/liquide/codecs", "/usr/local/lib/liquide/codecs"]
+
+# OpenH264 auto-download configuration
+[codecs.openh264]
+enabled = true
+download_url = "https://github.com/cisco/openh264/releases/download/v2.4.1/libopenh264-2.4.1-linux64.7.so.bz2"
+sha256 = ""                          # pinned hash — verified before loading
+auto_download = true                 # download on first use if not present
+cache_path = "/var/lib/liquide/codecs/"
+
+# Bring-your-own HEVC encoder
+[codecs.hevc]
+enabled = false                      # disabled by default — requires user action
+library = ""                         # path to shared library (e.g., "/usr/lib/x86_64-linux-gnu/libkvazaar.so")
+```
+
+#### Patent Compliance Notices
+
+- LiquiDE does not practice H.264, H.265, or any other patented codec technology directly. Encoding is performed by external libraries (OpenH264, hardware encoders, or user-supplied modules).
+- Users deploying LiquiDE in jurisdictions that enforce software patents are responsible for ensuring they have appropriate codec licenses for their use case.
+- The SVT-AV1 and VP8/VP9 codecs are covered by royalty-free patent grants from the Alliance for Open Media and Google, respectively.
 
 ---
 
@@ -4083,6 +4852,13 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 - `wp_fractional_scale_v1`.
 - `wp_viewporter`.
 - `xdg_decoration_unstable_v1`.
+- `zwp_text_input_v3` (text input for IME — see §12).
+- `zwp_input_method_v2` (input method engine interface — see §12).
+- `zwp_input_method_keyboard_grab_v2` (IME keyboard grab).
+- `zwp_input_popup_surface_v2` (IME candidate window positioning).
+- `zwp_virtual_keyboard_v1` (on-screen keyboard).
+- `wl_data_device_manager` (drag-and-drop, clipboard).
+- `wp_primary_selection_unstable_v1` (middle-click paste selection).
 - XWayland for legacy X11 applications.
 
 ### RDP Compatibility
@@ -4101,6 +4877,25 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 - Audio bidirectional.
 - Keyboard layout switching.
 
+### IME & Text Input
+- Verify `zwp_text_input_v3` protocol: enable/disable, surrounding text, content type, cursor rectangle.
+- Verify `zwp_input_method_v2` protocol: preedit, commit, keyboard grab, popup surface.
+- Verify built-in Pinyin input: type "nihao" → candidate window shows "你好" → select → commit.
+- Verify built-in Romaji/Kana input: type "nihon" → hiragana "にほん" → Kanji candidates → commit "日本".
+- Verify built-in Hangul input: Jamo composition produces correct syllable blocks.
+- Verify dead keys: `dead_acute` + `e` → `é` in text field.
+- Verify Compose key: `Multi_key` + `o` + `c` → `©`.
+- Verify external IBus bridge: ibus-daemon starts, methods list populated, input works end-to-end.
+- Verify external Fcitx5 bridge: fcitx5 starts, methods work.
+- Verify preedit rendering: underline, highlight, cursor position visible in application.
+- Verify candidate window positioning follows cursor across screen edges.
+- Verify XWayland compositor-side preedit fallback for legacy X11 applications.
+- Verify RTL shell layout: Arabic locale produces mirrored dock/status bar layout.
+- Verify BiDi mixed text: LTR + RTL in same paragraph renders correctly.
+- Verify keyboard layout switching via `Super+Space` cycles through configured layouts.
+- Verify per-window layout memory (when enabled): switching windows restores each window's layout.
+- Verify IME over remote connection: preedit and candidates render correctly in streamed video/tiles.
+
 ### Performance
 - Measure:
   - Input-to-photon latency.
@@ -4117,7 +4912,7 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 ### Reliability
 - Fuzz protocol decoding.
 - Long-run session soak tests (24h+).
-- Worker thread crash recovery tests.
+- Worker task cancellation and replacement tests.
 - Transport failover tests.
 
 ### Security
@@ -4126,6 +4921,25 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 - Authentication brute-force protection.
 - Audit log completeness.
 
+### Policy Engine
+- Verify `deny_overrides` resolution: server `false` + user `true` → effective `false`.
+- Verify `deny_overrides` session override: admin override of deny → effective `true` + audit event emitted.
+- Verify `min` resolution: server `60` + group `30` + user `120` → effective `30`.
+- Verify `intersection` resolution: server `["quic", "tcp", "udp"]` + group `["quic", "tcp"]` → effective `["quic", "tcp"]`.
+- Verify `highest_precedence` resolution: server `"balanced"` + user `"quality"` → effective `"quality"`.
+- Verify empty list semantics: server `[]` (all) + group `["hid"]` → effective `["hid"]`.
+- Verify multi-group conflict: user in groups A (`clipboard.enabled = true`) and B (`clipboard.enabled = false`) → effective `false` (deny wins).
+- Verify locked keys: `locked: true` key set by user policy → user value ignored, server value used.
+- Verify schema validation: policy file with out-of-range value → rejected at load, error logged.
+- Verify unknown key in policy file → warning logged, key ignored.
+- Verify policy hot-reload: modify policy file → new effective policy within 5 seconds.
+- Verify `PolicyUpdate` message sent to session on policy change.
+- Verify `policy.deny` audit event when clipboard blocked by policy.
+- Verify `policy.change` audit event when key value changes due to file modification.
+- Verify `liquidctl policy effective --user <user>` shows correct merged policy with source annotations.
+- Verify `liquidctl policy effective --user <user> --add-group <group>` what-if shows correct hypothetical policy.
+- Verify determinism: same inputs → identical effective policy across 1000 evaluations.
+
 ---
 
 ## 25) Failure Modes & Mishap Hardening
@@ -4133,7 +4947,7 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 This DE is explicitly designed to avoid common remote-desktop pain:
 
 - **No hidden GPU dependency**: renderer stays CPU-only unless GPU explicitly enabled and available.
-- **No hanging**: main thread is an orchestrator only; stuck workers are killed and restarted.
+- **No hanging**: main thread is an orchestrator only; stuck worker tasks are canceled via `CancellationToken` and replaced. Blocking workers that fail to yield are escalated to the supervisor for process-level `SIGKILL`.
 - **Clipboard is a first-class feature**: not an afterthought.
 - **Dynamic resizing is built-in**: not a best-effort.
 - **Transport resilience**: automatic failover between transport strategies.
@@ -4146,8 +4960,8 @@ This DE is explicitly designed to avoid common remote-desktop pain:
 
 | Category | Severity | Detection | Automatic Response |
 |----------|----------|-----------|-------------------|
-| Worker thread hang | Low | Deadline exceeded (orchestrator health monitor) | Kill and restart worker thread |
-| Worker thread panic | Low | Rust panic hook in worker | Catch at thread boundary, restart worker |
+| Worker task hang | Low | Deadline exceeded (orchestrator heartbeat channel) | Cancel the task's `CancellationToken`, drop work handle, spawn replacement task. If blocking worker does not yield within 2× deadline, escalate to supervisor (session process hang). |
+| Worker task panic | Low | Rust panic hook in `spawn_blocking` / `tokio::spawn` catch_unwind | Catch at task boundary via `JoinHandle` error, log panic, spawn replacement task |
 | WASM plugin fault | Low | Trap at WASM sandbox boundary | Disable plugin, notify user, session continues |
 | Plugin resource exhaustion | Low | Fuel exhaustion / memory limit | Trap and terminate plugin call, session continues |
 | Session process crash | Medium | Supervisor detects child exit (non-zero status) | Capture crash context, notify client, attempt restart |

@@ -2,7 +2,7 @@
 
 > **Language**: Rust
 > **License**: MIT
-> **Related specs**: [Server/DE](spec.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
+> **Related specs**: [Server/DE](spec.md) · [Web Client](spec-web-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
 
 ---
 
@@ -34,7 +34,7 @@ The client runs on Windows (x86_64, ARM64), Linux (x86_64, ARM64), and macOS (AR
 | Linux | ARM64 | Primary | Raspberry Pi, ARM boards |
 | macOS | ARM64 | Primary | Apple Silicon, VideoToolbox decode |
 | macOS | x86_64 | Secondary | Intel Macs |
-| Web | Any | Future | WebRTC-based, reduced feature set |
+| Web | Any | Planned | WebRTC-based, reduced feature set — see [spec-web-client.md](spec-web-client.md) |
 
 ---
 
