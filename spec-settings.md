@@ -719,7 +719,48 @@ show_previews = "always"    # always, when-unlocked, never
 
 ---
 
-## 16) About / System Info Module
+## 16) Applications & Flatpak Module
+
+**Module ID**: `apps`
+**Icon**: `system-software-install`
+**Backend**: Flatpak CLI, `~/.local/share/flatpak/`, `/var/lib/flatpak/`
+**Policy gate**: `settings.apps.enabled` (default: `true`)
+
+### 16.1 UI Flows
+
+- **Installed applications list**: shows all installed Flatpak apps with name, icon, version, size, source remote.
+  - Each entry has: "Open", "Permissions", "Uninstall" actions.
+  - Filter: by source (Flathub, Flathub Beta, custom remote, user, system).
+  - Sort: by name, size, install date.
+
+- **Permissions** (per-app): opens the permission editor (see spec-addons.md §15.6) for the selected Flatpak app.
+  - Toggles for: filesystem paths, network, sockets (Wayland, X11, PulseAudio, CUPS), devices (DRI, all, KVM, SHM), D-Bus services.
+  - "Reset to defaults" reverts all user overrides.
+
+- **Default Applications**: set default handler for web browser, email client, file manager, text editor, music player, video player, image viewer.
+  - Shows both built-in apps and installed Flatpak apps as options.
+  - Changes are written to `~/.config/mimeapps.list`.
+
+- **Flatpak Remotes**: list configured remotes with enable/disable toggles.
+  - "Add remote" opens a dialog for URL or `.flatpakrepo` file.
+  - Enterprise environments: `flatpak.allow_third_party_remotes = false` hides the "Add remote" button.
+
+- **Storage**: shows total disk space used by Flatpak apps and runtimes.
+  - Per-app data size (`~/.var/app/<app-id>/`).
+  - "Clean unused runtimes" triggers runtime garbage collection.
+
+### 16.2 Configuration
+
+```toml
+[settings.apps]
+show_runtimes = false              # Show runtimes in the app list
+show_system_apps = true            # Show system-wide Flatpak installs
+confirm_uninstall = true           # Require confirmation before uninstall
+```
+
+---
+
+## 17) About / System Info Module
 
 **Module ID**: `about`
 **Icon**: `dialog-information`
@@ -742,7 +783,7 @@ show_previews = "always"    # always, when-unlocked, never
 
 ---
 
-## 17) Test Plan
+## 18) Test Plan
 
 ### Functional
 - Each module opens correctly, loads current settings, and reflects backend state.
