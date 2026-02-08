@@ -1,0 +1,778 @@
+# liquidctl — CLI Tool Specification
+
+> **Language**: Rust
+> **License**: MIT
+> **Related specs**: [Server/DE](spec.md) · [Client](spec-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [Design Language](spec-design.md)
+
+---
+
+## 0) Overview
+
+**liquidctl** is the unified command-line tool for administering, monitoring, and troubleshooting LiquidDE servers. It is a single static binary written in Rust that communicates with the LiquidDE server daemon via a local Unix socket or a remote API endpoint.
+
+`liquidctl` is self-documenting, versioned, and designed to never produce "unknown subcommand" dead ends.
+
+---
+
+## 1) Design Principles
+
+- **Single binary** — one tool for everything.
+- **Self-documenting** — `liquidctl help` and `liquidctl <command> --help` always work.
+- **Structured output** — all commands support `--format json` for scripting.
+- **Human-friendly defaults** — colored, formatted output for interactive use.
+- **Safe by default** — destructive operations require `--confirm` or interactive confirmation.
+- **Remote capable** — can manage local or remote servers via API.
+
+---
+
+## 2) Global Options
+
+```
+liquidctl [global-options] <command> [command-options]
+
+Global options:
+  --server <address>      Server address (default: local Unix socket)
+  --api-key <key>         API key for remote authentication
+  --format <format>       Output format: text (default), json, csv, table
+  --color <when>          Colorize output: auto (default), always, never
+  --quiet                 Suppress non-essential output
+  --verbose               Increase output verbosity
+  --help                  Show help
+  --version               Show version
+```
+
+---
+
+## 3) Command Reference
+
+### `liquidctl status`
+
+Display overall server status.
+
+```
+$ liquidctl status
+
+LiquidDE Server v0.1.0
+  Status:       running
+  Uptime:       3d 14h 22m
+  Architecture: x86_64
+  GPU:          none (CPU-only mode)
+  Sessions:     12 active / 50 max
+  CPU:          23% (4 cores)
+  Memory:       1.8 GB / 8.0 GB
+  Bandwidth:    142 Mbps out / 8 Mbps in
+  Transport:    QUIC (primary), TLS/TCP (fallback active: 2 sessions)
+  Listeners:    0.0.0.0:3389 (quic), 0.0.0.0:3390 (tls-tcp)
+  Gateway:      registered (gateway.example.com)
+```
+
+Options:
+- `--watch` — continuous refresh (default: every 2s).
+- `--watch-interval <seconds>` — custom refresh interval.
+
+---
+
+### `liquidctl sessions`
+
+Manage active sessions.
+
+#### `liquidctl sessions list`
+
+```
+$ liquidctl sessions list
+
+ID       User     Monitor(s)   Resolution     Encoder   Transport  Latency  FPS   Bandwidth   Duration
+s-001    alice    1            1920x1080      h264/cpu  quic       12ms     60    28 Mbps     2h 14m
+s-002    bob      2            3840x2160×2    h265/gpu  quic       18ms     45    85 Mbps     0h 42m
+s-003    carol    1            1280x720       av1/cpu   tls-tcp    45ms     30    4 Mbps      5h 01m
+```
+
+Options:
+- `--user <name>` — filter by user.
+- `--sort <field>` — sort by column.
+- `--watch` — live updating.
+
+#### `liquidctl sessions show <session-id>`
+
+Show detailed session information.
+
+```
+$ liquidctl sessions show s-001
+
+Session s-001
+  User:           alice
+  Started:        2025-01-15 14:22:31 UTC
+  Duration:       2h 14m 33s
+  Client:         LiquidClient 0.1.0 (macOS ARM64)
+  Client IP:      203.0.113.42
+  Transport:      QUIC (v1)
+  Encryption:     TLS 1.3 (AES-256-GCM)
+
+  Monitors:
+    #0: 1920x1080 @ 60Hz, 96 DPI
+
+  Encoding:
+    Video:        H.264 (CPU, x264)
+    Preset:       interactive
+    Tile mode:    hybrid (auto)
+
+  Performance:
+    FPS:          60 render / 60 encode / 59 present
+    Latency:      12ms RTT, ~18ms input-to-photon
+    Bandwidth:    28.4 Mbps out / 0.8 Mbps in
+    Packet loss:  0.01%
+    Encode time:  4.2ms avg / 8.1ms p99
+    Cache hits:   blur=94%, wallpaper=100%, partial=87%
+    Effect budget: 62% utilized (5.0ms / 8.0ms)
+
+  Features:
+    Clipboard:    bidirectional (text, images)
+    Audio:        playback (opus), microphone (off)
+    Camera:       off
+    USB:          none
+
+  Policy:
+    Group:        developers
+    Overrides:    none
+```
+
+#### `liquidctl sessions disconnect <session-id>`
+
+Disconnect a session.
+
+```
+$ liquidctl sessions disconnect s-001
+Disconnect session s-001 (user: alice)? [y/N] y
+Session s-001 disconnected.
+```
+
+Options:
+- `--confirm` — skip interactive confirmation.
+- `--message <msg>` — send a message to the user before disconnecting.
+
+#### `liquidctl sessions disconnect-all`
+
+Disconnect all sessions.
+
+Options:
+- `--user <name>` — disconnect only sessions for a specific user.
+- `--confirm` — skip interactive confirmation.
+- `--drain` — stop accepting new sessions and wait for existing to end gracefully.
+
+---
+
+### `liquidctl users`
+
+Manage connected users.
+
+#### `liquidctl users list`
+
+```
+$ liquidctl users list
+
+User     Sessions  Last Login            Policy Group
+alice    1         2025-01-15 14:22 UTC  developers
+bob      2         2025-01-15 15:40 UTC  developers
+carol    1         2025-01-15 10:15 UTC  default
+```
+
+#### `liquidctl users show <username>`
+
+Detailed user information including active sessions, policy, and history.
+
+#### `liquidctl users kick <username>`
+
+Disconnect all sessions for a user.
+
+---
+
+### `liquidctl stats`
+
+Display real-time stream statistics.
+
+```
+$ liquidctl stats
+
+Aggregate Statistics
+  Sessions:       12 active
+  Total FPS:      avg 52, min 30, max 60
+  Total Output:   142 Mbps
+  Total Input:    12 Mbps
+  Avg Latency:    22ms RTT
+  Packet Loss:    0.02% avg
+  Cache Hits:     blur=91%, wallpaper=99%, partial=85%
+
+Per-Encoder Distribution:
+  h264/cpu:    8 sessions (67%)
+  h265/gpu:    2 sessions (17%)
+  av1/cpu:     1 session  (8%)
+  tiles/zstd:  1 session  (8%)
+
+Transport Distribution:
+  quic:        10 sessions (83%)
+  tls-tcp:     2 sessions  (17%)
+```
+
+Options:
+- `--session <id>` — show stats for a specific session.
+- `--watch` — live updating.
+- `--interval <ms>` — update interval (default: 1000ms).
+- `--format json` — machine-readable output for monitoring scripts.
+
+---
+
+### `liquidctl benchmark`
+
+Run performance benchmarks.
+
+```
+$ liquidctl benchmark
+
+Running LiquidDE Performance Benchmark...
+
+CPU Information:
+  Model:          AMD EPYC 7763 64-Core
+  Cores:          64 (128 threads)
+  Architecture:   x86_64
+  SIMD:           SSE4.2, AVX2, AVX-512
+
+Compositing Throughput:
+  Single-core:    2.4 Gpixels/s (AVX2)
+  Multi-core:     38.7 Gpixels/s (16 threads)
+  1080p compose:  0.8ms per frame
+
+Blur Throughput:
+  Gaussian r=20, 1080p:     12.4ms (single-core)
+  Gaussian r=20, 1080p:     1.6ms (8 threads)
+  Gaussian r=20, 1080p/4:   0.4ms (downsampled, 8 threads)
+  Box blur r=20, 1080p:     0.2ms (8 threads)
+
+Encoder Throughput (1080p):
+  x264 (ultrafast):     2.1ms  /  480 fps
+  x264 (veryfast):      4.8ms  /  210 fps
+  x265 (ultrafast):     8.2ms  /  122 fps
+  SVT-AV1 (preset 12):  12.1ms /  83 fps
+  VAAPI H.264:          not available (no GPU)
+
+Tile Compression (1080p, 128x128 tiles):
+  Zstd (level 1):    0.3ms / 3200 fps
+  LZ4:               0.1ms / 9600 fps
+  PNG:               2.8ms / 360 fps
+  QOI:               0.2ms / 4800 fps
+
+Memory Bandwidth:
+  Sequential read:    42 GB/s
+  Sequential write:   38 GB/s
+  Buffer copy:        19 GB/s
+
+Recommended Settings:
+  Effect budget:     8ms (auto)
+  Blur downsample:   4x (auto)
+  Default encoder:   h264 (x264 ultrafast)
+  Max concurrent:    ~25 sessions @ 1080p60
+```
+
+Options:
+- `--quick` — abbreviated benchmark (compositing + top encoder only).
+- `--full` — full benchmark (all encoders, all blur modes, all tile codecs).
+- `--save` — save results to file for later comparison.
+
+---
+
+### `liquidctl config`
+
+Configuration management.
+
+#### `liquidctl config show`
+
+Display current server configuration (redacted secrets).
+
+```
+$ liquidctl config show
+
+[general]
+hostname = "liquid-server-01"
+log_level = "info"
+...
+
+[tls]
+cert = "/etc/liquidde/cert.pem"
+key = "***REDACTED***"
+...
+```
+
+Options:
+- `--section <name>` — show only a specific section.
+- `--raw` — show without redacting secrets (requires admin).
+- `--defaults` — show default values for all settings.
+
+#### `liquidctl config validate`
+
+Validate configuration files.
+
+```
+$ liquidctl config validate
+
+Validating /etc/liquidde/server.toml...
+  ✓ Syntax valid
+  ✓ All required fields present
+  ✓ TLS certificate found and readable
+  ✓ TLS key found and readable
+  ✓ Listen addresses valid
+  ⚠ [encoding] hardware_encoding = "auto" but no GPU detected — will use CPU
+  ✓ Policy file /etc/liquidde/policies.toml valid
+
+Validation passed (1 warning).
+```
+
+#### `liquidctl config set <key> <value>`
+
+Set a configuration value (hot-reload if supported).
+
+```
+$ liquidctl config set performance.active_fps 45
+Set performance.active_fps = 45
+Configuration reloaded.
+```
+
+Options:
+- `--no-reload` — write to file but don't hot-reload.
+
+#### `liquidctl config diff`
+
+Show differences between running config and on-disk config.
+
+#### `liquidctl config export`
+
+Export current config to stdout (for backup or transfer).
+
+#### `liquidctl config import <file>`
+
+Import and apply a configuration file.
+
+---
+
+### `liquidctl policy`
+
+Policy management.
+
+#### `liquidctl policy show`
+
+Display current policies.
+
+```
+$ liquidctl policy show
+
+[default]
+  clipboard:        bidirectional
+  file_transfer:    true
+  audio_playback:   true
+  audio_microphone: false
+  camera:           false
+  usb_redirection:  false
+  max_sessions:     3
+  max_resolution:   3840x2160
+  max_fps:          60
+
+[group.developers]
+  clipboard:        bidirectional
+  file_transfer:    true
+  max_sessions:     5
+
+[group.guests]
+  clipboard:        server-to-client
+  file_transfer:    false
+  max_resolution:   1920x1080
+  max_fps:          30
+```
+
+#### `liquidctl policy set <scope> <key> <value>`
+
+Set a policy value.
+
+```
+$ liquidctl policy set group.guests max_fps 15
+Set group.guests.max_fps = 15
+Policy reloaded. Affects 3 active sessions.
+```
+
+#### `liquidctl policy effective <username>`
+
+Show the effective policy for a specific user (after all inheritance and overrides).
+
+```
+$ liquidctl policy effective alice
+
+Effective policy for alice (group: developers):
+  clipboard:        bidirectional           (from: group.developers)
+  file_transfer:    true                    (from: group.developers)
+  audio_playback:   true                    (from: default)
+  audio_microphone: false                   (from: default)
+  camera:           false                   (from: default)
+  usb_redirection:  false                   (from: default)
+  max_sessions:     5                       (from: group.developers)
+  max_resolution:   3840x2160              (from: default)
+  max_fps:          60                      (from: default)
+```
+
+---
+
+### `liquidctl monitors`
+
+Manage virtual monitors.
+
+#### `liquidctl monitors list`
+
+```
+$ liquidctl monitors list --session s-001
+
+Session s-001 (alice):
+  Monitor #0: 1920x1080 @ 60Hz, 96 DPI (primary)
+```
+
+#### `liquidctl monitors add <session-id>`
+
+Add a virtual monitor to a session.
+
+```
+$ liquidctl monitors add s-001 --resolution 1920x1080 --dpi 96
+Added monitor #1 (1920x1080 @ 60Hz, 96 DPI) to session s-001.
+```
+
+#### `liquidctl monitors remove <session-id> <monitor-id>`
+
+Remove a virtual monitor.
+
+#### `liquidctl monitors resize <session-id> <monitor-id> <resolution>`
+
+Resize a virtual monitor.
+
+---
+
+### `liquidctl transport`
+
+Manage transport settings and view transport status.
+
+#### `liquidctl transport status`
+
+```
+$ liquidctl transport status
+
+Active Transports:
+  QUIC (0.0.0.0:3389):     10 connections, 128 Mbps
+  TLS/TCP (0.0.0.0:3390):  2 connections, 14 Mbps
+
+Transport Negotiation: auto
+Preferred: quic
+Priority: quic > udp > tls-tcp > tcp > websocket
+Hybrid channels: enabled
+MTU: 1400 (discovered)
+FEC: disabled
+Congestion: BBR
+```
+
+#### `liquidctl transport switch <session-id> <transport>`
+
+Force a session to switch transport.
+
+```
+$ liquidctl transport switch s-003 quic
+Switching session s-003 from tls-tcp to quic...
+Transport switched successfully. New latency: 28ms (was 45ms).
+```
+
+---
+
+### `liquidctl audio`
+
+Manage audio subsystem.
+
+#### `liquidctl audio status`
+
+```
+$ liquidctl audio status
+
+Audio Subsystem: active
+  Playback:     12 sessions using playback
+  Microphone:   2 sessions using microphone
+  Codec:        opus (default)
+  Sample rate:  48000 Hz
+
+Backend: PipeWire
+```
+
+---
+
+### `liquidctl encoder`
+
+Manage encoders.
+
+#### `liquidctl encoder list`
+
+```
+$ liquidctl encoder list
+
+Available Encoders:
+  Name          Type     HW Accel   Status
+  h264/x264     video    CPU        active (8 sessions)
+  h265/x265     video    CPU        active (1 session)
+  av1/svt-av1   video    CPU        active (1 session)
+  vp9/libvpx    video    CPU        available
+  vp8/libvpx    video    CPU        available
+  mjpeg/turbo   video    CPU        available
+  h264/vaapi    video    GPU        not available (no GPU)
+  h265/vaapi    video    GPU        not available (no GPU)
+  zstd          tile     CPU        active (hybrid tiles)
+  lz4           tile     CPU        available
+  png           tile     CPU        available
+  qoi           tile     CPU        available
+  webp          tile     CPU        available
+  raw           tile     CPU        available
+```
+
+#### `liquidctl encoder benchmark <encoder>`
+
+Benchmark a specific encoder.
+
+---
+
+### `liquidctl logs`
+
+View and manage logs.
+
+#### `liquidctl logs tail`
+
+Stream live logs.
+
+```
+$ liquidctl logs tail --level info
+
+2025-01-15T16:22:31Z INFO  [session] Session s-013 started: user=dave, client=LiquidClient/0.1.0
+2025-01-15T16:22:31Z INFO  [transport] QUIC connection established: s-013, RTT=14ms
+2025-01-15T16:22:32Z INFO  [encoder] Encoder selected: h264/x264 (ultrafast) for s-013
+```
+
+Options:
+- `--level <level>` — filter by log level.
+- `--session <id>` — filter by session.
+- `--subsystem <name>` — filter by subsystem (session, transport, encoder, etc.).
+- `--since <time>` — show logs since a time.
+- `--follow` — stay attached and stream new logs.
+
+#### `liquidctl logs search <pattern>`
+
+Search historical logs.
+
+---
+
+### `liquidctl audit`
+
+View audit events.
+
+#### `liquidctl audit list`
+
+```
+$ liquidctl audit list --since 24h
+
+Time                    Event              User     Details
+2025-01-15 10:15:31     login_success      carol    IP: 198.51.100.5
+2025-01-15 10:15:31     session_start      carol    s-003, 1280x720
+2025-01-15 10:16:02     clipboard_sync     carol    text, 142 bytes, server→client
+2025-01-15 14:22:31     login_success      alice    IP: 203.0.113.42
+...
+```
+
+Options:
+- `--event <type>` — filter by event type.
+- `--user <name>` — filter by user.
+- `--since <time>` — time range.
+- `--limit <n>` — max entries.
+
+---
+
+### `liquidctl gateway`
+
+Manage gateway connection.
+
+#### `liquidctl gateway status`
+
+```
+$ liquidctl gateway status
+
+Gateway: registered
+  URL:        wss://gateway.example.com:443
+  Status:     connected
+  Uptime:     3d 14h
+  Mode:       reverse-connect
+  Sessions:   5 brokered through gateway
+```
+
+#### `liquidctl gateway register`
+
+Manually trigger gateway registration.
+
+#### `liquidctl gateway deregister`
+
+Deregister from gateway.
+
+---
+
+### `liquidctl service`
+
+Manage the LiquidDE service.
+
+#### `liquidctl service status`
+
+Service health check.
+
+#### `liquidctl service restart`
+
+Restart the server daemon (with graceful session handling).
+
+#### `liquidctl service stop`
+
+Stop the server daemon.
+
+Options:
+- `--drain` — stop accepting new sessions, wait for existing to end (up to timeout).
+- `--force` — immediate stop, disconnect all sessions.
+- `--timeout <seconds>` — drain timeout (default: 300).
+
+---
+
+### `liquidctl cache`
+
+Manage rendering caches.
+
+#### `liquidctl cache status`
+
+```
+$ liquidctl cache status
+
+Cache Status (all sessions):
+  Blur cache:       94% hit rate, 12 entries, 48 MB
+  Wallpaper cache:  100% hit rate, 12 entries, 96 MB
+  Partial cache:    87% hit rate, 156 entries, 24 MB
+  Font cache:       99% hit rate, 342 glyphs, 8 MB
+  Total cache:      176 MB
+```
+
+#### `liquidctl cache clear`
+
+Clear all or specific caches.
+
+Options:
+- `--type <type>` — blur, wallpaper, partial, font, all.
+- `--session <id>` — clear caches for a specific session only.
+
+---
+
+### `liquidctl rdp`
+
+Manage RDP compatibility layer.
+
+#### `liquidctl rdp status`
+
+```
+$ liquidctl rdp status
+
+RDP Compatibility: disabled
+  To enable: liquidctl config set rdp_compat.enabled true
+```
+
+#### `liquidctl rdp enable` / `liquidctl rdp disable`
+
+Toggle RDP compatibility without editing config files.
+
+---
+
+## 4) Shell Completion
+
+`liquidctl` generates shell completions:
+
+```bash
+# Bash
+liquidctl completions bash > /etc/bash_completion.d/liquidctl
+
+# Zsh
+liquidctl completions zsh > /usr/local/share/zsh/site-functions/_liquidctl
+
+# Fish
+liquidctl completions fish > ~/.config/fish/completions/liquidctl.fish
+
+# PowerShell
+liquidctl completions powershell > $PROFILE/liquidctl.ps1
+```
+
+---
+
+## 5) Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Invalid arguments / usage error |
+| 3 | Connection error (cannot reach server) |
+| 4 | Authentication error |
+| 5 | Permission denied |
+| 6 | Resource not found (session, user, etc.) |
+| 7 | Operation cancelled by user |
+| 8 | Timeout |
+
+---
+
+## 6) Configuration
+
+`liquidctl` reads its own config from:
+- `~/.config/liquidctl/config.toml` (Linux/macOS)
+- `%APPDATA%\liquidctl\config.toml` (Windows)
+
+```toml
+[default]
+server = "unix:///run/liquidde/ctl.sock"   # default local socket
+format = "text"                             # text, json, csv, table
+color = "auto"                              # auto, always, never
+
+[remote.prod]
+server = "https://liquid-server.example.com:9100"
+api_key = "remote-api-key"
+
+[remote.staging]
+server = "https://staging.example.com:9100"
+api_key = "staging-api-key"
+```
+
+Use remote profiles: `liquidctl --server @prod sessions list`.
+
+---
+
+## 7) Man Page
+
+`liquidctl` installs a man page at `liquidctl(1)` covering all commands, options, exit codes, and examples.
+
+---
+
+## 8) Test Plan
+
+### Functional
+- Every command and subcommand produces correct output.
+- `--format json` produces valid JSON for every command.
+- `--help` works for every command and subcommand.
+- Shell completions work for bash, zsh, fish, PowerShell.
+- Remote management (via API) works with authentication.
+- Destructive commands require confirmation.
+
+### Edge Cases
+- Server not running.
+- Invalid session/user/monitor ID.
+- Permission denied for non-admin operations.
+- Network timeout for remote management.
+- Concurrent `liquidctl` invocations.
+
+### Integration
+- `liquidctl benchmark` results match observed performance.
+- `liquidctl config set` + hot-reload actually changes running behavior.
+- `liquidctl policy set` affects active sessions in real-time.
+- `liquidctl transport switch` performs seamless switch.
+- `liquidctl sessions disconnect` cleanly terminates sessions.
