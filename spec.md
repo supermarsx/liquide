@@ -423,7 +423,7 @@ max_manifest_size_mb = 2             # max asset manifest size (limits total tra
 
 #### 9. Color Management
 
-LiquiDE provides server-side color management for accurate rendering:
+LiquiDE provides server-side color management for accurate rendering. The design goal is **"looks the same everywhere"** — a document or image viewed in a LiquiDE session should appear visually consistent regardless of which client device is used, modulo the client display's hardware limitations.
 
 - **ICC Profile Handling**:
   - The compositor applies ICC color profiles when rendering.
@@ -448,6 +448,60 @@ LiquiDE provides server-side color management for accurate rendering:
   - Virtual brightness adjustment: `display.brightness = 100` (range: 10–100, percentage). Applied as a linear scale on the output.
   - Night mode color temperature: handled separately (see spec-settings.md §7.1).
   - These adjustments affect the encoded video stream — the client receives already-adjusted frames.
+
+- **Color Pipeline End-to-End**:
+
+  The complete color pipeline from application rendering to client display:
+
+  ```
+  Application (renders in app color space, typically sRGB)
+      │
+      ▼
+  Compositor (converts app → compositing space via ICC profile)
+      │ Compositing space: linear sRGB (internal)
+      ▼
+  Post-compositing gamma/brightness adjustment
+      │
+      ▼
+  Encoder (output is gamma-corrected sRGB, 8-bit)
+      │ Color metadata: transfer function (sRGB gamma), primaries (BT.709)
+      ▼
+  Transport (encoded video stream)
+      │
+      ▼
+  Client decoder → Client GPU → Display
+      │ Client applies its own display ICC profile (OS-managed)
+      ▼
+  User's eyes
+  ```
+
+  **What LiquiDE guarantees**: the encoded stream is always in a well-defined color space (sRGB by default) with correct transfer function metadata in the video bitstream. Applications that are color-managed (e.g., GIMP with ICC support) will render correctly because the Wayland compositor provides `wp_color_management_v1` protocol support (when available).
+
+  **What LiquiDE does NOT guarantee**: the final appearance on the user's physical display. This depends on the client display's calibration, ICC profile, and the client OS's color management. A poorly calibrated monitor will show inaccurate colors — this is the same limitation as any display system.
+
+- **Codec Color Metadata**:
+
+  | Codec | Color Metadata | Notes |
+  |-------|---------------|-------|
+  | H.264 | VUI parameters: `colour_primaries=1` (BT.709), `transfer_characteristics=13` (sRGB), `matrix_coefficients=1` (BT.709) | Standard for SDR sRGB content |
+  | H.265 | Same VUI parameters as H.264 | Same color space |
+  | VP9 | Color space signaling in frame header | `CS_UNKNOWN` maps to sRGB |
+  | AV1 | `color_config`: primaries=1, transfer=13, matrix=1 | Explicit sRGB signaling |
+  | Tile (raw bitmap) | Assumed sRGB, no embedded ICC | Lossless — no color transform |
+
+- **Configuration**:
+
+  ```toml
+  [display.color]
+  # Server-side compositing color space
+  compositing_space = "srgb"          # srgb (only option in v1.0)
+  # Per-monitor ICC profile
+  icc_profile = ""                    # path to ICC profile file (empty = sRGB)
+  # Rendering intent for ICC profile application
+  rendering_intent = "perceptual"     # perceptual, relative, absolute, saturation
+  # Embed ICC metadata in encoded video VUI
+  embed_color_metadata = true
+  ```
 
 ---
 
@@ -483,6 +537,83 @@ LiquiDE provides server-side color management for accurate rendering:
   - Resolution and DPI.
   - Damage tracker and encode pipeline.
   - Transport stream (can be multiplexed or separate).
+
+### Per-Monitor DPI & Scaling
+
+LiquiDE supports per-monitor DPI scaling, where each virtual monitor in a session can have a different DPI scale factor. This maps to the client's physical display configuration.
+
+#### DPI Mapping Model
+
+The **client controls DPI**. When the client connects (or when the user changes display settings), it sends a `DisplayUpdate` message containing per-monitor DPI information:
+
+| Field | Description |
+|-------|-------------|
+| `monitor_id` | Virtual monitor identifier |
+| `width` / `height` | Resolution in pixels |
+| `scale_factor` | DPI scale (1.0 = 96 DPI, 1.25 = 120 DPI, 1.5 = 144 DPI, 2.0 = 192 DPI, etc.) |
+| `physical_width_mm` / `physical_height_mm` | Physical dimensions (if known) for DPI calculation |
+
+The server sets the virtual monitor's `wl_output` scale and fractional scale via `wp_fractional_scale_v1`. Wayland applications see the correct DPI and render accordingly.
+
+#### Per-OS Client DPI Discovery
+
+| Platform | API | Scale Factor Source | Notes |
+|----------|-----|-------------------|-------|
+| **Windows** | `GetDpiForMonitor()`, `PROCESS_DPI_AWARENESS` | Per-monitor V2 DPI awareness (Windows 10 1703+) | Client must be DPI-aware (manifest). Returns integer DPI per monitor (96, 120, 144, 192, etc.) |
+| **Windows (older)** | `GetDpiForWindow()` | System DPI or per-monitor V1 | Fallback for older Windows. Less accurate for mixed-DPI. |
+| **macOS** | `NSScreen.backingScaleFactor` | Per-screen. Returns 1.0 (non-Retina) or 2.0 (Retina). | macOS does not expose arbitrary DPI — it's always 1x or 2x. The OS handles intermediate scaling internally. |
+| **Linux (Wayland)** | `wl_output.scale` + `wp_fractional_scale_v1` | Per-output integer or fractional scale | Fractional scale (e.g., 1.25) requires `wp_fractional_scale_v1` support. |
+| **Linux (X11)** | `Xrandr` + `Xft.dpi` | Global DPI (Xft.dpi) or per-monitor via randr | X11 DPI is historically inconsistent. Client uses randr output physical size + resolution to compute true DPI. |
+| **Web** | `window.devicePixelRatio` | Per-window (not per-monitor) | Changes on window drag across monitors. Client listens for `resize` events and updates. |
+
+#### Mixed-DPI Behavior
+
+When the client has monitors at different DPI (e.g., laptop at 2x + external at 1x):
+
+1. **"Match local monitors" mode**: each virtual monitor gets the DPI of the corresponding physical monitor. The server renders at native DPI for each. Applications spanning two monitors see a DPI change at the boundary (standard Wayland behavior via `wl_surface.enter`/`wl_surface.leave` on different outputs).
+
+2. **"Tabbed monitors" mode**: each tab gets the DPI of the physical monitor currently displaying the client window. When the user drags the client window across monitors, the DPI changes and the server re-renders.
+
+3. **"Single large canvas" mode**: uses the DPI of the primary monitor. Other monitors may appear slightly larger or smaller depending on DPI mismatch.
+
+4. **"Multi-window" mode**: each window gets the DPI of the physical monitor it is on. Moving a window to a different monitor triggers a `DisplayUpdate`.
+
+#### DPI Change Handling
+
+When DPI changes mid-session (user drags window to different monitor, changes OS scaling):
+
+1. Client sends `DisplayUpdate` with new `scale_factor`.
+2. Server updates `wl_output` scale.
+3. Wayland surfaces receive `wl_surface.enter` with new output → applications re-render at new DPI.
+4. Server compositor invalidates all caches for affected surfaces.
+5. Full frame is re-encoded and sent (due to resolution/scale change).
+6. Client receives new frame at new resolution and renders.
+
+**Latency impact**: DPI changes trigger a full-screen redraw. Applications that are slow to respond to DPI changes (particularly XWayland/X11 apps) may show brief scaling artifacts. The server applies bilinear scaling as a temporary measure until the application re-renders.
+
+#### Failure Modes
+
+| Failure | Behavior | Mitigation |
+|---------|----------|------------|
+| Client reports wrong DPI | Text too large or too small in session | User can override scale in session settings. Admin can force scale via policy. |
+| Client doesn't report DPI | Server defaults to 96 DPI (scale 1.0) | Client-side diagnostic warns if DPI detection fails. |
+| Application ignores DPI change | Application renders at old DPI, compositor scales | Compositor applies scaled compositing. XWayland apps get server-side scaling. |
+| Rapid DPI changes (window dragged between monitors) | Multiple `DisplayUpdate` messages in quick succession | Server debounces DPI changes (200ms). Only the final DPI value is applied. |
+| Fractional scale on non-fractional-aware app | Sub-pixel rendering artifacts | Server rounds to nearest integer scale for non-fractional apps. Note in session settings. |
+
+#### Testing Matrix
+
+| Test Case | Platforms | Expected Result |
+|-----------|----------|----------------|
+| Single monitor, 100% (1x) | Windows, macOS, Linux | Text and UI at standard size |
+| Single monitor, 150% (1.5x) | Windows, Linux Wayland | Fractional scale applied, no blur |
+| Single monitor, 200% (2x) | Windows, macOS (Retina), Linux | HiDPI rendering, sharp text |
+| Dual monitor, same DPI | All | Both monitors render identically |
+| Dual monitor, mixed DPI (1x + 2x) | Windows, macOS | Per-monitor DPI correct, apps re-render on move |
+| Dual monitor, mixed fractional (1.0 + 1.25) | Windows, Linux | Fractional scale applied per monitor |
+| DPI change during session (OS setting change) | Windows, Linux | Session updates within 1 second |
+| Window drag across monitors (different DPI) | Windows, macOS | DPI transitions within 500ms |
+| Web client pixel ratio change | Chrome, Firefox | Canvas re-renders at new DPI |
 
 ---
 
@@ -637,6 +768,168 @@ color_depth = "rgb888"              # rgb888 (24-bit), rgba8888 (32-bit), rgb565
   transport = "quic"
   ```
 - Supports **reverse connection** mode for gateway-brokered sessions (server connects out to gateway instead of listening).
+
+### Corporate & Restrictive Network Environments
+
+Enterprise networks impose constraints that consumer-oriented protocols rarely encounter. LiquiDE treats these as first-class deployment targets.
+
+#### HTTP Proxy Traversal
+
+Many corporate networks require all outbound traffic to pass through an HTTP CONNECT proxy. LiquiDE handles this at the transport layer:
+
+| Proxy Type | Mechanism | LiquiDE Behavior |
+|------------|-----------|-----------------|
+| HTTP CONNECT (no auth) | `CONNECT host:port HTTP/1.1` | Client sends CONNECT to proxy, then upgrades to TLS. Works for TLS/TCP and WebSocket. |
+| HTTP CONNECT (basic auth) | `Proxy-Authorization: Basic <creds>` | Client reads proxy credentials from config or OS credential store (Windows: WinHTTP, macOS: Keychain, Linux: `http_proxy` env). |
+| HTTP CONNECT (NTLM/Negotiate) | SSPI (Windows) / GSSAPI (Linux/macOS) | Client performs NTLM/Kerberos authentication with proxy via platform APIs. |
+| PAC file | JavaScript-based proxy selection | Client evaluates PAC file to determine correct proxy for the target host. PAC URL sourced from OS settings or config. |
+| WPAD | Auto-discovery via DHCP/DNS | Client discovers PAC file via WPAD protocol when `proxy.mode = "auto"`. |
+| SOCKS5 | SOCKS5 protocol | Supported. Username/password auth supported. |
+| Transparent (intercepting) | No client action needed | Works if TLS inspection is not active. See below for TLS inspection. |
+
+Proxy configuration:
+
+```toml
+# Client config (config.toml)
+[proxy]
+mode = "auto"                        # auto (OS settings/WPAD), manual, none
+http_proxy = ""                      # manual: "http://proxy.corp.example:8080"
+https_proxy = ""                     # manual: "http://proxy.corp.example:8080"
+no_proxy = "localhost,127.0.0.1,*.internal.corp"
+socks5_proxy = ""                    # "socks5://proxy.corp.example:1080"
+pac_url = ""                         # manual PAC file URL
+auth_method = "auto"                 # auto, basic, ntlm, negotiate, none
+# Credentials: read from OS credential store by default.
+# Can be overridden for headless/scripted deployments:
+auth_username = ""
+auth_password = ""                   # or use auth_password_env = "PROXY_PASSWORD"
+```
+
+When `mode = "auto"`:
+- **Windows**: reads proxy settings from `WinHTTP` (system proxy) or Internet Options (per-user proxy).
+- **macOS**: reads from `SystemConfiguration` framework (Network Preferences → Proxies).
+- **Linux**: reads `http_proxy`, `https_proxy`, `no_proxy` environment variables, or NetworkManager proxy settings via D-Bus.
+
+#### TLS Inspection (SSL Interception)
+
+Corporate environments often deploy TLS-inspecting proxies (Zscaler, Palo Alto, Bluecoat, etc.) that terminate, inspect, and re-encrypt TLS traffic. This breaks certificate pinning and changes the TLS certificate chain.
+
+LiquiDE's behavior:
+
+| Scenario | Detection | Client Behavior |
+|----------|-----------|----------------|
+| No inspection | Server certificate chains to expected CA | Normal operation |
+| TLS inspection (untrusted CA) | Handshake fails — unknown CA | Connection fails. Error message: "TLS certificate verification failed. Your network may be intercepting encrypted traffic. Contact your IT administrator." |
+| TLS inspection (trusted system CA) | Handshake succeeds — chain includes system-trusted CA that is not the expected server CA | Connection succeeds. **Warning logged**: "TLS connection established via non-server CA. A TLS-inspecting proxy may be active." |
+| TLS inspection (admin-approved) | CA in `tls.inspecting_proxy_cas` list | Connection succeeds. No warning. |
+
+Configuration for environments with TLS inspection:
+
+```toml
+[tls]
+# Additional CA certificates to trust (PEM format)
+# Use this for enterprise internal CAs or TLS-inspecting proxy CAs
+additional_ca_file = "/etc/liquide/enterprise-ca.pem"
+# Specific proxy CAs that are known and approved (suppresses warnings)
+inspecting_proxy_cas = ["/etc/liquide/zscaler-ca.pem"]
+# Certificate pinning mode
+pinning = "report-only"              # enforce, report-only, disabled
+# enforce: reject connections where server cert doesn't match pinned key
+# report-only: log warning but allow connection (recommended for enterprise)
+# disabled: no pinning checks (for TLS-inspecting environments)
+```
+
+**QUIC and TLS inspection**: most TLS-inspecting proxies only support TCP-based protocols. QUIC (UDP-based) is typically blocked or passed through without inspection. When the client detects that QUIC connections fail but TLS/TCP succeeds, it permanently deprioritizes QUIC for that network profile.
+
+#### ALPN Strategy
+
+Application-Layer Protocol Negotiation (ALPN) is used during the TLS handshake to select the LiquiDE protocol:
+
+| ALPN Token | Transport | Notes |
+|------------|-----------|-------|
+| `liquide/1` | TLS/TCP (native protocol) | Primary ALPN identifier |
+| `h3` | QUIC (HTTP/3 framing) | Used when `transport = "quic"`, compatible with HTTP/3 proxies |
+| `h2` | TLS/TCP with HTTP/2 framing | Fallback for proxies that only allow HTTP/2 traffic |
+| `http/1.1` | WebSocket over HTTPS | Maximum compatibility — every proxy allows this |
+
+**Fallback behavior**: if a proxy or middlebox strips or rejects the `liquide/1` ALPN token, the client renegotiates with `h2` framing. As a last resort, it falls back to WebSocket (`http/1.1` ALPN), which passes through virtually all corporate proxies and firewalls.
+
+The server advertises all supported ALPN tokens. The client sends them in preference order. The first mutually-supported token wins.
+
+#### Connectivity Preflight
+
+Before establishing the full session, the client runs a **connectivity preflight** to diagnose the network environment:
+
+```
+Preflight Sequence (< 3 seconds total):
+ 1. DNS resolve (server hostname)                    → check DNS works
+ 2. TCP connect to server:port                       → check basic reachability
+ 3. TLS handshake (observe ALPN, cert chain)        → check TLS, detect inspection
+ 4. HTTP HEAD /health on gateway (if gateway URL)   → check gateway reachable
+ 5. QUIC probe (single packet, 1s timeout)          → check UDP/QUIC available
+ 6. STUN binding request (if web client)            → check NAT type
+```
+
+Results are displayed in the connection dialog as a compact status strip:
+
+```
+Network: ✓ DNS  ✓ TCP  ✓ TLS (proxy detected)  ✗ QUIC (blocked)
+Transport: TLS/TCP via HTTP proxy (proxy.corp.example:8080)
+```
+
+If the preflight reveals problems, the client shows a diagnostic panel before attempting the full connection. The preflight results are also logged and included in connection failure reports.
+
+Preflight can be disabled for fast connections: `connection.preflight = false`.
+
+#### Force TCP-Only Mode
+
+For severely restricted networks, administrators can force TCP-only operation:
+
+```toml
+[transport]
+# Force TCP-only: disables QUIC, UDP, WebRTC TURN-UDP
+# Useful for networks that block all UDP traffic
+force_tcp = false
+
+# When force_tcp = true, the transport priority becomes:
+# 1. TLS/TCP (direct)
+# 2. TLS/TCP via HTTP CONNECT proxy
+# 3. WebSocket (wss://) via HTTPS proxy
+# All UDP-based transports (QUIC, pure UDP, WebRTC TURN-UDP) are disabled.
+# WebRTC TURN-TCP and TURNS-TLS remain available for web clients.
+```
+
+When `force_tcp = true`:
+- QUIC is completely disabled.
+- Pure UDP is completely disabled.
+- For native clients: TLS/TCP or WebSocket only.
+- For web clients: WebSocket signaling + WebRTC with TURN-TCP/TURNS-TLS only (no TURN-UDP).
+- Network bandwidth estimation uses TCP-based probing only.
+- Congestion control switches to TCP-appropriate algorithms.
+
+#### Network Profile Auto-Detection
+
+The client remembers network conditions per connected network (identified by SSID, gateway MAC, or static config) and auto-applies transport preferences:
+
+```toml
+# Stored in client data directory, auto-managed
+[[network_profiles]]
+identifier = "CorpWiFi-5G"          # SSID or user-assigned name
+detected_proxy = true
+detected_tls_inspection = true
+quic_available = false
+preferred_transport = "tls-tcp"
+proxy_address = "proxy.corp.example:8080"
+last_used = "2025-06-15T14:00:00Z"
+
+[[network_profiles]]
+identifier = "HomeWiFi"
+detected_proxy = false
+detected_tls_inspection = false
+quic_available = true
+preferred_transport = "quic"
+last_used = "2025-06-14T20:00:00Z"
+```
 
 ---
 
@@ -879,6 +1172,250 @@ window_offload_apps = []               # app_ids eligible for window-level offlo
   max_bandwidth_mbps = 50              # per-session USB bandwidth cap
   audit_log = true
   ```
+
+#### USB Redirection Safety Guardrails
+
+USB redirection is powerful but hazardous. An accidental "forward all devices" could expose security keys, authentication tokens, or local storage to the remote server. LiquiDE applies multiple layers of protection to prevent data loss, credential theft, and administrative overhead.
+
+##### Default-Deny Posture
+
+- USB redirection is **disabled by default** at both server and client.
+- Even when enabled at the server, the client must also enable it (`usb.enabled = true` in client config).
+- The client **never auto-forwards devices**. Each device must be explicitly selected by the user or pre-approved by policy.
+
+##### Client-Side Device UI
+
+When USB redirection is enabled, the client toolbar shows a USB icon. Clicking it opens the **USB Device Manager**:
+
+```
+┌─────────────────────────────────────────────┐
+│  USB Devices                         [×]    │
+│                                             │
+│  Available (local):                         │
+│  ┌─────────────────────────────────────────┐│
+│  │ ⊘ YubiKey 5 NFC (FIDO2)        [Block] ││
+│  │   Yubico · VID:1050 PID:0407            ││
+│  │   ⚠ Security key — forwarding blocked   ││
+│  ├─────────────────────────────────────────┤│
+│  │ ○ SanDisk Ultra USB 3.0   [Forward ►]  ││
+│  │   SanDisk · VID:0781 PID:5581           ││
+│  │   Mass storage · 64 GB                  ││
+│  ├─────────────────────────────────────────┤│
+│  │ ● HP LaserJet Pro         [Disconnect]  ││
+│  │   HP · VID:03F0 PID:2B4A               ││
+│  │   Printer · Currently forwarded         ││
+│  └─────────────────────────────────────────┘│
+│                                             │
+│  Forwarded (to remote):                     │
+│  • HP LaserJet Pro (printer)                │
+│                                             │
+│  Policy: mass-storage, printer allowed      │
+│  Security keys: auto-blocked by policy      │
+└─────────────────────────────────────────────┘
+```
+
+Key UI behaviors:
+- **Security keys (FIDO2/U2F) are highlighted with a warning** and blocked by default. Users must explicitly acknowledge a confirmation dialog to forward them. Admin policy can hard-block this.
+- **YubiKey protection**: devices matching known security key VID/PIDs are classified as `security-key` class regardless of their USB device class descriptor. This prevents a YubiKey in HID mode from being accidentally forwarded as a generic HID device.
+- **Confirmation dialog** for forwarding any device: "You are about to forward [Device Name] to the remote session. The remote server will have direct access to this device. Continue?"
+- **Auto-disconnect on session end**: all forwarded devices are automatically disconnected when the session disconnects or terminates.
+
+##### Admin Allowlist / Blocklist
+
+Administrators control which device classes and specific devices can be forwarded:
+
+| Rule Type | Scope | Example | Effect |
+|-----------|-------|---------|--------|
+| `allowed_device_classes` | Server-wide | `["mass-storage", "printer"]` | Only these USB classes can be forwarded |
+| `blocked_device_classes` | Server-wide | `["hid", "wireless"]` | These classes are never forwarded |
+| `allowed_vid_pid` | Server-wide | `["0781:5581", "03F0:*"]` | Only these VID:PID pairs can be forwarded (wildcard supported) |
+| `blocked_vid_pid` | Server-wide | `["1050:*"]` | These VID:PID pairs are always blocked (overrides allow) |
+| Policy key | Per-user/group | `usb.enabled = false` | Disable USB for specific users/groups |
+| Policy key | Per-user/group | `usb.allowed_device_classes` | Restrict allowed classes per group |
+
+**Resolution order** (most restrictive wins):
+1. `blocked_vid_pid` — always wins (hard block).
+2. `blocked_device_classes` — class-level block.
+3. Policy `usb.allowed_device_classes` (intersection of server + group + user).
+4. `allowed_vid_pid` — explicit VID/PID allowlist (if non-empty, only listed devices allowed).
+5. `allowed_device_classes` — class-level allow.
+6. Client-side user confirmation required for each device.
+
+##### Known Security Key Identification
+
+LiquiDE maintains a built-in list of known security key vendor/product IDs that trigger automatic blocking and warnings:
+
+| Vendor | VID | Products | Classification |
+|--------|-----|----------|---------------|
+| Yubico | `1050` | All PIDs | `security-key` |
+| SoloKeys | `1209` | `5070`, `5071` | `security-key` |
+| Feitian | `096E` | FIDO-related PIDs | `security-key` |
+| Google (Titan) | `18D1` | `5026`, `5028` | `security-key` |
+| Nitrokey | `20A0` | `4287`, `42B1`, `42B2` | `security-key` |
+
+This list is updated with software releases. Administrators can extend it via config:
+
+```toml
+[usb.security_key_overrides]
+# Additional VID:PID pairs to classify as security keys
+additional = ["1234:5678"]
+# VID:PID pairs to remove from the security key list (false positives)
+exceptions = []
+```
+
+##### Audit Events
+
+| Event | Level | Fields |
+|-------|-------|--------|
+| `usb.device_forwarded` | `info` | `user`, `device_name`, `vid_pid`, `class`, `session_id` |
+| `usb.device_disconnected` | `info` | `user`, `device_name`, `vid_pid`, `reason` |
+| `usb.device_blocked` | `warn` | `user`, `device_name`, `vid_pid`, `class`, `block_reason` |
+| `usb.security_key_forward_attempt` | `warn` | `user`, `device_name`, `vid_pid`, `allowed` |
+| `usb.policy_violation` | `warn` | `user`, `device_name`, `vid_pid`, `policy_rule` |
+
+### Remote Printing
+
+LiquiDE supports printing from remote sessions to client-local or network printers. The printing pipeline uses a **PDF-based architecture** — all print jobs are converted to PDF on the server and delivered to the client or a network print queue.
+
+#### Printing Modes
+
+| Mode | Description | Print Path | Use Case |
+|------|-------------|-----------|----------|
+| **Client redirect** (default) | Print jobs are sent to the client, which prints to a local printer | Server → PDF → Client → Local CUPS/Windows print queue | User's physical desk printer |
+| **Network direct** | Session prints directly to a network printer (CUPS/IPP) | Server → CUPS → Network printer | Shared office printer on same LAN as server |
+| **PDF download** | Print job is converted to PDF and offered as a file download to the client | Server → PDF → File transfer channel → Client saves file | Review before printing, printing not available |
+| **Admin print queue** | Jobs are queued for administrator-managed printers (department printers, managed fleet) | Server → CUPS → Admin queue | Managed printing environment |
+
+#### Architecture
+
+```
+Application prints (CUPS client API)
+    │
+    ▼
+CUPS server (per-session, in-session namespace)
+    │
+    ├── cups-pdf backend → PDF file
+    │       │
+    │       ├── [Client redirect] → Print channel → Client → Local printer
+    │       ├── [PDF download]   → File transfer channel → Client saves .pdf
+    │       └── [DLP check]      → Policy engine evaluates job metadata
+    │
+    └── ipp backend → Network printer (direct mode)
+```
+
+Each session runs a lightweight CUPS instance (socket-activated, in the session's mount namespace) that intercepts print requests from applications. The CUPS instance is configured with virtual printers that correspond to the active printing mode.
+
+#### Client Printer Discovery
+
+When a client connects, it advertises its available local printers:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Printer display name (e.g., "HP LaserJet Pro M404") |
+| `driver` | PPD identifier or IPP Everywhere capability set |
+| `capabilities` | Duplex, color, paper sizes, stapling |
+| `default` | Whether this is the client's default printer |
+
+The server creates a virtual CUPS printer for each client-advertised printer. Applications see these printers in the standard print dialog.
+
+**Native client**: enumerates printers via platform API:
+- **Windows**: Win32 `EnumPrinters` API.
+- **macOS**: CUPS API (macOS uses CUPS natively).
+- **Linux**: CUPS API or D-Bus `org.freedesktop.UDisks2`.
+
+**Web client**: printing is PDF-download-only. The web client cannot access local printers directly from the browser. The user saves the PDF and prints from their local system.
+
+**RDP client**: printer redirection via the standard RDPDR printer sub-channel.
+
+#### PDF Generation
+
+All print jobs pass through a PDF conversion step:
+
+- **Backend**: `cups-pdf` (or equivalent CUPS backend that renders to PDF).
+- **PDF version**: PDF 1.7 (ISO 32000-1). Sufficient for all standard office printing needs.
+- **PostScript input**: converted via Ghostscript or `pdftocairo`.
+- **Raster input**: converted via `cups-filters` (cupsRasterToXyz → PDF).
+- **Maximum job size**: configurable, default 100 MB per job.
+- **Temporary storage**: PDF files are written to session-local tmpfs (RAM-backed), never to persistent disk. Cleared immediately after delivery or on session end.
+
+#### Data Loss Prevention (DLP) Integration
+
+Print jobs can be subject to policy-based DLP inspection:
+
+```toml
+[printing.dlp]
+enabled = false
+# When enabled, print jobs are inspected before delivery.
+# inspection_mode determines what happens during inspection:
+inspection_mode = "block-and-notify"   # block-and-notify, log-only, quarantine
+# Inspection hook: external program or WASM plugin that receives PDF metadata
+# and returns allow/deny decision.
+inspection_hook = ""                    # path to script or plugin ID
+# Metadata sent to hook: job title, username, printer name, page count, file size.
+# The PDF content itself is NOT sent to the hook by default (performance).
+# Set content_inspection = true to also provide PDF content (slower).
+content_inspection = false
+# Blocked job message shown to user:
+block_message = "This print job was blocked by your organization's data protection policy."
+```
+
+DLP inspection metadata:
+
+| Field | Description |
+|-------|-------------|
+| `job_id` | Unique print job ID |
+| `user` | Session user |
+| `printer` | Target printer name |
+| `job_title` | Document title (from application) |
+| `pages` | Page count |
+| `file_size_bytes` | PDF size |
+| `color` | Whether job uses color |
+| `duplex` | Whether job uses duplex |
+| `timestamp` | Job submission time |
+
+#### Audit Events
+
+All print jobs generate audit entries:
+
+| Event | Level | Fields |
+|-------|-------|--------|
+| `print.job_submitted` | `info` | `user`, `printer`, `job_title`, `pages`, `size_bytes`, `mode` |
+| `print.job_completed` | `info` | `user`, `printer`, `job_id`, `delivery_mode`, `duration_ms` |
+| `print.job_blocked` | `warn` | `user`, `printer`, `job_title`, `reason`, `dlp_rule` |
+| `print.job_failed` | `warn` | `user`, `printer`, `job_id`, `error` |
+| `print.client_printer_added` | `info` | `user`, `printer_name`, `capabilities` |
+
+#### Configuration
+
+```toml
+# Server config (server.toml)
+[printing]
+enabled = true
+default_mode = "client-redirect"       # client-redirect, network-direct, pdf-download
+max_job_size_mb = 100
+max_concurrent_jobs = 10
+pdf_temp_dir = ""                      # empty = session tmpfs (default, recommended)
+retain_pdf_seconds = 300               # how long to keep PDF after delivery (for reprint)
+
+# Client redirect settings
+[printing.client_redirect]
+enabled = true
+auto_discover_client_printers = true
+
+# Network direct settings
+[printing.network_direct]
+enabled = false
+cups_server = "localhost:631"          # network CUPS server
+allowed_printers = []                  # empty = all printers on CUPS server
+
+# PDF download settings
+[printing.pdf_download]
+enabled = true                         # always available as fallback
+
+# DLP (see above)
+[printing.dlp]
+enabled = false
+```
 
 ---
 
@@ -1813,6 +2350,119 @@ When a user authenticates and has existing sessions:
 - If `session.auto_resume = true` (default) and only one session exists, the client automatically resumes it (no selection screen).
 - If multiple sessions exist, the selection screen is shown.
 - If policy `session.max_per_user` would be exceeded, the "Start New Session" option is disabled.
+
+#### Session Resume Protocol
+
+Session resume allows a client to reconnect to a running or disconnected session without full re-authentication. This handles: laptop lid close/open, Wi-Fi roaming, network changes (VPN connect/disconnect), switching between office and home, and gateway failover.
+
+##### Resume Token
+
+On successful authentication, the server issues a **resume token** alongside the session:
+
+| Token Field | Description |
+|-------------|-------------|
+| `token_id` | Opaque 256-bit random identifier |
+| `session_id` | Bound session ID |
+| `user_id` | Bound user identity |
+| `issued_at` | Issuance timestamp (UTC) |
+| `expires_at` | Expiration timestamp (UTC). Default: 7 days (configurable). |
+| `client_fingerprint` | Hash of client properties (OS, machine-id, display config). Used for binding — not for security. |
+| `max_uses` | Maximum number of resume attempts with this token. Default: unlimited. |
+| `scope` | `"same-server"` or `"any-gateway"` — whether the token is valid only on the issuing server or routable via gateway. |
+
+The token is stored:
+- **Native client**: OS credential store (Windows: DPAPI/Credential Manager, macOS: Keychain, Linux: libsecret/kwallet).
+- **Web client**: `sessionStorage` (tab-scoped, cleared on close) or `localStorage` (with "remember me" — encrypted via Web Crypto API + user passphrase).
+
+##### Resume State Machine
+
+```
+Client                               Server (Supervisor)
+  │                                       │
+  │  Session disconnects (network drop,   │
+  │  lid close, VPN change, etc.)         │
+  │                                       │  Session enters Disconnected state
+  │                                       │  (apps continue running)
+  │                                       │
+  │  ... time passes (network changes) ...│
+  │                                       │
+  │  ── TCP/QUIC connect ──────────────►  │  (may be different source IP,
+  │     (may traverse different gateway)  │   different NAT, different port)
+  │                                       │
+  │  ── ResumeRequest ─────────────────►  │  Contains: resume_token, session_id,
+  │     {token, session_id,               │  client capabilities, new display config
+  │      client_caps, display}            │
+  │                                       │
+  │                                       │  Server validates:
+  │                                       │   1. Token exists and not expired
+  │                                       │   2. Token.session_id matches request
+  │                                       │   3. Token.user_id matches session owner
+  │                                       │   4. Session is in Disconnected or Running state
+  │                                       │   5. Policy allows resume
+  │                                       │
+  │  ◄── ResumeAccepted ──────────────── │  Contains: new_resume_token (rotation),
+  │      {new_token, session_state}       │  session state summary
+  │                                       │
+  │  ── Transport negotiation ─────────►  │  (new transport, may differ from before)
+  │  ◄── First frame ─────────────────── │  (session rendering resumes)
+  │                                       │
+  │  Resume complete.                     │  Session returns to Running state.
+  │  Old resume token invalidated.        │  New token issued.
+```
+
+**Token rotation**: every successful resume issues a **new** resume token and invalidates the old one. This limits the window of token theft.
+
+**Resume failure modes**:
+
+| Failure | Server Response | Client Action |
+|---------|----------------|---------------|
+| Token expired | `ResumeRejected { reason: "token_expired" }` | Fall back to full authentication |
+| Token revoked / invalid | `ResumeRejected { reason: "token_invalid" }` | Fall back to full authentication |
+| Session terminated | `ResumeRejected { reason: "session_terminated" }` | Show "Session ended" message, offer new session |
+| Session in Failed state | `ResumeRejected { reason: "session_failed" }` | Show crash screen |
+| Policy denies resume | `ResumeRejected { reason: "policy_denied" }` | Fall back to full authentication |
+| Different user | `ResumeRejected { reason: "user_mismatch" }` | Fall back to full authentication |
+| Concurrent connection (deny mode) | `ResumeRejected { reason: "session_in_use" }` | Show "session in use" message |
+
+##### NAT / IP / Gateway Changes
+
+Resume is **IP-agnostic**. The resume token is validated by session ID and user identity, not by source IP. This means:
+
+- Client can resume from a completely different IP address (e.g., switching from office Ethernet to home Wi-Fi).
+- Client can resume through a different gateway (if token scope is `"any-gateway"` and the gateways share a token validation backend).
+- Client can resume after VPN connect/disconnect changes the source IP.
+- Client can resume after mobile network handoff (4G → Wi-Fi).
+
+The server logs the IP change for audit purposes but does not reject the resume based on IP mismatch.
+
+##### Gateway-Routed Resume
+
+When connecting through a gateway, the resume flow adds a routing step:
+
+```
+Client → Gateway: ResumeRequest { token, session_id }
+Gateway: looks up session_id → backend server mapping
+Gateway → Backend: forwards ResumeRequest
+Backend: validates token, accepts/rejects
+Backend → Gateway: ResumeAccepted/ResumeRejected
+Gateway → Client: forwards response
+```
+
+For `scope: "any-gateway"` tokens, the gateway validates the token locally (shared token store across gateways, e.g., Redis or database) before routing to the backend. This prevents unnecessary routing attempts to backends that no longer host the session.
+
+##### Resume Configuration
+
+```toml
+[session.resume]
+enabled = true
+token_lifetime_hours = 168            # 7 days
+token_rotation = true                 # issue new token on each resume
+token_scope = "same-server"           # same-server, any-gateway
+max_disconnected_minutes = 60         # session terminated after this long disconnected
+# (0 = never auto-terminate disconnected sessions)
+require_mfa_on_resume = false         # true = require MFA on every resume
+require_mfa_after_hours = 24          # require MFA if last auth was > N hours ago
+```
 
 ### Crash Loop Containment
 
@@ -2909,6 +3559,121 @@ units = "metric"
   ca_certificates = ["/etc/liquide/smartcard-ca.pem"]
   require_pin = true
   ```
+
+#### Smart Card & Credential Forwarding
+
+Smart cards (PIV, CAC, OpenPGP) are used in enterprise and government environments for authentication, digital signatures, and encryption. LiquiDE supports two smart card usage models:
+
+##### Model 1: Client-Side Authentication (Login Only)
+
+The smart card is used **on the client** to authenticate the user. The server never sees the smart card directly.
+
+```
+Client                                Server
+  │                                     │
+  │  Smart card inserted locally        │
+  │  Client reads certificate via       │
+  │  PKCS#11 / platform API             │
+  │                                     │
+  │  ── LoginResponse (certificate) ──► │
+  │                                     │  Server verifies certificate chain
+  │  ◄── LoginChallenge (nonce) ──────  │  against trusted CA list
+  │                                     │
+  │  Client signs nonce with            │
+  │  smart card private key             │
+  │  (PIN entry on client)              │
+  │                                     │
+  │  ── LoginChallengeResponse ──────►  │
+  │                                     │  Server verifies signature
+  │  ◄── LoginSuccess ────────────────  │
+```
+
+This model is the **default and recommended** approach. The private key never leaves the smart card, and the smart card never leaves the client machine. The PIN is entered locally on the client.
+
+Platform APIs for client-side smart card access:
+
+| Platform | API | Notes |
+|----------|-----|-------|
+| **Windows** | Windows Smart Card API (winscard.dll), CNG (NCryptSignHash) | Integrated with Windows Hello and Windows credential providers |
+| **macOS** | CryptoTokenKit framework | Automatic token discovery, Keychain integration |
+| **Linux** | PKCS#11 via `opensc-pkcs11.so` or `p11-kit` | Supports PC/SC-lite daemon |
+| **Web** | WebAuthn (FIDO2 with smart card transport) | Limited to FIDO2-compliant cards; no raw PKCS#11 |
+
+##### Model 2: Smart Card Forwarding (In-Session Access)
+
+Some applications running **inside the remote session** need direct smart card access — email signing (S/MIME), document signing, VPN clients, or internal web applications that require client certificates.
+
+Smart card forwarding tunnels the PC/SC (Personal Computer/Smart Card) API calls over the LiquiDE connection:
+
+```
+Remote Application (in-session)
+    │
+    ▼
+Virtual PC/SC reader (pcscd socket, session-local)
+    │
+    ▼
+LiquiDE Smart Card Channel (dedicated transport channel)
+    │
+    ▼ (encrypted, over session transport)
+    │
+LiquiDE Client (smart card proxy)
+    │
+    ▼
+Physical PC/SC reader (client's pcscd or platform API)
+    │
+    ▼
+Physical Smart Card
+```
+
+| Component | Description |
+|-----------|-------------|
+| Virtual reader | A `pcscd` instance in the session namespace with a virtual reader backed by LiquiDE |
+| Transport channel | Dedicated reliable channel for PC/SC APDU (Application Protocol Data Unit) forwarding |
+| Client proxy | Translates between LiquiDE protocol messages and local PC/SC API calls |
+| Latency | PC/SC commands are request-response. Expect RTT-dependent latency per APDU exchange. |
+
+**Key protection guarantees**:
+- **Private keys never traverse the network**. Only APDU commands (cryptographic operation requests) are forwarded. The smart card performs all cryptographic operations locally on the client.
+- **PIN entry**: configurable — `local` (entered on client, never sent to server, forwarded via PC/SC PIN verification), `remote` (entered in session UI, sent via secure channel to client PC/SC — less secure, but needed for some workflows). Default: `local`.
+- **Card insertion/removal events** are forwarded in real-time.
+- **Multiple readers**: up to 4 simultaneous readers forwarded per session.
+
+Configuration:
+
+```toml
+[smartcard]
+# Master switch: enable smart card forwarding
+forwarding_enabled = false              # disabled by default
+
+# Pin entry mode
+pin_entry = "local"                     # local (client-side), remote (session-side)
+
+# Maximum concurrent forwarded readers
+max_readers = 4
+
+# Allowed card ATR (Answer To Reset) patterns — empty = all cards allowed
+# Use this to restrict forwarding to specific card types (e.g., only PIV cards)
+allowed_atr_patterns = []
+
+# Block specific card operations (APDU filtering)
+# These INS (instruction) bytes are blocked. Default: none.
+# Example: block GENERATE_KEY_PAIR (0x46) to prevent key generation over remote
+blocked_apdu_ins = []
+
+# Audit logging for smart card operations
+audit_log = true
+
+# Policy: which users/groups can use smart card forwarding
+# (Uses standard policy engine — see §15 policy keys)
+```
+
+Policy keys for smart card forwarding:
+
+| Key | Type | Resolution | Default | Description |
+|-----|------|-----------|---------|-------------|
+| `smartcard.forwarding_enabled` | bool | deny_overrides | `false` | Allow smart card forwarding |
+| `smartcard.pin_entry` | enum | highest_precedence | `"local"` | PIN entry location |
+| `smartcard.allowed_atr_patterns` | list | intersection | `[]` (all) | Allowed card ATR patterns |
 
 #### Certificate-Based Authentication
 - Mutual TLS (mTLS) for client authentication.
@@ -4213,16 +4978,88 @@ audit = "info"                         # always at least "info"
   [rdp_compat]
   enabled = false
   listen = "0.0.0.0:3389"
+  nla = true                           # Network Level Authentication (CredSSP/TLS)
+  tls_cert = ""                        # uses server TLS cert if empty
+  max_sessions = 0                     # 0 = same as native limit
+  security_layer = "tls"               # tls (recommended), nla, rdp (legacy, insecure)
   ```
 - When enabled, provides an RDP endpoint for standard RDP clients (mstsc, FreeRDP, etc.).
-- Supported RDP features:
-  - Basic display (bitmap updates).
-  - Keyboard and mouse input.
-  - Clipboard (text).
-  - Audio playback.
-  - Drive redirection (basic).
-- Limitations documented: not all LiquiDE features available via RDP (e.g., no hybrid tile+video, no transport switching).
-- Useful for environments where installing LiquidClient is not possible.
+- Useful for environments where installing LiquidClient is not possible or as a migration path from existing RDP deployments.
+
+### Supported RDP Features
+
+| RDP Feature | Status | Notes |
+|-------------|--------|-------|
+| Display (bitmap updates) | Supported | RFX and NSCodec for better quality where client supports it |
+| Keyboard input | Supported | Scancode and Unicode modes |
+| Mouse input | Supported | Absolute and relative positioning |
+| Clipboard (text) | Supported | UTF-8 text, bidirectional |
+| Clipboard (images) | Supported | PNG/BMP, size-limited by policy |
+| Clipboard (files) | Supported | File list transfer via CLIPRDR channel |
+| Audio playback | Supported | RDPSND channel, PCM and AAC |
+| Audio capture | Supported | AUDIN channel |
+| Drive redirection | Supported | RDPDR channel, read/write to client drives |
+| Printer redirection | Supported | RDPDR printer sub-channel (see §10a Printing) |
+| Smart card redirection | Supported | RDPDR smart card sub-channel |
+| USB redirection | Not supported | Use LiquidClient for USB/IP |
+| RemoteFX (RFX codec) | Supported | Better quality than raw bitmap |
+| H.264/AVC (RDP 10) | Not supported | Would require RDP-specific AVC framing |
+| Multi-monitor | Supported | Up to 4 monitors, per RDP spec limits |
+| Dynamic resolution | Supported | DISP channel (Display Update Virtual Channel) |
+| NLA (Network Level Auth) | Supported | CredSSP with NTLM or Kerberos |
+| TLS transport | Supported | TLS 1.2+ (server-configured) |
+| RemoteApp / seamless | Not supported | Out of scope — LiquiDE uses full desktop sessions |
+| Gateway (RD Gateway) | Not supported | Use `liquid-gateway` instead |
+| Multitouch | Not supported | No RDP multitouch channel implementation |
+| Graphics pipeline (EGFX) | Partial | RFX progressive codec only, no H.264 sub-mode |
+
+### Feature Gap: Native vs RDP
+
+Features that are **available in LiquidClient but not via RDP**:
+
+| Feature | Reason | Workaround |
+|---------|--------|------------|
+| Hybrid tile+video encoding | RDP protocol does not support LiquiDE's tile channel | RFX codec provides acceptable quality |
+| Transport switching | RDP uses TCP only | N/A |
+| QUIC / UDP transport | RDP standard is TCP-only | N/A |
+| Client-side font rendering | Requires LiquiDE protocol extensions | Server-rendered fonts (standard behavior) |
+| WASM plugin inter-op | Requires LiquiDE protocol | N/A |
+| Cursor prediction | Requires LiquiDE cursor channel semantics | Standard RDP cursor (slightly higher latency) |
+| Tile XOR delta | LiquiDE-specific optimization | RFX progressive provides similar benefit |
+| Session roaming tokens | LiquiDE session resume protocol | RDP reconnection (less seamless) |
+| WebTransport | Not applicable to RDP | N/A |
+| Screen Wake Lock | Client-side, LiquidClient feature | N/A |
+
+### Enterprise RDP Expectations: Safe Defaults
+
+For organizations evaluating LiquiDE as a replacement for existing RDP solutions, the RDP compatibility layer provides a migration bridge. These defaults are chosen for maximum compatibility with common RDP clients:
+
+| Setting | Default | Rationale |
+|---------|---------|-----------|
+| Security layer | TLS + NLA | Matches modern Windows RDP Server defaults |
+| Clipboard | Text only, 4 MB limit | Prevents accidental large data exfiltration |
+| Drive redirection | Read-only | Prevents writes to client machine until admin enables |
+| Audio | Playback only | Microphone capture requires explicit enable |
+| Max color depth | 32-bit | Full color |
+| Max resolution | 8192×8192 | Covers all practical monitor sizes |
+| Idle timeout | 30 minutes | Matches common enterprise policy |
+| Encryption | TLS 1.2+, AES-256 | No legacy RC4 or DES |
+
+### Hard "Won't Do" List
+
+The following RDP features will **not** be implemented. They are either legacy, security risks, or replaced by better LiquiDE-native alternatives:
+
+| RDP Feature | Reason for Exclusion |
+|-------------|---------------------|
+| RDP Security Layer (legacy RC4 encryption) | Insecure. TLS or NLA required. |
+| CredSSP with NTLMv1 | Insecure. NTLMv2 minimum, Kerberos preferred. |
+| RemoteApp / seamless windows | Out of scope. LiquiDE provides full desktop sessions. Use LiquidClient if seamless windows are needed. |
+| RD Gateway (HTTPS tunneling) | Replaced by `liquid-gateway` with better performance and security. |
+| RD Web Access | Replaced by LiquiDE web client (see [spec-web-client.md](spec-web-client.md)). |
+| RDP Licensing Server integration | LiquiDE uses its own licensing model (MIT). No CAL required. |
+| RDP Virtual Channels (custom) | Only standard channels (CLIPRDR, RDPSND, AUDIN, RDPDR, DISP) implemented. Custom virtual channel plugins are not supported via RDP. |
+| Bitmap caching (RDP persistent cache) | LiquiDE uses its own tile caching. RDP bitmap cache is not implemented. Clients fall back to non-cached mode. |
+| Network Characteristics Detection (AUTODETECT) | LiquiDE performs its own bandwidth estimation. RDP autodetect channel is acknowledged but not actively used. |
 
 ---
 
@@ -4866,6 +5703,128 @@ library = ""                         # path to shared library (e.g., "/usr/lib/x
 
 ---
 
+## 23a) Accessibility Conformance
+
+LiquiDE is a remote desktop environment where accessibility operates at two layers: the **server-side desktop** (Wayland compositor, shell, applications) and the **client-side UI** (connection dialog, login screen, toolbar, crash screen, settings). Both layers must be independently accessible.
+
+### Conformance Target
+
+| Standard | Level | Scope |
+|----------|-------|-------|
+| **WCAG 2.1** | AA | Client-side UI: connection dialog, login, toolbar, settings, crash screen |
+| **Section 508** | Applicable requirements | Entire product (for US government deployments) |
+| **EN 301 549** | Applicable clauses | Entire product (for EU public sector deployments) |
+
+"Accessibility done" for a release means: all automated accessibility tests pass, and manual screen reader testing has been completed on all Tier 1 platforms.
+
+### Server-Side Accessibility (Remote Session)
+
+Applications running inside the LiquiDE session use the standard Linux accessibility stack:
+
+```
+Application (GTK/Qt/etc.)
+    │
+    ▼ (AT-SPI2 D-Bus interface)
+AT-SPI2 Registry (per-session, runs inside session)
+    │
+    ▼
+LiquiDE AT-SPI2 Bridge
+    │
+    ├── Client-side screen reader passthrough
+    │   (accessibility tree forwarded to client over dedicated channel)
+    │
+    └── Server-side audio output
+        (screen reader speech rendered server-side via speech-dispatcher → audio channel)
+```
+
+#### Screen Reader Support
+
+| Mode | Description | Trade-offs |
+|------|-------------|-----------|
+| **Server-side speech** (default) | Screen reader (Orca) runs inside the session. Speech synthesized server-side (speech-dispatcher + eSpeak-NG/Piper). Audio output sent to client via audio channel. | Works with all clients. Screen reader has full AT-SPI2 access. Latency dependent on audio pipeline. |
+| **Client-side passthrough** | AT-SPI2 accessibility tree serialized and forwarded to client over a dedicated accessibility channel. Client's native screen reader (NVDA, JAWS, VoiceOver, Orca) reads the tree. | Lower latency. User's preferred screen reader voice. Requires client screen reader support in LiquidClient. |
+| **Hybrid** | Server-side Orca for basic navigation. Client-side passthrough for detailed reading. | Best of both, most complex. |
+
+Server-side speech is the default because it works with all client types (including RDP and web clients). Client-side passthrough requires explicit protocol support in LiquidClient.
+
+#### AT-SPI2 Bridge Protocol
+
+When client-side passthrough is enabled, the accessibility tree is serialized and forwarded:
+
+| Message | Direction | Content |
+|---------|-----------|---------|
+| `A11yTreeSnapshot` | Server → Client | Full accessibility tree (on session start and major changes) |
+| `A11yTreeDelta` | Server → Client | Incremental changes (node added, removed, property changed) |
+| `A11yAction` | Client → Server | User action request (click, focus, expand, etc.) |
+| `A11yTextQuery` | Client → Server | Text content request for a specific node |
+| `A11yTextResponse` | Server → Client | Text content response |
+
+Tree serialization format: CBOR encoding of AT-SPI2 accessible object tree (role, name, description, states, value, text, relations).
+
+#### Server-Side Configuration
+
+```toml
+[accessibility]
+enabled = true                         # enable accessibility infrastructure
+screen_reader = "orca"                 # orca (default), none
+speech_dispatcher = true               # enable speech-dispatcher for server-side TTS
+a11y_channel = true                    # enable AT-SPI2 bridge for client passthrough
+high_contrast_available = true
+large_text_available = true
+reduce_motion_available = true
+on_screen_keyboard = true              # enable on-screen keyboard via zwp_virtual_keyboard_v1
+```
+
+### Client-Side Accessibility
+
+Client-side UI elements (rendered by LiquidClient, not streamed from server) follow platform accessibility conventions:
+
+| Platform | Accessibility API | Screen Reader Tested |
+|----------|------------------|---------------------|
+| **Windows** | UI Automation (UIA) | NVDA (primary), JAWS (secondary), Narrator (secondary) |
+| **macOS** | NSAccessibility protocol | VoiceOver |
+| **Linux** | AT-SPI2 | Orca |
+| **Web** | WAI-ARIA | NVDA + Chrome, VoiceOver + Safari, Orca + Firefox |
+
+#### Per-Element Requirements
+
+| UI Element | Keyboard | Screen Reader | High Contrast | Large Text |
+|------------|----------|--------------|--------------|------------|
+| Connection dialog | Full Tab/Enter navigation | All fields labeled, server list announced | Solid backgrounds, visible borders | Text scales with OS setting |
+| Login screen | Tab order: username → password → sign in → utilities | Avatar announced, auth method announced, errors announced as live regions | Glass replaced with solid panel | Input height increases |
+| Session toolbar | Arrow key navigation between controls | Each control announced with name and state | Icons have visible labels | Toolbar height increases |
+| Settings panel | Tab + arrow navigation, value adjustment via arrow keys | Section headings, control labels, current values announced | High-contrast toggle visible | Category text scales |
+| Crash screen | Tab between action buttons, Enter to activate | Error type, description, and available actions announced | Emergency mode has high contrast by default | Error text uses larger size |
+| USB device dialog | Tab between devices, Enter to forward/block | Device name, type, status announced | Device status indicators have text alternatives | Device list text scales |
+| Print dialog | Tab between options | Printer names, settings announced | Standard dialog styling | Text scales |
+
+#### Automated Testing
+
+Accessibility conformance is verified by automated tests in CI:
+
+| Test Tool | Scope | CI Integration |
+|-----------|-------|---------------|
+| `axe-core` (via `playwright-axe`) | Web client: WCAG 2.1 AA automated checks | PR pipeline (Tier 1 browsers) |
+| Platform UI Automation tests | Native client: verify UIA tree on Windows, NSAccessibility on macOS | PR pipeline (Windows, macOS) |
+| AT-SPI2 tests | Linux client: verify accessible tree | PR pipeline (Linux) |
+| `Accessibility Insights` (manual) | Native client: guided manual testing | Release candidate QA |
+| Screen reader testing (manual) | NVDA, VoiceOver, Orca | Release candidate QA |
+
+**CI gate**: automated accessibility tests are blocking. A PR that introduces accessibility regressions (new WCAG violations detected by axe-core, missing UIA properties, etc.) is blocked.
+
+#### Release Gate
+
+A release is blocked if:
+1. Any automated accessibility test fails.
+2. Manual screen reader testing on Windows (NVDA) + macOS (VoiceOver) has not been completed.
+3. Known P1 accessibility bugs are open.
+
+A release may proceed if:
+1. Known P2 accessibility bugs are documented in release notes.
+2. Platform-specific issues on Tier 2 platforms (Linux Orca, JAWS) are documented.
+
+---
+
 ## 24) Test Plan
 
 ### Functional
@@ -4939,6 +5898,106 @@ library = ""                         # path to shared library (e.g., "/usr/lib/x
 - Verify `liquidctl policy effective --user <user>` shows correct merged policy with source annotations.
 - Verify `liquidctl policy effective --user <user> --add-group <group>` what-if shows correct hypothetical policy.
 - Verify determinism: same inputs → identical effective policy across 1000 evaluations.
+
+### Corporate Network & Transport
+- Verify connection through HTTP CONNECT proxy (no auth, basic auth, NTLM).
+- Verify PAC file evaluation selects correct proxy.
+- Verify WPAD auto-discovery finds proxy in DHCP/DNS environment.
+- Verify SOCKS5 proxy traversal with username/password auth.
+- Verify TLS inspection detection: log warning when non-server CA in chain.
+- Verify `tls.inspecting_proxy_cas` suppresses warning for approved CAs.
+- Verify `tls.pinning = "enforce"` rejects connections through inspecting proxy without approved CA.
+- Verify ALPN fallback: `liquide/1` → `h2` → `http/1.1` (WebSocket) when middlebox strips ALPN.
+- Verify connectivity preflight completes in < 3 seconds on LAN.
+- Verify connectivity preflight detects blocked QUIC and reports it.
+- Verify `force_tcp = true` disables all UDP transports.
+- Verify network profile auto-detection remembers proxy settings per SSID.
+
+### RDP Compatibility
+- Verify RDP connection from mstsc (Windows built-in) with NLA.
+- Verify RDP connection from FreeRDP.
+- Verify RDP clipboard (text, bidirectional).
+- Verify RDP audio playback (RDPSND).
+- Verify RDP drive redirection (read-only default).
+- Verify RDP printer redirection via RDPDR.
+- Verify RDP multi-monitor (up to 4).
+- Verify RDP dynamic resolution (DISP channel).
+- Verify legacy RC4 security layer is rejected.
+- Verify NTLMv1 auth is rejected.
+
+### Printing
+- Verify client-redirect print: application prints → PDF → client → local printer.
+- Verify PDF-download mode: application prints → PDF offered as download.
+- Verify network-direct mode: application prints → CUPS → network printer.
+- Verify client printer discovery (Windows, macOS, Linux).
+- Verify web client receives PDF download (no local printer access).
+- Verify DLP block: print job matching DLP rule is blocked, user sees block message.
+- Verify DLP log-only: print job matching DLP rule is logged but allowed.
+- Verify print audit events (`print.job_submitted`, `print.job_completed`, `print.job_blocked`).
+- Verify max job size enforcement (job exceeding limit is rejected).
+- Verify PDF temp files are cleared after delivery and on session end.
+
+### Smart Card
+- Verify client-side smart card authentication (certificate + nonce signing).
+- Verify smart card forwarding: application in session accesses forwarded card via PC/SC.
+- Verify PIN entry mode `local`: PIN entered on client, never sent to server.
+- Verify PIN entry mode `remote`: PIN entered in session UI, forwarded via secure channel.
+- Verify card insert/remove events forwarded in real-time.
+- Verify `allowed_atr_patterns` restricts forwarding to specified card types.
+- Verify `blocked_apdu_ins` blocks specific APDU instructions.
+- Verify smart card audit events logged.
+
+### Session Resume
+- Verify session resume with valid token after network disconnect.
+- Verify resume from different IP address (Wi-Fi → Ethernet).
+- Verify resume through different gateway (token scope `any-gateway`).
+- Verify token rotation: successful resume issues new token, invalidates old.
+- Verify expired token falls back to full authentication.
+- Verify revoked/invalid token falls back to full authentication.
+- Verify `require_mfa_on_resume = true` requires MFA on every resume.
+- Verify `require_mfa_after_hours` triggers MFA after configured time.
+- Verify `max_disconnected_minutes` terminates session after timeout.
+- Verify gateway-routed resume: gateway routes ResumeRequest to correct backend.
+
+### Multi-Monitor DPI
+- Verify single monitor at 100%, 150%, 200% DPI on Windows, macOS, Linux.
+- Verify dual monitor with mixed DPI (1x + 2x) in "match local monitors" mode.
+- Verify DPI change mid-session (window dragged between monitors).
+- Verify DPI change debouncing (200ms).
+- Verify server-side bilinear scaling for XWayland apps during DPI transition.
+- Verify web client `devicePixelRatio` change detection.
+- Verify fractional scale (1.25x) on Linux Wayland with `wp_fractional_scale_v1`.
+
+### USB Safety
+- Verify USB redirection is disabled by default (server and client).
+- Verify client never auto-forwards devices without user confirmation.
+- Verify security key (YubiKey, Titan) is auto-blocked with warning.
+- Verify `blocked_vid_pid` overrides allow rules.
+- Verify `allowed_device_classes` restricts forwarding to listed classes.
+- Verify confirmation dialog shown before forwarding any device.
+- Verify auto-disconnect of forwarded devices on session end.
+- Verify USB audit events (`usb.device_forwarded`, `usb.device_blocked`, `usb.security_key_forward_attempt`).
+
+### Accessibility
+- Verify server-side Orca screen reader produces speech output via audio channel.
+- Verify AT-SPI2 bridge serializes accessibility tree to client (passthrough mode).
+- Verify client-side UI elements have correct UIA properties (Windows).
+- Verify client-side UI elements have correct NSAccessibility properties (macOS).
+- Verify crash screen is keyboard-navigable (Tab between buttons, Enter to activate).
+- Verify high-contrast mode replaces glass effects with solid backgrounds.
+- Verify `prefers-reduced-motion` disables animations.
+- Verify web client passes axe-core WCAG 2.1 AA automated checks.
+
+### Crash Handling
+- Verify support bundle generation via `liquidctl support-bundle`.
+- Verify PII scrubbing: username replaced with `<user>`, home paths scrubbed, passwords redacted.
+- Verify coredump is NOT included in bundle by default.
+- Verify coredump IS included when `include_coredump_in_bundle = true`.
+- Verify "Share with Admin" sends bundle to configured HTTPS endpoint.
+- Verify "Share with Admin" launches email client when endpoint is `mailto:`.
+- Verify bundle manifest lists all included files and scrubbing applied.
+- Verify custom scrubbing patterns (`additional_patterns`) are applied.
+- Verify bundle size < 10 MB without coredump.
 
 ---
 
@@ -5101,6 +6160,158 @@ Crash reports are stored server-side in `/var/log/liquide/crashes/`:
 - **Retention**: Configurable, default 30 days.
 - **Prometheus metrics**: `liquide_crashes_total{type="session_crash"}`, `liquide_crash_restarts_total`, `liquide_session_uptime_at_crash_seconds` (histogram).
 - **Optional telemetry upload**: Disabled by default. If enabled, crash reports (without coredumps or user data) are sent to a configurable endpoint.
+
+### Support Bundle
+
+A **support bundle** is a self-contained diagnostic archive that can be generated by users, administrators, or automatically on crash. It is designed for sharing with IT support or the LiquiDE development team. Support bundles undergo mandatory PII scrubbing before export.
+
+#### Bundle Contents
+
+| Category | Files Included | PII Risk | Scrubbing Applied |
+|----------|---------------|----------|-------------------|
+| **Crash reports** | All crash JSON files for the session | Low (usernames, session IDs) | Username hashed, session ID preserved (needed for correlation) |
+| **Session logs** | Last 1000 log lines from the session | Medium (may contain filenames, app output) | File paths scrubbed (`/home/alice/...` → `/home/<user>/...`), IP addresses hashed |
+| **Supervisor logs** | Last 500 log lines from supervisor | Low | Same scrubbing as session logs |
+| **System info** | OS version, kernel, CPU, memory, GPU, disk | None | Included as-is |
+| **Configuration** | `server.toml` (redacted), `session.toml` (redacted) | High (may contain passwords, tokens) | Passwords/tokens replaced with `<REDACTED>`. Paths preserved. |
+| **Metrics snapshot** | Current Prometheus metric values | None | Included as-is |
+| **Plugin list** | Active plugins with versions | None | Included as-is |
+| **Transport stats** | RTT, bandwidth, packet loss, transport type | Low (server IPs) | Server IPs preserved (needed for diagnosis), client IPs hashed |
+| **Coredump** | Core dump file (if available and configured) | High (may contain memory with user data) | **NOT included by default**. Admin must explicitly enable with `crash.include_coredump = true`. |
+| **Screenshots** | **Never included** | — | Not collected |
+| **Clipboard contents** | **Never included** | — | Not collected |
+| **User files** | **Never included** | — | Not collected |
+
+#### PII Scrubbing Rules
+
+All text content in the support bundle passes through a scrubbing pipeline:
+
+| PII Type | Detection | Replacement |
+|----------|-----------|-------------|
+| Usernames | Known session user + adjacent path patterns | `<user>` |
+| Home directory paths | `/home/<username>/`, `C:\Users\<username>\` | `/home/<user>/`, `C:\Users\<user>\` |
+| Email addresses | Regex `[\w.+-]+@[\w-]+\.[\w.-]+` | `<email>` |
+| IPv4 addresses (client) | Regex + known client IP from session metadata | SHA-256 truncated to 8 hex chars |
+| IPv6 addresses (client) | Regex + known client IP | Same SHA-256 truncation |
+| Server IPs | Preserved (needed for network diagnosis) | Not scrubbed |
+| Bearer tokens | Regex `Bearer [A-Za-z0-9._-]+` | `Bearer <REDACTED>` |
+| Passwords in configs | Keys matching `password`, `secret`, `token`, `credential`, `key` in TOML | Value replaced with `<REDACTED>` |
+| OIDC tokens | JWT patterns `eyJ...` | `<REDACTED_JWT>` |
+| Smart card PINs | Never logged (not present in logs) | N/A |
+
+Admin can configure additional scrubbing patterns:
+
+```toml
+[crash.scrubbing]
+# Additional regex patterns to scrub from support bundles
+additional_patterns = [
+  { pattern = "ACME-\\d{8}", replacement = "<ACME_ID>" },
+  { pattern = "SSN:\\d{3}-\\d{2}-\\d{4}", replacement = "SSN:<REDACTED>" },
+]
+# Scrub all file paths (not just home directories)
+scrub_all_paths = false
+# Scrub hostnames (replace internal hostnames with hashes)
+scrub_hostnames = false
+```
+
+#### Bundle Generation
+
+Support bundles can be generated via:
+
+| Method | Initiator | Trigger |
+|--------|-----------|---------|
+| `liquidctl crash report --session <id> --bundle` | Admin (CLI) | On-demand |
+| Crash screen "Download Report" button | User (client UI) | On crash |
+| `liquidctl support-bundle` | Admin (CLI) | On-demand (no crash needed) |
+| Manager UI "Export Support Bundle" | Admin (web UI) | On-demand |
+| Automatic (on crash, if configured) | System | `crash.auto_bundle = true` |
+
+Bundle format: `.tar.gz` archive with a manifest (`manifest.json`) listing contents and scrubbing applied.
+
+Bundle size target: < 10 MB without coredump, < 500 MB with coredump.
+
+#### Share-with-Admin Flow
+
+The crash screen includes a **"Share with Admin"** button (in addition to "Download Report"):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│   [ Restart Session ]   [ Share with Admin ]   [ Download ] │
+│                         ▲                                   │
+│                         │                                   │
+│                    Sends bundle to                          │
+│                    admin-configured                         │
+│                    endpoint                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+When "Share with Admin" is clicked:
+1. Client generates the support bundle (with PII scrubbing).
+2. Client shows a summary of what will be included: "This report contains: crash details, system info, last 1000 log lines, configuration (passwords redacted), plugin list. It does NOT contain: screenshots, clipboard data, files, or passwords."
+3. User confirms.
+4. Bundle is uploaded to the configured admin endpoint.
+
+Admin endpoint configuration:
+
+```toml
+[crash.share]
+# Enable "Share with Admin" button on crash screen
+enabled = true
+# Endpoint for support bundle upload
+# Can be: file path (local/network share), HTTPS URL, email address
+endpoint = ""
+# Examples:
+# endpoint = "https://support.corp.example/crashes/upload"
+# endpoint = "/mnt/shared/liquide-crashes/"
+# endpoint = "mailto:it-support@corp.example"
+
+# For HTTPS endpoints:
+auth_method = "none"                  # none, bearer, basic
+auth_token = ""
+# Maximum bundle size for upload (bytes)
+max_upload_size_mb = 50
+# User-visible message shown after successful share
+success_message = "Report submitted to IT support. Reference: {crash_id}"
+```
+
+When `endpoint` is an email address, the client launches the system email client with the bundle as an attachment and a pre-filled subject line: "LiquiDE Crash Report: {crash_id}".
+
+#### Crash Configuration Summary
+
+```toml
+[crash]
+# Storage
+crash_dir = "/var/log/liquide/crashes"
+retention_days = 30
+max_crash_reports = 1000              # per server, oldest deleted first
+
+# Coredumps
+coredump_enabled = true               # capture coredumps on session crash
+coredump_max_size_mb = 500
+include_coredump_in_bundle = false    # never include by default — explicit admin opt-in
+
+# Auto-bundle
+auto_bundle = false                   # automatically generate support bundle on crash
+auto_bundle_dir = "/var/log/liquide/bundles"
+
+# Telemetry upload (developer telemetry, not admin share)
+telemetry_upload = false
+telemetry_endpoint = ""
+telemetry_include_logs = false
+telemetry_include_stack_trace = true
+
+# Share with admin (see above)
+[crash.share]
+enabled = true
+endpoint = ""
+
+# PII scrubbing (see above)
+[crash.scrubbing]
+additional_patterns = []
+scrub_all_paths = false
+scrub_hostnames = false
+```
 
 ### Crash Screen Rendering
 
