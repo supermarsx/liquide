@@ -306,6 +306,80 @@ taskbar_integration = true             # register windows with OS taskbar/dock
 - Layout selector available in client settings and fullscreen toolbar.
 - Supports 50+ layouts (same set as server-side).
 
+### IME & Text Input (Platform-Specific)
+
+The client's text input pipeline translates platform-specific IME (Input Method Editor) events into LiquiDE protocol messages. Each platform has a different IME API, and getting CJK, Korean, Vietnamese, and dead-key composition correct across all of them requires explicit platform mapping.
+
+#### End-to-End Text Input Flow
+
+```
+Client Platform IME API
+    │
+    ├── Composition start (preedit begin)
+    │       → CompositionUpdate { state: "start", preedit_string, cursor_pos }
+    │
+    ├── Composition update (preedit change, candidate selection)
+    │       → CompositionUpdate { state: "update", preedit_string, cursor_pos }
+    │
+    ├── Composition commit (user selects final text)
+    │       → TextInput { text: "committed_text" }  (UTF-8)
+    │
+    └── Composition cancel (user presses Escape during composition)
+            → CompositionUpdate { state: "cancel" }
+
+Server receives:
+    → zwp_text_input_v3 events → forwarded to focused Wayland application
+    → Application renders preedit string in its text field
+```
+
+#### Platform-Specific IME Integration
+
+| Platform | API | Client Integration | Key Challenges |
+|----------|-----|-------------------|----------------|
+| **Windows** | Text Services Framework (TSF) + `ITextStoreACP` | Client creates a hidden `HWND` with a TSF text store. IME composition events are intercepted before they reach any local application. The hidden window is never shown; it exists only to receive IME input. | TSF reconversion (re-composing already-committed text) is not supported — would require bidirectional text sync with server. `WM_IME_COMPOSITION` fallback for older IMEs (TSF unavailable). |
+| **macOS** | `NSTextInputClient` protocol | Client view implements `NSTextInputClient`. Composition events routed through `insertText:replacementRange:` and `setMarkedText:selectedRange:replacementRange:`. | macOS Kotoeri (Japanese) and Pinyin produce `insertText:` calls that are sometimes partial commits, not final. Client must buffer and detect boundaries using `markedRange`. Emoji picker (Ctrl+Cmd+Space) generates `insertText:` directly — no composition phase. |
+| **Linux (X11)** | XIM (X Input Method) or IBus/Fcitx5 via D-Bus | Client creates an invisible X window with `XOpenIM` / `XCreateIC`. Composition events via `XmbLookupString` + `XFilterEvent`. Modern path: connect to IBus/Fcitx5 panel via D-Bus for direct IBUS_INPUT_METHOD access. | XIM is legacy and quirky — some IBus-to-XIM bridges drop composition events under rapid typing. Direct D-Bus connection to IBus is more reliable but requires detecting whether IBus or Fcitx5 is running. |
+| **Linux (Wayland)** | `zwp_text_input_v3` (as Wayland client) | Client acts as a Wayland text-input client to the local compositor. Receives `preedit_string`, `commit_string`, `delete_surrounding_text` events. | Some compositors (GNOME/Mutter) have incomplete `text_input_v3` support, especially for `delete_surrounding_text`. Client must handle both v3 and v1 (KDE uses v1 in some configurations). |
+
+#### Dead Keys & Compose Sequences
+
+| Platform | Mechanism | Client Behavior |
+|----------|-----------|----------------|
+| Windows | `WM_DEADCHAR` → next `WM_CHAR` | Client buffers `WM_DEADCHAR`, waits for `WM_CHAR`, sends the composed character as `TextInput`. If the dead key is followed by an incompatible character, sends both characters separately. |
+| macOS | `NSTextInputClient` `setMarkedText:` → `insertText:` | Dead key produces a `setMarkedText:` call with the accent mark. Next keypress produces `insertText:` with the composed character (e.g., `´` + `e` → `é`). |
+| Linux | `XkbState` compose table or libxkbcommon compose | Client uses `xkb_compose_state_feed()` to process dead key sequences. Composed character sent as `TextInput`. |
+
+#### Scancode vs. Character Input
+
+The client sends input events in **two parallel streams**:
+
+| Stream | Content | Use Case | Protocol Message |
+|--------|---------|----------|-----------------|
+| **Scancode stream** | Hardware scancode + key state (down/up) | Games, terminal emulators, applications that need raw key events, modifier tracking | `KeyDown` / `KeyUp` on Input channel (0x50) |
+| **Text stream** | UTF-8 committed text | Text editors, web browsers, any text input field | `TextInput` on Input channel (0x50) |
+
+The server's input processing determines which stream to use based on the focused application:
+- If the focused surface has an active `zwp_text_input_v3` session, the text stream is prioritized (composition is handled client-side, committed text is applied server-side).
+- If no text input session is active, only the scancode stream is used (server-side input processing handles key-to-character mapping).
+
+**Composition mode selection:**
+
+| Mode | Description | Default |
+|------|-------------|---------|
+| **Client-side composition** | IME composition happens on the client. Preedit string is rendered locally (overlaid on the remote frame at the cursor position). Only committed text is sent to the server. | Default when RTT > 50ms (reduces composition latency). |
+| **Server-side composition** | All keystrokes are sent as scancodes. The server's IME (IBus/Fcitx5 inside the session) handles composition. Preedit rendering happens on the remote desktop, visible via the video stream. | Default when RTT < 50ms (simpler, no client-side preedit overlay). |
+
+Client-side composition is preferred on high-latency connections because it eliminates the RTT from the composition feedback loop — the user sees preedit characters immediately rather than after a round-trip.
+
+```toml
+[input.text]
+composition_mode = "auto"                # auto, client-side, server-side
+# auto: client-side if RTT > 50ms, server-side otherwise
+rtt_threshold_ms = 50                    # RTT above which client-side composition activates
+preedit_overlay_font = "system"          # font for client-side preedit overlay
+preedit_overlay_opacity = 0.95
+```
+
 ### Mouse Input
 - All mouse events (move, click, scroll, button press/release) forwarded.
 - Relative mode for applications that need it (e.g., 3D viewers).

@@ -446,6 +446,62 @@ min_severity = "info"                    # debug, info, warn, error, critical
 clipboard_transfer_log_interval_sec = 60 # log at most one clipboard event per 60s per session
 ```
 
+### Audit Log Integrity
+
+In enterprise deployments, audit logs are a compliance and forensics requirement. LiquiDE provides a **tamper-evident hash chain** and **mandatory external shipping** to ensure audit log integrity.
+
+#### Hash Chain
+
+Each audit event includes a `chain_hash` field — a cryptographic hash linking each event to its predecessor:
+
+```
+chain_hash[n] = SHA-256( chain_hash[n-1] || event_bytes[n] )
+```
+
+| Property | Specification |
+|----------|--------------|
+| Algorithm | SHA-256 (truncated to 16 bytes for compactness) |
+| Seed | `chain_hash[0]` = SHA-256 of a server-generated random nonce (stored in `/var/lib/liquide/audit-chain-seed`). |
+| Scope | One chain per server instance. Chain resets on daemon restart (new seed). The restart event itself is the first entry in the new chain. |
+| Verification | `liquidctl audit verify --file /var/log/liquide/audit.log` walks the chain and reports any gaps (missing events), hash mismatches (tampered events), or seed discontinuities (unexpected restarts). |
+
+#### Enterprise Mode (Mandatory External Shipping)
+
+When `audit.enterprise_mode = true`, the following constraints are enforced:
+
+| Constraint | Behavior If Violated |
+|-----------|---------------------|
+| **External destination required** | At least one non-local destination (syslog, SIEM, or remote journald) MUST be configured. Server refuses to start if only `file` is configured. |
+| **Delivery confirmation** | Each batch of events shipped to the external destination must be acknowledged. If the external destination is unreachable for > 5 minutes, the server emits a `critical`-level `audit.shipping_failed` event to journald and (optionally) sends an SNMP trap or webhook alert. |
+| **Local log protection** | The local audit log file is opened with `O_APPEND` and the server process drops write permissions to the audit log directory after opening the file. This prevents the server process from truncating or overwriting old entries (defense against compromised server process). |
+| **Minimum severity** | In enterprise mode, `min_severity` is forced to `info` or lower. Cannot be raised to `warn` or above. |
+| **Chain hash mandatory** | The hash chain is always active in enterprise mode. It cannot be disabled. |
+| **Retention** | `file_max_age_days` minimum is 90 days. Cannot be set lower. |
+
+#### Configuration
+
+```toml
+[audit]
+enabled = true
+enterprise_mode = false                  # set true for compliance deployments
+chain_hash_enabled = true                # tamper-evident hash chain (always true in enterprise_mode)
+destinations = ["file", "syslog"]
+file_path = "/var/log/liquide/audit.log"
+file_max_size_mb = 100
+file_max_age_days = 90
+file_max_backups = 10
+syslog_facility = "local0"
+syslog_tag = "liquide"
+min_severity = "info"
+
+# Enterprise mode additions
+[audit.external]
+syslog_server = ""                       # remote syslog server (e.g., "siem.example.com:514")
+syslog_protocol = "tcp+tls"             # udp, tcp, tcp+tls
+shipping_timeout_sec = 300               # alert after this many seconds of shipping failure
+alert_webhook = ""                       # optional webhook URL for shipping failure alerts
+```
+
 ---
 
 ## 7) Security Configuration Baseline
@@ -467,6 +523,7 @@ The following table defines the RECOMMENDED security configuration for productio
 | `plugins.require_signatures` | `false` | `true` | |
 | `plugins.allowed_plugins` | `[]` (all) | Explicit allowlist | |
 | `audit.min_severity` | `"info"` | `"debug"` | Full audit trail |
+| `audit.enterprise_mode` | `false` | `true` | Tamper-evident chain + mandatory external shipping |
 | `login_screen.show_server_info` | `true` | `false` | Don't reveal server version |
 | `login_screen.show_power_menu` | `false` | `false` | |
 

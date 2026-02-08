@@ -183,6 +183,57 @@ For server updates while sessions are active:
    - New sessions use the new version.
 2. Alternatively, `liquidctl update apply --force-restart` restarts immediately. Active sessions are terminated with a crash screen showing "Server is restarting for an update."
 
+### 4.6 Upgrade Safety Guarantees
+
+Server upgrades MUST NOT corrupt session state, policies, or configuration. The following invariants are enforced:
+
+#### State Preservation
+
+| State | Location | Upgrade Behavior |
+|-------|----------|-----------------|
+| **Server configuration** (`server.toml`) | `/etc/liquide/server.toml` | Never modified by the updater. Config is read-only to the update process. If a new version introduces new config keys, they use defaults. Deprecated keys are silently ignored (with `warn`-level log). |
+| **Policy files** (`policies.toml`, per-user overrides) | `/etc/liquide/policies/` | Never modified by the updater. Policy format is forward-compatible (unknown keys ignored). |
+| **TLS certificates** | `/etc/liquide/certs/` | Never modified. Certificate lifecycle is independent of software version. |
+| **Session tokens** (in-memory) | `liquid-desktopd` process memory | Lost on daemon restart. This is by design — all sessions must re-authenticate after upgrade. Clients reconnect automatically via session resume (if within token lifetime). |
+| **Active sessions** (graceful mode) | Running `liquid-session` processes | In graceful mode, active sessions continue running the **old binary** until they disconnect. The supervisor drains sessions from the old version. New sessions use the new binary. |
+| **Crash reports** | `/var/log/liquide/crashes/` | Preserved. Not part of the update payload. |
+| **Audit logs** | `/var/log/liquide/audit.log` | Preserved. The updater itself emits an audit event: `admin.action { action: "update_apply", before_version: "1.3.0", after_version: "1.4.0" }`. |
+| **Plugin state** | `/var/lib/liquide/plugins/` | Plugin WASM binaries are NOT updated by the server updater. Plugins have their own update lifecycle. Plugin ABI compatibility is checked at load time (see spec.md §14b). |
+
+#### Rollback
+
+If the new version fails to start (e.g., binary crash, config incompatibility):
+
+1. systemd `Restart=on-failure` triggers up to 3 restart attempts (with 5s `RestartSec`).
+2. If all restarts fail, systemd stops the unit and marks it as failed.
+3. The administrator can rollback by:
+   ```bash
+   liquidctl update rollback         # restores previous binary from /var/lib/liquide/rollback/
+   systemctl start liquid-desktopd   # start with previous version
+   ```
+4. The rollback binary is preserved for exactly one version (the version that was replaced). Updating from 1.3 → 1.4 → 1.5 means 1.3 is no longer available for rollback; only 1.4 is.
+
+#### Version Compatibility Matrix
+
+| Component Pair | Compatibility Rule |
+|---------------|-------------------|
+| Supervisor (new) ↔ Session (old) | Supervisor MUST support sessions from the previous minor version. Supervisor uses internal ABI version check on session spawn. |
+| Client (new) ↔ Server (old) | Protocol version negotiation handles this (spec-protocol-formal.md §15). Client falls back to server's protocol version. |
+| Client (old) ↔ Server (new) | Same — server falls back to client's protocol version. New server features are unavailable. |
+| Plugins (old ABI) ↔ Host (new) | Plugin ABI version checked at load time. Plugins with unsupported ABI are disabled with a clear error, not crashed. |
+| Config (old format) ↔ Binary (new) | New config keys use defaults. Removed keys are silently ignored. No config migration step needed for minor version updates. |
+
+#### Pre-Upgrade Validation
+
+`liquidctl update apply --dry-run` performs:
+
+1. Downloads and verifies the update package (signature, checksum).
+2. Checks binary compatibility (architecture, glibc version).
+3. Validates current config against new version's schema (warns about deprecated keys).
+4. Checks plugin ABI compatibility with new host version.
+5. Estimates downtime (graceful: 0 for new sessions, existing sessions continue; force: ~5–10s).
+6. Reports pass/fail. Does not modify any files.
+
 ---
 
 ## 5) Signed Updates & Integrity

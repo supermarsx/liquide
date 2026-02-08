@@ -213,6 +213,8 @@ The receiver reassembles fragments by channel and sequence number. Fragments mus
 | `0x0021` | `AssetRequest` | C → S | Client requests specific assets (cache misses) |
 | `0x0022` | `AssetData` | S → C | Asset payload (icon, cursor, theme resource) |
 | `0x0023` | `AssetManifestAck` | C → S | Client confirms manifest received with list of cache hits |
+| `0x0030` | `SecureAttention` | C → S | Secure Attention Sequence (privileged command, see below) |
+| `0x0031` | `SecureAttentionAck` | S → C | Server acknowledges SAS command with result |
 
 ### 5.2 Emergency Channel Messages (0x01)
 
@@ -358,6 +360,9 @@ Each `TileBatch` optionally includes a per-tile CRC-32 of the expected client-si
 | `0x5009` | `TouchCancel` | C → S | Touch sequence cancelled |
 | `0x500A` | `InputSyncRequest` | C → S | Request input state sync (after reconnect) |
 | `0x500B` | `InputSyncResponse` | S → C | Current modifier/button state |
+| `0x500C` | `TextInput` | C → S | Committed UTF-8 text from client IME (bypasses scancode-to-char mapping) |
+| `0x500D` | `CompositionUpdate` | C → S | IME composition state (start/update/cancel with preedit string + cursor position) |
+| `0x500E` | `CompositionRequest` | S → C | Server requests client to activate/deactivate IME composition (e.g., text field focused) |
 
 ---
 
@@ -669,6 +674,44 @@ AssetData = {
     ? is_last: bool,                           ; true if this is the last asset in a batch response
 }
 ```
+
+### 8.8 CBOR Schema: Secure Attention Sequence
+
+The Secure Attention Sequence (SAS) is a **privileged command channel** for operations that must not be spoofable by applications running inside the remote session. SAS commands are sent on the control channel (`0x00`), which terminates at the supervisor daemon — not at the session process. This ensures that a compromised session cannot intercept or forge SAS commands.
+
+```cddl
+SecureAttention = {
+    command: text,                             ; SAS command (see table below)
+    ? params: {* text => any},                 ; command-specific parameters
+    nonce: uint,                               ; unique per-request, for ack correlation
+    timestamp_us: uint,                        ; client timestamp
+}
+
+SecureAttentionAck = {
+    nonce: uint,                               ; correlates to SecureAttention.nonce
+    result: text,                              ; "ok", "denied", "error", "unsupported"
+    ? reason: text,                            ; human-readable reason (on deny/error)
+    ? data: {* text => any},                   ; command-specific response data
+}
+```
+
+**SAS Commands:**
+
+| Command | Description | Supervisor Action |
+|---------|-------------|-------------------|
+| `lock_session` | Lock the session (equivalent to Ctrl+Alt+L or Win+L) | Supervisor sends lock signal to session via IPC. Session shows lock screen. |
+| `ctrl_alt_delete` | Send Ctrl+Alt+Delete to the session (SAS on Windows guests, task manager) | Supervisor injects the key combination directly into the session's input queue, bypassing any application-level key grabbing. |
+| `switch_user` | Request user switch (show login screen for another user without terminating session) | Supervisor triggers VT switch or shows greeter. |
+| `terminate_session` | Force-terminate the session process | Supervisor sends SIGTERM → SIGKILL to session. Client shows crash/disconnect screen. |
+| `reboot_session` | Restart the session process | Supervisor terminates and respawns session. Client shows "Restarting..." overlay. |
+| `screenshot` | Capture a screenshot of the current session (admin/support tool) | Supervisor captures framebuffer, returns as PNG in `SecureAttentionAck.data.image`. Policy-gated. |
+| `change_password` | Request password change dialog (handled by supervisor, not session) | Supervisor invokes PAM password change flow. Credentials never pass through session process. |
+
+**Security properties:**
+- SAS commands are **never routed through the session process**. They are delivered to the supervisor daemon via the control channel, which the supervisor owns directly.
+- A compromised session process cannot intercept, block, or forge SAS commands because it has no access to the control channel's transport endpoint.
+- The client triggers SAS via a **dedicated key combination** (default: Ctrl+Alt+End, configurable) that is captured at the client's lowest input layer — before any application-level key handling.
+- Each SAS command is audit-logged (`admin.action` event with `action = "sas.<command>"`).
 
 ---
 

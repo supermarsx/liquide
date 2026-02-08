@@ -304,6 +304,59 @@ Policy: `session.autostart.enabled` (default: `true`) — master switch. `sessio
 >
 > This design keeps the supervisor small and auditable. If a deployment requires `CAP_SYS_ADMIN` (e.g., older kernels without cgroup v2 delegation or `clone3`), it can be added back to the systemd unit, but this SHOULD be treated as a compatibility fallback, not the default.
 
+#### Privilege Helper Process (`liquid-helper`)
+
+For deployments that require `CAP_SYS_ADMIN` (e.g., older kernels, non-systemd init, or specific namespace configurations), LiquiDE provides an **optional privilege helper** — a minimal, separate process that holds elevated capabilities on behalf of the supervisor. The supervisor itself remains unprivileged.
+
+```
+liquid-desktopd (supervisor)              liquid-helper (privileged)
+  [no CAP_SYS_ADMIN]                       [CAP_SYS_ADMIN, minimal code]
+        │                                         │
+        │── create_cgroup(session_id) ──►         │── mkdir /sys/fs/cgroup/...
+        │◄── ok                                   │
+        │                                         │
+        │── create_namespace(user, config) ──►    │── unshare(CLONE_NEWNS|...)
+        │◄── namespace_fd                         │
+        │                                         │
+        │── destroy_session(session_id) ──►       │── cleanup cgroup + ns
+        │◄── ok                                   │
+```
+
+**Design constraints:**
+
+| Property | Requirement |
+|----------|-------------|
+| **Binary size** | < 50 KB (statically linked, no dependencies beyond libc) |
+| **Attack surface** | < 500 lines of Rust. No network I/O. No config file parsing. No logging library. |
+| **Communication** | Unix domain socket (`/run/liquide/helper.sock`, mode 0660, group `liquide`). CBOR messages. |
+| **Allowed operations** | Exactly 4: `create_cgroup`, `destroy_cgroup`, `create_namespaces`, `destroy_namespaces`. All other requests rejected. |
+| **Seccomp filter** | Allowlist: `unshare`, `clone3`, `mount`, `umount2`, `mkdir`, `rmdir`, `write`, `read`, `close`, `exit_group`, `epoll_*`. Nothing else. |
+| **Audit** | Every operation logged to stderr (captured by journald). Includes caller PID, operation, session ID, result. |
+| **Activation** | Socket-activated by systemd. Exits after 60 seconds of inactivity. Not a persistent daemon. |
+
+The helper is **not installed by default**. Deployments that need it install `liquid-helper.service` and `liquid-helper.socket` separately. The supervisor auto-detects the helper socket and uses it when present; otherwise it falls back to `systemd-run` / `clone3`.
+
+```ini
+# liquid-helper.service
+[Unit]
+Description=LiquiDE Privilege Helper
+Documentation=man:liquid-helper(8)
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/liquid-helper
+CapabilityBoundingSet=CAP_SYS_ADMIN
+AmbientCapabilities=CAP_SYS_ADMIN
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=unshare clone3 mount umount2 mkdir rmdir write read close exit_group epoll_create1 epoll_ctl epoll_wait accept4 recvmsg sendmsg
+SystemCallArchitectures=native
+RestrictNamespaces=false
+```
+
 `liquid-session` runs with **no** elevated capabilities (`NoNewPrivileges=true`). It runs as the target user with standard user permissions.
 
 ### 6.2 Seccomp Filtering

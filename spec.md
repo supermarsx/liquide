@@ -1040,13 +1040,47 @@ color_depth = "rgb888"              # rgb888 (24-bit), rgba8888 (32-bit), rgb565
 | Scheme | Use Case | Notes |
 |--------|----------|-------|
 | **TLS 1.3** | Default for all connections | ChaCha20-Poly1305 or AES-256-GCM |
-| **AES-128-GCM** | Local/LAN deployments | Lower overhead alternative |
+| **AES-128-GCM** | Local/LAN deployments | Lower overhead alternative (see below) |
 | **AES-256-GCM** | High-security deployments | Maximum encryption strength |
 | **ChaCha20-Poly1305** | ARM64 / no AES-NI | Faster on platforms without AES hardware |
 | **None (plaintext)** | Localhost only | Must be explicitly enabled, policy-guarded |
 
 - Encryption is **per-transport-stream**, allowing different encryption for control vs. media channels.
 - Encryption scheme negotiated at connection or set by policy.
+
+#### Low-Latency Encryption Mode (AES-128-GCM for LAN)
+
+The AES-128-GCM "low-latency" option is **not** a weaker security mode. It is the same AEAD cipher used within TLS 1.3, applied with all standard security guarantees. The difference is operational: on LAN deployments where both client and server are on a trusted private network, AES-128-GCM offers lower per-packet CPU cost than AES-256-GCM (particularly on hardware with AES-NI) while still providing 128-bit security — more than sufficient for any current threat model.
+
+**What low-latency mode IS:**
+
+| Property | Guarantee |
+|----------|-----------|
+| AEAD | Yes — AES-128-GCM provides authenticated encryption with associated data. Every packet is integrity-protected and encrypted. Tampering is detected. |
+| Key exchange | Standard TLS 1.3 handshake (ECDHE). Session keys are ephemeral, derived via HKDF. No pre-shared secrets unless explicitly configured (see PSK mode below). |
+| Replay protection | Yes — TLS 1.3 record layer sequence numbers prevent replay. For DTLS/QUIC, the transport's anti-replay window applies. |
+| Forward secrecy | Yes — ephemeral ECDHE key exchange. Compromising the server's long-term key does not decrypt past sessions. |
+
+**What low-latency mode is NOT:**
+
+- It is NOT "encryption disabled."
+- It is NOT a pre-shared key mode (unless explicitly configured — see below).
+- It does NOT skip the TLS handshake or certificate verification.
+- It does NOT reduce the MAC tag size or weaken integrity protection.
+
+**Pre-Shared Key (PSK) Mode**
+
+For deployments where TLS handshake latency is unacceptable (e.g., session resume on ultra-low-latency LAN), LiquiDE supports TLS 1.3 PSK-based resumption:
+
+| Property | PSK Mode Behavior |
+|----------|------------------|
+| Initial connection | Standard TLS 1.3 handshake with certificate verification. Server issues a PSK identity (session ticket). |
+| Subsequent connections | Client presents PSK identity. Server validates. Handshake completes in 0-RTT or 1-RTT. |
+| 0-RTT data | Supported but **disabled by default** (`transport.enable_0rtt = false`). 0-RTT data is replayable by design. Only safe for idempotent operations (e.g., `ClientHello`). |
+| PSK lifetime | Default 24 hours. Configurable via `transport.psk_lifetime_sec`. |
+| Forward secrecy | Yes for 1-RTT PSK (ECDHE + PSK). Reduced for 0-RTT data (inherent TLS 1.3 0-RTT limitation). |
+
+> **Anti-footgun**: LiquiDE NEVER offers a "disable encryption" option outside of localhost-only connections. The `transport.encryption = "none"` setting is guarded by: (1) server policy `transport.allow_plaintext = false` (default), (2) connection source IP MUST be `127.0.0.1` or `::1`, (3) an audit event is emitted on every plaintext connection. Any attempt to use plaintext over a non-loopback interface is rejected with a protocol error.
 
 ### Transport Strategies
 
@@ -1738,6 +1772,82 @@ exceptions = []
 | `usb.security_key_forward_attempt` | `warn` | `user`, `device_name`, `vid_pid`, `allowed` |
 | `usb.policy_violation` | `warn` | `user`, `device_name`, `vid_pid`, `policy_rule` |
 
+#### USB Redirection Implementation Tiers
+
+USB device redirection "looks easy on paper" but drags in platform-specific driver complexity. LiquiDE explicitly tiers its USB support to ship a reliable product at each tier before expanding scope.
+
+| Tier | Name | Transport | Server-Side | Client Requirements | Ship Target |
+|------|------|-----------|-------------|--------------------|----|
+| **Tier 1** | Mass storage via file transfer | File transfer channel (`0x31`) | Virtual mount point (FUSE or bind mount) | File picker only — no raw block device access | v1.0 |
+| **Tier 2** | Smart card via PC/SC APDU | Dedicated USB channel (`0x40`), APDU-level | `pcscd` virtual reader (PC/SC IPC) | PC/SC middleware on client (Windows: built-in, macOS: built-in, Linux: pcsclite) | v1.0 |
+| **Tier 3** | Full USB/IP | Dedicated USB channel (`0x40`), device-level | Linux kernel VHCI (`usbip_host`) | Platform-specific USB/IP driver (Linux: kernel module, macOS: VirtualHere or similar, Windows: USB/IP driver) | v1.2+ |
+
+**Tier 1: Mass Storage via File Transfer**
+
+Instead of forwarding raw USB block devices (which exposes the server to filesystem exploits and requires kernel driver trust), Tier 1 treats mass storage as a **file transfer** operation:
+
+- Client detects USB mass storage device insertion.
+- Client lists files on the mounted device via native platform APIs.
+- User selects files to upload → standard file transfer channel.
+- Server mounts transferred files into a user-visible directory (e.g., `~/USB/<device-name>/`).
+- **No raw block device access**, no `mount` on the server, no trusted filesystem parsing of untrusted media.
+- Sufficient for 95% of use cases (user wants to copy files from a USB drive to the remote session).
+
+**Tier 2: Smart Card via PC/SC APDU Forwarding**
+
+Smart card redirection (PIV, CAC, FIDO2, PKI cards) uses APDU-level forwarding, not raw USB:
+
+```
+Client                                          Server
+  │                                                │
+  │  PC/SC middleware (native)                     │  pcscd (virtual reader)
+  │  ├── SCardEstablishContext()                   │  ├── virtual PC/SC IPC socket
+  │  ├── SCardConnect() to local reader            │  ├── presents virtual reader to apps
+  │  │                                              │  │
+  │  │  APDU forwarding (via USB channel 0x40):    │  │
+  │  │  Client sends: SCardTransmit(APDU_cmd) ──► │  │  SCardTransmit(APDU_cmd) → virtual card
+  │  │  Client receives: ◄── APDU_response         │  │  APDU_response ← virtual card
+  │  │                                              │  │
+  │  └── SCardDisconnect()                         │  └── reader removed
+```
+
+Benefits over full USB/IP for smart cards:
+- **No kernel driver required** on client or server — PC/SC operates entirely in userspace.
+- **Cross-platform**: Windows, macOS, and Linux all have native PC/SC stacks.
+- **Secure**: only APDU commands cross the wire — no raw USB descriptors, no device enumeration attacks.
+- **Low bandwidth**: APDU commands are tiny (typically <256 bytes per exchange).
+- Smart card PIN is entered locally (client-side PIN pad support) when possible, never transmitted in cleartext.
+
+**Tier 3: Full USB/IP (Raw Device)**
+
+Full USB/IP device forwarding for devices that cannot be abstracted at a higher level (lab equipment, custom HID devices, hardware tokens without PC/SC support):
+
+| Platform | Client Driver | Server Side | Status |
+|----------|--------------|-------------|--------|
+| Linux | Kernel `usbip` module (upstream) | Kernel VHCI driver | Supported, well-tested |
+| Windows | USB/IP project driver (signed) or VirtualHere | Kernel VHCI | Requires third-party driver installation |
+| macOS | VirtualHere or custom kext/dext | Kernel VHCI | Limited — Apple System Extensions required, notarization complexity |
+
+> **Warning**: Tier 3 full USB/IP is inherently risky. A forwarded USB device has the same kernel attack surface as a locally-plugged device. LiquiDE mitigates this by running the VHCI import inside the session's cgroup/namespace jail, but kernel bugs in USB class drivers can still be exploited. Tier 3 SHOULD be used only when Tier 1/2 alternatives are insufficient.
+
+**Tier Configuration**
+
+```toml
+[usb]
+enabled = false
+tier = "auto"                          # auto, 1, 2, 3
+# auto: uses highest tier supported by both client and server
+# 1: file transfer only (no raw USB)
+# 2: file transfer + PC/SC smart card APDU
+# 3: file transfer + PC/SC + full USB/IP
+
+[usb.smartcard]
+enabled = true                         # enable PC/SC APDU forwarding (Tier 2)
+pin_entry = "client-side"              # client-side, server-side
+apdu_timeout_ms = 5000                 # timeout for individual APDU exchanges
+max_readers = 4                        # max concurrent smart card readers
+```
+
 ### Remote Printing
 
 LiquiDE supports printing from remote sessions to client-local or network printers. The printing pipeline uses a **PDF-based architecture** — all print jobs are converted to PDF on the server and delivered to the client or a network print queue.
@@ -1881,6 +1991,47 @@ enabled = true                         # always available as fallback
 [printing.dlp]
 enabled = false
 ```
+
+#### Print Spool Hardening
+
+The per-session CUPS instance is a potential DoS vector — a misbehaving application or user can submit arbitrarily many large print jobs, exhausting tmpfs, memory, or disk. LiquiDE applies hard limits to contain print spool abuse.
+
+**Resource Limits**
+
+| Resource | Default | Max | Enforcement |
+|----------|---------|-----|-------------|
+| Max concurrent jobs per session | 10 | 50 | CUPS rejects further jobs with `server-error-busy`. Application sees "printer busy." |
+| Max job size (single job) | 100 MB | 500 MB | CUPS backend rejects oversize jobs before writing to spool. `print.job_blocked` audit event. |
+| Max total spool size per session | 200 MB | 1 GB | Session-level tmpfs quota. When 90% full, new jobs are rejected. When 100%, oldest undelivered job is evicted with warning. |
+| Max page count per job | 500 | 5000 | Estimated at PDF generation time. Oversize jobs blocked. |
+| Max jobs per user per hour | 50 | 200 | Rate limiting at CUPS backend. Prevents scripted job flooding. |
+
+**Spool Cleanup**
+
+| Trigger | Action |
+|---------|--------|
+| Job delivered to client or network printer | PDF deleted from spool immediately (or after `retain_pdf_seconds` if reprint is configured). |
+| Job delivery fails (client disconnect) | PDF retained for `retain_pdf_seconds` (default 300s), then deleted. Job re-queued on reconnect if within retention window. |
+| Session disconnect (graceful) | All pending print jobs held for 5 minutes. If client reconnects (session resume), jobs resume delivery. After timeout, jobs are deleted. |
+| Session termination (logout/crash) | All spool contents deleted immediately. No orphaned PDFs. |
+| Session idle timeout | Spool cleaned as part of session teardown. |
+| Periodic cleanup | Every 60 seconds, the spool watchdog scans for orphaned files (no corresponding CUPS job). Orphans older than 10 minutes are deleted. |
+
+**Configuration**
+
+```toml
+[printing.spool]
+max_concurrent_jobs = 10
+max_job_size_mb = 100
+max_spool_size_mb = 200
+max_pages_per_job = 500
+max_jobs_per_hour = 50
+retain_pdf_seconds = 300                # keep delivered PDFs for reprint
+spool_watchdog_interval_sec = 60        # orphan scan interval
+spool_tmpfs = true                      # always use tmpfs (RAM), never persistent disk
+```
+
+> **Operational note**: The `spool_tmpfs = true` default is critical. Print spool data MUST NOT be written to persistent disk unless the administrator explicitly configures a disk-backed spool directory. Persistent spool introduces data-at-rest risk (print jobs may contain sensitive documents) and post-session cleanup complexity.
 
 ---
 
