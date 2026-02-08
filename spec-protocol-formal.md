@@ -899,6 +899,311 @@ The emergency channel has its own heartbeat independent of the control channel:
                   Streaming
 ```
 
+### 10.5 Clipboard Channel State Machine
+
+```
+                    ┌────────────┐
+                    │   Idle     │ (channel open, no transfer active)
+                    └──┬──┬──┬──┘
+                       │  │  │
+          ClipboardOffer│  │  │ ChannelClose
+            (from peer) │  │  ▼
+                       │  │ ┌────────┐
+                       │  │ │ Closed │
+                       │  │ └────────┘
+                       ▼  │
+                ┌──────────────┐
+                │ Offer Pending│ (peer announced formats, awaiting local request)
+                └──────┬───┬──┘
+                       │   │
+        ClipboardRequest│   │ timeout / ClipboardClear
+                       │   ▼
+                       │  Idle
+                       ▼
+                ┌──────────────┐
+                │ Transferring │ (data chunks flowing)
+                └──┬──┬──┬────┘
+                   │  │  │
+   ClipboardDataEnd│  │  │ ClipboardCancel
+                   │  │  ▼
+                   │  │ Idle (transfer aborted)
+                   ▼  │
+                 Idle  │ ChannelClose
+                       ▼
+                    ┌────────┐
+                    │ Closed │
+                    └────────┘
+```
+
+**Key behaviors:**
+- The clipboard channel is **bidirectional** — both client and server can send `ClipboardOffer`.
+- Only **one transfer** can be active at a time in each direction. A new `ClipboardOffer` while in **Transferring** state implicitly cancels the current transfer.
+- **Policy enforcement** occurs at two points: (1) when an offer is received, the policy engine checks `clipboard.enabled` and `clipboard.direction`; (2) when data arrives, the policy engine checks `clipboard.max_size` and `clipboard.allowed_mime_types`.
+- `ClipboardProgress` messages are informational during **Transferring** and do not change state.
+- **Timeout**: if no `ClipboardRequest` arrives within 30 seconds of an offer, the offer expires and state returns to **Idle**.
+- **Large clipboard transfers** (> 1 MB) are fragmented into `ClipboardData` chunks with `ClipboardDataEnd` marking the final chunk.
+
+### 10.6 Input Channel State Machine
+
+```
+                    ┌────────────┐
+                    │  Inactive  │
+                    └──────┬─────┘
+                           │ ChannelOpen
+                           ▼
+                    ┌────────────┐
+                    │  Syncing   │ (InputSyncRequest/Response exchange)
+                    └──────┬─────┘
+                           │ InputSyncResponse received
+                           ▼
+                    ┌────────────┐
+                    │   Active   │ (input events flowing C → S)
+                    └──┬──┬──┬──┘
+                       │  │  │
+           reconnect   │  │  │ ChannelClose
+           (sync lost) │  │  ▼
+                       │  │ ┌────────┐
+                       │  │ │ Closed │
+                       │  │ └────────┘
+                       ▼  │
+                    Syncing│
+                           │ ChannelSuspend
+                           ▼
+                    ┌────────────┐
+                    │ Suspended  │ (session locked or minimized)
+                    └──────┬─────┘
+                           │ ChannelResume
+                           ▼
+                       Syncing → Active
+```
+
+**Key behaviors:**
+- On channel open or reconnect, the client sends `InputSyncRequest`. The server responds with `InputSyncResponse` containing current modifier and button state. This prevents phantom keystrokes (e.g., a stuck Ctrl key after reconnect).
+- During **Active** state, the client streams input events (key, mouse, touch) to the server. The server does not acknowledge individual input events (low-latency, fire-and-forget over reliable transport).
+- **Input coalescing**: when the server is backpressured, mouse move events MAY be coalesced (latest position wins). Key events are NEVER coalesced.
+- **Channel suspension** occurs when the session is locked or the client window is minimized. The server discards input events received during suspension.
+- The input channel is **client-to-server only** for event data. The only server-to-client message is `InputSyncResponse`.
+
+### 10.7 Cursor Channel State Machine
+
+```
+                    ┌────────────┐
+                    │  Inactive  │
+                    └──────┬─────┘
+                           │ ChannelOpen
+                           ▼
+                    ┌────────────┐
+                    │   Active   │ (cursor updates S → C)
+                    └──┬──┬──┬──┘
+                       │  │  │
+     CursorVisibility  │  │  │ ChannelClose
+     (hidden)          │  │  ▼
+                       │  │ ┌────────┐
+                       │  │ │ Closed │
+                       │  │ └────────┘
+                       ▼  │
+                 ┌────────────┐
+                 │   Hidden   │ (cursor invisible, position updates suppressed)
+                 └──────┬─────┘
+                        │ CursorVisibility (visible)
+                        ▼
+                     Active
+```
+
+**Key behaviors:**
+- The cursor channel is **server-to-client only**. The server sends position updates, shape changes, and visibility toggles.
+- Position updates are sent at a higher priority than video frames (low-latency cursor movement).
+- **Cursor shape caching**: the server sends `CursorShape` with a shape hash. If the client has the shape cached, it uses the cache. New shapes include the full image data. The asset cache (§8.7) can pre-load common cursor shapes.
+- **Rate limiting**: cursor position updates are capped at the frame rate (no more than one update per frame interval). During idle periods, no updates are sent.
+- **Client-side prediction**: the client MAY render the local cursor position immediately (client-side cursor) and reconcile with server position updates. This is configurable via `cursor.client_side = true`.
+
+---
+
+## 11) Backpressure & Flow Control
+
+All channels in the LiquiDE protocol implement backpressure mechanisms to prevent the sender from overwhelming the receiver. The specific mechanism varies by channel characteristics.
+
+### 11.1 Flow Control Model
+
+```
+Sender                                  Receiver
+  │                                         │
+  │  ──── Data Message ──────────────────►  │
+  │  ──── Data Message ──────────────────►  │
+  │  ──── Data Message ──────────────────►  │
+  │                                         │
+  │  ◄──── Acknowledgment ────────────────  │ (credit-based)
+  │        {received_seq, window_size}      │
+  │                                         │
+  │  ──── Data Message ──────────────────►  │ (sender respects window)
+  │                                         │
+```
+
+### 11.2 Per-Channel Flow Control
+
+| Channel | Mechanism | Window Size | Behavior When Full |
+|---------|-----------|-------------|-------------------|
+| **Control (0x00)** | No explicit flow control | N/A | Control messages are small and rate-limited by design. Sender-side rate limit: 100 messages/sec. |
+| **Emergency (0x01)** | No flow control | N/A | Emergency channel is best-effort, zero-copy. Messages are never dropped by sender. |
+| **Video (0x10)** | `FrameAck`-based | 3 frames in-flight | Server pauses encoding if 3 unacknowledged frames are in-flight. Drops to lower FPS or switches to tile mode. |
+| **Tile (0x12)** | `TileBatchAck`-based | 2 batches in-flight | Server waits for ack before sending 3rd batch. Client reports `decode_time_us` in ack for adaptive tuning. |
+| **Cursor (0x11)** | Rate-limited (no acks) | N/A | Server caps at 1 update per frame interval. During congestion, updates are coalesced (latest position wins). |
+| **Audio (0x20/0x21)** | Jitter buffer feedback | 200ms buffer | Client reports buffer level. Server adjusts bitrate. If buffer overflows, oldest packets are dropped (audio glitch preferred over latency). |
+| **Clipboard (0x30)** | `ClipboardProgress` + `ClipboardDataEnd` | 1 transfer at a time | Only one clipboard transfer per direction at a time. `ClipboardCancel` aborts. Max size enforced before transfer starts. |
+| **Input (0x50)** | No acks (fire-and-forget) | N/A | Reliable transport guarantees delivery. Server coalesces mouse movements during overload. Key events are never dropped. |
+
+### 11.3 Global Connection Backpressure
+
+When the total send queue across all channels exceeds a high-water mark, global backpressure activates:
+
+| Threshold | Action |
+|-----------|--------|
+| Send queue > 80% of `transport.send_buffer_size` | Video FPS reduced by 50%. Tile batch rate halved. |
+| Send queue > 90% of `transport.send_buffer_size` | Video encoding paused. Only tile key updates, cursor, audio, and control messages proceed. |
+| Send queue > 95% of `transport.send_buffer_size` | Audio bitrate reduced to minimum. Clipboard transfers paused. |
+| Send queue = 100% | Only control and emergency channel messages proceed. All data channels stalled. |
+
+Recovery is hysteretic: backpressure relaxes when the queue drops below 70% of the triggering threshold.
+
+### 11.4 Bandwidth Estimation & Adaptation
+
+The transport layer continuously estimates available bandwidth using:
+
+1. **ACK timing** — RTT measurement from Ping/Pong and data acks.
+2. **Packet loss** — detected via QUIC loss detection or TCP retransmit counters.
+3. **Send buffer drain rate** — how fast the OS sends pending data.
+
+Bandwidth estimate feeds into:
+- Video encoder bitrate target.
+- Tile compression level selection.
+- Audio codec bitrate.
+- Decision to switch between transmission modes (video ↔ tile ↔ client-side render).
+
+### 11.5 Connection-Level Resource Limits
+
+| Resource | Default Limit | Configurable |
+|----------|---------------|-------------|
+| Max concurrent channels | 16 | `transport.max_channels` |
+| Max message size (pre-fragmentation) | 16 MB | `transport.max_message_size` |
+| Max frame rate (video) | 60 fps | `performance.max_fps` |
+| Max tile batch rate | 60 batches/sec | `performance.tile.max_batch_rate` |
+| Max clipboard transfer size | 50 MB | `clipboard.max_size` |
+| Max pending clipboard transfers | 1 per direction | Fixed |
+| Input event rate limit | 1000 events/sec | `input.max_rate` |
+| Control message rate limit | 100 messages/sec | Fixed |
+
+---
+
+## 12) Protocol Extension Mechanism
+
+### 12.1 Capability Negotiation
+
+Post-handshake, either side can announce additional capabilities via the `Capabilities` message (type `0x0018`).
+
+#### CBOR Schema: Capabilities
+
+```cddl
+Capabilities = {
+    action: text,                   ; "advertise" | "request" | "confirm" | "reject"
+    capabilities: {* text => any},  ; capability_id => capability_value
+    ? request_id: uint,             ; correlates request/confirm/reject
+}
+```
+
+#### Negotiation Flow
+
+```
+Client                                  Server
+  │                                         │
+  │  ──── Capabilities ─────────────────►  │
+  │       {action: "advertise",             │
+  │        capabilities: {                  │
+  │          "file_transfer": true,         │
+  │          "usb_redirect": true,          │
+  │          "webcam": true                 │
+  │        }}                               │
+  │                                         │
+  │  ◄──── Capabilities ────────────────── │
+  │        {action: "confirm",              │
+  │         capabilities: {                 │
+  │           "file_transfer": true,        │ (server supports it too)
+  │           "usb_redirect": false,        │ (server denies — policy)
+  │           "webcam": true                │
+  │         }}                              │
+  │                                         │
+  │  At this point, file_transfer and       │
+  │  webcam channels can be opened.         │
+  │  usb_redirect is unavailable.           │
+```
+
+#### Known Capability Keys
+
+| Capability Key | Value Type | Meaning |
+|---------------|-----------|---------|
+| `file_transfer` | bool | File transfer channel support |
+| `usb_redirect` | bool | USB/IP device redirection |
+| `webcam` | bool | Camera passthrough |
+| `seamless_windows` | bool | Seamless window mode |
+| `audio_capture` | bool | Microphone input |
+| `clipboard_files` | bool | File list clipboard support |
+| `clipboard_images` | bool | Image clipboard support |
+| `clipboard_richtext` | bool | Rich text clipboard support |
+| `tile_encoding` | bool | Tile/bitmap channel support |
+| `client_render_offload` | bool | Mode C client-side rendering |
+| `multi_monitor` | bool | Multi-monitor virtual screens |
+| `pen_input` | bool | Stylus/pen input events |
+| `gamepad_input` | bool | Gamepad input forwarding |
+| `plugin_ipc` | bool | Plugin-to-client communication |
+
+New capability keys MAY be introduced in any MINOR version. Unknown capability keys MUST be ignored by the receiver (respond with `false` or omit from the confirm message).
+
+### 12.2 Protocol Version Extensions
+
+Each protocol version MAY introduce:
+- **New message types**: assigned type codes from reserved ranges (see §12.3).
+- **New fields in existing CBOR schemas**: receivers MUST ignore unknown CBOR fields (forward compatibility).
+- **New channels**: channel IDs from the reserved range.
+
+### 12.3 Reserved Ranges
+
+| Range | Allocation |
+|-------|-----------|
+| `0x0000–0x00FF` | Control channel messages |
+| `0x0100–0x01FF` | Emergency channel messages |
+| `0x1000–0x10FF` | Video channel messages |
+| `0x1100–0x11FF` | Cursor channel messages |
+| `0x1200–0x12FF` | Tile channel messages |
+| `0x2000–0x21FF` | Audio channel messages |
+| `0x3000–0x30FF` | Clipboard channel messages |
+| `0x4000–0x40FF` | File transfer channel messages (reserved) |
+| `0x5000–0x50FF` | Input channel messages |
+| `0x6000–0x60FF` | USB channel messages (reserved) |
+| `0x7000–0x70FF` | Webcam channel messages (reserved) |
+| `0x8000–0x80FF` | Plugin IPC channel messages (reserved) |
+| `0xE000–0xEFFF` | Vendor extensions (private use) |
+| `0xF000–0xFFFF` | Experimental / testing (MUST NOT be used in production) |
+
+### 12.4 Unknown Message Handling
+
+When a receiver encounters a message type it does not recognize:
+
+1. **Known channel, unknown type**: The message MUST be silently discarded. An optional `debug`-level log entry MAY be emitted. The receiver MUST NOT close the channel or connection.
+2. **Unknown channel ID**: The `ChannelOpen` for the unknown channel MUST be rejected with `ChannelOpenReject` (reason: `unsupported_channel`). If data arrives on a channel that was never opened, it MUST be silently discarded.
+3. **Unknown CBOR fields**: Receivers MUST ignore unknown fields in CBOR structures. This is the primary mechanism for forward compatibility.
+4. **Malformed messages**: Messages that fail CBOR decoding or violate schema constraints MUST be discarded. If malformed messages exceed a threshold (10 per minute per channel), the channel MAY be closed with an error.
+
+### 12.5 Vendor Extensions
+
+The `0xE000–0xEFFF` message type range is reserved for vendor-specific extensions. Vendors MUST use the `Capabilities` mechanism to negotiate vendor extension support before sending vendor messages. The capability key format for vendor extensions is `vendor.<vendor_id>.<extension_name>`.
+
+```cddl
+; Example vendor extension capability
+"vendor.acme.screenshare_annotations": {
+    version: uint,          ; extension version
+    max_annotations: uint,  ; max simultaneous annotations
+}
+```
+
 ---
 
 ## 13) Operational SLOs & Performance Targets
@@ -1033,6 +1338,21 @@ The following components are fuzzing targets for security and robustness:
 | Tile mode switch | TileModeSwitch video↔tile | Client transitions regions without artifacts |
 | Tile resize | Resize → TileConfig → TileKeyFrame | Client reconfigures grid, no desync |
 | Tile key frame request | Client sends TileKeyFrameRequest | Server responds with full TileKeyFrame |
+| Clipboard lifecycle | ClipboardOffer → Request → Data → DataEnd | Complete transfer, state returns to Idle |
+| Clipboard cancel | ClipboardCancel during transfer | Transfer aborted, state returns to Idle |
+| Clipboard timeout | No ClipboardRequest within 30s of offer | Offer expires, state returns to Idle |
+| Clipboard policy block | Transfer violating direction policy | Transfer rejected, audit event emitted |
+| Input sync | InputSyncRequest/Response on channel open | Client receives correct modifier state |
+| Input coalescing | Rapid mouse moves under backpressure | Server coalesces to latest position, no key drops |
+| Cursor shape cache | Repeated cursor shape changes | Client uses cached shapes, new shapes transferred |
+| Backpressure video | 3 unacked frames in-flight | Server pauses encoding, resumes on ack |
+| Backpressure tile | 2 unacked batches in-flight | Server waits for ack |
+| Backpressure global | Send queue exceeds 90% | Video paused, cursor/audio/control continue |
+| Capability negotiation | Client advertises, server confirms/rejects | Only confirmed capabilities activate channels |
+| Unknown message type | Send unrecognized message type on known channel | Message silently discarded, channel stays open |
+| Unknown CBOR field | Add extra field to known message | Receiver ignores field, processes message |
+| Unknown channel | ChannelOpen for unrecognized channel ID | ChannelOpenReject with unsupported_channel |
+| Vendor extension | Negotiate vendor cap, send vendor messages | Messages processed only after capability confirmed |
 
 ### 15.2 Conformance Test Runner
 
