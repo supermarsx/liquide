@@ -1015,6 +1015,249 @@ ratios_rows = [0.5, 0.5]
   username_field = "CN"                # CN, SAN:email, SAN:upn
   ```
 
+### Login Screen
+
+The login screen is the first visual experience a user has with LiquidDE. It is a full-screen, Liquid Glass themed interface that presents authentication options with elegance and clarity.
+
+#### Visual Composition
+
+The login screen is composed of distinct visual layers:
+
+```
+┌─────────────────────────────────────────────────────┐
+│                                                     │
+│   Wallpaper                                         │
+│   ┌───────────────────────────────────────────────┐ │
+│   │  Frosted Glass Layer (full-screen blur)       │ │
+│   │                                               │ │
+│   │           ┌──────────────┐                    │ │
+│   │           │   Clock &    │                    │ │
+│   │           │    Date      │                    │ │
+│   │           └──────────────┘                    │ │
+│   │                                               │ │
+│   │           ┌──────────────┐                    │ │
+│   │           │    Avatar    │                    │ │
+│   │           │  (circular)  │                    │ │
+│   │           └──────────────┘                    │ │
+│   │           Username                            │ │
+│   │           Greeting                            │ │
+│   │                                               │ │
+│   │           ┌──────────────────────┐            │ │
+│   │           │  Password Input      │            │ │
+│   │           └──────────────────────┘            │ │
+│   │           [Auth method icons]                 │ │
+│   │                                               │ │
+│   │           ┌─────────────┐                     │ │
+│   │           │  Sign In    │                     │ │
+│   │           └─────────────┘                     │ │
+│   │                                               │ │
+│   │           [Session resume indicator]          │ │
+│   │                                               │ │
+│   │  ┌──────┐                      ┌──────────┐  │ │
+│   │  │Server│                      │ Power /  │  │ │
+│   │  │ Info │                      │ Network  │  │ │
+│   │  └──────┘                      └──────────┘  │ │
+│   └───────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────┘
+```
+
+#### Background Layer
+
+- **Wallpaper**: the server's configured login wallpaper (separate from per-user desktop wallpaper).
+- **Frosted glass overlay**: a full-screen layer of Liquid Glass blur applied over the wallpaper, creating a soft, diffused backdrop.
+- **Blur intensity**: stronger than standard panel blur — `blur(40px)` default — to ensure the login content is the sole focus.
+- **Ambient light**: a subtle radial gradient centered behind the avatar, giving a gentle glow that draws the eye inward.
+- **Particle effect** (optional, disabled by default): slow-moving translucent circles that drift across the background, adding depth without distraction. Configurable, purely aesthetic.
+
+#### Clock & Date
+
+- Positioned at the **upper-center** of the screen, above the avatar.
+- **Time**: large, light-weight display font. Default: 72px, `font-weight: 200` (thin). Renders the current server time.
+- **Date**: below the clock, smaller secondary text. Format: "Saturday, February 8" (localized). `font-size: 16px`, `font-weight: 400`.
+- Both respect the user's locale and 12h/24h preference.
+- Subtle fade-in animation on screen activation.
+
+#### User Avatar
+
+- **Circular profile image** centered on-screen, framed by a glass ring.
+- **Size**: 120×120px default, configurable up to 160px.
+- **Glass ring**: a 3px translucent border with inner glow (`box-shadow: inset 0 0 12px rgba(255,255,255,0.15)`) that gives the avatar a "set into glass" appearance.
+- **Fallback**: if no avatar is set, a frosted glass circle with the user's initials rendered in the accent color.
+- **Avatar appears after username entry**: the avatar is initially hidden. Once the user enters a username and tabs/submits to the credential field, the server returns the avatar (if available) for that specific user. The avatar fades in with the entrance animation. To **prevent user enumeration**, the server always responds with a consistent delay whether or not the username exists — and returns either the real avatar or a generic initials fallback (indistinguishable from a user who simply has no avatar set).
+- **Avatar entrance animation**: on reveal, the avatar fades in and gently scales from 0.9→1.0 (200ms, ease-out).
+
+#### Username Input
+
+- **Username field**: a glass-styled input field, horizontally centered, positioned above the credential input.
+  - Width: 320px default (responsive, scales down on narrow viewports).
+  - Height: 48px for comfortable touch interaction.
+  - Same styling as the credential input: `var(--liquid-surface)` background, `backdrop-filter: blur(20px)`, pill-shaped border.
+  - Placeholder text: "Username" with `var(--liquid-text-tertiary)` color.
+  - Submit on Enter key moves focus to the credential input.
+- **Pre-filled username flow**: when the client has a username from the connection profile, the username field is pre-filled and the login screen starts with focus on the credential input (password/PIN). The user can still edit the username field if needed.
+- **Skip-to-credentials**: when the client connection profile provides both a username and `auto_fill = true`, the login screen can skip the username step entirely and show only the credential input — the username is displayed as read-only text above the avatar instead of an editable field.
+- **No user list from server**: the server **never sends a list of available usernames** to the client. This prevents user enumeration attacks. The client always presents a blank username field (or pre-fills from its own saved profile).
+- **Username submission**: when the user enters a username and presses Enter or Tab, the client sends the username to the server. The server responds with:
+  - Available authentication methods for the login attempt (not per-user — the response is generic to avoid enumeration).
+  - Avatar image (or a consistent generic fallback — see User Avatar above).
+  - Whether a session is available for resume (or a generic "no session" response).
+  - The server response timing and format are **identical** whether the username exists or not.
+
+#### Greeting
+
+- **Greeting**: a time-of-day greeting below the username. `font-size: 14px`, `color: var(--liquid-text-secondary)`.
+  - 05:00–11:59 → "Good morning"
+  - 12:00–16:59 → "Good afternoon"
+  - 17:00–20:59 → "Good evening"
+  - 21:00–04:59 → "Good night"
+- Greeting is localized and can be disabled or replaced with a custom server message.
+- The greeting is displayed from the start (it is not user-specific) — it uses the server's current time.
+
+#### Credential Input Area
+
+- **Password field**: a single glass-styled input field, horizontally centered.
+  - Width: 320px default (responsive, scales down on narrow viewports).
+  - Height: 48px for comfortable touch interaction.
+  - Background: `var(--liquid-surface)` with `backdrop-filter: blur(20px)`.
+  - Border: `1px solid var(--liquid-border)`, radius: `var(--liquid-radius-full)` (pill shape).
+  - Placeholder text: "Password" with `var(--liquid-text-tertiary)` color.
+  - **Focus state**: border transitions to accent color, subtle outer glow `box-shadow: 0 0 0 3px rgba(var(--liquid-accent-rgb), 0.25)`.
+  - Eye icon (show/hide password toggle) inside the field at the right edge.
+  - Submit on Enter key.
+- **PIN mode**: when server requires PIN authentication, the input switches to a row of 4-8 individual digit boxes with glass styling. Digits auto-advance on input.
+- **Smart card / security key prompt**: when these methods are active, the password field is replaced by an animated icon (pulsing card or key icon) with the text "Insert your smart card" or "Touch your security key". The icon pulses with a soft glow animation.
+- **Biometric prompt**: when platform biometric is available, a fingerprint or face icon is shown below the password field as an alternative. Tapping it initiates the local biometric flow.
+
+#### Authentication Method Indicators
+
+- Below the credential input, a row of small icons indicates available authentication methods:
+  - Password (key icon)
+  - TOTP (phone icon)
+  - FIDO2 (security key icon)
+  - Smart card (card icon)
+  - Biometric (fingerprint icon)
+  - Certificate (shield icon)
+- Only methods enabled by the server are shown.
+- The currently active method is highlighted with the accent color; others are `var(--liquid-text-tertiary)`.
+- Clicking an icon switches the credential input to that method.
+
+#### Sign In Button
+
+- **Primary action button**: glass-styled with accent color fill.
+- Dimensions: pill-shaped, matching the input width (320px × 48px).
+- Appears below the credential input.
+- **Hover**: slightly brighter, subtle uplift shadow.
+- **Active/pressed**: darkens slightly, shadow decreases.
+- **Loading state**: button text replaced with a spinning glass ring (not a generic spinner — a translucent ring with a highlight arc that rotates).
+- **Submit shortcut**: Enter key submits from the input field directly (button click is secondary).
+
+#### Session Resume Indicator
+
+- If the user has an existing session available for resume, a subtle indicator appears below the sign-in button:
+  - Text: "Session available — sign in to resume" in `var(--liquid-text-secondary)`.
+  - Optional: a small thumbnail of the last session state (blurred, low-res) shown inside a glass chip.
+- If no previous session exists, this area is empty.
+
+#### Error & Feedback States
+
+- **Authentication failure**: the credential input shakes horizontally (3 quick oscillations, 300ms total) and the border briefly flashes `var(--liquid-danger)`. Error message appears below the input in `var(--liquid-danger)` text: "Incorrect username or password" (always generic — never reveals whether the username exists).
+- **Account locked**: credential input is disabled. Message: "Account locked. Contact your administrator." with a lock icon.
+- **MFA step**: after primary auth succeeds, the login card smoothly transforms — the password field cross-fades to the MFA input (TOTP code field, security key prompt, etc.) with a 200ms transition. The avatar and greeting remain, providing visual continuity.
+- **Rate limiting**: after repeated failures, a countdown timer appears: "Try again in 45 seconds". The input field is disabled during the cooldown.
+- **Network error**: status text below the input: "Cannot reach server — retrying..." with a subtle pulsing animation.
+
+#### User Enumeration Prevention
+
+- The server **never exposes a list of valid usernames** to unauthenticated clients. This is a deliberate security measure to prevent user enumeration attacks.
+- All server responses during the login phase (avatar lookup, auth method query, session resume check) are **constant-time and indistinguishable** regardless of whether the submitted username exists.
+- If a username does not exist, the server responds with:
+  - A generic initials-based avatar (using the first letter of the submitted username).
+  - The default set of authentication methods (same as a real user without custom overrides).
+  - No session available for resume.
+  - The same response delay as for a valid username.
+- Authentication failure messages are generic: "Incorrect username or password" — never "User not found" or "Incorrect password" separately.
+
+#### Server Information Strip
+
+- Positioned at the **bottom-left** corner of the login screen.
+- Displays: server hostname, server version, connection protocol indicator (QUIC/TLS icon).
+- Styled in `var(--liquid-text-tertiary)`, `font-size: 12px` — present but unobtrusive.
+
+#### Utility Controls (Bottom-Right)
+
+- **Power menu** (if permitted by server policy): power icon that opens a small glass popover with options: restart session, shut down (if allowed).
+- **Network indicator**: shows current connection quality (latency, protocol).
+- **Accessibility toggle**: opens a quick-access panel with: high contrast toggle, large text toggle, on-screen keyboard toggle.
+- **Language selector**: if multiple locales are configured, a language code chip (e.g., "EN") that opens a locale picker.
+- All controls are glass-styled small icons that expand to popovers on click.
+
+#### Animations
+
+- **Screen activation**: wallpaper fades in (300ms), frosted overlay follows (200ms), then content elements cascade in top-to-bottom with 50ms stagger: clock → greeting → username input → credential input → button.
+- **Username submitted**: after the user enters a username, the avatar fades in above the username field (200ms, ease-out with scale 0.9→1.0), and the credential input receives focus.
+- **Auth success**: all elements gently fade out (200ms) while the desktop session fades in behind them. The transition feels like the login screen dissolves into the desktop.
+- **Auth failure shake**: `transform: translateX` oscillation: 0 → -8px → 8px → -4px → 4px → 0 over 300ms.
+- **All animations respect `prefers-reduced-motion`**: when enabled, transitions become instant cuts.
+
+#### Accessibility
+
+- **Full keyboard navigation**: Tab cycles through interactive elements (username input → credential input → sign-in button → utility controls). Focus ring clearly visible on all elements.
+- **Screen reader support**: all elements have ARIA labels. Avatar announces "User: [name]". Auth method icons announce "Switch to [method] authentication".
+- **High contrast mode**: glass effects are replaced with solid, high-contrast backgrounds. Input borders become thicker (2px). Colors follow WCAG AAA contrast ratios.
+- **Large text mode**: all login screen text scales up proportionally. Input field height increases to 56px. Avatar size stays fixed.
+- **On-screen keyboard**: can be activated from the accessibility controls for touch-only devices.
+
+#### Login Screen Configuration
+
+```toml
+[login_screen]
+# ─── Background ──────────────────────────────────────
+wallpaper = "default"                       # default, custom, solid
+custom_wallpaper = ""                       # path to custom login wallpaper
+solid_color = "#1C1C2E"                     # used when wallpaper = "solid"
+blur_intensity = 40                         # px, frosted glass blur over wallpaper
+ambient_glow = true                         # radial glow behind avatar
+particle_effect = false                     # floating translucent circles
+
+# ─── Clock ───────────────────────────────────────────
+show_clock = true
+clock_format = "24h"                        # 24h, 12h
+show_date = true
+date_format = "long"                        # long ("Saturday, February 8"), short ("Feb 8")
+
+# ─── User display ───────────────────────────────────
+show_avatar = true
+avatar_size = 120                           # px (64–160)
+show_greeting = true
+custom_greeting = ""                        # override time-of-day greeting
+show_username_input = true                  # show username input field
+username_input_placeholder = "Username"     # placeholder text for username field
+
+# ─── Credential input ────────────────────────────────
+default_auth_method = "password"            # password, pin, smartcard, fido2, certificate
+show_auth_method_icons = true               # show alternative method icons
+show_password_toggle = true                 # eye icon to reveal password
+input_shape = "pill"                        # pill (rounded), rounded-rect
+pin_length = 6                              # digits for PIN mode (4–8)
+
+# ─── Session resume ──────────────────────────────────
+show_resume_indicator = true
+show_resume_thumbnail = false               # show blurred last-session preview
+
+# ─── Server info ─────────────────────────────────────
+show_server_info = true
+show_connection_indicator = true
+
+# ─── Utilities ───────────────────────────────────────
+show_power_menu = false                     # requires explicit enable
+show_accessibility_toggle = true
+show_language_selector = "auto"             # auto (show if >1 locale), always, never
+
+# ─── Branding ────────────────────────────────────────
+custom_logo = ""                            # path to org logo (displayed above clock)
+custom_banner_text = ""                     # legal/compliance banner at bottom
+```
+
 ### Authorization & Policy Engine
 
 #### Server Policies

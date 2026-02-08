@@ -130,9 +130,61 @@ Media Worker
 ### Authentication Flow
 1. Client connects to server (transport negotiation).
 2. Server presents auth challenge (password, MFA, certificate).
-3. Client displays auth UI (glass-themed dialog).
-4. On success: session starts or resumes.
+3. Client displays the **Liquid Glass login screen** (see below).
+4. On success: login screen dissolves, session starts or resumes.
 5. On failure: error message with retry option.
+
+### Login Screen (Client-Side Rendering)
+
+The client renders the server's login screen locally using the Liquid Glass design language. The server sends login screen metadata (wallpaper hash, auth methods, greeting text, branding) during the connection handshake, and the client composites the full login experience. The server **never sends a list of available usernames** — the user must type their username or the client pre-fills it from a saved connection profile.
+
+#### Rendering Approach
+- The login screen is **rendered entirely client-side** — no video frames are streamed for the login screen.
+- Server sends a `login_screen_config` message containing:
+  - Login wallpaper (hash + transfer if not cached; client caches wallpapers persistently).
+  - Available authentication methods (server-wide defaults, not per-user — to prevent user enumeration).
+  - Server-configured greeting, branding logo, banner text.
+  - Login screen configuration (clock format, feature toggles, etc.).
+- **No user list is sent** — the server never exposes valid usernames to unauthenticated clients.
+- Client renders the login screen using its local GPU and the `.liquid-login` CSS component hierarchy.
+- This means the login screen renders at **native refresh rate with zero latency** — input, animations, and transitions are all local.
+- **Username pre-fill**: if the client has a saved username from the connection profile, it pre-fills the username field. If the profile has `auto_fill = true`, the login screen can skip directly to the credential input step.
+
+#### Username Submission Flow
+1. User types a username (or client pre-fills from profile).
+2. Client sends the username to the server over the encrypted transport channel.
+3. Server responds with a `username_accepted` message containing:
+   - Avatar image for the user (or a generic initials fallback — response is identical whether or not the user exists).
+   - Authentication methods available (response is consistent regardless of username validity).
+   - Session resume availability (generic "no session" if user doesn't exist).
+4. Response timing is constant to prevent timing-based enumeration.
+5. Client displays the avatar and transitions to the credential input.
+
+#### Login Screen Assets
+- **Wallpaper**: transferred once and cached in the client's wallpaper cache (`[wallpaper_cache]`). Subsequent connections to the same server skip the transfer if the hash matches.
+- **User avatar**: transferred per-user after username submission (≤64KB). Cached by the client keyed on server+username. Fallback: client renders initials locally. The server always returns an avatar response (real or generated) regardless of whether the username exists.
+- **Branding logo**: transferred once and cached.
+- **Fonts**: the login screen uses the client's local font stack. No font transfer needed for the login screen (unlike session font offload).
+
+#### Client-to-Server Communication During Login
+- Client sends authentication credentials over the encrypted transport channel.
+- All credential input is local — keystrokes never leave the client until the user submits.
+- MFA flow: server sends a `mfa_challenge` message; client transitions the login screen to the MFA input view locally.
+- On successful authentication, server sends `session_ready` and begins streaming the desktop session. The client plays the dissolve animation and presents the first session frame.
+
+#### Login Screen Configuration (Client-Side Overrides)
+The client can override certain login screen visual settings locally:
+
+```toml
+[login_screen]
+# Client-side overrides (server config takes priority for security-related settings)
+clock_format = "auto"                       # auto (use server setting), 24h, 12h
+theme = "auto"                              # auto (use server theme), liquid-glass, liquid-glass-dark
+animations_enabled = true                   # disable login animations for performance
+show_session_thumbnail = true               # show blurred last-session preview
+cache_wallpaper = true                      # cache login wallpaper locally
+cache_avatars = true                        # cache user avatars locally
+```
 
 ### Session Resume
 - If a previous session exists, client offers to resume.

@@ -1023,6 +1023,613 @@ When enabled (`prefers-reduced-motion` or DE setting):
 }
 ```
 
+### 7.13 Login Screen
+
+```css
+/* ─── Login screen root ─────────────────────────────── */
+.liquid-login {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  overflow: hidden;
+}
+
+/* Background wallpaper layer */
+.liquid-login .login-wallpaper {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  z-index: 0;
+}
+
+/* Frosted glass overlay */
+.liquid-login .login-frost {
+  position: absolute;
+  inset: 0;
+  backdrop-filter: blur(var(--liquid-login-blur, 40px));
+  background: rgba(0, 0, 0, 0.25);
+  z-index: 1;
+}
+
+/* Ambient glow behind avatar */
+.liquid-login .login-glow {
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  border-radius: var(--liquid-radius-full);
+  background: radial-gradient(
+    circle,
+    rgba(var(--liquid-accent-rgb), 0.08) 0%,
+    transparent 70%
+  );
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -60%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Optional floating particle layer */
+.liquid-login .login-particles {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.liquid-login .login-particle {
+  position: absolute;
+  border-radius: var(--liquid-radius-full);
+  background: rgba(255, 255, 255, 0.04);
+  animation: login-particle-drift 20s linear infinite;
+}
+
+@keyframes login-particle-drift {
+  from {
+    transform: translateY(110vh) translateX(0);
+    opacity: 0;
+  }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  to {
+    transform: translateY(-10vh) translateX(40px);
+    opacity: 0;
+  }
+}
+
+/* ─── Content card (vertically centered) ───────────── */
+.liquid-login .login-content {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--liquid-space-4);
+  max-width: 400px;
+  width: 100%;
+  padding: var(--liquid-space-6);
+}
+
+/* ─── Clock & date ──────────────────────────────────── */
+.liquid-login .login-clock {
+  font-size: 72px;
+  font-weight: 200;
+  color: var(--liquid-text);
+  line-height: 1;
+  letter-spacing: -2px;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.3);
+  text-align: center;
+}
+
+.liquid-login .login-date {
+  font-size: var(--liquid-font-size-md);
+  font-weight: var(--liquid-font-weight-normal);
+  color: var(--liquid-text-secondary);
+  text-align: center;
+  margin-top: calc(-1 * var(--liquid-space-2));
+}
+
+/* ─── User avatar ───────────────────────────────────── */
+.liquid-login .login-avatar {
+  width: var(--liquid-login-avatar-size, 120px);
+  height: var(--liquid-login-avatar-size, 120px);
+  border-radius: var(--liquid-radius-full);
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  box-shadow:
+    inset 0 0 12px rgba(255, 255, 255, 0.15),
+    0 4px 24px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  background: var(--liquid-surface);
+  backdrop-filter: blur(var(--liquid-glass-blur-light));
+  transition:
+    transform var(--liquid-duration-normal) var(--liquid-ease-spring),
+    box-shadow var(--liquid-duration-normal) var(--liquid-ease-default);
+}
+
+.liquid-login .login-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Initials fallback when no avatar image */
+.liquid-login .login-avatar .avatar-initials {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  font-weight: var(--liquid-font-weight-medium);
+  color: var(--liquid-accent);
+}
+
+/* Avatar entrance animation */
+@keyframes login-avatar-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.liquid-login .login-avatar {
+  animation: login-avatar-enter var(--liquid-duration-normal) var(--liquid-ease-out) both;
+}
+
+/* ─── Username input field ─────────────────────── */
+.liquid-login .login-username-input {
+  width: 320px;
+  height: 48px;
+  padding: 0 var(--liquid-space-4);
+  background: var(--liquid-surface);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--liquid-border);
+  border-radius: var(--liquid-radius-full);
+  color: var(--liquid-text);
+  font-size: var(--liquid-font-size-md);
+  outline: none;
+  text-align: center;
+  transition:
+    border-color var(--liquid-duration-fast) var(--liquid-ease-default),
+    box-shadow var(--liquid-duration-fast) var(--liquid-ease-default);
+}
+
+.liquid-login .login-username-input::placeholder {
+  color: var(--liquid-text-tertiary);
+}
+
+.liquid-login .login-username-input:focus {
+  border-color: var(--liquid-accent);
+  box-shadow: 0 0 0 3px rgba(var(--liquid-accent-rgb), 0.25);
+}
+
+/* Read-only username display (when pre-filled from profile with skip-to-credentials) */
+.liquid-login .login-username-display {
+  font-size: 20px;
+  font-weight: var(--liquid-font-weight-medium);
+  color: var(--liquid-text);
+  text-align: center;
+}
+
+/* ─── Username & greeting ──────────────────────────── */
+.liquid-login .login-username {
+  font-size: 20px;
+  font-weight: var(--liquid-font-weight-medium);
+  color: var(--liquid-text);
+  text-align: center;
+}
+
+.liquid-login .login-greeting {
+  font-size: var(--liquid-font-size-sm);
+  color: var(--liquid-text-secondary);
+  text-align: center;
+  margin-top: calc(-1 * var(--liquid-space-2));
+}
+
+/* ─── Credential input ─────────────────────────────── */
+.liquid-login .login-input-group {
+  width: 320px;
+  position: relative;
+}
+
+.liquid-login .login-input {
+  width: 100%;
+  height: 48px;
+  padding: 0 var(--liquid-space-4);
+  padding-right: 44px;                      /* space for toggle icon */
+  background: var(--liquid-surface);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--liquid-border);
+  border-radius: var(--liquid-radius-full);
+  color: var(--liquid-text);
+  font-size: var(--liquid-font-size-md);
+  outline: none;
+  transition:
+    border-color var(--liquid-duration-fast) var(--liquid-ease-default),
+    box-shadow var(--liquid-duration-fast) var(--liquid-ease-default);
+}
+
+.liquid-login .login-input::placeholder {
+  color: var(--liquid-text-tertiary);
+}
+
+.liquid-login .login-input:focus {
+  border-color: var(--liquid-accent);
+  box-shadow: 0 0 0 3px rgba(var(--liquid-accent-rgb), 0.25);
+}
+
+/* Password visibility toggle */
+.liquid-login .login-input-toggle {
+  position: absolute;
+  right: var(--liquid-space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--liquid-radius-full);
+  border: none;
+  background: transparent;
+  color: var(--liquid-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color var(--liquid-duration-fast) var(--liquid-ease-default);
+}
+
+.liquid-login .login-input-toggle:hover {
+  color: var(--liquid-text-secondary);
+}
+
+/* Error state */
+.liquid-login .login-input.error {
+  border-color: var(--liquid-danger);
+  animation: login-shake 300ms var(--liquid-ease-default);
+}
+
+@keyframes login-shake {
+  0%   { transform: translateX(0); }
+  20%  { transform: translateX(-8px); }
+  40%  { transform: translateX(8px); }
+  60%  { transform: translateX(-4px); }
+  80%  { transform: translateX(4px); }
+  100% { transform: translateX(0); }
+}
+
+.liquid-login .login-error-message {
+  font-size: var(--liquid-font-size-sm);
+  color: var(--liquid-danger);
+  text-align: center;
+  margin-top: var(--liquid-space-1);
+}
+
+/* ─── PIN input mode ───────────────────────────────── */
+.liquid-login .login-pin-group {
+  display: flex;
+  gap: var(--liquid-space-2);
+  justify-content: center;
+}
+
+.liquid-login .login-pin-digit {
+  width: 44px;
+  height: 52px;
+  text-align: center;
+  font-size: 24px;
+  font-weight: var(--liquid-font-weight-medium);
+  background: var(--liquid-surface);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--liquid-border);
+  border-radius: var(--liquid-radius-md);
+  color: var(--liquid-text);
+  outline: none;
+  transition:
+    border-color var(--liquid-duration-fast) var(--liquid-ease-default),
+    box-shadow var(--liquid-duration-fast) var(--liquid-ease-default);
+}
+
+.liquid-login .login-pin-digit:focus {
+  border-color: var(--liquid-accent);
+  box-shadow: 0 0 0 3px rgba(var(--liquid-accent-rgb), 0.25);
+}
+
+.liquid-login .login-pin-digit.filled {
+  background: var(--liquid-surface-active);
+}
+
+/* ─── Smart card / security key prompt ─────────────── */
+.liquid-login .login-device-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--liquid-space-3);
+}
+
+.liquid-login .login-device-prompt .device-icon {
+  width: 64px;
+  height: 64px;
+  color: var(--liquid-accent);
+  animation: login-device-pulse 2s ease-in-out infinite;
+}
+
+@keyframes login-device-pulse {
+  0%, 100% {
+    opacity: 0.7;
+    filter: drop-shadow(0 0 8px rgba(var(--liquid-accent-rgb), 0.2));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 16px rgba(var(--liquid-accent-rgb), 0.4));
+  }
+}
+
+.liquid-login .login-device-prompt .device-text {
+  font-size: var(--liquid-font-size-sm);
+  color: var(--liquid-text-secondary);
+}
+
+/* ─── Auth method indicators ───────────────────────── */
+.liquid-login .login-auth-methods {
+  display: flex;
+  gap: var(--liquid-space-3);
+  justify-content: center;
+}
+
+.liquid-login .login-auth-methods .auth-method-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--liquid-radius-full);
+  border: none;
+  background: transparent;
+  color: var(--liquid-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    color var(--liquid-duration-fast) var(--liquid-ease-default),
+    background var(--liquid-duration-fast) var(--liquid-ease-default);
+}
+
+.liquid-login .login-auth-methods .auth-method-icon:hover {
+  color: var(--liquid-text-secondary);
+  background: var(--liquid-surface-hover);
+}
+
+.liquid-login .login-auth-methods .auth-method-icon.active {
+  color: var(--liquid-accent);
+}
+
+/* ─── Sign-in button ───────────────────────────────── */
+.liquid-login .login-submit {
+  width: 320px;
+  height: 48px;
+  border: none;
+  border-radius: var(--liquid-radius-full);
+  background: var(--liquid-accent);
+  color: var(--liquid-text-on-accent);
+  font-size: var(--liquid-font-size-md);
+  font-weight: var(--liquid-font-weight-medium);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition:
+    background var(--liquid-duration-fast) var(--liquid-ease-default),
+    box-shadow var(--liquid-duration-fast) var(--liquid-ease-default),
+    transform var(--liquid-duration-fast) var(--liquid-ease-default);
+}
+
+.liquid-login .login-submit:hover {
+  background: var(--liquid-accent-hover);
+  box-shadow: 0 4px 16px rgba(var(--liquid-accent-rgb), 0.3);
+  transform: translateY(-1px);
+}
+
+.liquid-login .login-submit:active {
+  background: var(--liquid-accent-active);
+  box-shadow: 0 2px 8px rgba(var(--liquid-accent-rgb), 0.2);
+  transform: translateY(0);
+}
+
+/* Loading spinner (glass ring) */
+.liquid-login .login-submit.loading .btn-text {
+  opacity: 0;
+}
+
+.liquid-login .login-submit.loading::after {
+  content: "";
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  top: 50%;
+  left: 50%;
+  margin: -12px 0 0 -12px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--liquid-text-on-accent);
+  border-radius: var(--liquid-radius-full);
+  animation: login-spinner 600ms linear infinite;
+}
+
+@keyframes login-spinner {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Session resume indicator ─────────────────────── */
+.liquid-login .login-resume {
+  display: flex;
+  align-items: center;
+  gap: var(--liquid-space-2);
+  padding: var(--liquid-space-2) var(--liquid-space-3);
+  background: var(--liquid-surface);
+  backdrop-filter: blur(var(--liquid-glass-blur-light));
+  border: 1px solid var(--liquid-border-subtle);
+  border-radius: var(--liquid-radius-md);
+}
+
+.liquid-login .login-resume .resume-text {
+  font-size: var(--liquid-font-size-sm);
+  color: var(--liquid-text-secondary);
+}
+
+.liquid-login .login-resume .resume-thumbnail {
+  width: 48px;
+  height: 32px;
+  border-radius: var(--liquid-radius-sm);
+  overflow: hidden;
+  filter: blur(2px);
+  opacity: 0.6;
+}
+
+/* ─── Rate limit countdown ─────────────────────────── */
+.liquid-login .login-cooldown {
+  font-size: var(--liquid-font-size-sm);
+  color: var(--liquid-text-tertiary);
+  text-align: center;
+}
+
+/* ─── Server info strip (bottom-left) ──────────────── */
+.liquid-login .login-server-info {
+  position: absolute;
+  bottom: var(--liquid-space-4);
+  left: var(--liquid-space-4);
+  z-index: 10;
+  font-size: var(--liquid-font-size-xs);
+  color: var(--liquid-text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: var(--liquid-space-2);
+}
+
+/* ─── Utility controls (bottom-right) ──────────────── */
+.liquid-login .login-utilities {
+  position: absolute;
+  bottom: var(--liquid-space-4);
+  right: var(--liquid-space-4);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--liquid-space-2);
+}
+
+.liquid-login .login-utilities .util-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--liquid-radius-full);
+  border: none;
+  background: var(--liquid-surface);
+  backdrop-filter: blur(var(--liquid-glass-blur-light));
+  color: var(--liquid-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background var(--liquid-duration-fast) var(--liquid-ease-default),
+    color var(--liquid-duration-fast) var(--liquid-ease-default);
+}
+
+.liquid-login .login-utilities .util-btn:hover {
+  background: var(--liquid-surface-hover);
+  color: var(--liquid-text);
+}
+
+/* ─── Branding / custom logo ───────────────────────── */
+.liquid-login .login-logo {
+  max-height: 48px;
+  max-width: 200px;
+  object-fit: contain;
+  opacity: 0.8;
+}
+
+.liquid-login .login-banner {
+  position: absolute;
+  bottom: var(--liquid-space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  font-size: var(--liquid-font-size-xs);
+  color: var(--liquid-text-tertiary);
+  text-align: center;
+  max-width: 60%;
+}
+
+/* ─── Cascade entrance animation ───────────────────── */
+@keyframes login-cascade-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.liquid-login .login-content > * {
+  animation: login-cascade-in var(--liquid-duration-normal) var(--liquid-ease-out) both;
+}
+
+.liquid-login .login-content > *:nth-child(1) { animation-delay: 0ms; }
+.liquid-login .login-content > *:nth-child(2) { animation-delay: 50ms; }
+.liquid-login .login-content > *:nth-child(3) { animation-delay: 100ms; }
+.liquid-login .login-content > *:nth-child(4) { animation-delay: 150ms; }
+.liquid-login .login-content > *:nth-child(5) { animation-delay: 200ms; }
+.liquid-login .login-content > *:nth-child(6) { animation-delay: 250ms; }
+.liquid-login .login-content > *:nth-child(7) { animation-delay: 300ms; }
+
+/* ─── Auth success transition ──────────────────────── */
+.liquid-login.auth-success {
+  animation: login-dissolve 400ms var(--liquid-ease-in) forwards;
+}
+
+@keyframes login-dissolve {
+  to {
+    opacity: 0;
+    filter: blur(8px);
+    transform: scale(1.02);
+  }
+}
+
+/* ─── High contrast overrides ──────────────────────── */
+.liquid-high-contrast .liquid-login .login-frost {
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: none;
+}
+
+.liquid-high-contrast .liquid-login .login-avatar {
+  border: 3px solid var(--liquid-text);
+}
+
+.liquid-high-contrast .liquid-login .login-input {
+  border-width: 2px;
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.liquid-high-contrast .liquid-login .login-submit {
+  border: 2px solid var(--liquid-text-on-accent);
+}
+
+/* ─── Reduced motion ───────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .liquid-login .login-avatar,
+  .liquid-login .login-content > *,
+  .liquid-login.auth-success,
+  .liquid-login .login-particle,
+  .liquid-login .login-device-prompt .device-icon {
+    animation: none !important;
+  }
+}
+```
+
 ---
 
 ## 8) Iconography
@@ -1307,6 +1914,50 @@ Example — "Flat Minimal" theme (no glass):
 | `.liquid-tablet-mode .liquid-input` | Taller input fields for touch |
 | `.liquid-tablet-mode .liquid-notification` | Notifications accessible via swipe gesture |
 
+#### Login Screen
+| Selector | Element |
+|----------|---------|
+| `.liquid-login` | Login screen root (full-screen overlay) |
+| `.liquid-login .login-wallpaper` | Background wallpaper layer |
+| `.liquid-login .login-frost` | Frosted glass blur overlay |
+| `.liquid-login .login-glow` | Ambient radial glow behind avatar |
+| `.liquid-login .login-particles` | Optional floating particle container |
+| `.liquid-login .login-particle` | Individual floating particle |
+| `.liquid-login .login-content` | Centered content card |
+| `.liquid-login .login-clock` | Large time display |
+| `.liquid-login .login-date` | Date display below clock |
+| `.liquid-login .login-avatar` | Circular user avatar with glass ring |
+| `.liquid-login .login-avatar .avatar-initials` | Initials fallback inside avatar |
+| `.liquid-login .login-username-input` | Username text input field |
+| `.liquid-login .login-username-display` | Read-only username display (pre-filled from profile) |
+| `.liquid-login .login-username` | Username display |
+| `.liquid-login .login-greeting` | Time-of-day greeting |
+| `.liquid-login .login-input-group` | Credential input container |
+| `.liquid-login .login-input` | Password/text input field |
+| `.liquid-login .login-input.error` | Input in error state (shake animation) |
+| `.liquid-login .login-input-toggle` | Password show/hide eye icon |
+| `.liquid-login .login-error-message` | Error message text |
+| `.liquid-login .login-pin-group` | PIN digit input container |
+| `.liquid-login .login-pin-digit` | Individual PIN digit box |
+| `.liquid-login .login-pin-digit.filled` | PIN digit with entered value |
+| `.liquid-login .login-device-prompt` | Smart card / security key prompt |
+| `.liquid-login .login-device-prompt .device-icon` | Pulsing device icon |
+| `.liquid-login .login-device-prompt .device-text` | Device prompt instruction text |
+| `.liquid-login .login-auth-methods` | Auth method icon row |
+| `.liquid-login .login-auth-methods .auth-method-icon` | Individual auth method icon |
+| `.liquid-login .login-auth-methods .auth-method-icon.active` | Active/selected auth method |
+| `.liquid-login .login-submit` | Sign-in button |
+| `.liquid-login .login-submit.loading` | Sign-in button in loading state |
+| `.liquid-login .login-resume` | Session resume indicator chip |
+| `.liquid-login .login-resume .resume-thumbnail` | Blurred session thumbnail |
+| `.liquid-login .login-cooldown` | Rate limit countdown text |
+| `.liquid-login .login-server-info` | Server info strip (bottom-left) |
+| `.liquid-login .login-utilities` | Utility controls container (bottom-right) |
+| `.liquid-login .login-utilities .util-btn` | Utility control button (power, accessibility, language) |
+| `.liquid-login .login-logo` | Custom organization logo |
+| `.liquid-login .login-banner` | Legal/compliance banner text |
+| `.liquid-login.auth-success` | Login screen dissolving after auth success |
+
 ### 11.4 Custom Properties Reference (Complete)
 
 | Property | Default | Description |
@@ -1366,6 +2017,8 @@ Example — "Flat Minimal" theme (no glass):
 | `--liquid-tablet-min-target` | `56px` | Minimum touch target in tablet mode |
 | `--liquid-tablet-statusbar-height` | `40px` | Status bar height in tablet mode |
 | `--liquid-tablet-dock-icon-size` | `56px` | Dock icon size in tablet mode |
+| `--liquid-login-blur` | `40px` | Login screen frosted glass blur intensity |
+| `--liquid-login-avatar-size` | `120px` | Login screen avatar diameter |
 
 ---
 
