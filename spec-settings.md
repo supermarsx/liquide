@@ -800,6 +800,9 @@ confirm_uninstall = true           # Require confirmation before uninstall
 - Printers: add/remove/print via CUPS.
 - Users: password change, avatar change.
 - Time/date: timezone change, NTP toggle via timedated.
+- Apps: Flatpak app list populates correctly, permissions editor reads/writes overrides.
+- Apps: default application changes write to `~/.config/mimeapps.list` and take effect.
+- Apps: Flatpak remote add/remove works, policy disables "Add remote" when configured.
 
 ### Edge Cases
 - Backend service unavailable (module shows graceful error).
