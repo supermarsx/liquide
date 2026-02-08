@@ -2659,6 +2659,142 @@ Policies enforced on the client side:
   - Allowed features.
   - Performance profile.
 
+#### Policy Hierarchy & Resolution
+
+Policies are evaluated from four sources, in ascending precedence order:
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│ 4. Session Override  (highest — runtime overrides via liquidctl)  │
+├───────────────────────────────────────────────────────────────────┤
+│ 3. User Policy       (/etc/liquide/policies/users/<user>.toml)   │
+├───────────────────────────────────────────────────────────────────┤
+│ 2. Group Policy      (/etc/liquide/policies/groups/<group>.toml) │
+├───────────────────────────────────────────────────────────────────┤
+│ 1. Server Policy     (/etc/liquide/policies/server.toml)         │
+│    (lowest — applies to all sessions unless overridden)          │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+**Resolution rules:**
+
+1. **Last-writer-wins by precedence**: for each policy key, the highest-precedence source that defines the key wins. If a user policy sets `clipboard.enabled = false`, it overrides the server policy regardless of the server's value.
+
+2. **Group membership**: a user may belong to multiple groups. When multiple groups define the same key, the **most restrictive value wins** (deny-overrides-allow). Groups are evaluated in alphabetical order only for tie-breaking of non-boolean keys.
+
+3. **Deny always wins**: for boolean permission keys (`*.enabled`, `*.allowed`), `false` (deny) at any level overrides `true` (allow) at lower levels. A server policy of `clipboard.enabled = true` can be overridden to `false` by a group or user, but a server `false` **cannot** be overridden to `true` by a user (deny is sticky downward). This is the **deny-overrides-allow** principle.
+
+4. **Numeric keys — most restrictive**: for numeric limits (`max_sessions`, `max_fps`, `max_resolution_width`, `clipboard.max_size`), the **lowest value** among all sources that define the key wins. A server allowing `max_fps = 60` and a group setting `max_fps = 30` results in an effective value of 30.
+
+5. **List keys — intersection**: for list keys (`allowed_transports`, `allowed_codecs`, `allowed_mime_types`), the effective value is the **intersection** of all sources. A server allowing `["quic", "tcp", "udp"]` and a group allowing `["quic", "tcp"]` results in `["quic", "tcp"]`.
+
+6. **String keys — highest precedence**: for non-list, non-boolean, non-numeric keys (e.g., `rendering.profile`, `transport.default`), the highest-precedence source wins.
+
+7. **Session overrides**: admin can set per-session overrides via `liquidctl session policy <session_id> set <key> <value>`. These have the highest precedence but are ephemeral (lost on session restart). Used for debugging or temporary adjustments.
+
+**Policy file format:**
+
+```toml
+# /etc/liquide/policies/server.toml
+[clipboard]
+enabled = true
+direction = "both"                   # both, server_to_client, client_to_server
+max_size = 52428800                  # 50 MB
+allowed_mime_types = ["text/*", "image/png", "image/jpeg"]
+
+[audio]
+enabled = true
+direction = "both"                   # both, playback, capture
+
+[usb]
+enabled = false
+allowed_classes = []
+allowed_devices = []
+blocked_devices = []
+
+[file_transfer]
+enabled = true
+max_size = 1073741824               # 1 GB
+direction = "both"
+
+[session]
+max_per_user = 3
+max_duration_sec = 86400            # 24 hours
+max_idle_sec = 3600                 # 1 hour
+token_lifetime_sec = 86400
+
+[rendering]
+max_resolution_width = 7680         # 8K
+max_resolution_height = 4320
+max_fps = 60
+profile = "balanced"
+
+[transport]
+allowed = ["quic", "tcp", "udp", "websocket"]
+
+[plugins]
+enabled = true
+require_signatures = false
+allowed_plugins = []                # empty = all allowed
+blocked_plugins = []
+```
+
+```toml
+# /etc/liquide/policies/groups/developers.toml
+[clipboard]
+direction = "both"
+max_size = 104857600                # 100 MB — developers get larger clipboard
+
+[usb]
+enabled = true
+allowed_classes = ["hid", "hub"]    # developers can use USB keyboards/mice
+
+[session]
+max_per_user = 5                    # developers get more sessions
+```
+
+```toml
+# /etc/liquide/policies/users/alice.toml
+[rendering]
+profile = "quality"                 # Alice has a powerful workstation
+max_fps = 120
+```
+
+**Worked example — Alice (member of `developers` group):**
+
+| Key | Server | Group: `developers` | User: `alice` | Effective | Rule |
+|-----|--------|---------------------|---------------|-----------|------|
+| `clipboard.enabled` | `true` | (not set) | (not set) | `true` | Server default |
+| `clipboard.max_size` | 50 MB | 100 MB | (not set) | 50 MB | Numeric: min(50M, 100M) = 50M |
+| `usb.enabled` | `false` | `true` | (not set) | `false` | Deny-overrides-allow: server `false` wins |
+| `session.max_per_user` | 3 | 5 | (not set) | 3 | Numeric: min(3, 5) = 3 |
+| `rendering.profile` | `"balanced"` | (not set) | `"quality"` | `"quality"` | String: highest precedence (user) wins |
+| `rendering.max_fps` | 60 | (not set) | 120 | 60 | Numeric: min(60, 120) = 60 |
+
+> **Note on `usb.enabled`**: the server sets `false` (deny). Even though the developers group sets `true`, the deny-overrides-allow rule means the effective value is `false`. To grant USB to developers, the server policy must set `usb.enabled = true` (or not set it, defaulting to `false`) and the group policy grants `true`. If the admin wants to allow USB only for specific groups, they should set the server policy to `true` and use group policies to restrict — or set server `false` and use session overrides.
+
+**Effective policy introspection:**
+
+```bash
+# View effective policy for a user (before session starts)
+liquidctl policy effective --user alice
+# Output: merged policy with source annotations
+# clipboard.enabled = true           [source: server]
+# clipboard.max_size = 52428800      [source: server (min of server:52428800, group:developers:104857600)]
+# usb.enabled = false                [source: server (deny-overrides-allow)]
+# rendering.profile = "quality"      [source: user:alice]
+# rendering.max_fps = 60             [source: server (min of server:60, user:alice:120)]
+
+# View effective policy for a running session
+liquidctl session policy s-001
+
+# View which source defined each key
+liquidctl policy effective --user alice --show-sources
+
+# Test what-if scenarios
+liquidctl policy effective --user alice --add-group contractors
+```
+
 ### Audit Logging
 - Log:
   - Login success/failure with source IP.
