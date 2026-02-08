@@ -61,6 +61,18 @@ Present Worker
 ├── Wallpaper compositing (when client-cached)
 └── Client-side rendering offload
 
+Window Offload Worker(s) (when enabled)
+├── Terminal state receiver and diff application
+├── Local terminal rendering (character grid → pixels)
+├── Structured window rendering (text runs → pixels)
+└── Scrollback buffer management
+
+Seamless Window Manager (when in seamless mode)
+├── Native OS window creation/destruction
+├── Window geometry sync (local ↔ remote)
+├── Taskbar/dock integration (platform-specific)
+└── Per-window frame routing
+
 Audio Worker (dedicated channel)
 ├── Playback (server → speakers)
 ├── Capture (microphone → server)
@@ -162,7 +174,7 @@ The client renders the server's login screen locally using the Liquid Glass desi
 
 #### Login Screen Assets
 - **Wallpaper**: transferred once and cached in the client's wallpaper cache (`[wallpaper_cache]`). Subsequent connections to the same server skip the transfer if the hash matches.
-- **User avatar**: transferred per-user after username submission (≤64KB). Cached by the client keyed on server+username. Fallback: client renders initials locally. The server always returns an avatar response (real or generated) regardless of whether the username exists.
+- **User avatar**: transferred per-user after username submission (≤64KB, always PNG regardless of original upload format including SVG). Cached by the client keyed on server+username. Fallback: client renders initials locally. The server always returns an avatar response (real or generated) regardless of whether the username exists.
 - **Branding logo**: transferred once and cached.
 - **Fonts**: the login screen uses the client's local font stack. No font transfer needed for the login screen (unlike session font offload).
 
@@ -230,6 +242,46 @@ cache_avatars = true                        # cache user avatars locally
 - Switch between modes at runtime without disconnection.
 - Keyboard shortcut to cycle modes (configurable, default: Ctrl+Shift+M).
 - Mode selection also available in client settings and fullscreen toolbar.
+
+### Seamless Mode (Detached Windows)
+- Individual remote application windows are presented as **native OS windows** on the client desktop.
+- Each remote window becomes a real window in the client OS:
+  - Appears in the client's taskbar / dock / Alt+Tab switcher.
+  - Can be moved, resized, minimized, maximized, and closed using native OS window controls.
+  - Window decorations can be native (OS chrome) or Liquid Glass themed (configurable).
+- **How it works**:
+  1. Client sends a `seamless_mode_request` to the server during session negotiation or at any time during the session.
+  2. Server acknowledges and begins sending per-window lifecycle messages and per-window frame data.
+  3. For each `seamless_window_create` message, the client creates a native OS window with the specified geometry, title, and icon.
+  4. Frame data for each window is decoded and presented into its corresponding native window.
+  5. Client-side window management events (move, resize, state changes) are forwarded back to the server.
+  6. On `seamless_window_destroy`, the client destroys the native OS window.
+- **Desktop shell handling**: the LiquidDE dock, status bar, and wallpaper are not displayed by default in seamless mode. Optionally, they can appear as their own native windows (`shell_as_window = true`).
+- **Taskbar integration**:
+  - **Windows**: remote app icons and window titles appear in the Windows taskbar. Taskbar button grouping follows the app_id.
+  - **Linux (Wayland/X11)**: remote windows registered with the window manager and appear in the window list / task switcher.
+  - **macOS**: remote windows appear in Mission Control and the Dock. Window titles shown in the window menu.
+- **Input handling in seamless mode**: keystrokes and mouse events are captured per-window. When a seamless window has OS-level focus, input is forwarded to the server for that window. When no seamless window has focus, input is not captured.
+- **Mixed mode**: seamless mode can coexist with a "main" client window showing the full desktop. Some windows are detached (seamless), others remain in the desktop view.
+- **Clipboard**: clipboard works as normal — it is session-wide, not per-window.
+- **Window offload integration**: seamless mode combines with window-level offload for maximum efficiency. A terminal in seamless mode with offload enabled is rendered entirely by the client — native OS window, local text rendering, zero video encoding.
+- **Limitations**:
+  - Seamless mode requires additional per-window encoding overhead on the server.
+  - Transient windows (menus, tooltips, dropdowns) may flicker or not position correctly if they extend beyond their parent window bounds. The server groups these with their parent window.
+  - Audio remains session-wide (not per-window spatial audio).
+
+#### Seamless Mode Configuration (Client)
+```toml
+[display]
+mode = "seamless"                      # single, fullscreen, tabbed, multi-window, seamless
+
+[seamless]
+enabled = true
+window_decorations = "liquid-glass"    # liquid-glass, native-os, none
+show_remote_shell = false              # show dock/statusbar as native windows
+group_transient_windows = true         # group menus/tooltips with parent window
+taskbar_integration = true             # register windows with OS taskbar/dock
+```
 
 ---
 
@@ -1043,6 +1095,45 @@ hinting = "slight"                     # none, slight, medium, full
 use_platform_renderer = false          # true = use DirectWrite/CoreText/Pango
 ```
 
+### Window-Level Offload
+
+When the server is configured for window-level offload (see [spec.md](spec.md) §9), the client can render entire windows locally instead of decoding them from the video stream.
+
+#### Terminal Offload
+1. Server sends `window_offload_start` for a terminal window, including the initial character grid state.
+2. Client creates a local rendering surface for the terminal.
+3. Server sends incremental updates:
+   - **Cell diffs**: changed cells with new character, foreground/background colors, and attributes.
+   - **Cursor updates**: position, shape (block, underline, bar), blink state, visibility.
+   - **Scroll events**: number of lines scrolled, new content for revealed lines.
+   - **Resize events**: new grid dimensions when the terminal is resized.
+   - **Title changes**: updated window title.
+4. Client renders the terminal using:
+   - The font offload font cache (same fonts used for client-side text rendering).
+   - Local DPI-aware rendering with subpixel antialiasing.
+   - Client-native cursor blinking (no server round-trip for blink animation).
+5. Scrollback navigation:
+   - Client maintains a local scrollback buffer (received from server incrementally).
+   - Scroll wheel / Page Up / Page Down navigate the local buffer instantly.
+   - If the user scrolls beyond the locally cached scrollback, the client requests additional history from the server.
+
+#### Structured Window Offload
+For non-terminal text-heavy windows, the server sends structured rendering commands:
+1. Background fill commands (color, gradient).
+2. Text runs (string, font ref, size, position, color, decorations).
+3. Line/border primitives.
+4. Scroll region state.
+5. Client renders all elements locally and composites the result.
+
+#### Window Offload Settings (Client)
+```toml
+[window_offload]
+enabled = "auto"                       # auto, always, never
+terminal_renderer = "native"           # native (platform text APIs), freetype
+scrollback_cache_lines = 10000         # local scrollback buffer size
+cursor_blink_local = true              # blink cursor locally without server updates
+```
+
 ---
 
 ## 18) Client-Side Wallpaper Caching
@@ -1305,7 +1396,7 @@ show_last_frame = true             # keep last frame visible during reconnect
 
 ### Functional
 - Connect/disconnect/reconnect on each platform.
-- All display modes (single, fullscreen, tabbed, multi-window).
+- All display modes (single, fullscreen, tabbed, multi-window, seamless).
 - Keyboard capture in all modes.
 - Clipboard bidirectional (text, rich text, image).
 - Audio playback and microphone.

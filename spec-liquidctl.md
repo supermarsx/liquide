@@ -184,6 +184,46 @@ Detailed user information including active sessions, policy, and history.
 
 Disconnect all sessions for a user.
 
+#### `liquidctl users avatar set <username> <path>`
+
+Set or replace a user's avatar image. Supported formats: PNG, JPEG, WebP, SVG.
+
+- SVG files are sanitized (scripts, external references, and entity expansions removed) and rasterized to PNG before storage. The original SVG is not retained.
+- Images are resized to fit within 256×256px and stored as PNG regardless of input format.
+- Maximum upload size: configurable via `[avatar] max_size_kb` (default 256 KB).
+
+```
+$ liquidctl users avatar set alice /tmp/alice-photo.png
+Avatar updated for user 'alice' (256×256 PNG, 42 KB).
+
+$ liquidctl users avatar set bob /tmp/logo.svg
+SVG sanitized and rasterized. Avatar updated for user 'bob' (256×256 PNG, 38 KB).
+```
+
+#### `liquidctl users avatar remove <username>`
+
+Remove a user's avatar, reverting to initial-based fallback.
+
+```
+$ liquidctl users avatar remove alice
+Avatar removed for user 'alice'.
+```
+
+#### `liquidctl users avatar show <username>`
+
+Display avatar metadata for a user.
+
+```
+$ liquidctl users avatar show alice
+User:       alice
+Has Avatar: yes
+Format:     PNG (stored)
+Size:       256×256
+File Size:  42 KB
+Uploaded:   2025-01-15 14:30 UTC
+Source:     SVG (rasterized on upload)
+```
+
 ---
 
 ### `liquidctl stats`

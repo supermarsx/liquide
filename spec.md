@@ -562,6 +562,64 @@ Dedicated Channels:
 - Offload level configurable: `none`, `cursor-only` (default), `chrome`, `text`, `full`.
 - Reduces bandwidth and improves perceived latency for UI elements.
 
+#### Window-Level Offload
+
+Beyond offloading individual rendering elements (cursors, chrome, text), the server can offload **entire windows** to the client for local rendering. This is particularly effective for text-heavy applications like terminals, consoles, log viewers, and code editors.
+
+##### How Window Offload Works
+1. Server identifies eligible windows (based on app type or configuration).
+2. Instead of compositing the window into the framebuffer and encoding it as video/tiles, the server sends **structured window data** over a dedicated channel.
+3. The client receives the data and renders the entire window locally — including chrome, content, scrollbars, and cursor.
+4. The client composites the locally-rendered window into the session display alongside server-streamed windows.
+
+##### Offload Data Modes
+
+- **State mode** (`state`): Server sends the terminal/application state as a character grid:
+  - Character grid (rows × columns) with per-cell attributes (foreground color, background color, bold, italic, underline, blink, reverse, strikethrough).
+  - Cursor position, shape, and blink state.
+  - Scrollback buffer (configurable depth, incrementally synced).
+  - Window title and icon.
+  - Selection state (if any text is selected).
+  - Bell/alert state.
+  - Suitable for: terminal emulators, console applications.
+
+- **Structured mode** (`structured`): Server sends window content as structured rendering commands:
+  - Text runs with font, size, color, position, and decorations.
+  - Background rectangles with colors/gradients.
+  - Borders, separators, and dividers.
+  - Scrollbar state (position, range, thumb size).
+  - Window chrome parameters (title, buttons, decorations).
+  - Suitable for: text editors, log viewers, code editors, any text-dominant window.
+
+##### Benefits
+- **Eliminates encoding overhead**: text-heavy windows are not processed by the video encoder at all.
+- **Pixel-perfect text**: client renders text at native DPI with local subpixel rendering.
+- **Massive bandwidth savings**: a terminal character grid (~20KB) replaces a 1080p encoded frame region (~50–200KB per frame).
+- **Client-native scrolling**: scrollback navigation is instant (local), no round-trip needed.
+- **Scales with window count**: additional terminal windows add negligible server-side CPU or bandwidth cost.
+
+##### Interaction with Other Offload Levels
+- Window-level offload is **independent** of the general `offload.level` setting.
+- A session can mix window-offloaded terminals with server-streamed graphical applications.
+- Window offload automatically enables `text` offload for the offloaded windows (font cache applies).
+- If the client does not support window offload, the server falls back to normal encoding for those windows.
+
+##### Terminal Offload Protocol
+- On window creation: server sends `window_offload_start` with window ID, offload mode, initial state.
+- On state change: server sends incremental diffs (changed cells, cursor moves, scroll events).
+- On window close: server sends `window_offload_stop`.
+- Scrollback: server sends scrollback chunks on demand (client requests ranges).
+- Input: keystrokes for offloaded windows are sent to the server normally; only rendering is client-side.
+
+##### Window Offload Configuration
+```toml
+[offload]
+window_offload = "none"                # none, terminal, all-text-windows
+terminal_offload_mode = "state"        # state (character grid), structured (text runs + layout)
+terminal_scrollback_sync = 1000        # max scrollback lines synced to client initially
+window_offload_apps = []               # app_ids eligible for window-level offload (empty = auto-detect)
+```
+
 ### Benchmarks on Start
 - On session start (or on-demand via `liquidctl benchmark`):
   - **CPU compositing throughput** — measures SIMD-accelerated blend rates.
@@ -1071,7 +1129,7 @@ Each user has a profile that includes display metadata used on the login screen,
 #### Avatar Image
 
 - **Storage location**: `~/.config/liquidde/avatar.png` (per-user, on the server).
-- **Supported formats**: PNG (preferred), JPEG, WebP. All formats are internally converted and stored as PNG.
+- **Supported formats**: PNG (preferred), JPEG, WebP, SVG. All formats are internally converted and stored as PNG. SVG uploads are sanitized before rasterization (see SVG Upload Security below).
 - **Dimensions**: source images are automatically cropped and resized. Final stored size: 256×256px (the server generates scaled versions as needed: 128×128 for dock/tray, 120×120 for login screen, 64×64 for small contexts, 32×32 for notifications).
 - **Maximum upload size**: 2 MB (pre-crop/resize). Configurable per-server.
 - **Circular crop**: the avatar is always displayed in a circular mask. The upload flow allows the user to position and resize a circular crop region on rectangular source images.
@@ -1082,7 +1140,7 @@ Each user has a profile that includes display metadata used on the login screen,
 
 Users can manage their avatar through:
 1. **Settings app** → Profile section → Avatar editor.
-   - Upload from file (PNG, JPEG, WebP).
+   - Upload from file (PNG, JPEG, WebP, SVG).
    - Crop and position using a circular crop overlay.
    - Preview before applying.
    - Remove avatar (revert to initials fallback).
@@ -1097,9 +1155,22 @@ GET    /api/v1/users/{username}/avatar      Get avatar image (returns PNG, or 20
 DELETE /api/v1/users/{username}/avatar      Remove avatar
 ```
 
-- Upload endpoint accepts PNG, JPEG, or WebP. Server crops and resizes to 256×256.
+- Upload endpoint accepts PNG, JPEG, WebP, or SVG. Server crops and resizes to 256×256. SVG uploads are sanitized and rasterized before storage.
 - Server generates and caches scaled variants (128, 120, 64, 32px).
 - Avatar cache invalidation: when avatar changes, all sessions for the user receive an avatar update notification. Lock screens update immediately.
+
+#### SVG Upload Security
+
+SVG files can contain executable content and external references that pose security risks. All SVG uploads undergo mandatory sanitization before rasterization:
+
+- **Script removal**: all `<script>` elements, `on*` event handlers (onclick, onload, onerror, etc.), and `javascript:` URIs are stripped.
+- **External reference removal**: `<use xlink:href="...">` with external URLs, `<image href="...">` with external URLs, CSS `url()` with external references, `<foreignObject>` elements.
+- **Embedded content removal**: `<iframe>`, `<embed>`, `<object>`, `<applet>`, `<foreignObject>` elements.
+- **Metadata stripping**: XML processing instructions, DTD declarations, and `<!ENTITY>` definitions (to prevent XML entity expansion attacks / "billion laughs").
+- **Namespace restriction**: only SVG and XLink namespaces are permitted.
+- **Size validation**: SVG `viewBox` and dimensions must produce a rasterizable image within reasonable bounds (max 4096×4096 logical units).
+- After sanitization, the SVG is rasterized to PNG at the configured `stored_size` (default: 256×256) using the server's rendering pipeline.
+- The original SVG is **never stored** — only the rasterized PNG is persisted.
 
 #### User Display Name
 
@@ -1128,7 +1199,8 @@ DELETE /api/v1/users/{username}/avatar      Remove avatar
 enabled = true                           # allow user avatars
 max_upload_size_bytes = 2097152          # 2 MB
 stored_size = 256                        # stored avatar size (px, square)
-allowed_formats = ["png", "jpeg", "webp"]
+allowed_formats = ["png", "jpeg", "webp", "svg"]
+svg_sanitize = true                     # always sanitize SVG uploads (strongly recommended: true)
 generate_initials_fallback = true        # generate initials avatar when none uploaded
 default_avatar = ""                      # path to server-wide default avatar (blank = initials)
 ```
@@ -1157,10 +1229,138 @@ default_avatar = ""                      # path to server-wide default avatar (b
 - CSS class: `.liquid-status-bar`.
 
 ### App Launcher
-- Activated by dock icon, keyboard shortcut, or hot corner.
-- Search-as-you-type for applications.
-- Categories and recent apps.
-- Glass panel with blur backdrop.
+
+A **full-featured application launcher** accessible via dock icon, keyboard shortcut (`Super` key by default), or configurable hot corner. The launcher is the primary interface for discovering, searching, and launching applications.
+
+#### Visual Layout
+- **Overlay panel**: a centered glass panel (default: 600px wide, up to 70% screen height) with heavy blur backdrop.
+- **Search bar**: prominent text input at the top with a magnifying glass icon. Auto-focused on open.
+- **Results area**: below the search bar, displays results as a scrollable list or grid.
+- **Sections** (visible when search is empty):
+  1. **Favorites / Pinned**: user-pinned apps displayed at the top in a horizontal row or small grid.
+  2. **Recent**: recently launched apps sorted by recency (default) or frequency (configurable). Shows up to 8 entries.
+  3. **All Apps by category**: categorized list of all available applications, collapsible per category.
+
+#### Search
+- **Fuzzy matching**: searches across application name, description, keywords, categories, and executable name.
+- **Instant results**: results update as the user types (debounced at 50ms).
+- **Ranking**: results ranked by: exact match > prefix match > substring match > fuzzy match. Frequency-weighted: frequently launched apps rank higher for ambiguous queries.
+- **Calculator / Quick Answers**: if the query is a mathematical expression (e.g., `2+2`, `sqrt(144)`, `15% of 200`), the result is displayed inline at the top of the results. Supports basic arithmetic, percentages, powers, roots, trigonometry, and unit conversions (e.g., `10km in miles`, `72F in C`).
+- **File search** (optional): when enabled, searches file names from an indexed database alongside apps. Results appear in a separate "Files" section.
+- **Web search fallback** (optional): when no app results match, an option to "Search the web for '{query}'" appears at the bottom. Opens the configured default browser with the default search engine.
+- **Custom commands**: if the query starts with a configurable prefix (default: `>`), it is treated as a shell command. A "Run: `{command}`" entry appears. Pressing Enter executes the command in a new terminal.
+
+#### Categories
+- System, Development, Internet, Office, Media, Graphics, Utilities, Games, Settings, Other.
+- Categories are auto-assigned from `.desktop` file categories.
+- Uncategorized apps appear under "Other."
+- Category headers in list view show the category name and app count.
+- Categories are collapsible — click the header to expand/collapse.
+
+#### Application Metadata
+- Apps are discovered from:
+  1. `.desktop` files in standard XDG directories (`/usr/share/applications/`, `~/.local/share/applications/`).
+  2. LiquidDE built-in apps (Liquid Terminal, File Manager, Settings, Task Monitor).
+  3. Custom app entries defined in `~/.config/liquidde/apps.toml`.
+- Metadata per app: `name`, `description`, `icon`, `exec`, `categories`, `keywords`, `terminal` (bool), `no_display` (bool).
+- App list is refreshed on desktop file changes (inotify-based) and on launcher open.
+
+#### Views
+- **List view** (default): vertical list with icon (36px), app name, and description. One app per row.
+- **Grid view**: icon grid with larger icons (64px) and app name below. Suitable for touch and visual browsing.
+- Toggle between views with a view-switcher button in the launcher header or keyboard shortcut (`Ctrl+G`).
+- View preference is persisted per user.
+
+#### Keyboard Navigation
+- **Type to search**: any keypress while the launcher is open starts filtering (search bar is always focused).
+- **Arrow keys**: navigate through results (Up/Down in list view, Up/Down/Left/Right in grid view).
+- **Enter**: launch the selected app (or execute the calculator result / custom command).
+- **Escape**: close the launcher. If search has text, first Escape clears search; second Escape closes.
+- **Tab**: cycle between sections (Favorites, Recent, All Apps, Search Results).
+- **Ctrl+N / Ctrl+P**: alternative next/previous navigation (vim-style friendly).
+- **Ctrl+1..9**: quick-launch the Nth result.
+
+#### Quick Actions (Context Menu)
+Right-clicking (or long-pressing on touch) an app item shows a context menu:
+- **Launch**: open the application.
+- **Pin to Favorites**: add to the favorites/pinned section.
+- **Unpin from Favorites**: remove from favorites (shown only for pinned apps).
+- **Pin to Dock**: add a persistent dock icon for this app.
+- **Open File Location**: open the file manager at the app's `.desktop` file or executable location.
+- **Run in Terminal**: launch the app inside a Liquid Terminal window.
+- **App Info**: show details (version, .desktop file path, categories, executable).
+
+#### Favorites / Pinned Apps
+- Users can pin apps to a dedicated "Favorites" section at the top of the launcher.
+- Favorites are stored in `~/.config/liquidde/session.toml` under `[launcher.favorites]`.
+- Favorites are displayed as a horizontal row of icons (list view) or a top grid section (grid view).
+- Drag-and-drop reordering within favorites.
+- Maximum favorites: configurable (default: 20).
+
+#### Animations
+- **Open**: launcher fades in and scales from 95% to 100% over 200ms (`ease-out`).
+- **Close**: reverse of open animation (100% to 95%, fade out) over 150ms.
+- **Result transitions**: new results cross-fade in as the user types (100ms).
+- **All animations respect** `prefers-reduced-motion` and the effect budget.
+
+#### Plugins / Extension Points
+- The launcher supports **result provider plugins** — external processes or scripts that can contribute search results:
+  - Plugins register via a manifest file in `~/.config/liquidde/launcher-plugins/`.
+  - Each plugin specifies: name, trigger prefix (optional), icon, and an executable that receives the query on stdin and returns results as JSON on stdout.
+  - Plugin results appear in a dedicated section after app results.
+  - Built-in plugins: Calculator, File Search, Web Search. These can be disabled individually.
+- Plugin API:
+  ```json
+  // Input (stdin, one line):
+  {"query": "user search text", "max_results": 10}
+  // Output (stdout, one JSON object):
+  {"results": [{"title": "Result", "description": "...", "icon": "path", "action": "open:https://..."}]}
+  ```
+
+#### Workspace Integration
+- Optionally, the launcher can include a **workspace switcher strip** at the bottom showing numbered workspace thumbnails.
+- Clicking a workspace switches to it and closes the launcher.
+- Configurable: on, off (default: off).
+
+#### Launcher Configuration
+```toml
+# ~/.config/liquidde/session.toml
+
+[launcher]
+shortcut = "Super"                        # activation shortcut
+hot_corner = ""                           # none, top-left, top-right, bottom-left, bottom-right
+default_view = "list"                     # list, grid
+show_favorites = true
+show_recent = true
+recent_count = 8
+recent_sort = "recency"                   # recency, frequency
+show_categories = true
+search_files = false                      # search file names alongside apps
+search_web = false                        # offer web search fallback
+web_search_engine = "https://duckduckgo.com/?q={query}"
+custom_command_prefix = ">"
+calculator_enabled = true
+workspace_switcher = false
+max_favorites = 20
+plugin_dir = "~/.config/liquidde/launcher-plugins/"
+animation_enabled = true
+
+[launcher.favorites]
+apps = ["liquid-terminal", "firefox", "code"]   # pinned app IDs in display order
+```
+
+#### Launcher CSS Classes
+- `.liquid-launcher` — launcher overlay.
+- `.liquid-launcher .search-bar` — search bar area.
+- `.liquid-launcher .search-input` — search text input.
+- `.liquid-launcher .results` — results area (list or grid).
+- `.liquid-launcher .app-item` — application entry.
+- `.liquid-launcher .app-item.selected` — highlighted entry.
+- `.liquid-launcher .favorites-section` — favorites/pinned section.
+- `.liquid-launcher .category-header` — category divider.
+- `.liquid-launcher .quick-answer` — calculator/quick answer display.
+- `.liquid-launcher .context-menu` — right-click context menu.
+- Full CSS reference in [spec-design.md](spec-design.md).
 
 ### Window Management
 - Tiling and floating hybrid (configurable default).
@@ -1235,6 +1435,62 @@ ratios_rows = [0.5, 0.5]
 - `.liquid-tile-preview` — snap zone preview overlay.
 - `.liquid-tile-indicator` — tiling mode indicator.
 - Full CSS reference in [spec-design.md](spec-design.md).
+
+### Seamless Window Mode
+
+LiquidDE supports a **seamless window mode** where individual remote application windows are "detached" from the LiquidClient container and presented as **native OS windows** on the client's local desktop. This is analogous to Citrix Seamless Windows, RDP RemoteApp, or VMware Unity mode.
+
+#### Server-Side Behavior
+- When a client requests seamless mode (or when configured as default), the server:
+  - Tracks each application window independently (geometry, z-order, state, icon, title).
+  - Encodes and transmits frame data **per-window** rather than as a single desktop framebuffer.
+  - Sends window lifecycle events (create, destroy, minimize, maximize, restore, move, resize, z-order change, title change, icon change, focus change).
+  - Does **not** render the desktop shell (dock, status bar, wallpaper) — these are omitted or optionally presented as their own separate "shell windows."
+  - Maintains a virtual desktop coordinate space for correct window positioning.
+
+#### Per-Window Encoding
+- Each window is treated as an independent encoding region.
+- The server uses the same tile/video encoding pipeline, but scoped to each window's bounding rectangle.
+- Windows with no changes consume zero bandwidth (damage tracking per window).
+- Small utility windows (tooltips, menus, dropdowns) are grouped with their parent window to avoid per-window overhead.
+
+#### Window Lifecycle Messages
+
+| Message | Direction | Data |
+|---------|-----------|------|
+| `seamless_window_create` | Server → Client | window_id, app_id, title, icon, initial geometry, z_order, state |
+| `seamless_window_destroy` | Server → Client | window_id |
+| `seamless_window_geometry` | Server → Client | window_id, x, y, width, height |
+| `seamless_window_state` | Server → Client | window_id, state (normal, minimized, maximized, fullscreen) |
+| `seamless_window_title` | Server → Client | window_id, new_title |
+| `seamless_window_icon` | Server → Client | window_id, icon_data |
+| `seamless_window_zorder` | Server → Client | ordered list of window_ids |
+| `seamless_window_focus` | Server → Client | window_id |
+| `client_window_move` | Client → Server | window_id, new_x, new_y |
+| `client_window_resize` | Client → Server | window_id, new_width, new_height |
+| `client_window_state` | Client → Server | window_id, requested_state |
+| `client_window_focus` | Client → Server | window_id |
+| `client_window_close` | Client → Server | window_id |
+
+#### Interaction with Window-Level Offload
+- Seamless mode and window-level offload (see §9) are complementary.
+- A terminal in seamless mode can be further offloaded: the client creates a native OS window and renders the terminal content locally from character grid data.
+- This combination produces the most efficient result: zero server encoding, native window, pixel-perfect text.
+
+#### Seamless Mode Limitations
+- Additional per-window encoding overhead on the server (separate damage tracking and encode regions).
+- Transient windows (menus, tooltips, dropdowns) may flicker or misposition if they extend beyond their parent window bounds. The server groups these with their parent.
+- Audio remains session-wide (not per-window spatial audio).
+- DE shell elements (dock, status bar) are not shown by default — optionally presented as their own native windows (`shell_as_window = true`).
+
+#### Seamless Mode Configuration (Server-Side)
+```toml
+# Per-user session.toml
+[seamless]
+enabled = false                           # user preference for seamless mode
+exclude_apps = ["liquidde-desktop"]       # apps that stay on the virtual desktop
+shell_as_window = false                   # show dock/status bar as separate native windows
+```
 
 ### Notifications
 - "Stacking" to avoid animation storms.
@@ -2102,7 +2358,8 @@ keyboard_layout_dir = "/etc/liquidde/xkb"
 enabled = true
 max_upload_size_bytes = 2097152       # 2 MB
 stored_size = 256                     # px, square
-allowed_formats = ["png", "jpeg", "webp"]
+allowed_formats = ["png", "jpeg", "webp", "svg"]
+svg_sanitize = true                    # strip scripts, external refs, embedded objects from SVG uploads
 generate_initials_fallback = true
 
 # ─── Listening ──────────────────────────────────────────────
@@ -2254,6 +2511,20 @@ level = "cursor-only"                 # none, cursor-only, chrome, text, full
 font_rendering = "auto"              # auto, always, never, hybrid
 font_cache_max_mb = 200
 font_sync_on_connect = true
+window_offload = "none"              # none, terminal, all-text-windows
+terminal_offload_mode = "state"      # state (character grid), structured (text runs + layout)
+terminal_scrollback_sync = 1000      # max scrollback lines synced to client initially
+window_offload_apps = []             # app_ids eligible for window-level offload (empty = auto-detect)
+
+# ─── Seamless Windows ────────────────────────────────────────
+[seamless]
+enabled = false                       # enable seamless/detached window mode
+allow_client_request = true           # allow clients to request seamless mode
+per_window_encoding = true            # encode each window independently
+sync_z_order = true                   # sync window z-order to client
+sync_taskbar_entries = true           # expose remote windows to client taskbar/dock
+shell_as_window = false               # present dock/statusbar as separate native windows
+excluded_app_ids = ["liquidde-desktop"]  # apps that cannot be detached
 
 # ─── Gateway ────────────────────────────────────────────────
 [gateway]

@@ -467,6 +467,38 @@ When enabled (`prefers-reduced-motion` or DE setting):
   background: var(--liquid-error);
   color: white;
 }
+
+/* ─── Seamless window overrides ──────────────── */
+.liquid-window.seamless {
+  border-radius: 0;
+  box-shadow: none;
+  border: none;
+}
+
+.liquid-window.seamless .titlebar {
+  background: var(--liquid-bg-panel);
+  backdrop-filter: blur(var(--liquid-glass-blur));
+  border-bottom: 1px solid var(--liquid-border);
+  height: 32px;
+}
+
+.liquid-window.seamless .titlebar .title {
+  font-size: var(--liquid-font-size-xs);
+}
+
+/* Native OS chrome: hide the Liquid Glass titlebar */
+.liquid-window.seamless.native-chrome .titlebar {
+  display: none;
+}
+
+/* No decorations mode */
+.liquid-window.seamless.no-chrome {
+  border: none;
+}
+
+.liquid-window.seamless.no-chrome .titlebar {
+  display: none;
+}
 ```
 
 ### 7.2 Dock
@@ -729,6 +761,248 @@ When enabled (`prefers-reduced-motion` or DE setting):
 .liquid-launcher .app-item .app-desc {
   font-size: var(--liquid-font-size-xs);
   color: var(--liquid-text-tertiary);
+}
+
+/* ─── Launcher header controls ──────────────── */
+.liquid-launcher .launcher-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--liquid-space-2) var(--liquid-space-4) 0;
+}
+
+.liquid-launcher .view-toggle {
+  display: flex;
+  gap: var(--liquid-space-1);
+}
+
+.liquid-launcher .view-toggle .toggle-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--liquid-radius-sm);
+  background: transparent;
+  color: var(--liquid-text-secondary);
+  cursor: pointer;
+}
+
+.liquid-launcher .view-toggle .toggle-btn.active {
+  background: var(--liquid-surface);
+  color: var(--liquid-text);
+}
+
+/* ─── Favorites section ─────────────────────── */
+.liquid-launcher .favorites-section {
+  padding: var(--liquid-space-2) var(--liquid-space-4);
+  border-bottom: 1px solid var(--liquid-border-subtle);
+}
+
+.liquid-launcher .favorites-section .section-label {
+  font-size: var(--liquid-font-size-xs);
+  font-weight: var(--liquid-font-weight-semibold);
+  color: var(--liquid-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--liquid-space-2);
+}
+
+.liquid-launcher .favorites-row {
+  display: flex;
+  gap: var(--liquid-space-3);
+  overflow-x: auto;
+}
+
+.liquid-launcher .favorites-row .favorite-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--liquid-space-1);
+  padding: var(--liquid-space-2);
+  border-radius: var(--liquid-radius);
+  cursor: pointer;
+  min-width: 64px;
+  transition: background var(--liquid-duration-fast) var(--liquid-ease-default);
+}
+
+.liquid-launcher .favorites-row .favorite-item:hover {
+  background: var(--liquid-surface-hover);
+}
+
+.liquid-launcher .favorites-row .favorite-item .app-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.liquid-launcher .favorites-row .favorite-item .app-name {
+  font-size: var(--liquid-font-size-xs);
+  color: var(--liquid-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 64px;
+  text-align: center;
+}
+
+/* ─── Category headers ──────────────────────── */
+.liquid-launcher .category-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--liquid-space-2) var(--liquid-space-4);
+  cursor: pointer;
+  user-select: none;
+}
+
+.liquid-launcher .category-header .category-name {
+  font-size: var(--liquid-font-size-sm);
+  font-weight: var(--liquid-font-weight-semibold);
+  color: var(--liquid-text-secondary);
+}
+
+.liquid-launcher .category-header .category-count {
+  font-size: var(--liquid-font-size-xs);
+  color: var(--liquid-text-tertiary);
+}
+
+.liquid-launcher .category-header .collapse-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--liquid-text-tertiary);
+  transition: transform var(--liquid-duration-fast) var(--liquid-ease-default);
+}
+
+.liquid-launcher .category-header.collapsed .collapse-icon {
+  transform: rotate(-90deg);
+}
+
+/* ─── Grid view ─────────────────────────────── */
+.liquid-launcher .results.grid-view {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: var(--liquid-space-3);
+  padding: var(--liquid-space-3);
+}
+
+.liquid-launcher .results.grid-view .app-item {
+  flex-direction: column;
+  text-align: center;
+  padding: var(--liquid-space-3);
+}
+
+.liquid-launcher .results.grid-view .app-item .app-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: var(--liquid-space-1);
+}
+
+.liquid-launcher .results.grid-view .app-item .app-desc {
+  display: none;
+}
+
+/* ─── Calculator / Quick Answer ─────────────── */
+.liquid-launcher .quick-answer {
+  padding: var(--liquid-space-3) var(--liquid-space-4);
+  border-bottom: 1px solid var(--liquid-border-subtle);
+  display: flex;
+  align-items: center;
+  gap: var(--liquid-space-3);
+}
+
+.liquid-launcher .quick-answer .answer-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--liquid-accent);
+  border-radius: var(--liquid-radius);
+  color: var(--liquid-text-on-accent);
+  font-weight: var(--liquid-font-weight-bold);
+}
+
+.liquid-launcher .quick-answer .answer-text {
+  font-size: var(--liquid-font-size-lg);
+  font-weight: var(--liquid-font-weight-medium);
+  color: var(--liquid-text);
+}
+
+.liquid-launcher .quick-answer .answer-expression {
+  font-size: var(--liquid-font-size-xs);
+  color: var(--liquid-text-tertiary);
+}
+
+/* ─── Context menu ──────────────────────────── */
+.liquid-launcher .context-menu {
+  position: absolute;
+  min-width: 200px;
+  background: var(--liquid-bg-popover);
+  backdrop-filter: blur(var(--liquid-glass-blur-heavy));
+  border: 1px solid var(--liquid-border);
+  border-radius: var(--liquid-radius);
+  box-shadow: var(--liquid-shadow-lg);
+  padding: var(--liquid-space-1);
+  z-index: 3000;
+}
+
+.liquid-launcher .context-menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--liquid-space-2);
+  padding: var(--liquid-space-2) var(--liquid-space-3);
+  border-radius: var(--liquid-radius-sm);
+  cursor: pointer;
+  font-size: var(--liquid-font-size-sm);
+  color: var(--liquid-text);
+}
+
+.liquid-launcher .context-menu .menu-item:hover {
+  background: var(--liquid-surface-hover);
+}
+
+.liquid-launcher .context-menu .menu-separator {
+  height: 1px;
+  background: var(--liquid-border-subtle);
+  margin: var(--liquid-space-1) 0;
+}
+
+/* ─── Web search / custom command fallback ──── */
+.liquid-launcher .fallback-item {
+  display: flex;
+  align-items: center;
+  gap: var(--liquid-space-3);
+  padding: var(--liquid-space-3) var(--liquid-space-4);
+  border-top: 1px solid var(--liquid-border-subtle);
+  cursor: pointer;
+  color: var(--liquid-text-secondary);
+  font-size: var(--liquid-font-size-sm);
+}
+
+.liquid-launcher .fallback-item:hover {
+  background: var(--liquid-surface-hover);
+  color: var(--liquid-text);
+}
+
+/* ─── Workspace switcher strip ──────────────── */
+.liquid-launcher .workspace-strip {
+  display: flex;
+  gap: var(--liquid-space-2);
+  padding: var(--liquid-space-2) var(--liquid-space-4);
+  border-top: 1px solid var(--liquid-border-subtle);
+  justify-content: center;
+}
+
+.liquid-launcher .workspace-strip .workspace-thumb {
+  width: 48px;
+  height: 32px;
+  border-radius: var(--liquid-radius-sm);
+  border: 1px solid var(--liquid-border-subtle);
+  background: var(--liquid-surface);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.liquid-launcher .workspace-strip .workspace-thumb.active {
+  border-color: var(--liquid-accent);
 }
 ```
 
@@ -1867,6 +2141,9 @@ Example — "Flat Minimal" theme (no glass):
 | `.liquid-window .minimize-btn` | Minimize button |
 | `.liquid-window .maximize-btn` | Maximize button |
 | `.liquid-window .content` | Window content area |
+| `.liquid-window.seamless` | Window in seamless/detached mode |
+| `.liquid-window.seamless .titlebar` | Seamless window title bar (Liquid Glass themed) |
+| `.liquid-window.seamless.native-chrome` | Seamless window using native OS decorations |
 
 #### Tiling
 | Selector | Element |
@@ -1901,6 +2178,19 @@ Example — "Flat Minimal" theme (no glass):
 | `.liquid-launcher .app-name` | Application name |
 | `.liquid-launcher .app-desc` | Application description |
 | `.liquid-launcher .category` | Category header |
+| `.liquid-launcher .launcher-header` | Launcher header with view toggle |
+| `.liquid-launcher .view-toggle` | List/Grid view toggle buttons |
+| `.liquid-launcher .favorites-section` | Favorites/pinned apps section |
+| `.liquid-launcher .favorites-row` | Horizontal row of favorite apps |
+| `.liquid-launcher .favorite-item` | Individual favorite app entry |
+| `.liquid-launcher .category-header` | Category divider header |
+| `.liquid-launcher .category-header.collapsed` | Collapsed category |
+| `.liquid-launcher .results.grid-view` | Results in grid layout |
+| `.liquid-launcher .quick-answer` | Calculator / quick answer display |
+| `.liquid-launcher .context-menu` | Right-click context menu |
+| `.liquid-launcher .context-menu .menu-item` | Context menu entry |
+| `.liquid-launcher .fallback-item` | Web search / command fallback entry |
+| `.liquid-launcher .workspace-strip` | Workspace switcher strip |
 
 #### Notifications
 | Selector | Element |
@@ -2113,6 +2403,7 @@ The LiquidClient application uses the same Liquid Glass design language:
 | Dock | Standard | Cached | Yes | Optional | Low |
 | Window chrome | Standard | Cached | Yes | Optional | Low |
 | Window content | None | None | None | None | Zero (app-rendered) |
+| Window (offloaded) | None | None | None | None | Zero (client-rendered) |
 | Launcher | Heavy | Computed | Yes | None | Medium (on-demand) |
 | Notification | Standard | Computed | Yes | None | Low (small area) |
 | Modal backdrop | None | None | None | None | Zero (solid overlay) |
