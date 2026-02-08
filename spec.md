@@ -1490,6 +1490,204 @@ When a session process terminates unexpectedly (non-zero exit, signal):
 - When a session approaches resource limits (>90% memory, >95% PIDs), a warning is sent to the client.
 - The supervisor itself has minimal resource footprint — it performs no rendering, encoding, or heavy computation.
 
+### Session Lifecycle State Model
+
+Each session follows a well-defined state machine. Transitions are logged as audit events and exposed via `liquidctl session status`.
+
+```
+                         ┌──────────┐
+                         │ Created  │  (process spawned, initializing)
+                         └────┬─────┘
+                              │ init complete
+                              ▼
+                    ┌──────────────────┐
+                    │ Authenticating   │  (waiting for user auth)
+                    └────┬─────────┬──┘
+                         │         │ auth timeout / max attempts
+                    auth │         ▼
+                  success│    ┌──────────┐
+                         │    │Terminated│
+                         │    └──────────┘
+                         ▼
+                    ┌──────────┐
+              ┌────►│ Running  │◄───────────────────────────┐
+              │     └──┬──┬──┬─┘                            │
+              │        │  │  │                               │
+              │  idle  │  │  │ user lock /                   │ unlock
+              │ timeout│  │  │ policy lock                   │
+              │        │  │  ▼                               │
+              │        │  │ ┌──────────┐                    │
+              │        │  │ │  Locked  │────────────────────┘
+              │        │  │ └──────────┘
+              │        │  │
+              │        │  │ client disconnects
+              │        │  ▼
+              │        │ ┌──────────────┐
+              │        │ │ Disconnected │ (session alive, no client)
+              │        │ └──────┬──┬────┘
+              │        │        │  │
+              │        │ client │  │ disconnect timeout
+              │        │ reconnect │ (session.disconnect_timeout_sec)
+              │        │        │  ▼
+              │        │        │ ┌──────────┐
+              │        │        │ │Terminated│
+              │        │        │ └──────────┘
+              │        │        ▼
+              │        │    Running (resumed)
+              │        │
+              │        │ explicit suspend / admin suspend
+              │        ▼
+              │   ┌───────────┐
+              │   │ Suspended │ (session paused, state preserved, minimal resources)
+              │   └─────┬─────┘
+              │         │ resume (client reconnect or admin resume)
+              │         ▼
+              │     Running (resumed)
+              │
+              │ crash
+              ▼
+         ┌──────────┐
+         │ Crashed  │ (crash detected, restart pending)
+         └────┬─────┘
+              │ restart policy
+              ├──────────────► Running (restarted)
+              │
+              │ max restarts exceeded
+              ▼
+         ┌──────────┐
+         │  Failed  │ (requires admin intervention)
+         └──────────┘
+```
+
+**State definitions:**
+
+| State | Description | CPU Usage | Client View |
+|-------|-------------|-----------|-------------|
+| **Created** | Process spawned, loading config, initializing compositor | Moderate (startup) | Connection accepted, waiting |
+| **Authenticating** | Waiting for client to complete auth flow | Minimal | Login screen |
+| **Running** | Active desktop session, all workers operational | Normal | Full desktop |
+| **Locked** | Session locked (user-initiated, idle timeout, or policy). Screen locked, input blocked. Session process continues running. | Low (no rendering except lock screen) | Lock screen |
+| **Disconnected** | Client disconnected but session is alive. Applications continue running. No rendering or encoding. | Minimal (apps run, no rendering) | N/A (no client) |
+| **Suspended** | Session explicitly suspended. Worker threads paused. Applications frozen (SIGSTOP). Minimal memory footprint. | Near zero | N/A |
+| **Crashed** | Session process exited abnormally. Supervisor handling restart. | Zero | Crash screen |
+| **Failed** | Restart attempts exhausted. Session cannot recover without admin action. | Zero | Persistent crash screen |
+| **Terminated** | Session ended. Process exited. All resources released. | Zero | Disconnected / login screen |
+
+### Roaming & Multi-Client Sessions
+
+A session can be accessed by multiple clients or moved between clients (roaming).
+
+#### Connection Behavior Modes
+
+When a new client connects to a session that already has an active connection:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `steal` (default) | New client takes over the session. Previous client is disconnected with a "session taken by another client" message. | Moving between workstations |
+| `mirror` | Both clients see the same session simultaneously. Input from both clients is merged (last-writer-wins for key events, both mouse cursors shown). | Pair programming, support |
+| `deny` | New client is rejected with "session already in use" error. Only one client at a time. | Security-sensitive environments |
+| `view-only` | New client can observe the session but cannot send input. First client retains full control. | Training, monitoring |
+
+Configuration:
+
+```toml
+[session]
+multi_client_mode = "steal"          # steal, mirror, deny, view-only
+# Mirror mode settings
+mirror_show_remote_cursor = true     # show a ghost cursor for the other client
+mirror_max_clients = 4               # max simultaneous mirror clients
+```
+
+#### Session Selection at Login
+
+When a user authenticates and has existing sessions:
+
+```
+┌─────────────────────────────────────────────────┐
+│              Session Selection                   │
+│                                                  │
+│   You have existing sessions:                    │
+│                                                  │
+│   ┌─────────────────────────────────────────┐   │
+│   │ ● Session s-001 (Running)               │   │
+│   │   Started: 2h ago · 3 windows           │   │
+│   │   [Resume]  [Terminate]                 │   │
+│   ├─────────────────────────────────────────┤   │
+│   │ ○ Session s-003 (Disconnected)          │   │
+│   │   Disconnected: 45m ago · 1 window      │   │
+│   │   [Resume]  [Terminate]                 │   │
+│   └─────────────────────────────────────────┘   │
+│                                                  │
+│   [Start New Session]                            │
+│                                                  │
+└─────────────────────────────────────────────────┘
+```
+
+- If `session.auto_resume = true` (default) and only one session exists, the client automatically resumes it (no selection screen).
+- If multiple sessions exist, the selection screen is shown.
+- If policy `session.max_per_user` would be exceeded, the "Start New Session" option is disabled.
+
+### Crash Loop Containment
+
+When a session repeatedly crashes, the system employs escalating containment:
+
+| Restart # | Backoff | Action |
+|-----------|---------|--------|
+| 1 | 0ms (immediate) | Restart normally |
+| 2 | 1s | Restart normally |
+| 3 | 2s | Restart with plugins disabled (`--safe-plugins`) |
+| 4 | 4s | Restart in safe mode (`--safe-mode`) — minimal compositor, no shell plugins, no user CSS, no animations |
+| 5 | 8s | Restart in safe mode |
+| 6+ | — | Enter `Failed` state. Client shows persistent crash screen with admin contact info. |
+
+**Safe mode (`--safe-mode`)** disables:
+- All WASM plugins
+- User CSS overrides (uses default theme)
+- All shell animations
+- Wallpaper (solid color)
+- Rendering profile forced to `minimal`
+- Non-essential shell features (launcher plugins, notification handlers)
+
+Safe mode retains:
+- Core compositor functionality
+- Dock, status bar, terminal
+- File manager
+- Authentication and session management
+- Policy enforcement
+
+**Plugin quarantine**: if crashes consistently occur after a specific plugin loads (detected by correlating crash timestamps with plugin load events), that plugin is automatically quarantined (disabled) and a warning is logged. The quarantine persists across session restarts until the admin explicitly re-enables the plugin.
+
+### Session Configuration
+
+```toml
+# /etc/liquide/server.toml
+
+[session]
+auto_resume = true                   # auto-resume single existing session
+disconnect_timeout_sec = 3600        # keep session alive for 1h after disconnect
+idle_lock_sec = 300                  # lock session after 5min idle
+idle_suspend_sec = 0                 # 0 = never auto-suspend
+max_duration_sec = 86400             # max session duration (24h)
+max_per_user = 3                     # max concurrent sessions per user
+
+[session.multi_client]
+mode = "steal"                       # steal, mirror, deny, view-only
+mirror_max_clients = 4
+mirror_show_remote_cursor = true
+
+[supervisor]
+heartbeat_interval_sec = 5
+heartbeat_timeout_count = 3          # miss 3 heartbeats = hung
+max_restarts = 5
+restart_window_sec = 600
+restart_backoff_base_ms = 1000
+crash_report_dir = "/var/log/liquide/crashes"
+coredump_enabled = true
+crash_log_lines = 100
+safe_mode_after_restart = 3          # enter safe mode after 3rd restart
+plugin_quarantine_enabled = true
+```
+
 ---
 
 ## 14) Desktop Environment: Shell & Dock
