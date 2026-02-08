@@ -68,8 +68,9 @@ ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=true
 NoNewPrivileges=false
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_KILL CAP_SYS_PTRACE
-AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_KILL
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_KILL CAP_SYS_PTRACE
+AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_KILL CAP_SYS_PTRACE
+Delegate=yes
 ReadWritePaths=/run/liquide /var/log/liquide /var/lib/liquide /tmp
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -289,12 +290,19 @@ Policy: `session.autostart.enabled` (default: `true`) — master switch. `sessio
 
 | Capability | Reason |
 |------------|--------|
-| `CAP_SYS_ADMIN` | cgroup management, namespace creation |
 | `CAP_SETUID` / `CAP_SETGID` | Spawn session processes as different users |
 | `CAP_NET_BIND_SERVICE` | Bind to ports < 1024 (optional, if configured) |
-| `CAP_SYS_RESOURCE` | Set resource limits for sessions |
+| `CAP_SYS_RESOURCE` | Set resource limits for sessions (rlimits) |
 | `CAP_DAC_READ_SEARCH` | Read user home directories for config loading |
 | `CAP_KILL` | Send signals to session processes |
+| `CAP_SYS_PTRACE` | Inspect session process state for crash diagnostics |
+
+> **`CAP_SYS_ADMIN` is intentionally omitted.** This capability is too broad and would undermine session isolation guarantees (see [spec-threat-model.md T-18](spec-threat-model.md)). The supervisor avoids needing it through:
+>
+> - **cgroup management**: The systemd unit uses `Delegate=yes`, which grants the supervisor write access to its own cgroup subtree. The supervisor creates per-session child cgroups by writing to the delegated subtree — no capability required, only filesystem permissions.
+> - **Namespace creation**: The supervisor uses `systemd-run` (via D-Bus `org.freedesktop.systemd1.Manager.StartTransientUnit`) to spawn session processes as scoped units with `PrivateMounts=yes`, `PrivateUsers=yes`, etc. systemd (PID 1) performs the actual namespace creation. Alternatively, the supervisor uses `clone3()` with user-namespace-first unsharing where the kernel permits unprivileged user namespace creation (`/proc/sys/kernel/unprivileged_userns_clone = 1`).
+>
+> This design keeps the supervisor small and auditable. If a deployment requires `CAP_SYS_ADMIN` (e.g., older kernels without cgroup v2 delegation or `clone3`), it can be added back to the systemd unit, but this SHOULD be treated as a compatibility fallback, not the default.
 
 `liquid-session` runs with **no** elevated capabilities (`NoNewPrivileges=true`). It runs as the target user with standard user permissions.
 

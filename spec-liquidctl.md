@@ -947,7 +947,7 @@ Manage gateway connection.
 $ liquidctl gateway status
 
 Gateway: registered
-  URL:        wss://gateway.example.com:443
+  URL:        liquide://gateway.example.com
   Status:     connected
   Uptime:     3d 14h
   Mode:       reverse-connect

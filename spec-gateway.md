@@ -95,7 +95,7 @@ Servers register with the gateway to advertise availability.
 # In server.toml
 [gateway]
 enabled = true
-gateway_url = "wss://gateway.example.com:443"
+gateway_url = "liquide://gateway.example.com"
 reverse_connect = true
 registration_token = "secret-token-here"
 keepalive_interval_sec = 30
@@ -142,7 +142,7 @@ reconnect_delay_sec = 5
 # In client config.toml
 [gateway]
 enabled = true
-url = "wss://gateway.example.com:443"
+url = "liquide://gateway.example.com"
 auth_token = ""                    # or interactive auth
 auto_discover = true               # mDNS / DNS-SD for LAN gateways
 prefer_direct = true               # attempt direct connection first
@@ -214,6 +214,37 @@ prefer_direct = true               # attempt direct connection first
 - Gateway operates at the transport level — it forwards encrypted byte streams.
 - This means the gateway adds latency but does not compromise session encryption.
 - Optional **connection splicing** for zero-copy relay on supported platforms.
+
+### Gateway URI Scheme
+
+Gateway URLs use a **transport-neutral** `liquide://` scheme. The client and server negotiate the actual transport (QUIC, TLS/TCP, WebSocket) at connection time based on the gateway's `[[listen]]` configuration and the client's capabilities.
+
+**URI grammar:**
+
+```
+liquide-uri  = scheme "://" authority [ "/" path ]
+scheme       = "liquide"                         ; transport-neutral (QUIC → TLS/TCP → WSS auto-negotiation)
+             / "liquide+quic"                    ; force QUIC transport
+             / "liquide+tls"                     ; force TLS/TCP transport
+             / "liquide+wss"                     ; force WebSocket over TLS (web clients, corporate proxies)
+authority    = host [ ":" port ]
+port         = 1*5DIGIT                          ; default: 443
+path         = [ "ws" ]                          ; optional, for WebSocket endpoint path
+```
+
+**Examples:**
+
+| URI | Meaning |
+|-----|---------|
+| `liquide://gateway.example.com` | Connect to gateway on port 443, auto-negotiate transport (tries QUIC → TLS/TCP → WSS) |
+| `liquide://gateway.example.com:3389` | Same, non-default port |
+| `liquide+quic://gateway.example.com` | Force QUIC transport only |
+| `liquide+tls://gateway.example.com` | Force TLS/TCP transport only |
+| `liquide+wss://gateway.example.com` | Force WebSocket (TLS) — for web clients or proxied environments |
+
+The **default** `liquide://` scheme tries transports in preference order: QUIC (lowest latency) → TLS/TCP (wider compatibility) → WebSocket/TLS (maximum firewall penetration). The client stops at the first transport that connects successfully.
+
+> **Web clients**: The web client always uses `liquide+wss://` internally (browsers cannot open raw QUIC/TCP sockets). The web client config can accept `liquide://` and automatically applies the WebSocket constraint. See [spec-web-client.md §4](spec-web-client.md).
 
 ---
 

@@ -15,6 +15,8 @@ This document references trust boundaries defined in [spec-normative.md §3](spe
 
 ## 2) Data Flow Diagrams
 
+> **Note**: Channel IDs referenced in these diagrams use the canonical assignments defined in [spec-protocol-formal.md §2 Channel Assignments](spec-protocol-formal.md). See that table for the complete channel ID → subsystem mapping.
+
 ### 2.1 Session Establishment
 
 ```
@@ -103,7 +105,7 @@ Data stores:
 ### 2.3 Clipboard Transfer
 
 ```
-┌──────────────┐     Clipboard channel (0x10)     ┌──────────────┐
+┌──────────────┐     Clipboard channel (0x30)     ┌──────────────┐
 │ LiquidClient │ ◄═══════════════════════════════► │liquid-session │
 │              │           TLS-encrypted            │              │
 │              │                                    │              │
@@ -132,7 +134,7 @@ Data stores:
 ### 2.4 USB Device Redirection
 
 ```
-┌──────────────┐       USB channel (0x0D)         ┌──────────────┐
+┌──────────────┐       USB channel (0x40)         ┌──────────────┐
 │ LiquidClient │ ═══════════════════════════════►  │liquid-session │
 │              │          TLS-encrypted             │              │
 │  [USB device │                                    │  [USB/IP     │
@@ -181,7 +183,7 @@ Data stores:
 | T-15 | **D**enial of Service | Plugin exhausts memory | Host ↔ Plugin (B4) | 4 | Medium | Low | Per-plugin memory cap (default 32 MB, max 256 MB). wasmtime OOM trap at sandbox boundary. | Negligible |
 | T-16 | **D**enial of Service | Session process exhausts host resources | Supervisor ↔ Session (B3) | 3 | Medium | High | cgroup v2 limits: memory, CPU, PIDs, I/O bandwidth. Supervisor monitors and kills runaway sessions. | Low |
 | T-17 | **D**enial of Service | Brute-force authentication attempts | Client ↔ Server (B1) | 1 | High | Medium | fail2ban integration (auth, brute, proto jails). Progressive delays. Account lockout after N failures. Rate limiting at gateway. | Low |
-| T-18 | **E**levation of Privilege | Session process escapes jail | Supervisor ↔ Session (B3) | 3 | Low | Critical | cgroup v2, PID namespace, mount namespace, seccomp-bpf, landlock LSM. Session runs as unprivileged user. No CAP_SYS_ADMIN. | Low — requires kernel exploit |
+| T-18 | **E**levation of Privilege | Session process escapes jail | Supervisor ↔ Session (B3) | 3 | Low | Critical | cgroup v2, PID namespace, mount namespace, seccomp-bpf, landlock LSM. Session runs as unprivileged user. No `CAP_SYS_ADMIN` on either session or supervisor (supervisor uses cgroup v2 delegation + systemd-run for namespace creation — see [spec-system.md §6.1](spec-system.md)). | Low — requires kernel exploit |
 | T-19 | **E**levation of Privilege | Plugin escapes WASM sandbox | Host ↔ Plugin (B4) | 4 | Very Low | Critical | wasmtime sandbox (validated WASM bytecode, no direct syscalls). Plugin signing verification. Reduced WASI capabilities. Regular wasmtime updates. | Very Low — requires wasmtime bug |
 | T-20 | **E**levation of Privilege | User escalates to admin via manager | Admin ↔ Manager (B6) | 6 | Low | Critical | RBAC with least-privilege defaults. All API endpoints check authorization. Sensitive operations require re-authentication. No default admin password. | Low |
 | T-21 | **S**poofing | Rogue plugin installed by compromised admin | Host ↔ Plugin (B4) | 4 | Low | High | Plugin signature verification (ed25519). Optional policy to restrict plugins to an allowlist. Plugin install requires admin privilege. Audit log records plugin installs. | Low — requires admin compromise |
