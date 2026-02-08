@@ -901,9 +901,9 @@ The emergency channel has its own heartbeat independent of the control channel:
 
 ---
 
-## 11) Operational SLOs & Performance Targets
+## 13) Operational SLOs & Performance Targets
 
-### 11.1 Latency Budgets
+### 13.1 Latency Budgets
 
 | Metric | Target (1080p, same-datacenter) | Target (1080p, WAN 50ms RTT) | Target (4K, same-datacenter) |
 |--------|-------------------------------|------------------------------|------------------------------|
@@ -919,7 +919,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 | Cursor update | < 5ms | < 5ms + RTT | < 5ms |
 | Audio end-to-end | < 30ms | < 30ms + RTT | < 30ms |
 
-### 11.2 Throughput Targets
+### 13.2 Throughput Targets
 
 | Metric | Target  |
 |--------|---------|
@@ -933,7 +933,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 | Clipboard (text, < 1MB) | < 100ms end-to-end |
 | File transfer | Limited by network bandwidth |
 
-### 11.3 Resource Budget (Server, per session)
+### 13.3 Resource Budget (Server, per session)
 
 | Resource | Target | Maximum |
 |----------|--------|---------|
@@ -947,7 +947,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 | Network (4K, 30fps, balanced) | 8–20 Mbps | 50 Mbps |
 | Network (idle) | < 10 Kbps | — |
 
-### 11.4 CI Regression Thresholds
+### 13.4 CI Regression Thresholds
 
 Automated performance tests run in CI. A regression is flagged if:
 
@@ -961,7 +961,7 @@ Automated performance tests run in CI. A regression is flagged if:
 | Binary size | > 10% increase |
 | Startup time (session ready) | > 15% increase |
 
-### 11.5 Network Emulation Scenarios
+### 13.5 Network Emulation Scenarios
 
 Release gating includes tests under simulated network conditions:
 
@@ -984,7 +984,7 @@ For each scenario, verify:
 
 ---
 
-## 12) Fuzzing Targets
+## 14) Fuzzing Targets
 
 The following components are fuzzing targets for security and robustness:
 
@@ -998,7 +998,7 @@ The following components are fuzzing targets for security and robustness:
 | TLS handshake | Malformed TLS records | No crash, correct TLS error |
 | Session resume token | Malformed tokens | No bypass, correct auth error |
 
-### 12.1 Fuzzing Infrastructure
+### 14.1 Fuzzing Infrastructure
 
 - Fuzzing uses `cargo-fuzz` (libFuzzer) for Rust components.
 - Corpus seeded from protocol conformance test recordings.
@@ -1007,9 +1007,9 @@ The following components are fuzzing targets for security and robustness:
 
 ---
 
-## 13) Conformance Tests
+## 15) Conformance Tests
 
-### 13.1 Test Categories
+### 15.1 Test Categories
 
 | Category | Description | Pass Criteria |
 |----------|-------------|---------------|
@@ -1034,7 +1034,7 @@ The following components are fuzzing targets for security and robustness:
 | Tile resize | Resize → TileConfig → TileKeyFrame | Client reconfigures grid, no desync |
 | Tile key frame request | Client sends TileKeyFrameRequest | Server responds with full TileKeyFrame |
 
-### 13.2 Conformance Test Runner
+### 15.2 Conformance Test Runner
 
 A standalone conformance test tool (`liquide-conformance`) can be run against any LiquiDE server to verify protocol compliance:
 
@@ -1046,7 +1046,7 @@ Outputs a pass/fail report per test case.
 
 ---
 
-## 14) Test Plan
+## 16) Test Plan
 
 ### Protocol Correctness
 - Frame parsing: all field combinations, max sizes, truncated frames.
@@ -1066,9 +1066,12 @@ Outputs a pass/fail report per test case.
 - Emergency channel: verify it cannot be used to bypass authentication.
 
 ### Performance
-- All SLOs (§11) met under each network scenario (§11.5).
-- Regression thresholds (§11.4) enforced in CI.
+- All SLOs (§13) met under each network scenario (§13.5).
+- Regression thresholds (§13.4) enforced in CI.
 
 ### Interoperability
 - Conformance tests pass for: Linux client, Windows client, macOS client, browser client.
 - Version mismatch: older client with newer server and vice versa.
+- Backpressure: verify all channels respect flow control limits (§11).
+- Extension negotiation: verify unknown capabilities are ignored, known capabilities activate features.
+- Unknown messages: verify unknown message types are silently discarded (§12).
