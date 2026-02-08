@@ -38,7 +38,7 @@ Each LiquiDE component has its own version, but all components in a release shar
 | Supervisor daemon | `liquid-desktopd` | `1.3.2` |
 | Session process | `liquid-session` | `1.3.2` |
 | CLI tool | `liquidctl` | `1.3.2` |
-| Client | `liquiclient` | `1.3.2` |
+| Client | `liquidclient` | `1.3.2` |
 | Portal backend | `xdg-desktop-portal-liquide` | `1.3.2` |
 | Management UI | `liquid-manager` | `1.3.2` |
 | Plugin SDK | `liquide-plugin-sdk` | `1.3.2` |
@@ -368,11 +368,11 @@ codec = "h264"
 
 ### 8.1 Client Update Flow
 
-The LiquiClient application checks for updates independently:
+The LiquidClient application checks for updates independently:
 
 1. On startup (if `check_updates = true` in client config).
 2. Client queries the update server (HTTPS GET to `updates.liquide.dev/client/<platform>/<channel>/latest`).
-3. If a newer version is available, a non-intrusive notification appears: "LiquiClient X.Y.Z is available. [Update Now] [Later] [Skip This Version]".
+3. If a newer version is available, a non-intrusive notification appears: "LiquidClient X.Y.Z is available. [Update Now] [Later] [Skip This Version]".
 4. "Update Now" downloads the installer and launches it (platform-specific).
 5. "Skip This Version" suppresses the notification for that specific version.
 

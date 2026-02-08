@@ -355,7 +355,7 @@ Control channel payloads use **CBOR** (Concise Binary Object Representation, [RF
 ```cddl
 ClientHello = {
     protocol_version: text,                    ; "proto/1"
-    client_name: text,                         ; "LiquiClient"
+    client_name: text,                         ; "LiquidClient"
     client_version: text,                      ; "1.3.2"
     client_platform: text,                     ; "linux-x86_64", "windows-x86_64", "macos-aarch64"
     supported_transports: [+ text],            ; ["quic", "tcp+udp", "tcp-only", "websocket"]

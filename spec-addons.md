@@ -11,7 +11,7 @@ LiquiDE ships a curated set of built-in applications that provide essential desk
 
 ### Design Principles
 
-- **Native Liquid Glass**: all apps use GTK4 with the Liquid Glass CSS theme. Glass blur, translucency, and depth effects are applied automatically via the LiquiDE theme engine.
+- **Native Liquid Glass**: all apps are written in Rust using LiquiDE's own UI toolkit (`liquid-ui`), which renders the Liquid Glass design language directly via the compositor. Glass blur, translucency, and depth effects are native — no external GUI toolkit required.
 - **Remote-first**: all apps run on the **server** in a remote LiquiDE session. Their UI is streamed to the client like any other application. Where beneficial, specific apps support client-side offload (terminal, text editor) for reduced latency.
 - **Lightweight**: each app targets < 50 MB RSS memory at idle, < 200ms startup time.
 - **Accessible**: all apps expose full AT-SPI2 accessibility trees, support keyboard navigation, and respect high-contrast / reduced-motion / text-scaling preferences.
@@ -21,12 +21,10 @@ LiquiDE ships a curated set of built-in applications that provide essential desk
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| GTK4 | 4.12+ | UI toolkit |
-| libadwaita | 1.4+ | Adaptive layouts, platform patterns |
-| Liquid Glass CSS | (bundled) | LiquiDE visual theme |
-| GLib/GIO | 2.78+ | File I/O, settings, D-Bus |
+| `liquid-ui` | (bundled) | LiquiDE native Rust UI toolkit (Liquid Glass rendering, layout, input) |
 | tree-sitter | 0.20+ | Syntax highlighting (editor, terminal) |
 | PipeWire | 1.0+ | Audio (system monitor alerts) |
+| zbus | 4.0+ | D-Bus communication (Rust native) |
 
 ---
 
@@ -650,7 +648,7 @@ Name=Archive Manager
 GenericName=Archive Manager
 Comment=Create and extract archives
 Exec=liquid-archive %U
-Icon=org.gnome.FileRoller
+Icon=liquid-archive
 Categories=Utility;Archiving;
 MimeType=application/zip;application/x-tar;application/gzip;application/x-bzip2;application/x-xz;application/zstd;application/x-7z-compressed;application/x-rar;application/vnd.rar;application/x-iso9660-image;
 Keywords=archive;compress;extract;zip;tar;unzip;7z;rar;
@@ -812,7 +810,7 @@ Name=Document Viewer
 GenericName=Document Viewer
 Comment=View PDF, EPUB, and other documents
 Exec=liquid-docs %U
-Icon=org.gnome.Evince
+Icon=liquid-docs
 Categories=Office;Viewer;
 MimeType=application/pdf;application/epub+zip;image/vnd.djvu;application/oxps;application/vnd.ms-xpsdocument;application/x-cbr;application/x-cbz;
 Keywords=pdf;document;viewer;reader;epub;book;
@@ -858,7 +856,7 @@ Name=Disk Usage Analyzer
 GenericName=Disk Usage Analyzer
 Comment=Analyze disk space usage
 Exec=liquid-diskusage
-Icon=baobab
+Icon=liquid-diskusage
 Categories=System;Filesystem;
 Keywords=disk;usage;space;analyzer;storage;size;
 StartupNotify=true
@@ -1002,7 +1000,212 @@ StartupNotify=true
 
 ---
 
-## 15) Shared Infrastructure
+## 15) Software Center
+
+A graphical application for browsing, installing, updating, and removing Flatpak applications from Flathub and other configured repositories.
+
+### 15.1 Core Features
+
+| Feature | Description |
+|---------|-------------|
+| **Browse** | Featured apps, categories, editor's picks from Flathub |
+| **Search** | Full-text search across app name, summary, description, keywords |
+| **Install / Remove** | One-click install/uninstall with progress indication |
+| **Update** | View pending updates, update individual apps or all at once |
+| **App details** | Screenshots, description, version history, size, developer info, permissions |
+| **Permission review** | Pre-install permission summary with danger highlighting |
+| **Permission management** | Post-install per-app permission overrides (filesystem, network, devices) |
+| **Ratings & reviews** | Display ODRS (Open Desktop Ratings Service) ratings and reviews |
+| **Source badge** | Each app shows its source (Flathub, Flathub Beta, custom remote) |
+| **Multi-remote** | Browse and install from any configured Flatpak remote |
+| **Categories** | Audio & Video, Developer Tools, Education, Games, Graphics, Network, Office, Science, System, Utilities |
+
+### 15.2 Flathub Integration
+
+The Software Center uses the [Flathub API](https://flathub.org/api/) and local Flatpak metadata:
+
+| Data Source | Purpose |
+|-------------|---------|
+| Flathub AppStream XML | App metadata, screenshots, categories, keywords |
+| `flatpak search` | Offline fallback search via local appstream cache |
+| `flatpak info` | Installed app details, runtime, size |
+| ODRS API | User ratings and reviews |
+| Local Flatpak state | Install status, available updates, overrides |
+
+**Caching:**
+- AppStream metadata is cached locally and refreshed on each update check (controlled by `flatpak.auto_update_schedule`).
+- Screenshots are cached in `~/.cache/liquide/software-center/screenshots/` with LRU eviction at 200 MB.
+- App metadata cache: `~/.cache/liquide/software-center/appstream/`.
+
+### 15.3 UI Layout
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Software Center                                   ─ □ ✕     │
+├─────────────────────────────────────────────────────────────┤
+│  🔍 [Search apps...]                                        │
+│                                                             │
+│  [Explore]  [Installed]  [Updates (3)]                      │
+│                                                             │
+│  ── Featured ──────────────────────────────────             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                  │
+│  │  Banner  │  │  Banner  │  │  Banner  │   ← carousel     │
+│  └──────────┘  └──────────┘  └──────────┘                  │
+│                                                             │
+│  ── Categories ────────────────────────────                 │
+│  [ Audio & Video ] [ Developer Tools ] [ Games ] ...        │
+│                                                             │
+│  ── Recently Updated ──────────────────────                 │
+│  ┌────┐ Firefox           ┌────┐ GIMP                      │
+│  │icon│ Web browser  [Install] │icon│ Image editor  [Install]│
+│  └────┘                   └────┘                            │
+│  ┌────┐ VLC               ┌────┐ LibreOffice               │
+│  │icon│ Media player [Open]│icon│ Office suite  [Install]   │
+│  └────┘                   └────┘                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**App detail page:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ ← Back                                           ─ □ ✕     │
+│                                                             │
+│  ┌────┐  Firefox                                            │
+│  │icon│  Mozilla                              [Install]     │
+│  └────┘  ★★★★☆ (2,341 ratings)                             │
+│                                                             │
+│  ┌──────────────────────────────────────────┐               │
+│  │              Screenshot carousel          │               │
+│  └──────────────────────────────────────────┘               │
+│                                                             │
+│  Fast, private & safe web browser...                        │
+│                                                             │
+│  ── Permissions ────────────────────────────                │
+│  ⚠ Network access        ✓ Wayland           ✓ Audio       │
+│  ⚠ Filesystem: home      ✓ Notifications     ✓ GPU         │
+│                                                             │
+│  ── Details ────────────────────────────────                │
+│  Version: 124.0.1    Size: 241 MB    Runtime: org.freedeskop│
+│  Source: Flathub     License: MPL-2.0                       │
+│                                                             │
+│  ── Version History ────────────────────────                │
+│  124.0.1  (2025-02-05)  Bug fixes                          │
+│  124.0    (2025-02-01)  New tab groups feature              │
+│  123.0.1  (2025-01-15)  Security update                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 15.4 Update Management
+
+The Software Center's **Updates** tab shows:
+
+1. **Pending Flatpak updates** — app name, current version → new version, download size, changelog summary.
+2. **LiquiDE component updates** — if available (read from `liquidctl update check`).
+3. **"Update All"** button — applies all pending Flatpak updates in parallel, with per-app progress bars.
+4. **Auto-update status** — shows whether auto-updates are enabled, last update time, next scheduled check.
+
+**Background updates:** When `flatpak.auto_update = true`, updates are downloaded and applied in the background. A notification is shown: "N apps were updated" with an action to view details.
+
+### 15.5 Install / Remove Flow
+
+**Install:**
+1. User clicks "Install" on an app.
+2. Software Center checks policy (`flatpak.enabled`, `flatpak.blocked_apps`, `flatpak.allowed_apps`).
+3. Permission summary is shown. "Potentially dangerous" permissions (host filesystem, network, X11) are highlighted.
+4. User confirms. If the required runtime is not installed, it is fetched first.
+5. Progress bar shows download + install progress. The user can continue browsing.
+6. On completion, a toast shows "Firefox installed" with an "Open" action.
+7. The app's `.desktop` file export is detected by the launcher via `inotify`.
+
+**Remove:**
+1. User clicks "Uninstall" on an installed app page.
+2. Confirmation dialog: "Remove Firefox? App data will be kept. [Remove] [Remove with data] [Cancel]".
+3. "Remove" runs `flatpak uninstall <app-id>`.
+4. "Remove with data" also clears `~/.var/app/<app-id>/`.
+5. Unused runtimes are cleaned if `flatpak.gc_unused_runtimes = true`.
+
+### 15.6 Permission Editor
+
+Accessible from the app detail page (installed apps only) or from Settings → Apps → [App] → Permissions:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Permissions: Firefox                             ─ □ ✕     │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ── Filesystem ─────────────────────────────                │
+│  [✓] Home directory (~)                                     │
+│  [✓] Downloads (~/Downloads)                                │
+│  [ ] All files (host)                                       │
+│  [ ] /tmp                                                   │
+│  [+ Add path...]                                            │
+│                                                             │
+│  ── Network ────────────────────────────────                │
+│  [✓] Network access                                         │
+│                                                             │
+│  ── Display ────────────────────────────────                │
+│  [✓] Wayland                                                │
+│  [ ] X11 (fallback)                                         │
+│                                                             │
+│  ── Devices ────────────────────────────────                │
+│  [✓] GPU acceleration (DRI)                                 │
+│  [ ] All devices                                            │
+│  [✓] Shared memory (SHM)                                    │
+│                                                             │
+│  ── Session Bus ────────────────────────────                │
+│  [✓] org.freedesktop.Notifications                          │
+│  [✓] org.freedesktop.portal.*                               │
+│  [+ Add service...]                                         │
+│                                                             │
+│  [Reset to defaults]              [Apply]                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Changes are written to `~/.local/share/flatpak/overrides/<app-id>` and take effect on next app launch.
+
+### 15.7 Policy
+
+| Policy Key | Default | Description |
+|-----------|---------|-------------|
+| `apps.software_center.enabled` | `true` | Show Software Center in launcher |
+| `apps.software_center.allow_install` | `true` | Allow installing apps |
+| `apps.software_center.allow_remove` | `true` | Allow removing apps |
+| `apps.software_center.allow_permission_edit` | `true` | Allow modifying Flatpak permissions |
+| `apps.software_center.show_ratings` | `true` | Show ODRS ratings and reviews |
+
+### 15.8 Configuration
+
+```toml
+[software_center]
+default_remote = "flathub"
+show_beta_apps = false            # Show apps from Flathub beta
+show_eol_runtimes = false         # Show end-of-life runtime warnings
+screenshot_cache_mb = 200
+auto_refresh_interval = "daily"   # AppStream metadata refresh
+```
+
+### 15.9 `.desktop` Entry
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Software Center
+GenericName=Application Store
+Comment=Browse and install applications from Flathub
+Exec=liquid-software-center
+Icon=liquid-software-center
+Categories=System;PackageManager;
+Keywords=flatpak;flathub;install;apps;store;software;package;
+StartupNotify=true
+MimeType=application/vnd.flatpak.ref;application/vnd.flatpak.repo;
+```
+
+**MIME handling:** The Software Center registers as the handler for `.flatpakref` and `.flatpakrepo` files. Opening a `.flatpakref` file shows the app's detail page with an "Install" button. Opening a `.flatpakrepo` file prompts to add the remote.
+
+---
+
+## 16) Shared Infrastructure
 
 ### 15.1 Common Application Conventions
 
@@ -1017,9 +1220,9 @@ All LiquiDE built-in applications follow these conventions:
 | **Data storage** | User data (palettes, bookmarks, history) in `~/.local/share/liquide/<app-name>/` |
 | **D-Bus activation** | Each app can be activated via D-Bus for single-instance enforcement |
 | **Dark mode** | Respond to `org.freedesktop.portal.Settings` `color-scheme` signal automatically |
-| **Locale** | All user-visible strings are localizable via gettext `.po` files |
+| **Locale** | All user-visible strings are localizable via Fluent (`.ftl`) or gettext (`.po`) files |
 | **Undo** | Destructive actions show an undo toast for 5 seconds before committing |
-| **Print** | Use the GTK print dialog (which routes through the portal) |
+| **Print** | Use the LiquiDE print dialog (which routes through the portal) |
 
 ### 15.2 Icon Theme Entries
 
@@ -1033,10 +1236,10 @@ All built-in apps register icons in the LiquiDE icon theme at standard sizes (16
 | Image Viewer | `image-viewer` |
 | Calculator | `accessories-calculator` |
 | Screenshot | `applets-screenshooter` |
-| Archive Manager | `org.gnome.FileRoller` |
+| Archive Manager | `liquid-archive` |
 | System Monitor | `utilities-system-monitor` |
-| Document Viewer | `org.gnome.Evince` |
-| Disk Usage | `baobab` |
+| Document Viewer | `liquid-docs` |
+| Disk Usage | `liquid-diskusage` |
 | Font Viewer | `preferences-desktop-font` |
 | Character Map | `accessories-character-map` |
 | Color Picker | `color-picker` |
@@ -1077,14 +1280,15 @@ Each app optionally provides a D-Bus interface for programmatic control:
 | Terminal | `org.liquide.Terminal` | `Open()`, `RunCommand(s)` |
 | Screenshot | `org.liquide.Screenshot` | `CaptureRegion()`, `CaptureWindow()`, `CaptureScreen()` |
 
-### 15.5 GTK4 + Liquid Glass Integration
+### 15.5 Liquid UI Toolkit
 
-All built-in apps use GTK4 with libadwaita. The Liquid Glass theme is applied via:
+All built-in apps are written in Rust using `liquid-ui`, LiquiDE's own UI toolkit:
 
-1. The GTK4 CSS provider loads the Liquid Glass stylesheet (registered in `gtk-4.0/gtk.css`).
-2. libadwaita's `AdwStyleManager` is configured to follow the LiquiDE color scheme via the portal Settings interface.
-3. Apps use standard `AdwApplicationWindow`, `AdwHeaderBar`, `AdwNavigationView`, `AdwToastOverlay` patterns.
-4. Glass blur effects on window backgrounds are composited by the LiquiDE compositor — the app sees a solid semi-transparent background color.
+1. `liquid-ui` renders directly to the Wayland surface via the LiquiDE compositor's rendering pipeline. No intermediate GUI toolkit (GTK, Qt) is involved.
+2. The Liquid Glass CSS theme is applied natively — `liquid-ui` widgets read the same CSS custom properties as the compositor shell.
+3. Apps use `liquid-ui` standard patterns: `Window`, `HeaderBar`, `NavigationView`, `ToastOverlay`, `ListView`, `Grid`, etc.
+4. Glass blur effects on window backgrounds are composited by the LiquiDE compositor — the app requests a translucent surface and the compositor applies blur behind it.
+5. Third-party GTK/Qt applications still work normally inside LiquiDE sessions via standard Wayland and XWayland support. Only the **built-in** apps use `liquid-ui` directly.
 
 ### 15.6 Global Policy
 

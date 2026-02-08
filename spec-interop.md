@@ -651,18 +651,165 @@ Certain actions require explicit user consent. LiquiDE displays a Liquid Glass p
 
 ### 6.3 Flatpak Integration
 
-LiquiDE provides first-class Flatpak support:
+LiquiDE provides **full, first-class** Flatpak and Flathub support. Flatpak is the primary mechanism for users to install third-party applications.
 
-- Flatpak applications are detected via their `.desktop` exports and listed in the app launcher.
-- Portal calls from Flatpak apps include the `app_id` which is used for permission attribution.
-- `xdg-desktop-portal-liquide` is registered as the portal backend in `/usr/share/xdg-desktop-portal/portals/liquide.portal`:
+#### 6.3.1 Runtime Requirements
+
+LiquiDE depends on Flatpak being installed on the host system. The `liquid-desktopd` installer checks for Flatpak and offers to install it if missing.
+
+| Requirement | Detail |
+|-------------|--------|
+| Flatpak version | 1.14+ (for `--columns`, `app-id` portal attribution, security context) |
+| Default runtime | `org.freedesktop.Platform` (latest stable, e.g. `23.08`) |
+| X11 compat | `org.freedesktop.Platform.GL.default` (for XWayland Flatpak apps) |
+
+#### 6.3.2 Flathub Repository
+
+LiquiDE configures the Flathub repository out of the box:
+
+```bash
+# System-wide (done by installer or first-boot setup)
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+# LiquiDE also supports the Flathub beta channel
+flatpak remote-add --if-not-exists flathub-beta https://flathub.org/beta-repo/flathub-beta.flatpakrepo
+```
+
+| Repository | Scope | Default |
+|------------|-------|---------|
+| `flathub` | system | Enabled (added at install) |
+| `flathub-beta` | system | Disabled (opt-in) |
+| User-added remotes | user or system | Supported via `liquidctl flatpak remote-add` or Software Center |
+
+**Policy keys:**
+
+| Policy Key | Default | Description |
+|-----------|---------|-------------|
+| `flatpak.enabled` | `true` | Master switch — disabling prevents all Flatpak operations |
+| `flatpak.flathub.enabled` | `true` | Allow Flathub repository |
+| `flatpak.flathub_beta.enabled` | `false` | Allow Flathub beta repository |
+| `flatpak.allow_third_party_remotes` | `true` | Allow adding non-Flathub remotes |
+| `flatpak.allow_user_install` | `true` | Allow per-user Flatpak installs |
+| `flatpak.allow_system_install` | `false` | Allow system-wide installs (requires polkit) |
+| `flatpak.allowed_apps` | `[]` | Allowlist — if non-empty, only these app IDs can be installed |
+| `flatpak.blocked_apps` | `[]` | Blocklist — these app IDs cannot be installed |
+
+#### 6.3.3 Application Discovery
+
+Flatpak applications are discovered and surfaced in the LiquiDE app launcher:
+
+1. `.desktop` files exported by Flatpak are scanned from:
+   - `/var/lib/flatpak/exports/share/applications/` (system installs)
+   - `~/.local/share/flatpak/exports/share/applications/` (user installs)
+2. Icons are picked up from:
+   - `/var/lib/flatpak/exports/share/icons/` (system)
+   - `~/.local/share/flatpak/exports/share/icons/` (user)
+3. MIME type associations from Flatpak apps are merged into the system MIME database (lower priority than native apps).
+4. The app launcher displays a "Source: Flatpak" badge on Flatpak applications.
+5. Flatpak apps are launched via `flatpak run <app-id>` with the appropriate Wayland socket and portal access.
+
+**Filesystem monitoring:** LiquiDE monitors the export directories via `inotify` for real-time updates when apps are installed/removed.
+
+#### 6.3.4 Portal Routing
+
+Portal calls from Flatpak apps include the `app_id` which is used for permission attribution.
+
+`xdg-desktop-portal-liquide` is registered as the portal backend in `/usr/share/xdg-desktop-portal/portals/liquide.portal`:
 
 ```ini
 [portal]
 DBusName=org.freedesktop.impl.portal.desktop.liquide
-Interfaces=org.freedesktop.impl.portal.FileChooser;org.freedesktop.impl.portal.OpenURI;org.freedesktop.impl.portal.Settings;org.freedesktop.impl.portal.Screenshot;org.freedesktop.impl.portal.ScreenCast;org.freedesktop.impl.portal.Notification;org.freedesktop.impl.portal.Inhibit;org.freedesktop.impl.portal.Background;org.freedesktop.impl.portal.GlobalShortcuts;org.freedesktop.impl.portal.AppChooser;org.freedesktop.impl.portal.Access
+Interfaces=org.freedesktop.impl.portal.FileChooser;org.freedesktop.impl.portal.OpenURI;org.freedesktop.impl.portal.Settings;org.freedesktop.impl.portal.Screenshot;org.freedesktop.impl.portal.ScreenCast;org.freedesktop.impl.portal.Notification;org.freedesktop.impl.portal.Inhibit;org.freedesktop.impl.portal.Background;org.freedesktop.impl.portal.GlobalShortcuts;org.freedesktop.impl.portal.AppChooser;org.freedesktop.impl.portal.Access;org.freedesktop.impl.portal.DynamicLauncher
 UseIn=LiquiDE
 ```
+
+**Additional portal:** `org.freedesktop.impl.portal.DynamicLauncher` is now supported, allowing Flatpak apps to request creating desktop shortcuts / launcher entries.
+
+#### 6.3.5 Permission Management
+
+Flatpak sandbox permissions are exposed to users through the Settings app and the Software Center:
+
+| Permission Category | Examples | UI |
+|-------------------|----------|-----|
+| Filesystem | `home`, `host`, `~/Documents`, specific paths | Toggle per-path |
+| Network | `network` | Single toggle |
+| D-Bus (session bus) | `org.freedesktop.Notifications`, `org.freedesktop.portal.*` | Per-service toggle |
+| D-Bus (system bus) | `org.freedesktop.UPower`, `org.freedesktop.NetworkManager` | Per-service toggle |
+| Device | `dri`, `all`, `kvm`, `shm` | Per-device toggle |
+| Socket | `wayland`, `x11`, `pulseaudio`, `cups` | Per-socket toggle |
+| Features | `bluetooth`, `canbus`, `multiarch` | Per-feature toggle |
+
+**Override storage:** Per-app permission overrides are stored in:
+- User: `~/.local/share/flatpak/overrides/<app-id>`
+- System: `/var/lib/flatpak/overrides/<app-id>`
+
+**Permission review on install:** When a user installs a Flatpak app, the Software Center shows a permission summary before confirming. Permissions classified as "potentially dangerous" (`host` filesystem, `network`, `x11`) are highlighted with a warning icon.
+
+#### 6.3.6 Runtime Management
+
+LiquiDE manages Flatpak runtimes automatically:
+
+1. **Auto-install runtimes:** When a Flatpak app requires a runtime not yet installed, `liquid-desktopd` installs it automatically before launching the app.
+2. **Runtime garbage collection:** Unused runtimes (not referenced by any installed app) are cleaned up periodically. Controlled by policy `flatpak.gc_unused_runtimes` (default: `true`), checked daily.
+3. **Runtime pinning:** Administrators can pin specific runtime versions via `flatpak.pinned_runtimes` policy (list of `org.freedesktop.Platform/x86_64/23.08` style refs).
+4. **GL driver extensions:** `org.freedesktop.Platform.GL.default` and Mesa/NVIDIA extensions are auto-installed for GPU-accelerated Flatpak apps.
+
+#### 6.3.7 Flatpak Updates
+
+Flatpak app updates are integrated into the LiquiDE update system (see spec-updates.md):
+
+1. `liquid-desktopd` checks for Flatpak updates alongside system component updates.
+2. Available Flatpak updates appear in the notification center and the Software Center.
+3. Updates are applied per-user or system-wide depending on install scope.
+4. Auto-update behavior is controlled by policy:
+
+| Policy Key | Default | Description |
+|-----------|---------|-------------|
+| `flatpak.auto_update` | `true` | Automatically download and apply Flatpak updates |
+| `flatpak.auto_update_schedule` | `daily` | Update check frequency: `hourly`, `daily`, `weekly`, `manual` |
+| `flatpak.notify_on_update` | `true` | Show notification when updates are installed |
+
+#### 6.3.8 D-Bus Service Export
+
+Flatpak applications that export D-Bus services (e.g., search providers, file handlers) are integrated:
+
+- Session bus services are proxied through the Flatpak D-Bus filtering.
+- The `.service` files exported to `/var/lib/flatpak/exports/share/dbus-1/services/` are picked up by the session bus.
+- LiquiDE's D-Bus service manager monitors these and can activate Flatpak apps on demand.
+
+#### 6.3.9 Flatpak CLI Integration
+
+LiquiDE wraps common Flatpak operations through `liquidctl`:
+
+```bash
+# Search Flathub
+liquidctl flatpak search firefox
+
+# Install an app
+liquidctl flatpak install org.mozilla.firefox
+
+# Remove an app
+liquidctl flatpak remove org.mozilla.firefox
+
+# List installed apps
+liquidctl flatpak list
+
+# Update all Flatpak apps
+liquidctl flatpak update
+
+# Show app permissions
+liquidctl flatpak permissions org.mozilla.firefox
+
+# Override a permission
+liquidctl flatpak override org.mozilla.firefox --filesystem=~/Downloads
+
+# Manage remotes
+liquidctl flatpak remote-add myrepo https://example.com/repo.flatpakrepo
+liquidctl flatpak remote-list
+liquidctl flatpak remote-remove myrepo
+```
+
+These commands proxy to the Flatpak host command but add LiquiDE policy enforcement and logging.
 
 ### 6.4 Snap Integration
 
@@ -721,6 +868,12 @@ These custom protocols are versioned and documented separately. Applications are
 - `.desktop` file parsing: all keys, localization, actions, Exec field expansion, `OnlyShowIn`/`NotShowIn`.
 - MIME type resolution: glob matching, magic bytes, default application lookup, user overrides.
 - Flatpak integration: app detection, portal routing, permission attribution.
+- Flatpak install/remove: Flathub search, install, launch, uninstall, verify `.desktop` export appears/disappears.
+- Flatpak updates: auto-update check, notification, apply, verify app is updated.
+- Flatpak permissions: override filesystem/network/device, verify overrides take effect in sandbox.
+- Flatpak runtime management: auto-install runtime on first app install, GC unused runtimes, pin runtime version.
+- Flatpak remotes: add/remove/list custom remotes, Flathub beta enable/disable.
+- Flatpak policy: `flatpak.enabled=false` blocks all operations, `flatpak.blocked_apps` prevents install, `flatpak.allowed_apps` allowlist works.
 
 ### Edge Cases
 - Replace-id from wrong app (must fail).
@@ -738,6 +891,7 @@ These custom protocols are versioned and documented separately. Applications are
 ### Integration
 - GTK4 app: notifications, file chooser, settings portal, tray icon.
 - Qt6 app: same.
-- Flatpak app: all portals.
+- Flatpak app: all portals, permission overrides, launch from app launcher, MIME association.
+- Flatpak runtime update: app launches correctly after runtime update.
 - Electron app: notifications, tray, file dialogs.
 - Legacy X11 app via XWayland: XEmbed tray, clipboard, window management.

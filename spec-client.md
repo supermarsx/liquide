@@ -1,4 +1,4 @@
-# LiquiClient — Client Specification
+# LiquidClient — Client Specification
 
 > **Language**: Rust
 > **License**: MIT
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-**LiquiClient** is the native client application for connecting to LiquiDE remote desktop sessions. It is built entirely in Rust and features the **Liquid Glass** visual aesthetic throughout its own UI — including custom window chrome, controls, and a translucent, depth-rich interface.
+**LiquidClient** is the native client application for connecting to LiquiDE remote desktop sessions. It is built entirely in Rust and features the **Liquid Glass** visual aesthetic throughout its own UI — including custom window chrome, controls, and a translucent, depth-rich interface.
 
 The client runs on Windows (x86_64, ARM64), Linux (x86_64, ARM64), and macOS (ARM64, x86_64).
 
@@ -121,7 +121,7 @@ Media Worker
 - "Remember me" option (credentials stored in OS keychain).
 
 ### Connection Profiles
-- Saved as `~/.config/liquiclient/profiles.toml` (Linux/macOS) or `%APPDATA%\LiquiClient\profiles.toml` (Windows).
+- Saved as `~/.config/liquidclient/profiles.toml` (Linux/macOS) or `%APPDATA%\LiquidClient\profiles.toml` (Windows).
 - Each profile contains:
   ```toml
   [[profile]]
@@ -648,11 +648,11 @@ show_monitor_selector = true
 ## 14) Client Window Chrome
 
 ### Custom Title Bar
-- LiquiClient draws its own window title bar (no native OS chrome).
+- LiquidClient draws its own window title bar (no native OS chrome).
 - **Appearance**: Liquid Glass style — translucent, blur backdrop, subtle border.
 - **Elements**:
   - App icon (left).
-  - Window title: "LiquiClient — [server name]" or "[session name]".
+  - Window title: "LiquidClient — [server name]" or "[session name]".
   - Connection status indicator (colored dot: green=connected, yellow=reconnecting, red=disconnected).
   - Latency display (e.g., "12ms").
   - Window controls (right): minimize, maximize/restore, close.
@@ -690,9 +690,9 @@ macos_traffic_lights = "right"     # left (macOS-native), right (default)
 ## 15) Client Configuration
 
 ### Configuration Files
-- **Linux**: `~/.config/liquiclient/config.toml`
-- **macOS**: `~/Library/Application Support/LiquiClient/config.toml`
-- **Windows**: `%APPDATA%\LiquiClient\config.toml`
+- **Linux**: `~/.config/liquidclient/config.toml`
+- **macOS**: `~/Library/Application Support/LiquidClient/config.toml`
+- **Windows**: `%APPDATA%\LiquidClient\config.toml`
 
 ### Full Configuration Structure
 
@@ -909,7 +909,7 @@ error_sound = true                   # play error sound on crash screen display
 
 ## 16) Multi-Machine Management
 
-LiquiClient can manage connections to **multiple remote servers** from a single interface.
+LiquidClient can manage connections to **multiple remote servers** from a single interface.
 
 ### Machine Manager
 - The connection dialog includes a **machine list** showing all saved servers.
@@ -961,9 +961,9 @@ Thumbnails are captured at specific moments during the session lifecycle:
   - **Tiny**: 80px wide — used for the machine list compact/row view.
 - **File size**: typically 15–50 KB per thumbnail (large variant). All three variants stored.
 - **Storage location**:
-  - **Linux**: `~/.config/liquiclient/thumbnails/`
-  - **macOS**: `~/Library/Application Support/LiquiClient/thumbnails/`
-  - **Windows**: `%APPDATA%\LiquiClient\thumbnails\`
+  - **Linux**: `~/.config/liquidclient/thumbnails/`
+  - **macOS**: `~/Library/Application Support/LiquidClient/thumbnails/`
+  - **Windows**: `%APPDATA%\LiquidClient\thumbnails\`
 - **File naming**: `<server_address_hash>_<timestamp>.webp` — each machine retains only the most recent thumbnail (old thumbnails are replaced).
 - **Multi-monitor sessions**: for sessions with multiple virtual monitors, the thumbnail captures the primary monitor by default. Optionally, a tiled composite of all monitors can be generated.
 
@@ -1029,7 +1029,7 @@ stale_threshold_days = 7                  # dim thumbnails older than this
     - **Linux**: libsecret (GNOME Keyring, KDE Wallet).
   - **Master password** (fallback): user-provided password, key derived via Argon2id.
   - **Combined**: OS keychain + master password for maximum security.
-- Credential file: `~/.config/liquiclient/credentials.enc` (Linux/macOS) or `%APPDATA%\LiquiClient\credentials.enc` (Windows).
+- Credential file: `~/.config/liquidclient/credentials.enc` (Linux/macOS) or `%APPDATA%\LiquidClient\credentials.enc` (Windows).
 - Credentials store:
   - Username.
   - Password (encrypted).
@@ -1096,7 +1096,7 @@ When the server has font offload enabled, the client handles text rendering loca
 6. Rendered text is composited into the frame before presentation.
 
 ### Font Cache
-- Fonts cached persistently in `~/.config/liquiclient/font-cache/` (Linux) or platform equivalent.
+- Fonts cached persistently in `~/.config/liquidclient/font-cache/` (Linux) or platform equivalent.
 - Cache indexed by font hash — identical fonts across servers share cache entries.
 - Configurable max cache size; LRU eviction.
 - Cache can be pre-warmed from previous sessions.
@@ -1120,9 +1120,9 @@ The client maintains a persistent cache of application icons, cursor themes, she
 #### Cache Architecture
 
 ```
-~/.config/liquiclient/asset-cache/     (Linux)
-~/Library/Caches/LiquiClient/assets/   (macOS)
-%LOCALAPPDATA%\LiquiClient\assets\     (Windows)
+~/.config/liquidclient/asset-cache/     (Linux)
+~/Library/Caches/LiquidClient/assets/   (macOS)
+%LOCALAPPDATA%\LiquidClient\assets\     (Windows)
 ├── index.db                            (SQLite: asset_id, server_fingerprint, hash, size, last_used)
 ├── icons/
 │   ├── <hash>.png
@@ -1606,7 +1606,7 @@ See [spec-protocol-formal.md](spec-protocol-formal.md) §9 for full emergency ch
 
 ## 26) Deliverables
 
-- `liquiclient` — native desktop application binary.
+- `liquidclient` — native desktop application binary.
 - Platform-specific installers:
   - **Windows**: MSI installer + portable ZIP.
   - **macOS**: DMG with .app bundle.
