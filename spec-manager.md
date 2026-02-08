@@ -157,6 +157,39 @@ The management server is a **simple Node.js application** that is **disabled by 
 - **Integrity verification**: verify HMAC integrity of audit log entries from the UI.
 - **Timeline view**: visual timeline of security events for a user or session.
 
+### Honeypot & Tarpit Dashboard
+- **Status overview**:
+  - Active tarpit connections (count, type breakdown: TCP/TLS/auth).
+  - Active honeypot sessions (count, triggers).
+  - Tarpit pool utilization (used / max slots).
+- **Live activity feed**: real-time stream of tarpit/honeypot events (WebSocket-driven).
+- **Attacker table**:
+  - IP address, first seen, last seen, total attempts, trigger type, current status (tarpitted/honeypotted/dropped).
+  - Geolocation (if IP geolocation data available).
+  - Sortable and filterable columns.
+- **IOC management**:
+  - View collected indicators of compromise (IPs, payload hashes, tool fingerprints).
+  - Export IOCs in STIX, CSV, or JSON format.
+  - Push IOC blocklists from gateway to all servers (one-click).
+- **Trigger configuration**: view and edit honeypot/tarpit trigger thresholds from the UI.
+- **Payload viewer**: inspect captured exploit payloads (hex dump + decoded analysis) for security research.
+- **Statistics graphs**:
+  - Tarpit/honeypot activations over time.
+  - Attack type distribution (pie chart).
+  - Top attacker IPs (bar chart).
+  - Credential stuffing attempts timeline.
+
+### Session Lock Management
+- **Lock status overview**: table showing all sessions with lock state (unlocked, screen blank, locked, disconnected+locked, suspended).
+- **Bulk lock/unlock**: lock or unlock all sessions or selected sessions with one action.
+- **Lock policy viewer**: display effective lock policy per user/group with inheritance chain.
+- **Lock timeline**: visual timeline showing lock/unlock/escalation events per session.
+- **Actions**:
+  - Lock session (with optional custom message).
+  - Unlock session (admin override).
+  - Modify lock escalation timers per session (override policy temporarily).
+  - View lock screen appearance preview.
+
 ---
 
 ## 4) Authentication & Security
@@ -296,6 +329,21 @@ The management server exposes its own API (used by the web frontend and optional
 | `GET` | `/api/v1/audit/verify` | Verify audit log HMAC integrity |
 | `WS` | `/ws/v1/metrics` | WebSocket stream of real-time metrics |
 | `WS` | `/ws/v1/logs` | WebSocket stream of real-time log entries |
+| `GET` | `/api/v1/honeypot/status` | Honeypot/tarpit status and statistics |
+| `GET` | `/api/v1/honeypot/connections` | List active tarpit/honeypot connections |
+| `DELETE` | `/api/v1/honeypot/connections/{id}` | Drop a tarpit/honeypot connection |
+| `GET` | `/api/v1/honeypot/iocs` | List collected indicators of compromise |
+| `POST` | `/api/v1/honeypot/iocs/export` | Export IOCs (STIX, CSV, JSON) |
+| `POST` | `/api/v1/honeypot/iocs/push` | Push IOC blocklists to all servers |
+| `GET` | `/api/v1/honeypot/triggers` | View trigger configuration |
+| `PUT` | `/api/v1/honeypot/triggers` | Update trigger thresholds |
+| `WS` | `/ws/v1/honeypot` | WebSocket stream of honeypot/tarpit events |
+| `GET` | `/api/v1/sessions/{id}/lock` | Get lock state for a session |
+| `POST` | `/api/v1/sessions/{id}/lock` | Lock a session |
+| `POST` | `/api/v1/sessions/{id}/unlock` | Unlock a session (admin override) |
+| `POST` | `/api/v1/sessions/lock-all` | Lock all sessions |
+| `GET` | `/api/v1/lock/policies` | Get lock policies |
+| `PUT` | `/api/v1/lock/policies` | Update lock policies |
 
 ---
 
@@ -318,7 +366,8 @@ The management server exposes its own API (used by the web frontend and optional
 8. **Metrics** — full metrics dashboard with graphs.
 9. **Logs** — centralized log explorer with per-subsystem filtering and live streaming.
 10. **Audit** — audit log viewer with integrity verification.
-11. **Settings** — management UI settings, user account.
+11. **Honeypot** — honeypot/tarpit dashboard, attacker table, IOC management.
+12. **Settings** — management UI settings, user account.
 
 ### UX Principles
 - Real-time updates (no manual refresh needed).

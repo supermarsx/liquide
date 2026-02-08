@@ -1160,6 +1160,230 @@ Policies enforced on the client side:
   fingerprint_reduction = true
   ```
 
+### Honeypot & Tarpit (Automatic)
+
+LiquidDE can automatically detect **unambiguously malicious traffic** and respond with honeypot/tarpit tactics that waste attacker resources while gathering intelligence. Only patterns that have zero chance of being legitimate traffic trigger these mechanisms.
+
+#### What Triggers Tarpit/Honeypot (Zero False-Positive Criteria)
+
+These triggers are chosen because no legitimate client would ever produce them:
+
+| Trigger | Why It's Safe | Response |
+|---------|---------------|----------|
+| **Invalid protocol magic bytes** | Legitimate clients always send the correct LiquidDE protocol header. Scanners (nmap, masscan, etc.) send HTTP, SSH, or random probes. | Tarpit: accept connection, respond very slowly with garbage data |
+| **Known exploit signatures** | Pattern-matched against known RDP/VNC/SSH exploit payloads. No legitimate client sends CVE exploit code. | Honeypot: fake vulnerable service, log full payload |
+| **Continued attempts after IP ban** | IP is already blocked by rate limiting. Legitimate users would stop or contact admin. Attackers use automation. | Tarpit: accept TCP, drip-feed data at 1 byte/sec |
+| **Credential stuffing patterns** | Rapid sequential logins with different usernames from single IP. No human types that fast with different accounts. Threshold: >10 distinct usernames in 60 seconds. | Tarpit: simulate slow auth processing (5-30s delay), always reject |
+| **Protocol downgrade attacks** | Attempts to force TLS 1.0/1.1 or null ciphers after server advertises minimum TLS 1.2+. | Tarpit: slow TLS handshake, then reject |
+| **Port scan follow-up** | Connection arrives from an IP that probed 3+ closed ports within the last 60 seconds on this host. | Honeypot: fake open service, log all interaction |
+| **Malformed packet floods** | >100 malformed packets per second from a single IP. No broken client produces sustained malformed traffic at this rate. | Tarpit: throttle to 1 response/sec, then blackhole |
+
+#### What Does NOT Trigger Tarpit (Preserved Legitimate Behavior)
+
+These are explicitly excluded to avoid false positives:
+
+- **Wrong password** (user may have typo or changed password) — handled by normal rate limiting only.
+- **Slow connections** (user may be on poor network) — never penalized for latency.
+- **Expired/invalid certificates** (user may have stale config) — clear error, no tarpit.
+- **Old client version** (user may not have updated) — version mismatch error, no tarpit.
+- **Single failed auth then success** (common human pattern) — no penalty.
+- **High bandwidth usage** (legitimate heavy session) — handled by QoS, not security.
+- **Unusual connection times** (user may work odd hours) — no time-based suspicion.
+
+#### Tarpit Behavior
+
+When a tarpit is activated:
+1. **TCP tarpit**: accept the connection but respond with artificially small TCP window sizes (1-10 bytes). Data drips out at 1 byte per second. Ties up attacker's connection slot and thread.
+2. **TLS tarpit**: begin TLS handshake but send ServerHello parameters extremely slowly (one extension per second). May take 30-60 seconds for attacker to realize it's fake.
+3. **Auth tarpit**: accept credentials, simulate "processing" with realistic timing jitter (5-30 seconds), then reject. Attacker cannot distinguish from a slow server.
+4. **Bandwidth tarpit**: for ongoing connections, throttle to near-zero throughput with realistic TCP backpressure signals.
+- Maximum concurrent tarpit connections: configurable (default: 100). Beyond this, new malicious connections are silently dropped (to prevent tarpit resource exhaustion).
+- Tarpit connections are isolated in a dedicated thread pool (do not affect legitimate connection handling).
+
+#### Honeypot Behavior
+
+For confirmed malicious actors (post-ban, exploit attempts):
+1. **Fake service emulation**: present a plausible-looking service that responds to protocol probes. Emulates just enough to keep scanners engaged.
+2. **Intelligence gathering**: log all traffic from honeypot sessions — source IP, payloads, timing patterns, tool fingerprints — to a dedicated `honeypot.log`.
+3. **Deception payloads**: for protocol probes, return plausible-looking but fake version strings and capability lists.
+4. **Session recording**: full traffic capture of honeypot interactions for forensic analysis (stored separately, configurable retention).
+- Honeypot is entirely passive — it never initiates outbound connections or retaliates.
+- Honeypot data is never mixed with real audit logs (separate log stream).
+
+#### Honeypot & Tarpit Configuration
+
+```toml
+[security.honeypot]
+enabled = true
+mode = "tarpit"                          # tarpit, honeypot, both, disabled
+
+# Tarpit settings
+tarpit_max_connections = 100             # max concurrent tarpit slots
+tarpit_byte_rate = 1                     # bytes per second to drip
+tarpit_tls_delay_ms = 1000              # ms between TLS handshake fragments
+tarpit_auth_delay_sec = 15              # seconds to "process" fake auth
+tarpit_thread_pool_size = 4             # dedicated threads for tarpit
+
+# Honeypot settings
+honeypot_log = "/var/log/liquidde/honeypot.log"
+honeypot_capture_payloads = true         # capture full packet payloads
+honeypot_max_capture_mb = 100           # max payload storage per day
+honeypot_retention_days = 90            # how long to keep honeypot logs
+honeypot_fake_version = ""              # empty = auto-generate plausible version
+
+# Trigger thresholds (all require ZERO legitimate overlap)
+trigger_on_invalid_protocol = true       # non-LiquidDE protocol magic
+trigger_on_exploit_signatures = true     # known CVE exploit patterns
+trigger_on_post_ban_attempts = true      # continued attempts after IP ban
+trigger_on_credential_stuffing = true    # rapid multi-user auth attempts
+credential_stuffing_threshold = 10       # distinct usernames per 60s
+trigger_on_downgrade_attacks = true      # TLS downgrade attempts
+trigger_on_port_scan_followup = true     # connection after port scanning
+port_scan_probe_threshold = 3           # closed ports probed before trigger
+trigger_on_malformed_floods = true       # sustained malformed packet floods
+malformed_flood_threshold = 100          # packets per second
+
+# Integration
+notify_on_trigger = true                 # send alert to management API / webhook
+webhook_url = ""                         # external notification endpoint
+export_iocs = true                       # export indicators of compromise
+ioc_export_format = "stix"              # stix, csv, json
+```
+
+### Workstation Lock & Timeout
+
+LiquidDE provides extensive session lock and timeout controls for security and resource management. Lock policies can be configured globally, per-group, or per-user.
+
+#### Lock Triggers
+
+| Trigger | Description | Default |
+|---------|-------------|---------|
+| **Idle timeout** | No keyboard or mouse input for a configurable duration. | 15 minutes |
+| **Disconnect lock** | Client disconnects (network drop, app close). | Immediate lock |
+| **Schedule lock** | Time-of-day based lock (e.g., lock at 18:00 daily). | Disabled |
+| **Manual lock** | User triggers lock via keyboard shortcut or DE menu. | Always available |
+| **Admin lock** | Administrator locks session remotely via CLI or management UI. | Always available |
+| **Policy lock** | External event triggers lock (e.g., PAM session event, LDAP group change). | Disabled |
+| **Lid close** | If hardware lid sensor detected (e.g., laptop session). | Lock |
+| **Screen blank** | Screen blanks after timeout (separate from lock). | 10 minutes |
+
+#### Lock Actions
+
+When a lock is triggered:
+1. **Lock screen displayed**: glass-themed lock screen with user avatar, session info, and unlock prompt.
+2. **Session preserved**: all applications continue running; no data loss.
+3. **Screen content hidden**: frame buffer is replaced with lock screen; no leaking of session content.
+4. **Input blocked**: all keyboard and mouse input rejected except unlock credentials.
+5. **Active features paused**: clipboard sync paused, USB forwarding paused (configurable), audio playback muted (configurable).
+
+#### Post-Lock Behavior (Escalation Chain)
+
+After a session is locked, further timeouts can escalate the action:
+
+```
+Lock → (grace period) → Disconnect client → (background timeout) → Suspend session → (terminate timeout) → Terminate session
+```
+
+Each step is independently configurable:
+
+| Stage | Description | Default |
+|-------|-------------|---------|
+| **Lock grace period** | Time after lock before client is forcibly disconnected. | Never (stay locked) |
+| **Background timeout** | Time a locked+disconnected session runs in background before suspension. | 4 hours |
+| **Suspend** | Session state serialized to disk, processes frozen (SIGSTOP + cgroup freeze). RAM reclaimed. | Disabled |
+| **Terminate timeout** | Time a suspended (or background) session persists before termination. | 24 hours |
+| **Terminate** | Session killed, processes terminated, temporary files cleaned. | Only on timeout |
+
+#### Screen Blank (Pre-Lock)
+
+- Screen blank is separate from lock — the screen goes dark but the session is not locked.
+- Any input wakes the screen immediately (no authentication required).
+- Useful for power saving and burn-in prevention without the friction of re-authenticating.
+- Screen blank timeout is always shorter than or equal to lock timeout.
+
+#### Lock Screen Customization
+
+- **Lock screen wallpaper**: separate from desktop wallpaper (or same, configurable).
+- **Lock screen message**: administrator-defined message displayed on lock screen (e.g., "Contact IT at x1234").
+- **Lock screen clock**: display current time and date.
+- **Session info**: show session duration, username, server name.
+- **Auth method indicator**: show which authentication method is required to unlock (password, fingerprint, smart card).
+- **Graceful unlock**: when unlocked, session is immediately visible without re-rendering (frame buffer swap).
+
+#### Lock Configuration
+
+```toml
+[session.lock]
+# ─── Idle lock ──────────────────────────────────────────────
+idle_lock_enabled = true
+idle_timeout_min = 15                    # minutes of no input before lock
+idle_detection = "keyboard+mouse"        # keyboard+mouse, keyboard, mouse, any-input
+ignore_audio_activity = true             # audio playback does not reset idle timer
+ignore_clipboard_activity = true         # clipboard events do not reset idle timer
+
+# ─── Screen blank ───────────────────────────────────────────
+screen_blank_enabled = true
+screen_blank_timeout_min = 10            # minutes before screen blanks (≤ idle_timeout)
+screen_blank_on_lock = true              # also blank screen when locked
+
+# ─── Disconnect behavior ────────────────────────────────────
+disconnect_action = "lock"               # lock, keep-unlocked, terminate
+disconnect_grace_sec = 0                 # seconds to wait before applying action (0 = immediate)
+
+# ─── Post-lock escalation ──────────────────────────────────
+lock_grace_min = 0                       # 0 = stay locked indefinitely; >0 = disconnect after N min
+background_timeout_min = 240             # locked+disconnected session background time (0 = infinite)
+suspend_enabled = false                  # serialize session to disk after background timeout
+suspend_timeout_min = 1440               # time before suspended session is terminated (0 = infinite)
+terminate_after_total_min = 0            # hard cap: terminate regardless of state (0 = disabled)
+
+# ─── Schedule lock ──────────────────────────────────────────
+schedule_lock_enabled = false
+schedule_lock_cron = "0 18 * * *"        # cron expression for scheduled lock
+schedule_unlock_cron = ""                # optional auto-unlock (empty = manual unlock only)
+schedule_timezone = "UTC"
+
+# ─── Lock screen appearance ─────────────────────────────────
+lock_screen_wallpaper = "desktop"        # desktop (same as session), blur (blurred desktop), custom, solid
+lock_screen_custom_wallpaper = ""        # path to custom lock screen image
+lock_screen_message = ""                 # admin-defined message
+lock_screen_show_clock = true
+lock_screen_show_session_info = true
+lock_screen_show_user_avatar = true
+
+# ─── Feature behavior during lock ───────────────────────────
+lock_pause_clipboard = true              # pause clipboard sync while locked
+lock_pause_usb = false                   # pause USB forwarding while locked
+lock_mute_audio = false                  # mute audio playback while locked
+lock_pause_camera = true                 # pause camera forwarding while locked
+```
+
+#### Lock Policies (Per-Group / Per-User)
+
+Lock settings can be overridden in `policies.toml`:
+
+```toml
+[default.lock]
+idle_timeout_min = 15
+disconnect_action = "lock"
+background_timeout_min = 240
+
+[group.contractors.lock]
+idle_timeout_min = 5                     # stricter for contractors
+background_timeout_min = 30              # shorter background time
+terminate_after_total_min = 60           # hard terminate after 1 hour
+
+[group.kiosk.lock]
+idle_timeout_min = 2
+disconnect_action = "terminate"          # terminate immediately on disconnect
+schedule_lock_enabled = true
+schedule_lock_cron = "0 22 * * *"        # lock nightly at 10 PM
+
+[user.alice.lock]
+idle_timeout_min = 30                    # alice gets a longer timeout
+background_timeout_min = 480             # 8 hours background
+```
+
 ---
 
 ## 16) Stream Analysis
@@ -1497,6 +1721,33 @@ rate_limit_window_sec = 300
 service_banner = "default"
 silent_drop_unknown = false
 port_knocking_enabled = false
+
+[security.honeypot]
+enabled = true
+mode = "tarpit"                          # tarpit, honeypot, both, disabled
+tarpit_max_connections = 100
+tarpit_auth_delay_sec = 15
+trigger_on_invalid_protocol = true
+trigger_on_exploit_signatures = true
+trigger_on_post_ban_attempts = true
+trigger_on_credential_stuffing = true
+honeypot_log = "/var/log/liquidde/honeypot.log"
+
+# ─── Session Lock ─────────────────────────────────────────
+[session.lock]
+idle_lock_enabled = true
+idle_timeout_min = 15
+screen_blank_enabled = true
+screen_blank_timeout_min = 10
+disconnect_action = "lock"
+background_timeout_min = 240
+suspend_enabled = false
+terminate_after_total_min = 0            # 0 = disabled
+schedule_lock_enabled = false
+lock_screen_wallpaper = "blur"
+lock_screen_message = ""
+lock_pause_clipboard = true
+lock_pause_camera = true
 
 # ─── Logging ───────────────────────────────────────────────
 [logging]

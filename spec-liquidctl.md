@@ -707,6 +707,196 @@ Options:
 
 ---
 
+### `liquidctl honeypot`
+
+Monitor and manage the honeypot/tarpit system.
+
+#### `liquidctl honeypot status`
+
+```
+$ liquidctl honeypot status
+
+Honeypot & Tarpit Status: active (mode: both)
+  Active tarpits:     7 / 100 max
+  Honeypot sessions:  2 active
+
+  Tarpit Breakdown:
+    TCP tarpit:       3 connections (1 byte/sec drip)
+    TLS tarpit:       2 connections (slow handshake)
+    Auth tarpit:      2 connections (fake processing)
+
+  Today's Statistics:
+    Tarpitted IPs:     23
+    Honeypot captures: 8
+    Exploit attempts:  3
+    Credential stuffing detected: 5
+    Post-ban reconnects: 12
+    IOCs exported:     15
+
+  Top Attacker IPs (24h):
+    198.51.100.99      142 attempts (tarpitted, post-ban)
+    203.0.113.77        87 attempts (credential stuffing)
+    192.0.2.15          34 attempts (exploit payloads)
+```
+
+Options:
+- `--watch` — live updating.
+
+#### `liquidctl honeypot list`
+
+List active tarpit and honeypot connections.
+
+```
+$ liquidctl honeypot list
+
+ID        IP               Type         Started           Duration    Trigger
+hp-001    198.51.100.99    tcp-tarpit   16:22:31 UTC      12m 04s     post-ban reconnect
+hp-002    203.0.113.77     auth-tarpit  16:28:14 UTC      5m 51s      credential stuffing
+hp-003    192.0.2.15       honeypot     16:30:02 UTC      3m 03s      exploit signature (CVE-2019-0708)
+hp-004    198.51.100.22    tls-tarpit   16:31:45 UTC      1m 20s      TLS downgrade
+hp-005    10.0.0.99        tcp-tarpit   16:33:01 UTC      0m 04s      invalid protocol magic
+```
+
+#### `liquidctl honeypot drop <connection-id>`
+
+Release a tarpit/honeypot connection immediately.
+
+#### `liquidctl honeypot drop-all`
+
+Release all active tarpit/honeypot connections.
+
+#### `liquidctl honeypot iocs`
+
+List or export collected indicators of compromise.
+
+```
+$ liquidctl honeypot iocs --since 24h --format table
+
+IP               First Seen           Last Seen            Type                 Attempts   Payloads
+198.51.100.99    2025-01-15 04:12     2025-01-15 16:34     brute-force          142        0
+203.0.113.77     2025-01-15 14:00     2025-01-15 16:28     credential-stuffing  87         0
+192.0.2.15       2025-01-15 16:30     2025-01-15 16:33     exploit              3          3
+```
+
+Options:
+- `--since <time>` — time range.
+- `--format <format>` — text, json, csv, stix.
+- `--export <file>` — export to file.
+
+#### `liquidctl honeypot triggers`
+
+Show which triggers are enabled and their thresholds.
+
+```
+$ liquidctl honeypot triggers
+
+Trigger                      Enabled   Threshold           Response
+Invalid protocol magic       yes       any                 tarpit
+Known exploit signatures     yes       any                 honeypot
+Post-ban reconnection        yes       after IP ban        tarpit
+Credential stuffing          yes       10 users/60s        tarpit
+TLS downgrade attack         yes       any                 tarpit
+Port scan follow-up          yes       3 ports/60s         honeypot
+Malformed packet flood       yes       100 pkt/s           tarpit
+```
+
+---
+
+### `liquidctl lock`
+
+Manage session locks.
+
+#### `liquidctl lock status`
+
+Show lock state for all sessions.
+
+```
+$ liquidctl lock status
+
+Session  User     State      Locked Since          Idle Time   Escalation
+s-001    alice    unlocked   —                     2m 14s      —
+s-002    bob      locked     2025-01-15 15:40 UTC  1h 22m      disconnect in 2h 38m
+s-003    carol    locked     2025-01-15 12:00 UTC  5h 02m      background (terminate in 18h 58m)
+s-004    dave     blank      —                     8m 30s      lock in 6m 30s
+```
+
+#### `liquidctl lock <session-id>`
+
+Lock a specific session immediately (admin action).
+
+```
+$ liquidctl lock s-001
+Lock session s-001 (user: alice)? [y/N] y
+Session s-001 locked.
+```
+
+Options:
+- `--confirm` — skip interactive confirmation.
+- `--message <msg>` — show a custom message on the lock screen.
+- `--reason <reason>` — reason for lock (logged in audit).
+
+#### `liquidctl lock all`
+
+Lock all active sessions.
+
+Options:
+- `--confirm` — skip interactive confirmation.
+- `--message <msg>` — custom lock screen message for all sessions.
+
+#### `liquidctl unlock <session-id>`
+
+Unlock a locked session (admin override, bypasses user auth).
+
+```
+$ liquidctl unlock s-002
+Admin-unlock session s-002 (user: bob)? This bypasses user authentication. [y/N] y
+Session s-002 unlocked.
+```
+
+Options:
+- `--confirm` — skip interactive confirmation.
+
+#### `liquidctl lock policy <username>`
+
+Show the effective lock policy for a user.
+
+```
+$ liquidctl lock policy alice
+
+Effective lock policy for alice (group: developers):
+  Idle lock:            enabled, 30 min          (from: user.alice.lock)
+  Screen blank:         enabled, 10 min          (from: default)
+  Disconnect action:    lock                     (from: default)
+  Background timeout:   480 min (8h)             (from: user.alice.lock)
+  Suspend:              disabled                 (from: default)
+  Terminate timeout:    1440 min (24h)           (from: default)
+  Schedule lock:        disabled                 (from: default)
+  Lock clipboard:       pause                    (from: default)
+  Lock audio:           continue                 (from: default)
+  Lock USB:             continue                 (from: default)
+  Lock camera:          pause                    (from: default)
+```
+
+#### `liquidctl lock config`
+
+Show current lock configuration.
+
+```
+$ liquidctl lock config
+
+Lock Configuration:
+  Idle lock:            enabled (15 min)
+  Screen blank:         enabled (10 min)
+  Disconnect action:    lock
+  Background timeout:   240 min (4h)
+  Suspend:              disabled
+  Schedule lock:        disabled
+  Lock screen wallpaper: blur
+  Lock screen message:  (none)
+```
+
+---
+
 ### `liquidctl gateway`
 
 Manage gateway connection.

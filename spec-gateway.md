@@ -402,6 +402,72 @@ timeout_sec = 10
   fingerprint_reduction = true
   ```
 
+### Honeypot & Tarpit (Automatic)
+
+The gateway can automatically detect unambiguously malicious traffic and respond with tarpit/honeypot tactics. Since the gateway is the public-facing entry point, it is the primary defense layer.
+
+#### Triggers (Zero False-Positive Only)
+
+Only patterns that no legitimate client would ever produce:
+
+| Trigger | Response |
+|---------|----------|
+| **Invalid protocol magic** — non-LiquidDE/non-WebSocket probes (HTTP, SSH, random bytes) | Tarpit: accept, drip-feed data at 1 byte/sec |
+| **Known exploit payloads** — RDP/VNC/SSH CVE exploit signatures | Honeypot: fake service, log full payload |
+| **Post-ban reconnection** — IP already banned by rate limiter, continues attempts | Tarpit: accept TCP, drip-feed indefinitely |
+| **Credential stuffing** — >10 distinct usernames from single IP in 60 seconds | Tarpit: 5-30s fake auth processing per attempt |
+| **TLS downgrade attack** — attempts null ciphers or TLS <1.2 after 1.3 was offered | Tarpit: slow handshake, then reject |
+| **Port scan follow-up** — IP probed 3+ closed ports in last 60s, now connecting | Honeypot: fake service, log all interaction |
+| **Malformed packet flood** — >100 malformed packets/sec from single IP | Tarpit: throttle to 1 response/sec |
+
+**Does NOT trigger** (to avoid false positives): wrong passwords (typos), slow connections (poor network), expired certificates (stale config), old client versions, single auth failures followed by success, unusual connection times.
+
+#### Gateway Tarpit Implementation
+
+- **TCP tarpit**: tiny TCP window (1-10 bytes), 1 byte/sec throughput. Ties up attacker sockets.
+- **TLS tarpit**: ServerHello sent one extension per second. Attacker waits 30-60s before timeout.
+- **Auth tarpit**: accept credentials, simulate 5-30s "processing" with jitter, always reject.
+- **Relay decoy**: for post-ban IPs, pretend to broker a session to a fake server, then stall.
+- Dedicated thread pool for tarpit connections (does not affect legitimate traffic).
+- Configurable max concurrent tarpit slots (default: 200, higher than server default since gateway is public-facing).
+
+#### Gateway Honeypot
+
+- **Intelligence logging**: all honeypot traffic logged to `honeypot.log` with source IP, payloads, timing, tool fingerprints.
+- **IOC export**: indicators of compromise exported in STIX, CSV, or JSON format.
+- **Shared threat intelligence**: gateway can push IOC lists to all registered servers so they pre-block known attackers.
+- Honeypot is passive — never initiates outbound connections.
+
+#### Configuration
+
+```toml
+[security.honeypot]
+enabled = true
+mode = "both"                            # tarpit, honeypot, both, disabled
+tarpit_max_connections = 200             # higher for public-facing gateway
+tarpit_byte_rate = 1
+tarpit_tls_delay_ms = 1000
+tarpit_auth_delay_sec = 15
+tarpit_thread_pool_size = 8
+honeypot_log = "/var/log/liquid-gateway/honeypot.log"
+honeypot_capture_payloads = true
+honeypot_max_capture_mb = 200
+honeypot_retention_days = 90
+trigger_on_invalid_protocol = true
+trigger_on_exploit_signatures = true
+trigger_on_post_ban_attempts = true
+trigger_on_credential_stuffing = true
+credential_stuffing_threshold = 10
+trigger_on_downgrade_attacks = true
+trigger_on_port_scan_followup = true
+trigger_on_malformed_floods = true
+notify_on_trigger = true
+webhook_url = ""
+export_iocs = true
+ioc_export_format = "stix"
+share_iocs_with_servers = true           # push IOC blocklists to registered servers
+```
+
 ### Extensive Logging
 The gateway has a comprehensive logging system:
 
@@ -580,6 +646,22 @@ port_knocking_sequence = [7331, 8442, 9553]
 port_knocking_timeout_sec = 10
 timing_randomization = true
 fingerprint_reduction = true
+
+[security.honeypot]
+enabled = true
+mode = "both"                            # tarpit, honeypot, both, disabled
+tarpit_max_connections = 200
+tarpit_auth_delay_sec = 15
+tarpit_thread_pool_size = 8
+honeypot_log = "/var/log/liquid-gateway/honeypot.log"
+honeypot_capture_payloads = true
+trigger_on_invalid_protocol = true
+trigger_on_exploit_signatures = true
+trigger_on_post_ban_attempts = true
+trigger_on_credential_stuffing = true
+share_iocs_with_servers = true
+export_iocs = true
+ioc_export_format = "stix"
 
 # ─── Logging ──────────────────────────────────────────────
 [logging]

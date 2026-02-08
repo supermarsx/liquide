@@ -991,7 +991,65 @@ The server can push policies to the client that override or restrict local setti
 
 ---
 
-## 21) Gateway Connection
+## 21) Lock Screen Behavior (Client-Side)
+
+When the server locks a session, the client must handle the lock screen presentation and unlock flow.
+
+### Lock Screen Display
+
+- Server sends a `session_locked` event to the client with lock metadata (reason, lock screen config, required auth method).
+- Client replaces the session display with a **Liquid Glass themed lock screen**:
+  - Blurred or custom wallpaper background.
+  - User avatar (if provided by server).
+  - Username and session info.
+  - Clock and date.
+  - Administrator message (if configured).
+  - Unlock input field (password, PIN, smart card prompt, biometric prompt).
+- Lock screen is rendered client-side — no session frame data is transmitted while locked (bandwidth saved).
+- Client continues to maintain the transport connection (keepalive) so unlock is instant.
+
+### Unlock Flow
+
+1. User provides credentials via the lock screen input.
+2. Client sends unlock credentials to the server.
+3. Server validates and either:
+   - **Unlocks**: sends `session_unlocked` + resumes frame streaming. Client immediately shows the session.
+   - **Rejects**: client shows error, allows retry. Failed unlock attempts follow the same rate limiting as login.
+4. Alternative unlock methods (if server supports):
+   - Smart card insertion.
+   - FIDO2 security key tap.
+   - Platform biometric (fingerprint/face — client captures, server validates).
+
+### Client Lock Screen Settings
+
+```toml
+[lock_screen]
+show_clock = true
+show_session_info = true                # duration, server name
+show_user_avatar = true
+show_admin_message = true
+clock_format = "24h"                    # 24h, 12h
+background = "blur"                     # blur (blur last frame), solid, custom
+custom_background = ""                  # path to custom lock screen image
+unlock_input_position = "center"        # center, bottom
+```
+
+### Client-Side Idle Detection
+
+The client can optionally detect local idle state and notify the server:
+- If the user is idle on the client side (no local keyboard/mouse input), the client reports this to the server.
+- The server uses this to trigger its idle lock timer.
+- This is more accurate than server-side idle detection because it accounts for the user being away from the physical machine, not just lack of remote input.
+- Configuration:
+  ```toml
+  [idle_detection]
+  enabled = true                          # report local idle state to server
+  report_interval_sec = 30               # how often to send idle/active status
+  ```
+
+---
+
+## 22) Gateway Connection
 
 When connecting through a LiquidDE Gateway (see [spec-gateway.md](spec-gateway.md)):
 
@@ -1020,7 +1078,7 @@ prefer_direct = true               # prefer direct connection if possible
 
 ---
 
-## 22) Keyboard Shortcuts (Defaults)
+## 23) Keyboard Shortcuts (Defaults)
 
 | Action | Shortcut | Configurable |
 |--------|----------|-------------|
@@ -1039,7 +1097,7 @@ All shortcuts configurable in `config.toml` under `[shortcuts]`.
 
 ---
 
-## 23) Accessibility
+## 24) Accessibility
 
 - **High contrast mode**: client chrome and overlays use high contrast colors.
 - **Large cursor**: configurable cursor size up to 64px.
@@ -1050,7 +1108,7 @@ All shortcuts configurable in `config.toml` under `[shortcuts]`.
 
 ---
 
-## 24) Error Handling & Reconnection
+## 25) Error Handling & Reconnection
 
 ### Connection Loss
 - On connection drop, client immediately shows "Reconnecting..." overlay.
@@ -1077,7 +1135,7 @@ show_last_frame = true             # keep last frame visible during reconnect
 
 ---
 
-## 25) Deliverables
+## 26) Deliverables
 
 - `liquidclient` — native desktop application binary.
 - Platform-specific installers:
@@ -1089,7 +1147,7 @@ show_last_frame = true             # keep last frame visible during reconnect
 
 ---
 
-## 26) Test Plan
+## 27) Test Plan
 
 ### Functional
 - Connect/disconnect/reconnect on each platform.
