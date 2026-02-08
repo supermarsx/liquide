@@ -1,4 +1,4 @@
-# LiquidDE — Built-in Applications & Addons Specification
+# LiquiDE — Built-in Applications & Addons Specification
 
 > **Status**: Draft
 > **Depends on**: [spec.md](spec.md) (core server), [spec-client.md](spec-client.md) (client), [spec-design.md](spec-design.md) (theming), [spec-interop.md](spec-interop.md) (desktop standards), [spec-accessibility.md](spec-accessibility.md) (accessibility)
@@ -7,12 +7,12 @@
 
 ## 1) Overview
 
-LiquidDE ships a curated set of built-in applications that provide essential desktop functionality out of the box. These applications are designed as lightweight, Liquid Glass-themed utilities — not full-featured professional tools, but competent defaults that cover everyday needs.
+LiquiDE ships a curated set of built-in applications that provide essential desktop functionality out of the box. These applications are designed as lightweight, Liquid Glass-themed utilities — not full-featured professional tools, but competent defaults that cover everyday needs.
 
 ### Design Principles
 
-- **Native Liquid Glass**: all apps use GTK4 with the Liquid Glass CSS theme. Glass blur, translucency, and depth effects are applied automatically via the LiquidDE theme engine.
-- **Remote-first**: all apps run on the **server** in a remote LiquidDE session. Their UI is streamed to the client like any other application. Where beneficial, specific apps support client-side offload (terminal, text editor) for reduced latency.
+- **Native Liquid Glass**: all apps use GTK4 with the Liquid Glass CSS theme. Glass blur, translucency, and depth effects are applied automatically via the LiquiDE theme engine.
+- **Remote-first**: all apps run on the **server** in a remote LiquiDE session. Their UI is streamed to the client like any other application. Where beneficial, specific apps support client-side offload (terminal, text editor) for reduced latency.
 - **Lightweight**: each app targets < 50 MB RSS memory at idle, < 200ms startup time.
 - **Accessible**: all apps expose full AT-SPI2 accessibility trees, support keyboard navigation, and respect high-contrast / reduced-motion / text-scaling preferences.
 - **Policy-controlled**: enterprise administrators can hide, restrict, or replace any built-in app via the policy engine.
@@ -23,7 +23,7 @@ LiquidDE ships a curated set of built-in applications that provide essential des
 |------------|---------|---------|
 | GTK4 | 4.12+ | UI toolkit |
 | libadwaita | 1.4+ | Adaptive layouts, platform patterns |
-| Liquid Glass CSS | (bundled) | LiquidDE visual theme |
+| Liquid Glass CSS | (bundled) | LiquiDE visual theme |
 | GLib/GIO | 2.78+ | File I/O, settings, D-Bus |
 | tree-sitter | 0.20+ | Syntax highlighting (editor, terminal) |
 | PipeWire | 1.0+ | Audio (system monitor alerts) |
@@ -77,13 +77,13 @@ A modern, fast file manager with dual-pane support, thumbnail previews, and full
 ### 2.4 Remote Session Considerations
 
 - The file manager browses the **server** filesystem by default.
-- If `portals.file_chooser.allow_client_browsing = true` is set, a "Local Machine" sidebar entry allows browsing the client filesystem via the LiquidDE file transfer channel. Files selected from the client side are transferred to a server-side staging directory.
+- If `portals.file_chooser.allow_client_browsing = true` is set, a "Local Machine" sidebar entry allows browsing the client filesystem via the LiquiDE file transfer channel. Files selected from the client side are transferred to a server-side staging directory.
 - Thumbnail generation occurs on the server. Network-mounted shares (SMB, NFS) are server-relative.
 
 ### 2.5 Configuration
 
 ```toml
-# ~/.config/liquidde/liquid-files.toml
+# ~/.config/liquide/liquid-files.toml
 
 [file_manager]
 default_view = "icon-grid"         # icon-grid, list, compact, columns
@@ -185,7 +185,7 @@ A lightweight text editor for quick file editing. Tree-sitter syntax highlightin
 ### 3.3 Configuration
 
 ```toml
-# ~/.config/liquidde/liquid-edit.toml
+# ~/.config/liquide/liquid-edit.toml
 
 [editor]
 font = "monospace 12"
@@ -279,7 +279,7 @@ A GPU-accelerated terminal emulator with true color support, tabs, split panes, 
 ### 4.3 Configuration
 
 ```toml
-# ~/.config/liquidde/liquid-terminal.toml
+# ~/.config/liquide/liquid-terminal.toml
 
 [terminal]
 shell = ""                         # empty = $SHELL or /bin/bash default
@@ -679,7 +679,7 @@ A task manager and resource monitor. Displays processes, CPU/memory/disk/network
 | GPU | DRM/sysfs (model, driver, VRAM) |
 | Disk | `statvfs` (filesystem usage per mount) |
 | Uptime | `/proc/uptime` |
-| Session | LiquidDE session ID, user, connected clients |
+| Session | LiquiDE session ID, user, connected clients |
 
 #### Processes
 
@@ -1006,15 +1006,15 @@ StartupNotify=true
 
 ### 15.1 Common Application Conventions
 
-All LiquidDE built-in applications follow these conventions:
+All LiquiDE built-in applications follow these conventions:
 
 | Convention | Requirement |
 |------------|-------------|
 | **Window icon** | Use icon-theme name matching the `.desktop` file `Icon=` key |
 | **App ID** | Wayland `app_id` matches `.desktop` file basename (e.g., `liquid-files`) |
-| **Settings storage** | User config in `~/.config/liquidde/<app-name>.toml` |
-| **State storage** | Runtime state (window size, sidebar widths) in `~/.local/state/liquidde/<app-name>/` |
-| **Data storage** | User data (palettes, bookmarks, history) in `~/.local/share/liquidde/<app-name>/` |
+| **Settings storage** | User config in `~/.config/liquide/<app-name>.toml` |
+| **State storage** | Runtime state (window size, sidebar widths) in `~/.local/state/liquide/<app-name>/` |
+| **Data storage** | User data (palettes, bookmarks, history) in `~/.local/share/liquide/<app-name>/` |
 | **D-Bus activation** | Each app can be activated via D-Bus for single-instance enforcement |
 | **Dark mode** | Respond to `org.freedesktop.portal.Settings` `color-scheme` signal automatically |
 | **Locale** | All user-visible strings are localizable via gettext `.po` files |
@@ -1023,7 +1023,7 @@ All LiquidDE built-in applications follow these conventions:
 
 ### 15.2 Icon Theme Entries
 
-All built-in apps register icons in the LiquidDE icon theme at standard sizes (16, 24, 32, 48, 64, 128, 256, scalable SVG):
+All built-in apps register icons in the LiquiDE icon theme at standard sizes (16, 24, 32, 48, 64, 128, 256, scalable SVG):
 
 | App | Icon Name |
 |-----|-----------|
@@ -1041,11 +1041,11 @@ All built-in apps register icons in the LiquidDE icon theme at standard sizes (1
 | Character Map | `accessories-character-map` |
 | Color Picker | `color-picker` |
 
-Icon names follow the [freedesktop Icon Naming Specification](https://specifications.freedesktop.org/icon-naming-spec/latest/) where applicable. LiquidDE-specific icons (not in the spec) are provided in the LiquidDE icon theme and fallback to hicolor.
+Icon names follow the [freedesktop Icon Naming Specification](https://specifications.freedesktop.org/icon-naming-spec/latest/) where applicable. LiquiDE-specific icons (not in the spec) are provided in the LiquiDE icon theme and fallback to hicolor.
 
 ### 15.3 MIME Type Registrations
 
-Built-in apps register as handlers for their supported MIME types in their `.desktop` files (see each app's entry above). Default associations are set in `/usr/share/applications/liquidde-mimeapps.list`:
+Built-in apps register as handlers for their supported MIME types in their `.desktop` files (see each app's entry above). Default associations are set in `/usr/share/applications/liquide-mimeapps.list`:
 
 ```ini
 [Default Applications]
@@ -1072,19 +1072,19 @@ Each app optionally provides a D-Bus interface for programmatic control:
 
 | App | Service Name | Key Methods |
 |-----|-------------|-------------|
-| File Manager | `org.liquidde.Files` | `OpenFolder(s)`, `ShowFile(s)`, `EmptyTrash()` |
-| Text Editor | `org.liquidde.Edit` | `Open(s)`, `OpenAtLine(si)` |
-| Terminal | `org.liquidde.Terminal` | `Open()`, `RunCommand(s)` |
-| Screenshot | `org.liquidde.Screenshot` | `CaptureRegion()`, `CaptureWindow()`, `CaptureScreen()` |
+| File Manager | `org.liquide.Files` | `OpenFolder(s)`, `ShowFile(s)`, `EmptyTrash()` |
+| Text Editor | `org.liquide.Edit` | `Open(s)`, `OpenAtLine(si)` |
+| Terminal | `org.liquide.Terminal` | `Open()`, `RunCommand(s)` |
+| Screenshot | `org.liquide.Screenshot` | `CaptureRegion()`, `CaptureWindow()`, `CaptureScreen()` |
 
 ### 15.5 GTK4 + Liquid Glass Integration
 
 All built-in apps use GTK4 with libadwaita. The Liquid Glass theme is applied via:
 
 1. The GTK4 CSS provider loads the Liquid Glass stylesheet (registered in `gtk-4.0/gtk.css`).
-2. libadwaita's `AdwStyleManager` is configured to follow the LiquidDE color scheme via the portal Settings interface.
+2. libadwaita's `AdwStyleManager` is configured to follow the LiquiDE color scheme via the portal Settings interface.
 3. Apps use standard `AdwApplicationWindow`, `AdwHeaderBar`, `AdwNavigationView`, `AdwToastOverlay` patterns.
-4. Glass blur effects on window backgrounds are composited by the LiquidDE compositor — the app sees a solid semi-transparent background color.
+4. Glass blur effects on window backgrounds are composited by the LiquiDE compositor — the app sees a solid semi-transparent background color.
 
 ### 15.6 Global Policy
 
@@ -1129,7 +1129,7 @@ All built-in apps use GTK4 with libadwaita. The Liquid Glass theme is applied vi
 
 ### Remote Session
 
-- All apps render correctly when streamed via LiquidDE protocol.
+- All apps render correctly when streamed via LiquiDE protocol.
 - Terminal offload mode reduces input latency measurably vs. streamed mode.
 - File manager shows correct server filesystem, not client filesystem.
 - System monitor shows server hardware info.

@@ -1,4 +1,4 @@
-# LiquidDE — System Integration & Session Lifecycle Specification
+# LiquiDE — System Integration & Session Lifecycle Specification
 
 > **Status**: Draft
 > **Depends on**: [spec.md](spec.md) (core server), [spec-interop.md](spec-interop.md) (desktop standards)
@@ -7,7 +7,7 @@
 
 ## 1) Overview
 
-This document specifies how LiquidDE integrates with the host Linux system: systemd service units, socket activation, PAM authentication flows, XDG autostart, filesystem layout, environment variables, and security hardening profiles.
+This document specifies how LiquiDE integrates with the host Linux system: systemd service units, socket activation, PAM authentication flows, XDG autostart, filesystem layout, environment variables, and security hardening profiles.
 
 ---
 
@@ -25,7 +25,7 @@ systemd (PID 1)
     ├── liquid-session@alice.service (user session, spawned on login)
     │   ├── XWayland (optional child process)
     │   ├── User applications
-    │   └── xdg-desktop-portal-liquidde
+    │   └── xdg-desktop-portal-liquide
     │
     └── liquid-session@bob.service (another user session)
         └── ...
@@ -49,7 +49,7 @@ systemd (PID 1)
 
 ```ini
 [Unit]
-Description=LiquidDE Desktop Environment Supervisor
+Description=LiquiDE Desktop Environment Supervisor
 Documentation=man:liquid-desktopd(8)
 After=network-online.target dbus.service graphical.target
 Wants=network-online.target
@@ -57,7 +57,7 @@ Requires=dbus.service
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/liquid-desktopd --config /etc/liquidde/server.toml
+ExecStart=/usr/bin/liquid-desktopd --config /etc/liquide/server.toml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
@@ -70,7 +70,7 @@ PrivateTmp=true
 NoNewPrivileges=false
 CapabilityBoundingSet=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_KILL CAP_SYS_PTRACE
 AmbientCapabilities=CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE CAP_DAC_READ_SEARCH CAP_KILL
-ReadWritePaths=/run/liquidde /var/log/liquidde /var/lib/liquidde /tmp
+ReadWritePaths=/run/liquide /var/log/liquide /var/lib/liquide /tmp
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=false
@@ -104,12 +104,12 @@ WantedBy=graphical.target
 
 ```ini
 [Unit]
-Description=LiquidDE Supervisor Control Socket
+Description=LiquiDE Supervisor Control Socket
 
 [Socket]
-ListenStream=/run/liquidde/ctl.sock
+ListenStream=/run/liquide/ctl.sock
 SocketMode=0660
-SocketGroup=liquidde
+SocketGroup=liquide
 Accept=false
 
 [Install]
@@ -124,22 +124,22 @@ This is a **template** systemd unit. It is instantiated by `liquid-desktopd` via
 
 ```ini
 [Unit]
-Description=LiquidDE User Session for %i
+Description=LiquiDE User Session for %i
 After=dbus.service
 
 [Service]
 Type=notify
-ExecStart=/usr/lib/liquidde/liquid-session --user %i
+ExecStart=/usr/lib/liquide/liquid-session --user %i
 User=%i
 Group=%i
-PAMName=liquidde-session
+PAMName=liquide-session
 Slice=user-%i.slice
 
 # ─── Session Environment ────────────────────
 Environment=XDG_SESSION_TYPE=wayland
-Environment=XDG_CURRENT_DESKTOP=LiquidDE
-Environment=DESKTOP_SESSION=liquidde
-Environment=WAYLAND_DISPLAY=liquidde-%i
+Environment=XDG_CURRENT_DESKTOP=LiquiDE
+Environment=DESKTOP_SESSION=liquide
+Environment=WAYLAND_DISPLAY=liquide-%i
 Environment=XDG_RUNTIME_DIR=/run/user/%U
 
 # ─── Hardening ──────────────────────────────
@@ -162,17 +162,17 @@ StandardError=journal
 SyslogIdentifier=liquid-session-%i
 ```
 
-### 3.4 Portal Service — `xdg-desktop-portal-liquidde.service`
+### 3.4 Portal Service — `xdg-desktop-portal-liquide.service`
 
 ```ini
 [Unit]
-Description=LiquidDE XDG Desktop Portal
+Description=LiquiDE XDG Desktop Portal
 PartOf=graphical-session.target
 
 [Service]
 Type=dbus
-BusName=org.freedesktop.impl.portal.desktop.liquidde
-ExecStart=/usr/lib/liquidde/xdg-desktop-portal-liquidde
+BusName=org.freedesktop.impl.portal.desktop.liquide
+ExecStart=/usr/lib/liquide/xdg-desktop-portal-liquide
 
 [Install]
 WantedBy=default.target
@@ -182,10 +182,10 @@ WantedBy=default.target
 
 ## 4) PAM Integration
 
-### 4.1 PAM Service File — `/etc/pam.d/liquidde-session`
+### 4.1 PAM Service File — `/etc/pam.d/liquide-session`
 
 ```
-# LiquidDE session authentication
+# LiquiDE session authentication
 auth        required    pam_env.so
 auth        required    pam_unix.so
 auth        optional    pam_sss.so
@@ -214,7 +214,7 @@ session     optional    pam_env.so readenv=1 envfile=/etc/default/locale
 
 1. Client sends credentials to `liquid-desktopd` over the encrypted transport.
 2. `liquid-desktopd` invokes PAM conversation:
-   - `pam_start("liquidde-session", username, &conversation, &handle)`
+   - `pam_start("liquide-session", username, &conversation, &handle)`
    - `pam_authenticate(handle, 0)` — password, LDAP, SSSD, or fingerprint.
    - `pam_acct_mgmt(handle, 0)` — account status, expiration, restrictions.
 3. On success:
@@ -228,11 +228,11 @@ session     optional    pam_env.so readenv=1 envfile=/etc/default/locale
 
 ### 4.3 Multi-Factor Authentication
 
-When the PAM stack returns `PAM_NEW_AUTHTOK_REQD` or includes modules that require additional interaction (e.g., TOTP via pam_oath), the LiquidDE login screen renders additional input fields dynamically based on the PAM conversation messages. The PAM conversation function relays prompts to the client login screen via the control channel.
+When the PAM stack returns `PAM_NEW_AUTHTOK_REQD` or includes modules that require additional interaction (e.g., TOTP via pam_oath), the LiquiDE login screen renders additional input fields dynamically based on the PAM conversation messages. The PAM conversation function relays prompts to the client login screen via the control channel.
 
 ### 4.4 PAM Session Events
 
-LiquidDE listens for PAM session events to trigger desktop behaviors:
+LiquiDE listens for PAM session events to trigger desktop behaviors:
 - `pam_open_session` → start user session process, load user config.
 - `pam_close_session` → terminate session, clean up runtime files.
 - Password-about-to-expire warnings from `pam_unix` → surface as notification to user.
@@ -243,7 +243,7 @@ LiquidDE listens for PAM session events to trigger desktop behaviors:
 
 ### 5.1 XDG Autostart Specification
 
-LiquidDE processes autostart entries per the [XDG Autostart Specification](https://specifications.freedesktop.org/autostart-spec/latest/):
+LiquiDE processes autostart entries per the [XDG Autostart Specification](https://specifications.freedesktop.org/autostart-spec/latest/):
 
 **Search directories (in order):**
 1. `$XDG_CONFIG_HOME/autostart/` (default: `~/.config/autostart/`)
@@ -252,23 +252,23 @@ LiquidDE processes autostart entries per the [XDG Autostart Specification](https
 **Processing rules:**
 - Only entries with `Type=Application` are considered.
 - `Hidden=true` → skip.
-- `OnlyShowIn` / `NotShowIn` → apply `XDG_CURRENT_DESKTOP=LiquidDE` filter (with compat list, see spec-interop.md §4.6).
+- `OnlyShowIn` / `NotShowIn` → apply `XDG_CURRENT_DESKTOP=LiquiDE` filter (with compat list, see spec-interop.md §4.6).
 - `TryExec` → check if executable exists; skip if not.
-- `AutostartCondition` → evaluate condition (e.g., `GSettings org.gnome.system.proxy mode` = `manual`). LiquidDE evaluates GSettings conditions via D-Bus if available; unknown conditions default to "run".
+- `AutostartCondition` → evaluate condition (e.g., `GSettings org.gnome.system.proxy mode` = `manual`). LiquiDE evaluates GSettings conditions via D-Bus if available; unknown conditions default to "run".
 - User entries in `$XDG_CONFIG_HOME/autostart/` override system entries with the same filename (user can set `Hidden=true` to suppress a system autostart entry).
 
 ### 5.2 Autostart Phases
 
-LiquidDE processes autostart in two phases:
+LiquiDE processes autostart in two phases:
 
 | Phase | Timing | Description |
 |-------|--------|-------------|
-| **Early** | After compositor + D-Bus are ready, before first frame | Entries with `X-LiquidDE-Autostart-Phase=early` (e.g., accessibility tools, input methods) |
+| **Early** | After compositor + D-Bus are ready, before first frame | Entries with `X-LiquiDE-Autostart-Phase=early` (e.g., accessibility tools, input methods) |
 | **Normal** | After first frame is sent to client | All remaining autostart entries |
 
 ### 5.3 Autostart Delay
 
-LiquidDE supports `X-GNOME-Autostart-Delay=N` (GNOME compat) and `X-LiquidDE-Autostart-Delay=N` for delaying autostart by N seconds after the phase begins.
+LiquiDE supports `X-GNOME-Autostart-Delay=N` (GNOME compat) and `X-LiquiDE-Autostart-Delay=N` for delaying autostart by N seconds after the phase begins.
 
 ### 5.4 Autostart Management
 
@@ -347,16 +347,16 @@ Special:
 
 ### 6.4 SELinux Policy (Optional)
 
-LiquidDE provides an optional SELinux policy module (`liquidde-selinux`):
+LiquiDE provides an optional SELinux policy module (`liquide-selinux`):
 
-- `liquid-desktopd` runs in the `liquidde_supervisor_t` domain.
-- `liquid-session` runs in the `liquidde_session_t` domain.
+- `liquid-desktopd` runs in the `liquide_supervisor_t` domain.
+- `liquid-session` runs in the `liquide_session_t` domain.
 - Session processes are confined: no access to other users' files, no raw network sockets (beyond what the session requires), no kernel module loading.
-- Transitions: `liquidde_supervisor_t` → `liquidde_session_t` on session process exec.
+- Transitions: `liquide_supervisor_t` → `liquide_session_t` on session process exec.
 
 ### 6.5 AppArmor Profile (Optional)
 
-LiquidDE provides optional AppArmor profiles:
+LiquiDE provides optional AppArmor profiles:
 
 ```
 # /etc/apparmor.d/usr.bin.liquid-desktopd
@@ -364,18 +364,18 @@ LiquidDE provides optional AppArmor profiles:
   #include <abstractions/base>
   #include <abstractions/nameservice>
 
-  /etc/liquidde/** r,
-  /var/lib/liquidde/** rw,
-  /var/log/liquidde/** rw,
-  /run/liquidde/** rw,
-  /run/user/*/liquidde/** rw,
+  /etc/liquide/** r,
+  /var/lib/liquide/** rw,
+  /var/log/liquide/** rw,
+  /run/liquide/** rw,
+  /run/user/*/liquide/** rw,
 
   # GPU access
   /dev/dri/** rw,
   /dev/nvidia* rw,
 
   # Spawn session processes
-  /usr/lib/liquidde/liquid-session px -> liquidde_session,
+  /usr/lib/liquide/liquid-session px -> liquide_session,
 
   capability setuid,
   capability setgid,
@@ -406,61 +406,61 @@ LiquidDE provides optional AppArmor profiles:
 |------|---------|-------------|
 | `/usr/bin/liquid-desktopd` | Supervisor daemon binary | `0755 root:root` |
 | `/usr/bin/liquidctl` | CLI management tool | `0755 root:root` |
-| `/usr/lib/liquidde/liquid-session` | Session process binary | `0755 root:root` |
-| `/usr/lib/liquidde/xdg-desktop-portal-liquidde` | Portal backend | `0755 root:root` |
-| `/usr/lib/liquidde/liquid-greeter` | Greeter helper (optional) | `0755 root:root` |
-| `/etc/liquidde/` | System configuration | `0755 root:root` |
-| `/etc/liquidde/server.toml` | Main server config | `0640 root:liquidde` |
-| `/etc/liquidde/policies.toml` | Policy definitions | `0640 root:liquidde` |
-| `/etc/liquidde/manager.toml` | Management UI config | `0640 root:liquidde` |
-| `/etc/liquidde/plugins/` | System-wide plugins | `0755 root:root` |
-| `/etc/liquidde/certs/` | TLS certificates | `0700 liquidde:liquidde` |
+| `/usr/lib/liquide/liquid-session` | Session process binary | `0755 root:root` |
+| `/usr/lib/liquide/xdg-desktop-portal-liquide` | Portal backend | `0755 root:root` |
+| `/usr/lib/liquide/liquid-greeter` | Greeter helper (optional) | `0755 root:root` |
+| `/etc/liquide/` | System configuration | `0755 root:root` |
+| `/etc/liquide/server.toml` | Main server config | `0640 root:liquide` |
+| `/etc/liquide/policies.toml` | Policy definitions | `0640 root:liquide` |
+| `/etc/liquide/manager.toml` | Management UI config | `0640 root:liquide` |
+| `/etc/liquide/plugins/` | System-wide plugins | `0755 root:root` |
+| `/etc/liquide/certs/` | TLS certificates | `0700 liquide:liquide` |
 
 #### Runtime Paths (volatile, tmpfs)
 
 | Path | Purpose | Permissions |
 |------|---------|-------------|
-| `/run/liquidde/` | Supervisor runtime | `0750 root:liquidde` |
-| `/run/liquidde/ctl.sock` | Management control socket | `0660 root:liquidde` |
-| `/run/liquidde/sessions/` | Per-session runtime data | `0750 root:liquidde` |
-| `/run/liquidde/sessions/<id>/` | Session-specific runtime | `0700 <user>:<user>` |
+| `/run/liquide/` | Supervisor runtime | `0750 root:liquide` |
+| `/run/liquide/ctl.sock` | Management control socket | `0660 root:liquide` |
+| `/run/liquide/sessions/` | Per-session runtime data | `0750 root:liquide` |
+| `/run/liquide/sessions/<id>/` | Session-specific runtime | `0700 <user>:<user>` |
 | `/run/user/<uid>/` | XDG_RUNTIME_DIR (systemd-provided) | `0700 <user>:<user>` |
-| `/run/user/<uid>/liquidde/` | Session Wayland socket, PipeWire | `0700 <user>:<user>` |
+| `/run/user/<uid>/liquide/` | Session Wayland socket, PipeWire | `0700 <user>:<user>` |
 
 #### Persistent State Paths
 
 | Path | Purpose | Permissions |
 |------|---------|-------------|
-| `/var/lib/liquidde/` | Server persistent state | `0750 root:liquidde` |
-| `/var/lib/liquidde/sessions.db` | Session metadata database | `0640 liquidde:liquidde` |
-| `/var/lib/liquidde/permissions.db` | App permission grants | `0640 liquidde:liquidde` |
-| `/var/lib/liquidde/plugins/` | Installed plugins (global) | `0755 root:liquidde` |
-| `/var/log/liquidde/` | Log directory | `0750 root:liquidde` |
-| `/var/log/liquidde/supervisor.log` | Supervisor daemon log | `0640 liquidde:liquidde` |
-| `/var/log/liquidde/sessions/` | Per-session logs | `0750 root:liquidde` |
-| `/var/log/liquidde/sessions/<id>.log` | Session log file | `0640 <user>:liquidde` |
-| `/var/log/liquidde/crashes/` | Crash reports | `0750 root:liquidde` |
-| `/var/log/liquidde/audit/` | Audit log (append-only) | `0640 root:liquidde` |
+| `/var/lib/liquide/` | Server persistent state | `0750 root:liquide` |
+| `/var/lib/liquide/sessions.db` | Session metadata database | `0640 liquide:liquide` |
+| `/var/lib/liquide/permissions.db` | App permission grants | `0640 liquide:liquide` |
+| `/var/lib/liquide/plugins/` | Installed plugins (global) | `0755 root:liquide` |
+| `/var/log/liquide/` | Log directory | `0750 root:liquide` |
+| `/var/log/liquide/supervisor.log` | Supervisor daemon log | `0640 liquide:liquide` |
+| `/var/log/liquide/sessions/` | Per-session logs | `0750 root:liquide` |
+| `/var/log/liquide/sessions/<id>.log` | Session log file | `0640 <user>:liquide` |
+| `/var/log/liquide/crashes/` | Crash reports | `0750 root:liquide` |
+| `/var/log/liquide/audit/` | Audit log (append-only) | `0640 root:liquide` |
 
 #### User Paths
 
 | Path | Purpose | Permissions |
 |------|---------|-------------|
-| `~/.config/liquidde/` | User configuration | `0700 <user>:<user>` |
-| `~/.config/liquidde/config.toml` | User config overrides | `0600 <user>:<user>` |
-| `~/.config/liquidde/plugins/` | User-installed plugins | `0700 <user>:<user>` |
+| `~/.config/liquide/` | User configuration | `0700 <user>:<user>` |
+| `~/.config/liquide/config.toml` | User config overrides | `0600 <user>:<user>` |
+| `~/.config/liquide/plugins/` | User-installed plugins | `0700 <user>:<user>` |
 | `~/.config/autostart/` | XDG autostart entries | `0700 <user>:<user>` |
-| `~/.local/share/liquidde/` | User data | `0700 <user>:<user>` |
-| `~/.local/share/liquidde/permissions.db` | Per-user permission grants | `0600 <user>:<user>` |
-| `~/.local/share/liquidde/notification-history.db` | Notification history | `0600 <user>:<user>` |
-| `~/.local/share/liquidde/crash-reports/` | User-accessible crash reports | `0700 <user>:<user>` |
-| `~/.cache/liquidde/` | Cache (icons, thumbnails, etc.) | `0700 <user>:<user>` |
-| `~/.cache/liquidde/icon-cache/` | Resolved icon cache | `0700 <user>:<user>` |
-| `~/.cache/liquidde/plugin-cache/` | AOT-compiled WASM cache | `0700 <user>:<user>` |
+| `~/.local/share/liquide/` | User data | `0700 <user>:<user>` |
+| `~/.local/share/liquide/permissions.db` | Per-user permission grants | `0600 <user>:<user>` |
+| `~/.local/share/liquide/notification-history.db` | Notification history | `0600 <user>:<user>` |
+| `~/.local/share/liquide/crash-reports/` | User-accessible crash reports | `0700 <user>:<user>` |
+| `~/.cache/liquide/` | Cache (icons, thumbnails, etc.) | `0700 <user>:<user>` |
+| `~/.cache/liquide/icon-cache/` | Resolved icon cache | `0700 <user>:<user>` |
+| `~/.cache/liquide/plugin-cache/` | AOT-compiled WASM cache | `0700 <user>:<user>` |
 
 ### 7.2 XDG Base Directory Compliance
 
-LiquidDE fully respects the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
+LiquiDE fully respects the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
 
 | Variable | Default | Usage |
 |----------|---------|-------|
@@ -471,7 +471,7 @@ LiquidDE fully respects the [XDG Base Directory Specification](https://specifica
 | `XDG_CONFIG_DIRS` | `/etc/xdg` | System configuration search |
 | `XDG_DATA_DIRS` | `/usr/local/share:/usr/share` | System data search |
 
-All LiquidDE components use `$XDG_*` variables when set, falling back to defaults.
+All LiquiDE components use `$XDG_*` variables when set, falling back to defaults.
 
 ---
 
@@ -484,15 +484,15 @@ When `liquid-session` starts a user session, it sets the following environment v
 | Variable | Value | Description |
 |----------|-------|-------------|
 | `XDG_SESSION_TYPE` | `wayland` | Session type |
-| `XDG_CURRENT_DESKTOP` | `LiquidDE` | Desktop environment name |
-| `DESKTOP_SESSION` | `liquidde` | Session name |
-| `XDG_SESSION_DESKTOP` | `liquidde` | Session desktop (GDM compat) |
-| `WAYLAND_DISPLAY` | `liquidde-0` | Wayland compositor socket name |
+| `XDG_CURRENT_DESKTOP` | `LiquiDE` | Desktop environment name |
+| `DESKTOP_SESSION` | `liquide` | Session name |
+| `XDG_SESSION_DESKTOP` | `liquide` | Session desktop (GDM compat) |
+| `WAYLAND_DISPLAY` | `liquide-0` | Wayland compositor socket name |
 | `DISPLAY` | `:N` (if XWayland enabled) | X11 display number |
 | `XDG_RUNTIME_DIR` | `/run/user/<uid>` | Runtime directory |
 | `DBUS_SESSION_BUS_ADDRESS` | `unix:path=/run/user/<uid>/bus` | Session D-Bus |
-| `LIQUIDDE_SESSION_ID` | `<session-id>` | LiquidDE session identifier |
-| `LIQUIDDE_VERSION` | `<version>` | LiquidDE version string |
+| `LIQUIDDE_SESSION_ID` | `<session-id>` | LiquiDE session identifier |
+| `LIQUIDDE_VERSION` | `<version>` | LiquiDE version string |
 | `GDK_BACKEND` | `wayland` | GTK backend hint |
 | `QT_QPA_PLATFORM` | `wayland` | Qt platform hint |
 | `SDL_VIDEODRIVER` | `wayland` | SDL backend hint |
@@ -508,34 +508,34 @@ Variables from `/etc/environment`, `/etc/default/locale`, and `~/.pam_environmen
 ### 8.3 User Environment Overrides
 
 Users can set additional environment variables in:
-- `~/.config/liquidde/env.conf` — one `KEY=VALUE` per line.
+- `~/.config/liquide/env.conf` — one `KEY=VALUE` per line.
 - Session config: `[session] environment = { "FOO" = "bar" }`.
 
-These are applied after PAM environment and LiquidDE defaults. User values override system values.
+These are applied after PAM environment and LiquiDE defaults. User values override system values.
 
 ---
 
 ## 9) Service User & Group
 
-### 9.1 System User — `liquidde`
+### 9.1 System User — `liquide`
 
-LiquidDE creates a system user and group during installation:
+LiquiDE creates a system user and group during installation:
 
 ```bash
-useradd --system --no-create-home --shell /usr/sbin/nologin --group liquidde liquidde
+useradd --system --no-create-home --shell /usr/sbin/nologin --group liquide liquide
 ```
 
 | Property | Value |
 |----------|-------|
-| Username | `liquidde` |
-| Group | `liquidde` |
-| Home | `/var/lib/liquidde` (no login shell) |
+| Username | `liquide` |
+| Group | `liquide` |
+| Home | `/var/lib/liquide` (no login shell) |
 | Shell | `/usr/sbin/nologin` |
 | Purpose | Owns daemon files, membership grants `liquidctl` access |
 
 ### 9.2 Group Membership
 
-- Users in the `liquidde` group can access the management socket (`/run/liquidde/ctl.sock`) and use `liquidctl`.
+- Users in the `liquide` group can access the management socket (`/run/liquide/ctl.sock`) and use `liquidctl`.
 - The `video` and `render` groups may be needed for GPU access (handled by systemd `DeviceAllow`).
 
 ---
@@ -546,14 +546,14 @@ useradd --system --no-create-home --shell /usr/sbin/nologin --group liquidde liq
 
 | Component | Destination | Format |
 |-----------|-------------|--------|
-| `liquid-desktopd` | systemd journal + `/var/log/liquidde/supervisor.log` | Structured JSON |
-| `liquid-session` | systemd journal + `/var/log/liquidde/sessions/<id>.log` | Structured JSON |
-| Audit events | `/var/log/liquidde/audit/audit.log` | Append-only structured JSON |
-| Crash reports | `/var/log/liquidde/crashes/` | Individual JSON files |
+| `liquid-desktopd` | systemd journal + `/var/log/liquide/supervisor.log` | Structured JSON |
+| `liquid-session` | systemd journal + `/var/log/liquide/sessions/<id>.log` | Structured JSON |
+| Audit events | `/var/log/liquide/audit/audit.log` | Append-only structured JSON |
+| Crash reports | `/var/log/liquide/crashes/` | Individual JSON files |
 
 ### 10.2 Log Rotation
 
-- File logs are rotated by LiquidDE internally (configurable max size + max files).
+- File logs are rotated by LiquiDE internally (configurable max size + max files).
 - Default: 50 MB max per file, 10 files retained.
 - Crash reports: retained for `crash_report_retention_days` (default: 30), max `crash_report_max_count` (default: 1000).
 - Audit logs: append-only, rotated monthly, retained for `audit_retention_days` (default: 365).
@@ -569,7 +569,7 @@ journalctl -u liquid-desktopd.service
 # Session logs for a specific user
 journalctl -u liquid-session@alice.service
 
-# All LiquidDE logs
+# All LiquiDE logs
 journalctl -t liquid-desktopd -t liquid-session
 ```
 
@@ -623,18 +623,18 @@ When a client connects and an existing session exists for the user:
 
 ## 12) tmpfiles.d Configuration
 
-LiquidDE installs a tmpfiles.d configuration to ensure runtime directories exist:
+LiquiDE installs a tmpfiles.d configuration to ensure runtime directories exist:
 
 ```ini
-# /usr/lib/tmpfiles.d/liquidde.conf
-d /run/liquidde 0750 root liquidde -
-d /run/liquidde/sessions 0750 root liquidde -
-d /var/log/liquidde 0750 root liquidde -
-d /var/log/liquidde/sessions 0750 root liquidde -
-d /var/log/liquidde/crashes 0750 root liquidde -
-d /var/log/liquidde/audit 0750 root liquidde -
-d /var/lib/liquidde 0750 root liquidde -
-d /var/lib/liquidde/plugins 0755 root liquidde -
+# /usr/lib/tmpfiles.d/liquide.conf
+d /run/liquide 0750 root liquide -
+d /run/liquide/sessions 0750 root liquide -
+d /var/log/liquide 0750 root liquide -
+d /var/log/liquide/sessions 0750 root liquide -
+d /var/log/liquide/crashes 0750 root liquide -
+d /var/log/liquide/audit 0750 root liquide -
+d /var/lib/liquide 0750 root liquide -
+d /var/lib/liquide/plugins 0755 root liquide -
 ```
 
 ---
@@ -643,48 +643,48 @@ d /var/lib/liquidde/plugins 0755 root liquidde -
 
 ### 13.1 Package Contents
 
-A LiquidDE server package installs:
+A LiquiDE server package installs:
 
 | File | Description |
 |------|-------------|
 | `/usr/bin/liquid-desktopd` | Supervisor daemon |
 | `/usr/bin/liquidctl` | CLI management tool |
-| `/usr/lib/liquidde/liquid-session` | Session process binary |
-| `/usr/lib/liquidde/xdg-desktop-portal-liquidde` | Portal backend |
+| `/usr/lib/liquide/liquid-session` | Session process binary |
+| `/usr/lib/liquide/xdg-desktop-portal-liquide` | Portal backend |
 | `/usr/lib/systemd/system/liquid-desktopd.service` | System unit |
 | `/usr/lib/systemd/system/liquid-desktopd.socket` | Socket unit |
-| `/usr/lib/tmpfiles.d/liquidde.conf` | Runtime directory creation |
-| `/usr/lib/sysusers.d/liquidde.conf` | System user creation |
-| `/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.liquidde.service` | Portal D-Bus activation |
-| `/usr/share/xdg-desktop-portal/portals/liquidde.portal` | Portal registration |
-| `/usr/share/wayland-sessions/liquidde.desktop` | Session entry for display managers |
-| `/etc/liquidde/server.toml` | Default config (marked as conffile) |
-| `/etc/liquidde/policies.toml` | Default policies (marked as conffile) |
-| `/etc/pam.d/liquidde-session` | PAM service file |
+| `/usr/lib/tmpfiles.d/liquide.conf` | Runtime directory creation |
+| `/usr/lib/sysusers.d/liquide.conf` | System user creation |
+| `/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.liquide.service` | Portal D-Bus activation |
+| `/usr/share/xdg-desktop-portal/portals/liquide.portal` | Portal registration |
+| `/usr/share/wayland-sessions/liquide.desktop` | Session entry for display managers |
+| `/etc/liquide/server.toml` | Default config (marked as conffile) |
+| `/etc/liquide/policies.toml` | Default policies (marked as conffile) |
+| `/etc/pam.d/liquide-session` | PAM service file |
 | `/usr/share/man/man1/liquidctl.1.gz` | Man page |
 | `/usr/share/man/man8/liquid-desktopd.8.gz` | Man page |
 
-### 13.2 sysusers.d — `/usr/lib/sysusers.d/liquidde.conf`
+### 13.2 sysusers.d — `/usr/lib/sysusers.d/liquide.conf`
 
 ```
-u liquidde - "LiquidDE system user" /var/lib/liquidde /usr/sbin/nologin
+u liquide - "LiquiDE system user" /var/lib/liquide /usr/sbin/nologin
 ```
 
 ### 13.3 Display Manager Integration
 
-LiquidDE provides a `.desktop` session entry for GDM, SDDM, and other display managers:
+LiquiDE provides a `.desktop` session entry for GDM, SDDM, and other display managers:
 
 ```ini
-# /usr/share/wayland-sessions/liquidde.desktop
+# /usr/share/wayland-sessions/liquide.desktop
 [Desktop Entry]
-Name=LiquidDE
-Comment=LiquidDE Remote Desktop Environment
+Name=LiquiDE
+Comment=LiquiDE Remote Desktop Environment
 Exec=/usr/bin/liquid-desktopd --local-session
 Type=Application
-DesktopNames=LiquidDE
+DesktopNames=LiquiDE
 ```
 
-The `--local-session` flag starts a single-user local session (useful for development or when running LiquidDE as a local DE instead of a remote server).
+The `--local-session` flag starts a single-user local session (useful for development or when running LiquiDE as a local DE instead of a remote server).
 
 ---
 
@@ -706,11 +706,11 @@ The `--local-session` flag starts a single-user local session (useful for develo
 - `ProtectSystem=strict` prevents writes to `/usr`, `/etc`.
 - SELinux confinement works (domain transitions, denied operations).
 - AppArmor profile denies out-of-profile access.
-- Management socket is not accessible to non-`liquidde` group users.
+- Management socket is not accessible to non-`liquide` group users.
 
 ### Integration
 - PAM + LDAP authentication works.
-- PAM session events trigger correct LiquidDE behaviors.
+- PAM session events trigger correct LiquiDE behaviors.
 - journald logging is structured and filterable.
 - Crash reports are written to correct paths with correct permissions.
 - Log rotation works at configured thresholds.

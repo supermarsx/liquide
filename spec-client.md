@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-**LiquidClient** is the native client application for connecting to LiquidDE remote desktop sessions. It is built entirely in Rust and features the **Liquid Glass** visual aesthetic throughout its own UI — including custom window chrome, controls, and a translucent, depth-rich interface.
+**LiquidClient** is the native client application for connecting to LiquiDE remote desktop sessions. It is built entirely in Rust and features the **Liquid Glass** visual aesthetic throughout its own UI — including custom window chrome, controls, and a translucent, depth-rich interface.
 
 The client runs on Windows (x86_64, ARM64), Linux (x86_64, ARM64), and macOS (ARM64, x86_64).
 
@@ -256,7 +256,7 @@ cache_avatars = true                        # cache user avatars locally
   4. Frame data for each window is decoded and presented into its corresponding native window.
   5. Client-side window management events (move, resize, state changes) are forwarded back to the server.
   6. On `seamless_window_destroy`, the client destroys the native OS window.
-- **Desktop shell handling**: the LiquidDE dock, status bar, and wallpaper are not displayed by default in seamless mode. Optionally, they can appear as their own native windows (`shell_as_window = true`).
+- **Desktop shell handling**: the LiquiDE dock, status bar, and wallpaper are not displayed by default in seamless mode. Optionally, they can appear as their own native windows (`shell_as_window = true`).
 - **Taskbar integration**:
   - **Windows**: remote app icons and window titles appear in the Windows taskbar. Taskbar button grouping follows the app_id.
   - **Linux (Wayland/X11)**: remote windows registered with the window manager and appear in the window list / task switcher.
@@ -1391,7 +1391,7 @@ The client can optionally detect local idle state and notify the server:
 
 ## 22) Gateway Connection
 
-When connecting through a LiquidDE Gateway (see [spec-gateway.md](spec-gateway.md)):
+When connecting through a LiquiDE Gateway (see [spec-gateway.md](spec-gateway.md)):
 
 ### Connection Flow
 1. Client connects to gateway URL.

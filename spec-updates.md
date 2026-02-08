@@ -1,4 +1,4 @@
-# LiquidDE — Updates, Versioning & Migrations Specification
+# LiquiDE — Updates, Versioning & Migrations Specification
 
 > **Status**: Draft
 > **Depends on**: [spec.md](spec.md) (core server), [spec-system.md](spec-system.md) (system integration)
@@ -7,7 +7,7 @@
 
 ## 1) Overview
 
-This document specifies LiquidDE's versioning scheme, compatibility guarantees, update mechanisms, cryptographic signing, rollback procedures, and data migration strategies.
+This document specifies LiquiDE's versioning scheme, compatibility guarantees, update mechanisms, cryptographic signing, rollback procedures, and data migration strategies.
 
 ---
 
@@ -15,7 +15,7 @@ This document specifies LiquidDE's versioning scheme, compatibility guarantees, 
 
 ### 2.1 Semantic Versioning
 
-LiquidDE follows [Semantic Versioning 2.0.0](https://semver.org/):
+LiquiDE follows [Semantic Versioning 2.0.0](https://semver.org/):
 
 ```
 MAJOR.MINOR.PATCH[-prerelease][+build]
@@ -31,7 +31,7 @@ MAJOR.MINOR.PATCH[-prerelease][+build]
 
 ### 2.2 Version Components
 
-Each LiquidDE component has its own version, but all components in a release share the same version number:
+Each LiquiDE component has its own version, but all components in a release share the same version number:
 
 | Component | Binary | Example Version |
 |-----------|--------|----------------|
@@ -39,15 +39,15 @@ Each LiquidDE component has its own version, but all components in a release sha
 | Session process | `liquid-session` | `1.3.2` |
 | CLI tool | `liquidctl` | `1.3.2` |
 | Client | `liquidclient` | `1.3.2` |
-| Portal backend | `xdg-desktop-portal-liquidde` | `1.3.2` |
+| Portal backend | `xdg-desktop-portal-liquide` | `1.3.2` |
 | Management UI | `liquid-manager` | `1.3.2` |
-| Plugin SDK | `liquidde-plugin-sdk` | `1.3.2` |
+| Plugin SDK | `liquide-plugin-sdk` | `1.3.2` |
 
 ### 2.3 Protocol Version
 
 The wire protocol has an independent version number negotiated during the TLS handshake:
 
-| Protocol Version | LiquidDE Versions | Description |
+| Protocol Version | LiquiDE Versions | Description |
 |-----------------|-------------------|-------------|
 | `proto/1` | `1.0.0` – `1.x.y` | Initial protocol |
 | `proto/2` | `2.0.0` – `2.x.y` | (future) Breaking protocol changes |
@@ -88,12 +88,12 @@ Deprecation warnings are logged at `warn` level and surfaced in the management U
 
 ### 3.3 Configuration Forward Compatibility
 
-When a newer LiquidDE version reads an older config file:
+When a newer LiquiDE version reads an older config file:
 - Unknown sections are ignored (with a debug log).
 - Missing keys use defaults.
 - No config file modification occurs automatically.
 
-When an older LiquidDE version reads a newer config file:
+When an older LiquiDE version reads a newer config file:
 - Unknown sections and keys are ignored.
 - No errors for unknown keys.
 
@@ -126,7 +126,7 @@ On startup, `liquid-desktopd` checks schema versions and runs migrations if need
 
 ### 4.2 Update Sources
 
-LiquidDE supports multiple update delivery methods:
+LiquiDE supports multiple update delivery methods:
 
 | Method | Description |
 |--------|-------------|
@@ -230,7 +230,7 @@ Each release includes a signed manifest:
   ],
   "migrations": ["1.3.0-to-1.4.0"],
   "min_upgrade_from": "1.2.0",
-  "changelog_url": "https://docs.liquidde.dev/changelog/1.4.0"
+  "changelog_url": "https://docs.liquide.dev/changelog/1.4.0"
 }
 ```
 
@@ -248,7 +248,7 @@ Manifest signature: detached Ed25519 signature in `manifest.sig`.
 
 ### 5.4 Transparency Log (Optional)
 
-For organizations requiring auditability, LiquidDE can publish releases to a [Sigstore](https://sigstore.dev/)-compatible transparency log. Configuration:
+For organizations requiring auditability, LiquiDE can publish releases to a [Sigstore](https://sigstore.dev/)-compatible transparency log. Configuration:
 
 ```toml
 [updates]
@@ -262,24 +262,24 @@ transparency_log_url = ""
 
 ### 6.1 Rollback Strategy
 
-LiquidDE supports rollback to the previous version in case an update causes issues:
+LiquiDE supports rollback to the previous version in case an update causes issues:
 
 | Method | Description |
 |--------|-------------|
-| **OS package manager** | `apt install liquidde=1.3.2-1`, `dnf downgrade liquidde` |
+| **OS package manager** | `apt install liquide=1.3.2-1`, `dnf downgrade liquide` |
 | **Standalone** | `liquidctl update rollback` (keeps one previous version) |
 | **Snapshot** | For VM/container deployments: filesystem snapshot before update |
 
 ### 6.2 Standalone Rollback
 
-When `liquidctl update apply` is used, the previous binaries are preserved in `/var/lib/liquidde/rollback/`:
+When `liquidctl update apply` is used, the previous binaries are preserved in `/var/lib/liquide/rollback/`:
 
 ```
-/var/lib/liquidde/rollback/
+/var/lib/liquide/rollback/
 ├── version.txt        (previous version: "1.3.2")
 ├── liquid-desktopd
 ├── liquid-session
-├── xdg-desktop-portal-liquidde
+├── xdg-desktop-portal-liquide
 └── liquidctl
 ```
 
@@ -306,7 +306,7 @@ Database migrations (§7) include both `up` and `down` migration scripts. On rol
 ### 6.4 Config Rollback
 
 A backup of the config files is created before any migration modifies them:
-- `/etc/liquidde/server.toml.bak.<timestamp>`
+- `/etc/liquide/server.toml.bak.<timestamp>`
 - Backups older than 30 days are automatically cleaned up.
 
 ---
@@ -371,7 +371,7 @@ codec = "h264"
 The LiquidClient application checks for updates independently:
 
 1. On startup (if `check_updates = true` in client config).
-2. Client queries the update server (HTTPS GET to `updates.liquidde.dev/client/<platform>/<channel>/latest`).
+2. Client queries the update server (HTTPS GET to `updates.liquide.dev/client/<platform>/<channel>/latest`).
 3. If a newer version is available, a non-intrusive notification appears: "LiquidClient X.Y.Z is available. [Update Now] [Later] [Skip This Version]".
 4. "Update Now" downloads the installer and launches it (platform-specific).
 5. "Skip This Version" suppresses the notification for that specific version.

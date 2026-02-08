@@ -1,4 +1,4 @@
-# LiquidDE Management UI — Specification
+# LiquiDE Management UI — Specification
 
 > **Language**: Node.js (server) + Web (frontend)
 > **License**: MIT
@@ -8,16 +8,16 @@
 
 ## 0) Overview
 
-**liquid-manager** is a lightweight web-based management interface for LiquidDE deployments. It provides administrators with a visual dashboard for monitoring sessions, managing servers, configuring policies, and viewing metrics.
+**liquid-manager** is a lightweight web-based management interface for LiquiDE deployments. It provides administrators with a visual dashboard for monitoring sessions, managing servers, configuring policies, and viewing metrics.
 
-The management server is a **simple Node.js application** that is **disabled by default**. It runs as a separate process from the LiquidDE server and communicates with server instances via their management APIs.
+The management server is a **simple Node.js application** that is **disabled by default**. It runs as a separate process from the LiquiDE server and communicates with server instances via their management APIs.
 
 ---
 
 ## 1) Design Philosophy
 
 - **Disabled by default** — must be explicitly enabled and configured.
-- **Runs as a separate process** — does not affect LiquidDE server performance or stability.
+- **Runs as a separate process** — does not affect LiquiDE server performance or stability.
 - **Simple to deploy** — single `npm start` or `node server.js` command.
 - **Read-mostly** — primarily for monitoring; configuration changes require explicit confirmation.
 - **Secure** — requires authentication, supports HTTPS, and never stores session credentials.
@@ -37,13 +37,13 @@ The management server is a **simple Node.js application** that is **disabled by 
                     │ API            │ API            │ API
                     ▼                ▼                ▼
             ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-            │  LiquidDE    │ │  LiquidDE    │ │  liquid-      │
+            │  LiquiDE    │ │  LiquiDE    │ │  liquid-      │
             │  Server 1    │ │  Server 2    │ │  gateway      │
             └──────────────┘ └──────────────┘ └──────────────┘
 ```
 
 ### Components
-- **Node.js backend**: serves the web frontend, proxies API calls to LiquidDE servers and gateways.
+- **Node.js backend**: serves the web frontend, proxies API calls to LiquiDE servers and gateways.
 - **Web frontend**: single-page application with responsive design.
 - **No database**: configuration stored in TOML files, state queried from servers in real-time.
 
@@ -258,7 +258,7 @@ The management server is a **simple Node.js application** that is **disabled by 
 - **Rate limiting** on login attempts.
 - **Session timeout** (configurable, default: 30 minutes).
 - **Audit logging** of all management actions.
-- **No credential storage**: management UI never stores LiquidDE session credentials; it uses API keys to communicate with servers.
+- **No credential storage**: management UI never stores LiquiDE session credentials; it uses API keys to communicate with servers.
 
 ---
 

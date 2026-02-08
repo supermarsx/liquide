@@ -1,4 +1,4 @@
-# LiquidDE Theme: Night — OLED Dark Theme Specification
+# LiquiDE Theme: Night — OLED Dark Theme Specification
 
 > **Preset ID**: `night`
 > **Type**: Dark (OLED-optimized)
@@ -9,7 +9,7 @@
 
 ## 0) Overview
 
-**Night** is LiquidDE's OLED-optimized dark theme. It uses pure black (`#000000`) backgrounds and deep, true-dark surfaces to maximize contrast and minimize power draw on OLED/AMOLED displays. Glass effects are toned down in favor of sharp edges and high-contrast borders, giving the theme a clean, minimal, "lights-off cockpit" aesthetic.
+**Night** is LiquiDE's OLED-optimized dark theme. It uses pure black (`#000000`) backgrounds and deep, true-dark surfaces to maximize contrast and minimize power draw on OLED/AMOLED displays. Glass effects are toned down in favor of sharp edges and high-contrast borders, giving the theme a clean, minimal, "lights-off cockpit" aesthetic.
 
 Night is the ideal choice for:
 - OLED/AMOLED client displays (power savings, no burn-in glow).
@@ -49,7 +49,7 @@ Night is the ideal choice for:
 
 ```css
 /* ═══════════════════════════════════════════════════════
-   LiquidDE Theme: Night — OLED Dark
+   LiquiDE Theme: Night — OLED Dark
    Preset: night
    ═══════════════════════════════════════════════════════ */
 
@@ -347,7 +347,7 @@ id = "night"
 name = "Night"
 description = "OLED-optimized dark theme with true black backgrounds"
 type = "dark"
-author = "LiquidDE"
+author = "LiquiDE"
 version = "1.0.0"
 
 [theme.tags]

@@ -1,4 +1,4 @@
-# LiquidDE Theme: Midday — Tarnished White Light Theme Specification
+# LiquiDE Theme: Midday — Tarnished White Light Theme Specification
 
 > **Preset ID**: `midday`
 > **Type**: Light (warm off-white)
@@ -9,7 +9,7 @@
 
 ## 0) Overview
 
-**Midday** is LiquidDE's light theme. Rather than a clinical pure-white design, Midday uses a **tarnished white** — a warm, slightly yellowed off-white reminiscent of aged paper, natural linen, or the diffused light of midday sun through frosted glass. Surfaces have a creamy warmth that makes the interface feel organic and easy on the eyes, avoiding the harshness of pure white backgrounds.
+**Midday** is LiquiDE's light theme. Rather than a clinical pure-white design, Midday uses a **tarnished white** — a warm, slightly yellowed off-white reminiscent of aged paper, natural linen, or the diffused light of midday sun through frosted glass. Surfaces have a creamy warmth that makes the interface feel organic and easy on the eyes, avoiding the harshness of pure white backgrounds.
 
 Midday is the ideal choice for:
 - Well-lit environments where dark themes cause excessive contrast with surroundings.
@@ -48,7 +48,7 @@ Midday is the ideal choice for:
 
 ```css
 /* ═══════════════════════════════════════════════════════
-   LiquidDE Theme: Midday — Tarnished White Light
+   LiquiDE Theme: Midday — Tarnished White Light
    Preset: midday
    ═══════════════════════════════════════════════════════ */
 
@@ -546,7 +546,7 @@ id = "midday"
 name = "Midday"
 description = "Warm off-white light theme with tarnished linen tones"
 type = "light"
-author = "LiquidDE"
+author = "LiquiDE"
 version = "1.0.0"
 
 [theme.tags]

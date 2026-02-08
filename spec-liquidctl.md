@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-**liquidctl** is the unified command-line tool for administering, monitoring, and troubleshooting LiquidDE servers. It is a single static binary written in Rust that communicates with the LiquidDE server daemon via a local Unix socket or a remote API endpoint.
+**liquidctl** is the unified command-line tool for administering, monitoring, and troubleshooting LiquiDE servers. It is a single static binary written in Rust that communicates with the LiquiDE server daemon via a local Unix socket or a remote API endpoint.
 
 `liquidctl` is self-documenting, versioned, and designed to never produce "unknown subcommand" dead ends.
 
@@ -52,7 +52,7 @@ Display overall server status.
 ```
 $ liquidctl status
 
-LiquidDE Server v0.1.0
+LiquiDE Server v0.1.0
   Status:       running
   Uptime:       3d 14h 22m
   Architecture: x86_64
@@ -268,7 +268,7 @@ Run performance benchmarks.
 ```
 $ liquidctl benchmark
 
-Running LiquidDE Performance Benchmark...
+Running LiquiDE Performance Benchmark...
 
 CPU Information:
   Model:          AMD EPYC 7763 64-Core
@@ -336,7 +336,7 @@ log_level = "info"
 ...
 
 [tls]
-cert = "/etc/liquidde/cert.pem"
+cert = "/etc/liquide/cert.pem"
 key = "***REDACTED***"
 ...
 ```
@@ -353,14 +353,14 @@ Validate configuration files.
 ```
 $ liquidctl config validate
 
-Validating /etc/liquidde/server.toml...
+Validating /etc/liquide/server.toml...
   ✓ Syntax valid
   ✓ All required fields present
   ✓ TLS certificate found and readable
   ✓ TLS key found and readable
   ✓ Listen addresses valid
   ⚠ [encoding] hardware_encoding = "auto" but no GPU detected — will use CPU
-  ✓ Policy file /etc/liquidde/policies.toml valid
+  ✓ Policy file /etc/liquide/policies.toml valid
 
 Validation passed (1 warning).
 ```
@@ -679,23 +679,23 @@ $ liquidctl logs config
 
 Log Subsystems:
   Subsystem     Level    Log File
-  server        info     /var/log/liquidde/server.log
-  session       info     /var/log/liquidde/session.log
-  auth          info     /var/log/liquidde/auth.log
-  render        warn     /var/log/liquidde/render.log
-  encode        warn     /var/log/liquidde/encode.log
-  transport     info     /var/log/liquidde/transport.log
-  audio         warn     /var/log/liquidde/audio.log
-  clipboard     info     /var/log/liquidde/clipboard.log
-  usb           info     /var/log/liquidde/usb.log
-  input         warn     /var/log/liquidde/input.log
-  policy        info     /var/log/liquidde/policy.log
-  metrics       warn     /var/log/liquidde/metrics.log
-  audit         info     /var/log/liquidde/audit.log (immutable)
+  server        info     /var/log/liquide/server.log
+  session       info     /var/log/liquide/session.log
+  auth          info     /var/log/liquide/auth.log
+  render        warn     /var/log/liquide/render.log
+  encode        warn     /var/log/liquide/encode.log
+  transport     info     /var/log/liquide/transport.log
+  audio         warn     /var/log/liquide/audio.log
+  clipboard     info     /var/log/liquide/clipboard.log
+  usb           info     /var/log/liquide/usb.log
+  input         warn     /var/log/liquide/input.log
+  policy        info     /var/log/liquide/policy.log
+  metrics       warn     /var/log/liquide/metrics.log
+  audit         info     /var/log/liquide/audit.log (immutable)
 
 General:
   Format:       json
-  Base dir:     /var/log/liquidde
+  Base dir:     /var/log/liquide
   Max file:     100 MB
   Rotation:     10 files, compressed
   Syslog:       disabled
@@ -966,7 +966,7 @@ Deregister from gateway.
 
 ### `liquidctl service`
 
-Manage the LiquidDE service.
+Manage the LiquiDE service.
 
 #### `liquidctl service status`
 
@@ -1197,7 +1197,7 @@ liquidctl completions powershell > $PROFILE/liquidctl.ps1
 
 ```toml
 [default]
-server = "unix:///run/liquidde/ctl.sock"   # default local socket
+server = "unix:///run/liquide/ctl.sock"   # default local socket
 format = "text"                             # text, json, csv, table
 color = "auto"                              # auto, always, never
 

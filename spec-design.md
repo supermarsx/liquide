@@ -1,4 +1,4 @@
-# LiquidDE Design Language — Specification
+# LiquiDE Design Language — Specification
 
 > **License**: MIT
 > **Related specs**: [Server/DE](spec.md) · [Client](spec-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
@@ -7,9 +7,9 @@
 
 ## 0) Overview
 
-The **Liquid Glass** design language defines the visual identity of LiquidDE — both the remote desktop environment and the LiquidClient application. Every visual element is implemented through a CSS-driven theming engine, making the entire appearance customizable by users and administrators.
+The **Liquid Glass** design language defines the visual identity of LiquiDE — both the remote desktop environment and the LiquidClient application. Every visual element is implemented through a CSS-driven theming engine, making the entire appearance customizable by users and administrators.
 
-This document serves as both a design specification and the authoritative CSS documentation for theming LiquidDE.
+This document serves as both a design specification and the authoritative CSS documentation for theming LiquiDE.
 
 ---
 
@@ -105,7 +105,7 @@ This document serves as both a design specification and the authoritative CSS do
 
 ### 2.2 Theme Presets
 
-LiquidDE ships with **four built-in theme presets**. The base palette above serves as the **Standard** (default) dark theme. Three additional presets are defined in separate specification files:
+LiquiDE ships with **four built-in theme presets**. The base palette above serves as the **Standard** (default) dark theme. Three additional presets are defined in separate specification files:
 
 | Preset | ID | Type | Description | Spec |
 |--------|----|------|-------------|------|
@@ -117,24 +117,24 @@ LiquidDE ships with **four built-in theme presets**. The base palette above serv
 Theme presets are activated via:
 - **Server-side**: `[appearance] theme = "night"` in `session.toml` or `server.toml`.
 - **Client-side**: `[general] theme = "night"` in client `config.toml`.
-- **CSS**: `@import "/etc/liquidde/themes/night.css";` in user's `theme.css`.
+- **CSS**: `@import "/etc/liquide/themes/night.css";` in user's `theme.css`.
 
 Each preset provides a complete CSS class (`.liquid-theme-night`, `.liquid-theme-sunset`, `.liquid-theme-midday`) that overrides all relevant custom properties. The class is applied to the document root alongside any accessibility or mode classes.
 
 #### Theme Selection Priority
-1. User preference (`~/.config/liquidde/session.toml` → `[appearance] theme`).
-2. System default (`/etc/liquidde/server.toml` → `[appearance] default_theme`).
+1. User preference (`~/.config/liquide/session.toml` → `[appearance] theme`).
+2. System default (`/etc/liquide/server.toml` → `[appearance] default_theme`).
 3. `"liquid-glass"` (Standard dark theme) if no preference is set.
 
 #### Theme Metadata Files
-Each preset has a metadata file at `/etc/liquidde/themes/<id>.toml` containing:
+Each preset has a metadata file at `/etc/liquide/themes/<id>.toml` containing:
 ```toml
 [theme]
 id = "sunset"
 name = "Sunset"
 description = "Warm dark theme with amber and orange tones"
 type = "dark"          # dark, light
-author = "LiquidDE"
+author = "LiquiDE"
 version = "1.0.0"
 
 [theme.tags]
@@ -146,7 +146,7 @@ default = "sunset-amber.jpg"
 fallback_color = "#1A1008"
 ```
 
-Custom themes follow the same format and are placed in `/etc/liquidde/themes/` (system-wide) or `~/.config/liquidde/themes/` (per-user).
+Custom themes follow the same format and are placed in `/etc/liquide/themes/` (system-wide) or `~/.config/liquide/themes/` (per-user).
 
 ### 2.3 Light Theme Override (Legacy)
 
@@ -2263,7 +2263,7 @@ The crash screen is a client-rendered full-viewport overlay that displays when a
 - Single color (inherits `currentColor`).
 
 ### 8.2 Icon Set
-LiquidDE ships with a minimal icon set for shell UI:
+LiquiDE ships with a minimal icon set for shell UI:
 - Window controls: close, minimize, maximize, restore.
 - System: settings, search, power, lock, network, volume, brightness.
 - Files: folder, file, image, video, archive.
@@ -2362,7 +2362,7 @@ When wallpaper is disabled, glass surfaces use the solid `--liquid-bg-desktop` c
 
 ### 11.1 Creating a Custom Theme
 
-1. Create `~/.config/liquidde/theme.css`.
+1. Create `~/.config/liquide/theme.css`.
 2. Override any CSS variable or class.
 3. Changes apply immediately (live reload).
 
@@ -2398,8 +2398,8 @@ Example — "Flat Minimal" theme (no glass):
 ```
 
 ### 11.2 CSS File Load Order
-1. `/etc/liquidde/theme.css` — system base theme (Liquid Glass defaults).
-2. `~/.config/liquidde/theme.css` — user overrides.
+1. `/etc/liquide/theme.css` — system base theme (Liquid Glass defaults).
+2. `~/.config/liquide/theme.css` — user overrides.
 3. User overrides take precedence (CSS cascade).
 
 ### 11.3 Available CSS Classes (Complete Reference)

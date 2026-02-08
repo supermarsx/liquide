@@ -1,4 +1,4 @@
-# LiquidDE Gateway — Specification
+# LiquiDE Gateway — Specification
 
 > **Language**: Rust
 > **License**: MIT
@@ -8,7 +8,7 @@
 
 ## 0) Overview
 
-**liquid-gateway** is a connection broker and relay server for LiquidDE deployments where direct client-to-server connectivity is not possible — typically when servers sit behind NAT, firewalls, or in private networks.
+**liquid-gateway** is a connection broker and relay server for LiquiDE deployments where direct client-to-server connectivity is not possible — typically when servers sit behind NAT, firewalls, or in private networks.
 
 The gateway is a lightweight, standalone Rust binary that runs on a publicly reachable host. It handles connection brokering, optional traffic relay, authentication passthrough, and load distribution.
 
@@ -18,7 +18,7 @@ The gateway is a lightweight, standalone Rust binary that runs on a publicly rea
 
 ### Primary
 - **NAT traversal**: servers behind NAT/firewall, clients on the internet.
-- **Enterprise edge**: single public entry point to multiple internal LiquidDE servers.
+- **Enterprise edge**: single public entry point to multiple internal LiquiDE servers.
 - **Zero-trust access**: gateway as the only exposed endpoint, servers never directly reachable.
 
 ### Secondary
@@ -34,7 +34,7 @@ The gateway is a lightweight, standalone Rust binary that runs on a publicly rea
 Internet                          │  Private Network
                                   │
 ┌──────────┐    QUIC/TLS    ┌─────┴──────┐    Internal    ┌─────────────┐
-│  Client   │ ────────────→ │  Gateway    │ ────────────→ │  LiquidDE   │
+│  Client   │ ────────────→ │  Gateway    │ ────────────→ │  LiquiDE   │
 │           │ ←──────────── │             │ ←──────────── │  Server(s)  │
 └──────────┘    Session     └─────┬──────┘    Relay or    └─────────────┘
                 stream            │           Direct
@@ -412,7 +412,7 @@ Only patterns that no legitimate client would ever produce:
 
 | Trigger | Response |
 |---------|----------|
-| **Invalid protocol magic** — non-LiquidDE/non-WebSocket probes (HTTP, SSH, random bytes) | Tarpit: accept, drip-feed data at 1 byte/sec |
+| **Invalid protocol magic** — non-LiquiDE/non-WebSocket probes (HTTP, SSH, random bytes) | Tarpit: accept, drip-feed data at 1 byte/sec |
 | **Known exploit payloads** — RDP/VNC/SSH CVE exploit signatures | Honeypot: fake service, log full payload |
 | **Post-ban reconnection** — IP already banned by rate limiter, continues attempts | Tarpit: accept TCP, drip-feed indefinitely |
 | **Credential stuffing** — >10 distinct usernames from single IP in 60 seconds | Tarpit: 5-30s fake auth processing per attempt |

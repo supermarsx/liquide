@@ -1,4 +1,4 @@
-# LiquidDE — Settings Application Specification
+# LiquiDE — Settings Application Specification
 
 > **Status**: Draft
 > **Depends on**: [spec.md](spec.md) (core server), [spec-design.md](spec-design.md) (theming), [spec-interop.md](spec-interop.md) (desktop standards), [spec-accessibility.md](spec-accessibility.md) (accessibility)
@@ -7,7 +7,7 @@
 
 ## 1) Overview
 
-LiquidDE includes a built-in **Settings application** that provides user-facing control panels for all configurable aspects of the desktop environment. The Settings app runs within the user's session as a standard Wayland application, rendered with the Liquid Glass design language.
+LiquiDE includes a built-in **Settings application** that provides user-facing control panels for all configurable aspects of the desktop environment. The Settings app runs within the user's session as a standard Wayland application, rendered with the Liquid Glass design language.
 
 ### Design Principles
 
@@ -43,7 +43,7 @@ Each settings module is a self-contained unit with:
 
 | Scope | Storage | Location |
 |-------|---------|----------|
-| User preferences | TOML config | `~/.config/liquidde/config.toml` |
+| User preferences | TOML config | `~/.config/liquide/config.toml` |
 | System/backend settings | D-Bus to backend service | NetworkManager, BlueZ, PipeWire, timedated, etc. |
 | Session-only overrides | In-memory | Lost on session end |
 
@@ -54,8 +54,8 @@ The Settings app also exposes a D-Bus interface for programmatic settings access
 | Property | Value |
 |----------|-------|
 | Bus | Session bus |
-| Service name | `org.liquidde.Settings` |
-| Object path | `/org/liquidde/Settings` |
+| Service name | `org.liquide.Settings` |
+| Object path | `/org/liquide/Settings` |
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -145,7 +145,7 @@ auto_connect_metered = false
 
 ### 4.2 Remote Session Considerations
 
-In a remote LiquidDE session, Bluetooth refers to the **server's** Bluetooth hardware. LiquidDE does **not** bridge client-local Bluetooth to the server session. A notice is shown: "Bluetooth devices are on the remote server, not your local machine."
+In a remote LiquiDE session, Bluetooth refers to the **server's** Bluetooth hardware. LiquiDE does **not** bridge client-local Bluetooth to the server session. A notice is shown: "Bluetooth devices are on the remote server, not your local machine."
 
 ### 4.3 Config Keys
 
@@ -199,13 +199,13 @@ auto_connect_paired = true
 
 #### Sound Effects / Alert Sounds
 
-- **System sound theme**: dropdown (LiquidDE default, freedesktop, none).
+- **System sound theme**: dropdown (LiquiDE default, freedesktop, none).
 - **Event sounds**: toggle for UI interaction sounds (button clicks, notifications).
 - **Notification sound**: preview + select.
 
 ### 5.2 Remote Session Considerations
 
-Audio in a remote session is streamed over the LiquidDE audio channel:
+Audio in a remote session is streamed over the LiquiDE audio channel:
 
 - **Server audio** (application output) → encoded → transported to client → played on client speakers.
 - **Client microphone** → captured on client → transported to server → available as PipeWire source.
@@ -223,7 +223,7 @@ input_device = ""
 input_volume = 100
 input_muted = false
 balance = 0.0               # -1.0 (left) to 1.0 (right)
-sound_theme = "liquidde"
+sound_theme = "liquide"
 event_sounds = true
 ```
 
@@ -274,7 +274,7 @@ event_sounds = true
 
 In a remote session:
 - "Screen blank" and "Suspend" refer to the **server** session behavior (blanking the compositor, suspending the session process or the machine if it's a dedicated server).
-- Lock screen refers to the LiquidDE session lock, not the client machine's lock.
+- Lock screen refers to the LiquiDE session lock, not the client machine's lock.
 - Battery information is from the **server** hardware. A note is shown if no battery is detected: "No battery detected on the remote server."
 
 ### 6.3 Config Keys
@@ -307,7 +307,7 @@ battery_saver_auto = true       # auto-enable at 20%
 
 **Module ID**: `display`
 **Icon**: `video-display`
-**Backend**: LiquidDE compositor (internal), `org.freedesktop.portal.Settings`
+**Backend**: LiquiDE compositor (internal), `org.freedesktop.portal.Settings`
 **Policy gate**: `settings.display.enabled` (default: `true`)
 
 ### 7.1 UI Flows
@@ -316,7 +316,7 @@ battery_saver_auto = true       # auto-enable at 20%
 
 - **Screen arrangement**: drag-and-drop positioning of virtual screens (like GNOME/macOS display settings).
 - **Per-screen settings**: resolution, refresh rate, scaling factor (100%, 125%, 150%, 175%, 200%).
-- **Add/remove virtual screens** (LiquidDE compositor creates virtual outputs).
+- **Add/remove virtual screens** (LiquiDE compositor creates virtual outputs).
 - **Primary screen selector**.
 
 #### Night Mode / Blue Light Filter
@@ -348,7 +348,7 @@ night_mode_end = "07:00"
 night_mode_temperature = 3500
 
 [wallpaper]
-path = "/usr/share/liquidde/wallpapers/default.jpg"
+path = "/usr/share/liquide/wallpapers/default.jpg"
 mode = "fill"           # fill, fit, stretch, center, tile
 ```
 
@@ -406,7 +406,7 @@ show_print_dialog_preview = true
 
 **Module ID**: `users`
 **Icon**: `system-users`
-**Backend**: `org.freedesktop.Accounts`, LiquidDE user management API
+**Backend**: `org.freedesktop.Accounts`, LiquiDE user management API
 **Policy gate**: `settings.users.enabled` (default: `true`)
 
 ### 9.1 UI Flows
@@ -431,7 +431,7 @@ show_print_dialog_preview = true
 
 ### 9.2 Config Keys
 
-User profile changes are written to both the LiquidDE user database and (where applicable) the system user database via `org.freedesktop.Accounts`.
+User profile changes are written to both the LiquiDE user database and (where applicable) the system user database via `org.freedesktop.Accounts`.
 
 ### 9.3 Permissions
 
@@ -495,7 +495,7 @@ formats = "en_US.UTF-8"        # regional format (dates, numbers)
 
 **Module ID**: `keyboard`
 **Icon**: `input-keyboard`
-**Backend**: LiquidDE compositor (internal), IBus/Fcitx5 via D-Bus
+**Backend**: LiquiDE compositor (internal), IBus/Fcitx5 via D-Bus
 **Policy gate**: `settings.keyboard.enabled` (default: `true`)
 
 ### 11.1 UI Flows
@@ -519,7 +519,7 @@ formats = "en_US.UTF-8"        # regional format (dates, numbers)
 
 #### Shortcuts
 
-- **System shortcuts**: table of all LiquidDE keyboard shortcuts (see spec.md §7).
+- **System shortcuts**: table of all LiquiDE keyboard shortcuts (see spec.md §7).
   - Each row: action description, current binding, edit button.
   - Click edit → press new key combination → confirm / cancel.
   - Conflict detection: warn if shortcut is already bound.
@@ -567,7 +567,7 @@ size = "medium"
 
 **Module ID**: `appearance`
 **Icon**: `preferences-desktop-wallpaper`
-**Backend**: LiquidDE compositor (internal)
+**Backend**: LiquiDE compositor (internal)
 **Policy gate**: `settings.appearance.enabled` (default: `true`)
 
 ### 12.1 UI Flows
@@ -622,7 +622,7 @@ See spec.md for full `[theme]`, `[glass]`, `[dock]`, `[cursor]` config sections.
 
 **Module ID**: `privacy`
 **Icon**: `preferences-system-privacy`
-**Backend**: LiquidDE internal
+**Backend**: LiquiDE internal
 **Policy gate**: `settings.privacy.enabled` (default: `true`)
 
 ### 13.1 UI Flows
@@ -679,7 +679,7 @@ clipboard_clear_on_lock = false
 
 **Module ID**: `notifications`
 **Icon**: `preferences-system-notifications`
-**Backend**: `org.liquidde.Notifications` (D-Bus, see spec-interop.md §2.1.1)
+**Backend**: `org.liquide.Notifications` (D-Bus, see spec-interop.md §2.1.1)
 **Policy gate**: `settings.notifications.enabled` (default: `true`)
 
 ### 14.1 UI Flows
@@ -723,13 +723,13 @@ show_previews = "always"    # always, when-unlocked, never
 
 **Module ID**: `about`
 **Icon**: `dialog-information`
-**Backend**: various (uname, /proc, lsb_release, LiquidDE version)
+**Backend**: various (uname, /proc, lsb_release, LiquiDE version)
 **Policy gate**: always visible
 
 ### 16.1 UI Flows
 
 - **Device name**: editable hostname.
-- **LiquidDE version**: with "Check for updates" link.
+- **LiquiDE version**: with "Check for updates" link.
 - **OS**: distribution name + version.
 - **Kernel**: kernel version string.
 - **Hardware**:
@@ -738,7 +738,7 @@ show_previews = "always"    # always, when-unlocked, never
   - GPU: model, driver, VRAM.
   - Disk: total / available on root filesystem.
 - **Session info**: session ID, uptime, connected client info.
-- **Licenses**: open-source license list for LiquidDE dependencies.
+- **Licenses**: open-source license list for LiquiDE dependencies.
 
 ---
 

@@ -1,4 +1,4 @@
-# LiquidDE — Protocol Formal Specification
+# LiquiDE — Protocol Formal Specification
 
 > **Status**: Draft
 > **Depends on**: [spec.md](spec.md) (core server), [spec-client.md](spec-client.md) (client)
@@ -7,9 +7,9 @@
 
 ## 1) Overview
 
-This document formally specifies the LiquidDE wire protocol: message framing, channel architecture, compression rules, ordering guarantees, canonical schemas, state machines, the emergency channel, and conformance testing.
+This document formally specifies the LiquiDE wire protocol: message framing, channel architecture, compression rules, ordering guarantees, canonical schemas, state machines, the emergency channel, and conformance testing.
 
-The LiquidDE protocol is a **multiplexed, multi-channel binary protocol** designed for low-latency remote desktop streaming with reliability guarantees on control data and best-effort delivery on media streams.
+The LiquiDE protocol is a **multiplexed, multi-channel binary protocol** designed for low-latency remote desktop streaming with reliability guarantees on control data and best-effort delivery on media streams.
 
 ---
 
@@ -134,7 +134,7 @@ Every message on the wire is wrapped in a frame:
 
 | Field | Size | Description |
 |-------|------|-------------|
-| Magic | 2 bytes | `0x4C44` ("LD" for LiquidDE) |
+| Magic | 2 bytes | `0x4C44` ("LD" for LiquiDE) |
 | Version | 4 bits | Protocol frame version (`1`) |
 | Flags | 4 bits | See flag table below |
 | Channel ID | 2 bytes | Logical channel (see §3.1) |
@@ -378,7 +378,7 @@ ClientHello = {
 ```cddl
 ServerHello = {
     protocol_version: text,
-    server_name: text,                         ; "LiquidDE"
+    server_name: text,                         ; "LiquiDE"
     server_version: text,
     selected_transport: text,
     selected_video_codec: text,
@@ -879,10 +879,10 @@ The following components are fuzzing targets for security and robustness:
 
 ### 13.2 Conformance Test Runner
 
-A standalone conformance test tool (`liquidde-conformance`) can be run against any LiquidDE server to verify protocol compliance:
+A standalone conformance test tool (`liquide-conformance`) can be run against any LiquiDE server to verify protocol compliance:
 
 ```bash
-liquidde-conformance --server <address> --username <user> --password <pass> --suite all
+liquide-conformance --server <address> --username <user> --password <pass> --suite all
 ```
 
 Outputs a pass/fail report per test case.

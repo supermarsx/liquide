@@ -1,4 +1,4 @@
-# LiquidDE Theme: Sunset — Warm Dark Theme Specification
+# LiquiDE Theme: Sunset — Warm Dark Theme Specification
 
 > **Preset ID**: `sunset`
 > **Type**: Dark (warm-toned)
@@ -9,7 +9,7 @@
 
 ## 0) Overview
 
-**Sunset** is LiquidDE's warm-toned dark theme. It replaces the cool blue default palette with rich amber, burnt orange, and warm brown tones — evoking the golden hour. Glass surfaces are tinted with a warm undertone, and the accent color is a vibrant orange that cuts through the dark chocolate surfaces.
+**Sunset** is LiquiDE's warm-toned dark theme. It replaces the cool blue default palette with rich amber, burnt orange, and warm brown tones — evoking the golden hour. Glass surfaces are tinted with a warm undertone, and the accent color is a vibrant orange that cuts through the dark chocolate surfaces.
 
 Sunset is the ideal choice for:
 - Users who prefer warm-toned interfaces over cool blues.
@@ -47,7 +47,7 @@ Sunset is the ideal choice for:
 
 ```css
 /* ═══════════════════════════════════════════════════════
-   LiquidDE Theme: Sunset — Warm Dark
+   LiquiDE Theme: Sunset — Warm Dark
    Preset: sunset
    ═══════════════════════════════════════════════════════ */
 
@@ -405,7 +405,7 @@ id = "sunset"
 name = "Sunset"
 description = "Warm dark theme with amber and orange tones"
 type = "dark"
-author = "LiquidDE"
+author = "LiquiDE"
 version = "1.0.0"
 
 [theme.tags]

@@ -1,4 +1,4 @@
-# LiquidDE Server & Desktop Environment — Full Specification
+# LiquiDE Server & Desktop Environment — Full Specification
 
 > **Language**: Rust
 > **License**: MIT
@@ -20,7 +20,7 @@ A **remote-first, native desktop environment** built entirely in Rust, designed 
 - **Multi-platform server**: x86_64 and ARM64 (Linux), with ARM64 support for macOS-hosted VMs and ARM Linux boards.
 - Supports **multiple transport strategies** including QUIC, UDP, TCP, TLS, switchable and hybridizable on the fly.
 
-Working name: **LiquidDE** (server) + **LiquidClient** (client, see [spec-client.md](spec-client.md)).
+Working name: **LiquiDE** (server) + **LiquidClient** (client, see [spec-client.md](spec-client.md)).
 
 ---
 
@@ -113,7 +113,7 @@ Working name: **LiquidDE** (server) + **LiquidClient** (client, see [spec-client
 
 ## 4) Architecture Overview
 
-LiquidDE is built from cleanly separated layers, all in Rust, with a strict multi-threaded design.
+LiquiDE is built from cleanly separated layers, all in Rust, with a strict multi-threaded design.
 
 ### Thread Model
 
@@ -344,7 +344,7 @@ Dedicated Channels:
 
 #### 6. Icon & Asset Caching
 
-LiquidDE supports **client-side caching of application icons, shell assets, and UI resources** to reduce repeated transmission of static assets across sessions.
+LiquiDE supports **client-side caching of application icons, shell assets, and UI resources** to reduce repeated transmission of static assets across sessions.
 
 **What is cached:**
 
@@ -423,7 +423,7 @@ max_manifest_size_mb = 2             # max asset manifest size (limits total tra
 
 #### 9. Color Management
 
-LiquidDE provides server-side color management for accurate rendering:
+LiquiDE provides server-side color management for accurate rendering:
 
 - **ICC Profile Handling**:
   - The compositor applies ICC color profiles when rendering.
@@ -434,7 +434,7 @@ LiquidDE provides server-side color management for accurate rendering:
 
 - **Client Display Color**:
   - The encoded video stream is in sRGB by default (or the configured server-side profile).
-  - The **client** is responsible for applying its own display ICC profile (monitor calibration). This is outside LiquidDE's control — it depends on the client OS and display hardware.
+  - The **client** is responsible for applying its own display ICC profile (monitor calibration). This is outside LiquiDE's control — it depends on the client OS and display hardware.
   - The client config includes `color.profile_hint` to inform the server of the client's display characteristics (gamut, white point). The server can use this to optimize rendering, but it is informational only.
 
 - **HDR (High Dynamic Range)**:
@@ -853,7 +853,7 @@ window_offload_apps = []               # app_ids eligible for window-level offlo
 ## 11) Clipboard & Data Channels
 
 ### Dedicated Transport Channels
-LiquidDE uses **separate, dedicated transport channels** for different data types. Each channel operates independently with its own QoS, priority, and flow control:
+LiquiDE uses **separate, dedicated transport channels** for different data types. Each channel operates independently with its own QoS, priority, and flow control:
 
 | Channel | Priority | Reliability | Notes |
 |---------|----------|-------------|-------|
@@ -894,7 +894,7 @@ Clipboard data is exchanged with explicit MIME types. The conversion rules are:
 | BMP image | `image/bmp` | Converted to PNG on wire if `convert_bmp = true` |
 | SVG image | `image/svg+xml` | Sanitized (same rules as avatar SVG, see §13) |
 | URI list | `text/uri-list` | One URI per line, `\r\n` separated |
-| File list | `application/x-liquidde-file-list` | Maps to file transfer channel (see below) |
+| File list | `application/x-liquide-file-list` | Maps to file transfer channel (see below) |
 | Custom | `application/octet-stream` | Opaque binary — passed through if policy allows |
 
 When a clipboard offer contains multiple formats, the receiver requests in preference order: `text/html` > `text/plain` for text; `image/png` > `image/jpeg` for images. Applications that offer multiple representations should include all of them.
@@ -919,18 +919,18 @@ When clipboard contains file URIs, filenames are sanitized before use:
 - Null bytes and control characters (0x00–0x1F) are removed.
 - Filenames exceeding 255 bytes are truncated (preserving extension).
 - If the destination filename already exists: `filename (1).ext`, `filename (2).ext`, etc.
-- Reserved names on target OS are prefixed (e.g., `CON` → `_CON` on Windows-hosted sessions, though LiquidDE is Linux-native this matters for file transfers to Windows clients).
+- Reserved names on target OS are prefixed (e.g., `CON` → `_CON` on Windows-hosted sessions, though LiquiDE is Linux-native this matters for file transfers to Windows clients).
 
 #### Clipboard History
 
-- LiquidDE maintains a clipboard history ring buffer per session.
+- LiquiDE maintains a clipboard history ring buffer per session.
 - History size: `clipboard_history_size` (default: 25 items, max: 100).
 - History stores: MIME type, size, timestamp, source application (if detectable via D-Bus), content hash (SHA-256).
 - **Content storage**: text items are stored verbatim up to 1 MB. Image items store a thumbnail (128×128 PNG). Larger items store only metadata (MIME type, size, hash).
 - History is accessible via:
   - `Super+V` keyboard shortcut (opens clipboard history overlay).
   - Clipboard history WASM plugin extension point (see §14b).
-  - `org.liquidde.Clipboard.GetHistory()` D-Bus method.
+  - `org.liquide.Clipboard.GetHistory()` D-Bus method.
 - History is cleared on session lock if `privacy.clipboard_clear_on_lock = true`.
 - History does not survive session restart (in-memory only).
 
@@ -1049,11 +1049,11 @@ Configurable per session/user/group with extensive options:
 ## 12b) Internationalization (i18n) & Localization
 
 ### Overview
-LiquidDE provides comprehensive internationalization support. All user-facing text in the DE shell, login screen, settings, and built-in applications is translatable. The i18n system covers UI translations, keyboard layouts, date/time formatting, number formatting, and text directionality.
+LiquiDE provides comprehensive internationalization support. All user-facing text in the DE shell, login screen, settings, and built-in applications is translatable. The i18n system covers UI translations, keyboard layouts, date/time formatting, number formatting, and text directionality.
 
 ### Supported Languages
 
-LiquidDE ships with translations for 40+ languages. The translation framework supports any additional language through community-contributed message catalogs.
+LiquiDE ships with translations for 40+ languages. The translation framework supports any additional language through community-contributed message catalogs.
 
 #### Tier 1 — Full Translation + Full QA
 - English (en-US, en-GB, en-AU)
@@ -1091,7 +1091,7 @@ LiquidDE ships with translations for 40+ languages. The translation framework su
 
 #### Tier 3 — Community Translation
 - Any additional language supported through community-contributed `.ftl` (Fluent) message catalogs.
-- Community translations are loaded from `/etc/liquidde/i18n/` or `~/.config/liquidde/i18n/`.
+- Community translations are loaded from `/etc/liquide/i18n/` or `~/.config/liquide/i18n/`.
 
 ### Translation Framework
 
@@ -1099,11 +1099,11 @@ LiquidDE ships with translations for 40+ languages. The translation framework su
 - Translation uses **Project Fluent** (`.ftl` files) — a modern localization system designed for natural-sounding translations.
 - Fluent supports pluralization, gender, number formatting, and complex grammatical rules natively.
 - Message files are stored at:
-  - System: `/etc/liquidde/i18n/<locale>/messages.ftl`
-  - User overrides: `~/.config/liquidde/i18n/<locale>/messages.ftl`
+  - System: `/etc/liquide/i18n/<locale>/messages.ftl`
+  - User overrides: `~/.config/liquide/i18n/<locale>/messages.ftl`
 - Example message file:
   ```ftl
-  # /etc/liquidde/i18n/de-DE/messages.ftl
+  # /etc/liquide/i18n/de-DE/messages.ftl
   login-greeting-morning = Guten Morgen
   login-greeting-afternoon = Guten Tag
   login-greeting-evening = Guten Abend
@@ -1133,7 +1133,7 @@ LiquidDE ships with translations for 40+ languages. The translation framework su
 Full keyboard layout specification with variants and options:
 
 ```toml
-# ~/.config/liquidde/keyboard-layout.toml
+# ~/.config/liquide/keyboard-layout.toml
 
 [keyboard]
 layout = "us"                            # primary layout
@@ -1182,7 +1182,7 @@ per_window = true                        # remember layout per window (vs. globa
 Date, time, number, and currency formatting respect the user's locale:
 
 ```toml
-# ~/.config/liquidde/session.toml
+# ~/.config/liquide/session.toml
 
 [locale]
 language = "en-US"                       # UI language (message catalog)
@@ -1225,7 +1225,7 @@ paper_size = "auto"                      # auto (from region), a4, letter
 
 ### Text Directionality (BiDi)
 
-- LiquidDE supports **right-to-left (RTL)** text layout for Arabic, Hebrew, Persian, and Urdu locales.
+- LiquiDE supports **right-to-left (RTL)** text layout for Arabic, Hebrew, Persian, and Urdu locales.
 - When an RTL language is the primary locale:
   - Status bar layout mirrors (clock/tray on left, app menus on right).
   - Dock position defaults mirror (though user can override).
@@ -1247,15 +1247,15 @@ paper_size = "auto"                      # auto (from region), a4, letter
 ### Server-Side i18n Configuration
 
 ```toml
-# /etc/liquidde/server.toml
+# /etc/liquide/server.toml
 
 [i18n]
 default_locale = "en-US"                 # system default language
 available_locales = ["en-US", "en-GB", "de-DE", "fr-FR", "ja-JP", "zh-CN", "ko-KR", "es-ES", "pt-BR", "ru-RU", "ar-SA", "hi-IN"]
 fallback_locale = "en-US"
-message_dir = "/etc/liquidde/i18n"       # system message catalogs
+message_dir = "/etc/liquide/i18n"       # system message catalogs
 allow_user_translations = true           # allow user-provided .ftl overrides
-keyboard_layout_dir = "/etc/liquidde/xkb" # custom XKB layout directory
+keyboard_layout_dir = "/etc/liquide/xkb" # custom XKB layout directory
 ```
 
 ### i18n in Login Screen
@@ -1293,7 +1293,7 @@ Each user session runs in one of:
 - Session state survives client disconnect (reconnect continues where left off).
 
 ### User-Centric DE Configuration
-- Each user has their own DE configuration directory: `~/.config/liquidde/`.
+- Each user has their own DE configuration directory: `~/.config/liquide/`.
 - Contains:
   - `theme.css` — user's CSS customizations.
   - `session.toml` — DE preferences (dock position, wallpaper, layout, locale, appearance).
@@ -1309,7 +1309,7 @@ Each user has a profile that includes display metadata used on the login screen,
 
 #### Avatar Image
 
-- **Storage location**: `~/.config/liquidde/avatar.png` (per-user, on the server).
+- **Storage location**: `~/.config/liquide/avatar.png` (per-user, on the server).
 - **Supported formats**: PNG (preferred), JPEG, WebP, SVG. All formats are internally converted and stored as PNG. SVG uploads are sanitized before rasterization (see SVG Upload Security below).
 - **Dimensions**: source images are automatically cropped and resized. Final stored size: 256×256px (the server generates scaled versions as needed: 128×128 for dock/tray, 120×120 for login screen, 64×64 for small contexts, 32×32 for notifications).
 - **Maximum upload size**: 2 MB (pre-crop/resize). Configurable per-server.
@@ -1356,11 +1356,11 @@ SVG files can contain executable content and external references that pose secur
 #### User Display Name
 
 - Optional display name for richer profile display.
-- Stored in `~/.config/liquidde/session.toml`:
+- Stored in `~/.config/liquide/session.toml`:
   ```toml
   [profile]
   display_name = "Alice Johnson"           # optional, shown on lock screen and login greeting
-  avatar = "avatar.png"                    # relative to ~/.config/liquidde/
+  avatar = "avatar.png"                    # relative to ~/.config/liquide/
   initials_override = ""                   # override auto-generated initials (e.g., "AJ")
   ```
 - If no display name is set, the Unix username is displayed.
@@ -1374,7 +1374,7 @@ SVG files can contain executable content and external references that pose secur
 #### Server Avatar Configuration
 
 ```toml
-# /etc/liquidde/server.toml
+# /etc/liquide/server.toml
 
 [avatar]
 enabled = true                           # allow user avatars
@@ -1388,7 +1388,7 @@ default_avatar = ""                      # path to server-wide default avatar (b
 
 ### Session Supervisor & Process Model
 
-LiquidDE uses a **supervisor process model** for session isolation. The server daemon (`liquid-desktopd`) never runs user session code directly — it spawns a separate `liquid-session` child process for each authenticated user.
+LiquiDE uses a **supervisor process model** for session isolation. The server daemon (`liquid-desktopd`) never runs user session code directly — it spawns a separate `liquid-session` child process for each authenticated user.
 
 #### Process Hierarchy
 
@@ -1414,7 +1414,7 @@ liquid-desktopd (supervisor daemon)
   - I/O bandwidth limits.
   - Process count limits (pids.max).
 - Crash of one session **never** affects other sessions or the supervisor daemon.
-- The supervisor daemon runs as a privileged service (root or `liquidde` service user) and handles process lifecycle only — it never touches user data directly.
+- The supervisor daemon runs as a privileged service (root or `liquide` service user) and handles process lifecycle only — it never touches user data directly.
 
 #### Heartbeat Monitoring
 
@@ -1513,8 +1513,8 @@ A **full-featured application launcher** accessible via dock icon, keyboard shor
 #### Application Metadata
 - Apps are discovered from:
   1. `.desktop` files in standard XDG directories (`/usr/share/applications/`, `~/.local/share/applications/`).
-  2. LiquidDE built-in apps (Liquid Terminal, File Manager, Settings, Task Monitor).
-  3. Custom app entries defined in `~/.config/liquidde/apps.toml`.
+  2. LiquiDE built-in apps (Liquid Terminal, File Manager, Settings, Task Monitor).
+  3. Custom app entries defined in `~/.config/liquide/apps.toml`.
 - Metadata per app: `name`, `description`, `icon`, `exec`, `categories`, `keywords`, `terminal` (bool), `no_display` (bool).
 - App list is refreshed on desktop file changes (inotify-based) and on launcher open.
 
@@ -1545,7 +1545,7 @@ Right-clicking (or long-pressing on touch) an app item shows a context menu:
 
 #### Favorites / Pinned Apps
 - Users can pin apps to a dedicated "Favorites" section at the top of the launcher.
-- Favorites are stored in `~/.config/liquidde/session.toml` under `[launcher.favorites]`.
+- Favorites are stored in `~/.config/liquide/session.toml` under `[launcher.favorites]`.
 - Favorites are displayed as a horizontal row of icons (list view) or a top grid section (grid view).
 - Drag-and-drop reordering within favorites.
 - Maximum favorites: configurable (default: 20).
@@ -1558,7 +1558,7 @@ Right-clicking (or long-pressing on touch) an app item shows a context menu:
 
 #### Plugins / Extension Points
 - The launcher supports **result provider plugins** — external processes or scripts that can contribute search results:
-  - Plugins register via a manifest file in `~/.config/liquidde/launcher-plugins/`.
+  - Plugins register via a manifest file in `~/.config/liquide/launcher-plugins/`.
   - Each plugin specifies: name, trigger prefix (optional), icon, and an executable that receives the query on stdin and returns results as JSON on stdout.
   - Plugin results appear in a dedicated section after app results.
   - Built-in plugins: Calculator, File Search, Web Search. These can be disabled individually.
@@ -1577,7 +1577,7 @@ Right-clicking (or long-pressing on touch) an app item shows a context menu:
 
 #### Launcher Configuration
 ```toml
-# ~/.config/liquidde/session.toml
+# ~/.config/liquide/session.toml
 
 [launcher]
 shortcut = "Super"                        # activation shortcut
@@ -1595,7 +1595,7 @@ custom_command_prefix = ">"
 calculator_enabled = true
 workspace_switcher = false
 max_favorites = 20
-plugin_dir = "~/.config/liquidde/launcher-plugins/"
+plugin_dir = "~/.config/liquide/launcher-plugins/"
 animation_enabled = true
 
 [launcher.favorites]
@@ -1617,7 +1617,7 @@ apps = ["liquid-terminal", "firefox", "code"]   # pinned app IDs in display orde
 
 ### Shell Keyboard Shortcuts
 
-LiquidDE provides familiar keyboard shortcuts inspired by Windows, GNOME, and macOS conventions. All shortcuts are reconfigurable via `keybindings.toml` or Settings → Keyboard → Shortcuts. Shortcuts marked **(custom)** are LiquidDE-specific additions to the familiar set.
+LiquiDE provides familiar keyboard shortcuts inspired by Windows, GNOME, and macOS conventions. All shortcuts are reconfigurable via `keybindings.toml` or Settings → Keyboard → Shortcuts. Shortcuts marked **(custom)** are LiquiDE-specific additions to the familiar set.
 
 #### System & Session
 
@@ -1716,7 +1716,7 @@ LiquidDE provides familiar keyboard shortcuts inspired by Windows, GNOME, and ma
 #### Shortcut Configuration
 
 ```toml
-# ~/.config/liquidde/keybindings.toml
+# ~/.config/liquide/keybindings.toml
 
 [system]
 lock = "Super+L"
@@ -1785,7 +1785,7 @@ All shortcuts can be disabled by setting the value to `""`. Conflicts between us
 - Window animations governed by CSS transitions and effect budget.
 
 ### Extensive Window Tiling
-LiquidDE includes a full-featured tiling window manager that coexists with the floating mode:
+LiquiDE includes a full-featured tiling window manager that coexists with the floating mode:
 
 #### Tiling Layouts
 - **Split horizontal** (side-by-side) — default for 2-window tiling.
@@ -1854,7 +1854,7 @@ ratios_rows = [0.5, 0.5]
 
 ### Seamless Window Mode
 
-LiquidDE supports a **seamless window mode** where individual remote application windows are "detached" from the LiquidClient container and presented as **native OS windows** on the client's local desktop. This is analogous to Citrix Seamless Windows, RDP RemoteApp, or VMware Unity mode.
+LiquiDE supports a **seamless window mode** where individual remote application windows are "detached" from the LiquidClient container and presented as **native OS windows** on the client's local desktop. This is analogous to Citrix Seamless Windows, RDP RemoteApp, or VMware Unity mode.
 
 #### Server-Side Behavior
 - When a client requests seamless mode (or when configured as default), the server:
@@ -1904,7 +1904,7 @@ LiquidDE supports a **seamless window mode** where individual remote application
 # Per-user session.toml
 [seamless]
 enabled = false                           # user preference for seamless mode
-exclude_apps = ["liquidde-desktop"]       # apps that stay on the virtual desktop
+exclude_apps = ["liquide-desktop"]       # apps that stay on the virtual desktop
 shell_as_window = false                   # show dock/status bar as separate native windows
 ```
 
@@ -1919,19 +1919,19 @@ shell_as_window = false                   # show dock/status bar as separate nat
 
 ### Overview
 
-LiquidDE provides a comprehensive **WebAssembly (WASM)-based plugin system** that allows third-party and user-created extensions to augment the desktop environment. Plugins run in sandboxed WASM runtimes with strict memory and CPU resource limits, ensuring that no plugin can crash, hang, or compromise the host session.
+LiquiDE provides a comprehensive **WebAssembly (WASM)-based plugin system** that allows third-party and user-created extensions to augment the desktop environment. Plugins run in sandboxed WASM runtimes with strict memory and CPU resource limits, ensuring that no plugin can crash, hang, or compromise the host session.
 
 The plugin system is designed for:
 - **Performance**: Near-native execution speed via ahead-of-time compiled WASM. Minimal overhead per call. Memory-pooled allocations.
 - **Safety**: Complete isolation — plugins cannot access host memory, other plugins, or the filesystem beyond what is explicitly granted via host functions.
-- **Stability**: Versioned ABIs ensure plugins remain compatible across LiquidDE updates. Deprecation policy gives plugin authors time to migrate.
+- **Stability**: Versioned ABIs ensure plugins remain compatible across LiquiDE updates. Deprecation policy gives plugin authors time to migrate.
 - **Extensibility**: Nine distinct extension points cover shell UI, input processing, notifications, file handling, theming, and more.
 
 ### Plugin Architecture
 
 #### WASM Runtime
 
-LiquidDE uses **wasmtime** as its WASM runtime:
+LiquiDE uses **wasmtime** as its WASM runtime:
 - Rust-native, no FFI overhead.
 - Ahead-of-time (AOT) compilation for near-native performance.
 - **Fuel-based CPU metering**: each WASM instruction consumes fuel, providing precise CPU time quotas without relying on wall-clock timers.
@@ -1954,7 +1954,7 @@ LiquidDE uses **wasmtime** as its WASM runtime:
 
 ### Extension Points
 
-LiquidDE provides **nine extension points** that plugins can register for. A plugin may register for one or more extension points.
+LiquiDE provides **nine extension points** that plugins can register for. A plugin may register for one or more extension points.
 
 #### 1. Shell Extensions
 Modify dock behavior, add status bar items, custom workspace behaviors.
@@ -2035,7 +2035,7 @@ abi_version = "v1"
 entry_module = "plugin.wasm"
 
 [plugin.requirements]
-liquidde_min_version = "0.1.0"
+liquide_min_version = "0.1.0"
 capabilities = ["ui", "timers", "storage", "notifications"]
 
 [plugin.resources]
@@ -2090,8 +2090,8 @@ units = "metric"                         # metric, imperial
 
 ### Plugin Registry & Discovery
 
-- **System plugins**: `/etc/liquidde/plugins/<plugin-id>/plugin.toml` + `plugin.wasm`
-- **User plugins**: `~/.config/liquidde/plugins/<plugin-id>/plugin.toml` + `plugin.wasm`
+- **System plugins**: `/etc/liquide/plugins/<plugin-id>/plugin.toml` + `plugin.wasm`
+- **User plugins**: `~/.config/liquide/plugins/<plugin-id>/plugin.toml` + `plugin.wasm`
 - **Discovery**: directories are scanned at session start. When `hot_reload = true`, inotify/kqueue watches detect changes.
 - **Conflicts**: if system and user plugins share the same ID, the user plugin takes precedence (user can override system plugins).
 - **Signature verification**: if `[plugins] signature_required = true`, each `plugin.wasm` must have a detached signature file `plugin.wasm.sig` (Ed25519).
@@ -2145,7 +2145,7 @@ Plugins call host functions to interact with the desktop environment. Functions 
 | `storage_delete(key)` | Delete a key from storage |
 | `storage_list_keys() -> [string]` | List all keys in plugin storage |
 
-Storage is plugin-scoped (isolated per plugin) and stored at `~/.config/liquidde/plugin-data/<plugin-id>/`.
+Storage is plugin-scoped (isolated per plugin) and stored at `~/.config/liquide/plugin-data/<plugin-id>/`.
 
 #### Logging API (no capability required)
 | Function | Description |
@@ -2193,10 +2193,10 @@ Hot-reload happens with **zero downtime** for other plugins and the session.
 
 ### Plugin Development SDK
 
-The primary SDK is a Rust crate: `liquidde-plugin-sdk`.
+The primary SDK is a Rust crate: `liquide-plugin-sdk`.
 
 ```rust
-use liquidde_plugin_sdk::prelude::*;
+use liquide_plugin_sdk::prelude::*;
 
 #[liquid_plugin]
 struct WeatherWidget {
@@ -2263,14 +2263,14 @@ When a plugin is disabled (manually or by watchdog), its extension points revert
 #### Server-Side (`server.toml`)
 See §19 `[plugins]` and `[plugins.resources]` configuration sections.
 
-#### User-Side (`~/.config/liquidde/session.toml`)
+#### User-Side (`~/.config/liquide/session.toml`)
 ```toml
 [plugins]
 enabled_plugins = []                     # empty = all installed; list IDs to restrict
 disabled_plugins = ["com.example.broken-plugin"]  # explicitly disabled
 ```
 
-#### Per-Plugin (`~/.config/liquidde/plugins/<id>/config.toml`)
+#### Per-Plugin (`~/.config/liquide/plugins/<id>/config.toml`)
 ```toml
 # Plugin-specific config (schema defined by plugin.toml [plugin.config])
 api_key = "user-api-key"
@@ -2325,12 +2325,12 @@ units = "metric"
   mfa_remember_device_days = 30        # 0 = always require MFA
 
   [auth.fido2]
-  relying_party_id = "liquidde.example.com"
+  relying_party_id = "liquide.example.com"
   attestation = "none"                 # none, indirect, direct
 
   [auth.smartcard]
   pkcs11_module = "/usr/lib/opensc-pkcs11.so"
-  ca_certificates = ["/etc/liquidde/smartcard-ca.pem"]
+  ca_certificates = ["/etc/liquide/smartcard-ca.pem"]
   require_pin = true
   ```
 
@@ -2346,8 +2346,8 @@ units = "metric"
   ```toml
   [auth.certificate]
   enabled = false
-  client_ca_file = "/etc/liquidde/client-ca.pem"
-  crl_file = "/etc/liquidde/crl.pem"
+  client_ca_file = "/etc/liquide/client-ca.pem"
+  crl_file = "/etc/liquide/crl.pem"
   ocsp_enabled = false
   ocsp_responder_url = ""
   username_field = "CN"                # CN, SAN:email, SAN:upn
@@ -2355,7 +2355,7 @@ units = "metric"
 
 ### Login Screen
 
-The login screen is the first visual experience a user has with LiquidDE. It is a full-screen, Liquid Glass themed interface that presents authentication options with elegance and clarity.
+The login screen is the first visual experience a user has with LiquiDE. It is a full-screen, Liquid Glass themed interface that presents authentication options with elegance and clarity.
 
 #### Visual Composition
 
@@ -2637,35 +2637,35 @@ Policies enforced on the client side:
   - Administrative actions.
 
 ### Intrusion Prevention (fail2ban Integration)
-- LiquidDE integrates with **fail2ban** for automated intrusion prevention.
+- LiquiDE integrates with **fail2ban** for automated intrusion prevention.
 - Server emits structured authentication events to a log file or syslog that fail2ban can monitor.
 - **Built-in fail2ban jails** ship with the server:
-  - `liquidde-auth` — ban IPs after repeated authentication failures.
-  - `liquidde-brute` — ban IPs attempting rapid connection attempts.
-  - `liquidde-proto` — ban IPs sending malformed protocol messages.
-- Jail configuration (shipped as `/etc/fail2ban/jail.d/liquidde.conf`):
+  - `liquide-auth` — ban IPs after repeated authentication failures.
+  - `liquide-brute` — ban IPs attempting rapid connection attempts.
+  - `liquide-proto` — ban IPs sending malformed protocol messages.
+- Jail configuration (shipped as `/etc/fail2ban/jail.d/liquide.conf`):
   ```ini
-  [liquidde-auth]
+  [liquide-auth]
   enabled = true
-  filter = liquidde-auth
-  logpath = /var/log/liquidde/auth.log
+  filter = liquide-auth
+  logpath = /var/log/liquide/auth.log
   maxretry = 5
   findtime = 600
   bantime = 3600
-  action = iptables-multiport[name=liquidde, port="3389,3390"]
+  action = iptables-multiport[name=liquide, port="3389,3390"]
 
-  [liquidde-brute]
+  [liquide-brute]
   enabled = true
-  filter = liquidde-brute
-  logpath = /var/log/liquidde/auth.log
+  filter = liquide-brute
+  logpath = /var/log/liquide/auth.log
   maxretry = 20
   findtime = 60
   bantime = 86400
 
-  [liquidde-proto]
+  [liquide-proto]
   enabled = true
-  filter = liquidde-proto
-  logpath = /var/log/liquidde/server.log
+  filter = liquide-proto
+  logpath = /var/log/liquide/server.log
   maxretry = 3
   findtime = 60
   bantime = 86400
@@ -2677,7 +2677,7 @@ Policies enforced on the client side:
 - Server configuration:
   ```toml
   [security]
-  fail2ban_log = "/var/log/liquidde/auth.log"
+  fail2ban_log = "/var/log/liquide/auth.log"
   fail2ban_log_format = "syslog"       # syslog, json
   rate_limit_enabled = true
   rate_limit_max_attempts = 5
@@ -2713,7 +2713,7 @@ Policies enforced on the client side:
 
 ### WASM Plugin Security & Sandboxing
 
-LiquidDE's WASM plugin system (§14b) introduces a controlled extension surface that must be secured against both malicious and buggy plugins. The following security properties are enforced:
+LiquiDE's WASM plugin system (§14b) introduces a controlled extension surface that must be secured against both malicious and buggy plugins. The following security properties are enforced:
 
 #### Threat Model
 - **Malicious plugin**: A plugin that attempts to exfiltrate data, escalate privileges, or disrupt the session.
@@ -2753,12 +2753,12 @@ LiquidDE's WASM plugin system (§14b) introduces a controlled extension surface 
 - Plugin-initiated actions that affect user-visible state (e.g., clipboard write, notification display) are logged at `info` level.
 
 ### Service Obfuscation
-- LiquidDE supports hiding its identity from network scanners and unauthorized probes.
+- LiquiDE supports hiding its identity from network scanners and unauthorized probes.
 - **Protocol obfuscation**:
   - The initial handshake can be disguised to not reveal the service type.
   - Connection attempts without a valid protocol version header receive no response (silent drop).
   - Configurable banner/identification:
-    - `default` — identifies as LiquidDE (standard).
+    - `default` — identifies as LiquiDE (standard).
     - `minimal` — returns only a protocol version, no product name.
     - `hidden` — no identification whatsoever; unknown clients get connection reset.
     - `custom` — administrator-defined response string.
@@ -2774,7 +2774,7 @@ LiquidDE's WASM plugin system (§14b) introduces a controlled extension surface 
   [security.obfuscation]
   service_banner = "hidden"            # default, minimal, hidden, custom
   custom_banner = ""
-  silent_drop_unknown = true           # silently drop non-LiquidDE connections
+  silent_drop_unknown = true           # silently drop non-LiquiDE connections
   port_knocking_enabled = false
   port_knocking_sequence = [7331, 8442, 9553]
   port_knocking_timeout_sec = 10
@@ -2784,7 +2784,7 @@ LiquidDE's WASM plugin system (§14b) introduces a controlled extension surface 
 
 ### Honeypot & Tarpit (Automatic)
 
-LiquidDE can automatically detect **unambiguously malicious traffic** and respond with honeypot/tarpit tactics that waste attacker resources while gathering intelligence. Only patterns that have zero chance of being legitimate traffic trigger these mechanisms.
+LiquiDE can automatically detect **unambiguously malicious traffic** and respond with honeypot/tarpit tactics that waste attacker resources while gathering intelligence. Only patterns that have zero chance of being legitimate traffic trigger these mechanisms.
 
 #### What Triggers Tarpit/Honeypot (Zero False-Positive Criteria)
 
@@ -2792,7 +2792,7 @@ These triggers are chosen because no legitimate client would ever produce them:
 
 | Trigger | Why It's Safe | Response |
 |---------|---------------|----------|
-| **Invalid protocol magic bytes** | Legitimate clients always send the correct LiquidDE protocol header. Scanners (nmap, masscan, etc.) send HTTP, SSH, or random probes. | Tarpit: accept connection, respond very slowly with garbage data |
+| **Invalid protocol magic bytes** | Legitimate clients always send the correct LiquiDE protocol header. Scanners (nmap, masscan, etc.) send HTTP, SSH, or random probes. | Tarpit: accept connection, respond very slowly with garbage data |
 | **Known exploit signatures** | Pattern-matched against known RDP/VNC/SSH exploit payloads. No legitimate client sends CVE exploit code. | Honeypot: fake vulnerable service, log full payload |
 | **Continued attempts after IP ban** | IP is already blocked by rate limiting. Legitimate users would stop or contact admin. Attackers use automation. | Tarpit: accept TCP, drip-feed data at 1 byte/sec |
 | **Credential stuffing patterns** | Rapid sequential logins with different usernames from single IP. No human types that fast with different accounts. Threshold: >10 distinct usernames in 60 seconds. | Tarpit: simulate slow auth processing (5-30s delay), always reject |
@@ -2847,14 +2847,14 @@ tarpit_auth_delay_sec = 15              # seconds to "process" fake auth
 tarpit_thread_pool_size = 4             # dedicated threads for tarpit
 
 # Honeypot settings
-honeypot_log = "/var/log/liquidde/honeypot.log"
+honeypot_log = "/var/log/liquide/honeypot.log"
 honeypot_capture_payloads = true         # capture full packet payloads
 honeypot_max_capture_mb = 100           # max payload storage per day
 honeypot_retention_days = 90            # how long to keep honeypot logs
 honeypot_fake_version = ""              # empty = auto-generate plausible version
 
 # Trigger thresholds (all require ZERO legitimate overlap)
-trigger_on_invalid_protocol = true       # non-LiquidDE protocol magic
+trigger_on_invalid_protocol = true       # non-LiquiDE protocol magic
 trigger_on_exploit_signatures = true     # known CVE exploit patterns
 trigger_on_post_ban_attempts = true      # continued attempts after IP ban
 trigger_on_credential_stuffing = true    # rapid multi-user auth attempts
@@ -2874,7 +2874,7 @@ ioc_export_format = "stix"              # stix, csv, json
 
 ### Workstation Lock & Timeout
 
-LiquidDE provides extensive session lock and timeout controls for security and resource management. Lock policies can be configured globally, per-group, or per-user.
+LiquiDE provides extensive session lock and timeout controls for security and resource management. Lock policies can be configured globally, per-group, or per-user.
 
 #### Lock Triggers
 
@@ -3048,7 +3048,7 @@ background_timeout_min = 480             # 8 hours background
 - Configurable log levels per subsystem.
 
 ### Extensive Logging System
-LiquidDE has a comprehensive, per-component logging system designed for production debugging, auditing, and monitoring:
+LiquiDE has a comprehensive, per-component logging system designed for production debugging, auditing, and monitoring:
 
 #### Log Subsystems
 Each subsystem logs independently with its own configurable log level:
@@ -3072,7 +3072,7 @@ Each subsystem logs independently with its own configurable log level:
 #### Log Configuration
 ```toml
 [logging]
-base_dir = "/var/log/liquidde"
+base_dir = "/var/log/liquide"
 format = "json"                       # json, text, syslog
 max_file_size_mb = 100                # per log file
 max_files = 10                        # rotation count
@@ -3136,7 +3136,7 @@ audit = "info"                         # always at least "info"
   - Clipboard (text).
   - Audio playback.
   - Drive redirection (basic).
-- Limitations documented: not all LiquidDE features available via RDP (e.g., no hybrid tile+video, no transport switching).
+- Limitations documented: not all LiquiDE features available via RDP (e.g., no hybrid tile+video, no transport switching).
 - Useful for environments where installing LiquidClient is not possible.
 
 ---
@@ -3144,10 +3144,10 @@ audit = "info"                         # always at least "info"
 ## 19) Server Configuration
 
 ### Configuration Files
-- `/etc/liquidde/server.toml` — server-wide configuration.
-- `/etc/liquidde/policies.toml` — policy definitions.
-- `~/.config/liquidde/session.toml` — per-user session preferences.
-- `~/.config/liquidde/theme.css` — per-user CSS theme.
+- `/etc/liquide/server.toml` — server-wide configuration.
+- `/etc/liquide/policies.toml` — policy definitions.
+- `~/.config/liquide/session.toml` — per-user session preferences.
+- `~/.config/liquide/theme.css` — per-user CSS theme.
 
 ### Server Configuration Structure (`server.toml`)
 
@@ -3157,23 +3157,23 @@ audit = "info"                         # always at least "info"
 hostname = "liquid-server-01"
 log_level = "info"                    # trace, debug, info, warn, error
 log_format = "json"                   # json, text
-data_dir = "/var/lib/liquidde"
+data_dir = "/var/lib/liquide"
 
 # ─── Appearance ──────────────────────────────────────────────
 [appearance]
 default_theme = "liquid-glass"        # liquid-glass, night, sunset, midday, custom
-theme_dir = "/etc/liquidde/themes"    # system theme directory
+theme_dir = "/etc/liquide/themes"    # system theme directory
 allow_user_themes = true              # allow users to override theme
-wallpaper_dir = "/etc/liquidde/wallpapers"
+wallpaper_dir = "/etc/liquide/wallpapers"
 
 # ─── Internationalization ────────────────────────────────────
 [i18n]
 default_locale = "en-US"
 available_locales = ["en-US", "en-GB", "de-DE", "fr-FR", "ja-JP", "zh-CN", "ko-KR", "es-ES", "pt-BR", "ru-RU", "ar-SA", "hi-IN"]
 fallback_locale = "en-US"
-message_dir = "/etc/liquidde/i18n"
+message_dir = "/etc/liquide/i18n"
 allow_user_translations = true
-keyboard_layout_dir = "/etc/liquidde/xkb"
+keyboard_layout_dir = "/etc/liquide/xkb"
 
 # ─── Avatar ──────────────────────────────────────────────────
 [avatar]
@@ -3195,8 +3195,8 @@ transport = "tls-tcp"
 
 # ─── TLS ────────────────────────────────────────────────────
 [tls]
-cert = "/etc/liquidde/cert.pem"
-key = "/etc/liquidde/key.pem"
+cert = "/etc/liquide/cert.pem"
+key = "/etc/liquide/key.pem"
 acme_enabled = false
 acme_domain = ""
 acme_email = ""
@@ -3348,7 +3348,7 @@ per_window_encoding = true            # encode each window independently
 sync_z_order = true                   # sync window z-order to client
 sync_taskbar_entries = true           # expose remote windows to client taskbar/dock
 shell_as_window = false               # present dock/statusbar as separate native windows
-excluded_app_ids = ["liquidde-desktop"]  # apps that cannot be detached
+excluded_app_ids = ["liquide-desktop"]  # apps that cannot be detached
 
 # ─── Gateway ────────────────────────────────────────────────
 [gateway]
@@ -3375,7 +3375,7 @@ gesture_navigation = true
 
 # ─── Security ──────────────────────────────────────────────
 [security]
-fail2ban_log = "/var/log/liquidde/auth.log"
+fail2ban_log = "/var/log/liquide/auth.log"
 rate_limit_enabled = true
 rate_limit_max_attempts = 5
 rate_limit_window_sec = 300
@@ -3394,7 +3394,7 @@ trigger_on_invalid_protocol = true
 trigger_on_exploit_signatures = true
 trigger_on_post_ban_attempts = true
 trigger_on_credential_stuffing = true
-honeypot_log = "/var/log/liquidde/honeypot.log"
+honeypot_log = "/var/log/liquide/honeypot.log"
 
 # ─── Session Lock ─────────────────────────────────────────
 [session.lock]
@@ -3415,7 +3415,7 @@ lock_pause_camera = true
 # ─── Plugins (WASM Extension System) ──────────────────────────
 [plugins]
 enabled = true                           # enable the WASM plugin system
-plugin_dirs = ["/etc/liquidde/plugins", "~/.config/liquidde/plugins"]
+plugin_dirs = ["/etc/liquide/plugins", "~/.config/liquide/plugins"]
 signature_required = false               # require cryptographic signature on plugins
 signature_public_key = ""                # path to public key for plugin verification
 hot_reload = true                        # watch plugin directories for changes
@@ -3447,7 +3447,7 @@ crash_log_lines = 100                    # number of session log lines to captur
 
 # ─── Crash Screen ──────────────────────────────────────────────
 [crash_screen]
-crash_report_dir = "/var/log/liquidde/crashes"
+crash_report_dir = "/var/log/liquide/crashes"
 crash_report_retention_days = 30         # auto-delete old crash reports
 crash_report_max_count = 1000            # max stored crash reports
 telemetry_upload_enabled = false         # upload crash reports to endpoint
@@ -3456,7 +3456,7 @@ include_coredump_in_report = false       # include coredump path in client-visib
 
 # ─── Logging ───────────────────────────────────────────────
 [logging]
-base_dir = "/var/log/liquidde"
+base_dir = "/var/log/liquide"
 format = "json"
 max_file_size_mb = 100
 max_files = 10
@@ -3526,11 +3526,11 @@ max_sessions = 10
 ## 20) CSS Theming System
 
 ### Overview
-LiquidDE uses a CSS-like styling language for all visual elements. Users and administrators can customize the appearance of the entire desktop environment through CSS files.
+LiquiDE uses a CSS-like styling language for all visual elements. Users and administrators can customize the appearance of the entire desktop environment through CSS files.
 
 ### CSS Scope
-- **System theme**: `/etc/liquidde/theme.css` — base theme, ships with Liquid Glass defaults.
-- **User theme**: `~/.config/liquidde/theme.css` — user overrides, merged on top of system theme.
+- **System theme**: `/etc/liquide/theme.css` — base theme, ships with Liquid Glass defaults.
+- **User theme**: `~/.config/liquide/theme.css` — user overrides, merged on top of system theme.
 
 ### Supported Properties
 The theming engine supports a subset of CSS3 + custom properties:
@@ -3797,7 +3797,7 @@ The `liquid-desktopd` daemon acts as a supervisor for `liquid-session` child pro
    - Maximum 5 restarts within a 10-minute window.
    - After exhaustion: session enters `failed` state, client shows persistent crash screen.
    - Admin can force restart via `liquidctl supervisor restart <session-id>`.
-6. **Crash report**: Generated and stored in `/var/log/liquidde/crashes/crash-<session-id>-<timestamp>.json`.
+6. **Crash report**: Generated and stored in `/var/log/liquide/crashes/crash-<session-id>-<timestamp>.json`.
 
 ### Crash Detection & Classification
 
@@ -3878,7 +3878,7 @@ The crash screen is rendered using the Liquid Glass design language (see [spec-d
 
 ### Crash Reporting & Telemetry
 
-Crash reports are stored server-side in `/var/log/liquidde/crashes/`:
+Crash reports are stored server-side in `/var/log/liquide/crashes/`:
 
 ```json
 {
@@ -3901,12 +3901,12 @@ Crash reports are stored server-side in `/var/log/liquidde/crashes/`:
   },
   "last_log_lines": ["...last 100 lines from session log..."],
   "active_plugins": ["widget-clock", "clipboard-sanitizer"],
-  "coredump_path": "/var/log/liquidde/crashes/core.s001.20250115T162231"
+  "coredump_path": "/var/log/liquide/crashes/core.s001.20250115T162231"
 }
 ```
 
 - **Retention**: Configurable, default 30 days.
-- **Prometheus metrics**: `liquidde_crashes_total{type="session_crash"}`, `liquidde_crash_restarts_total`, `liquidde_session_uptime_at_crash_seconds` (histogram).
+- **Prometheus metrics**: `liquide_crashes_total{type="session_crash"}`, `liquide_crash_restarts_total`, `liquide_session_uptime_at_crash_seconds` (histogram).
 - **Optional telemetry upload**: Disabled by default. If enabled, crash reports (without coredumps or user data) are sent to a configurable endpoint.
 
 ### Crash Screen Rendering
@@ -3951,7 +3951,7 @@ The crash screen is **never** streamed as encoded video frames from the server. 
   - Plugin development guide.
 
 - **Plugin SDK**:
-  - `liquidde-plugin-sdk` — Rust crate for developing WASM plugins.
+  - `liquide-plugin-sdk` — Rust crate for developing WASM plugins.
   - Sample plugins (status bar widget, clipboard transformer, theme generator).
 
 - **Crash Reporting**:

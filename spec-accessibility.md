@@ -1,4 +1,4 @@
-# LiquidDE — Accessibility System Specification
+# LiquiDE — Accessibility System Specification
 
 > **Status**: Draft
 > **Depends on**: [spec.md](spec.md) (core server), [spec-client.md](spec-client.md) (client), [spec-design.md](spec-design.md) (theming), [spec-settings.md](spec-settings.md) (settings)
@@ -7,12 +7,12 @@
 
 ## 1) Overview
 
-LiquidDE provides comprehensive accessibility support to ensure the desktop environment is usable by people with visual, auditory, motor, and cognitive disabilities. This document specifies the accessibility infrastructure, assistive technology integration, and universal design contracts.
+LiquiDE provides comprehensive accessibility support to ensure the desktop environment is usable by people with visual, auditory, motor, and cognitive disabilities. This document specifies the accessibility infrastructure, assistive technology integration, and universal design contracts.
 
 ### Design Principles
 
 - **Accessible by default**: all built-in UI components (shell, dock, launcher, notifications, panels, settings, login screen, crash screen) are fully accessible without requiring optional packages.
-- **AT-SPI compliant**: LiquidDE exposes the full Accessibility Toolkit Service Provider Interface (AT-SPI2) tree for all compositor-rendered surfaces.
+- **AT-SPI compliant**: LiquiDE exposes the full Accessibility Toolkit Service Provider Interface (AT-SPI2) tree for all compositor-rendered surfaces.
 - **Remote-aware**: accessibility features work across the remote session boundary. Screen readers run on the server; their audio output is streamed to the client via the standard audio channel. Client-local assistive technologies may also be used to interact with the client application itself.
 - **Policy-controllable**: accessibility features can be forced on/off by policy for enterprise deployments (e.g., ensuring screen reader support is always available).
 
@@ -32,10 +32,10 @@ AT-SPI2 Bus (org.a11y.Bus)
     │
     ├── Screen Reader (Orca)
     ├── Magnifier (liquid-magnifier)
-    └── LiquidDE Shell (exposes shell UI via AT-SPI)
+    └── LiquiDE Shell (exposes shell UI via AT-SPI)
 ```
 
-LiquidDE provides the AT-SPI2 bus registry service:
+LiquiDE provides the AT-SPI2 bus registry service:
 
 | Property | Value |
 |----------|-------|
@@ -53,7 +53,7 @@ The accessibility bus is started on demand when:
 
 ### 2.3 Shell UI Accessibility Tree
 
-LiquidDE's compositor-rendered shell elements (dock, status bar, notifications, launcher, lock screen, crash screen) are not toolkit widgets — they are rendered directly by the Rust compositor. To make them accessible, LiquidDE maintains a parallel AT-SPI tree for all shell elements:
+LiquiDE's compositor-rendered shell elements (dock, status bar, notifications, launcher, lock screen, crash screen) are not toolkit widgets — they are rendered directly by the Rust compositor. To make them accessible, LiquiDE maintains a parallel AT-SPI tree for all shell elements:
 
 | Shell Element | AT-SPI Role | Accessible Name | Description |
 |---------------|-------------|-----------------|-------------|
@@ -74,7 +74,7 @@ LiquidDE's compositor-rendered shell elements (dock, status bar, notifications, 
 
 ### 2.4 Focus Tracking
 
-LiquidDE tracks keyboard focus through the accessibility tree:
+LiquiDE tracks keyboard focus through the accessibility tree:
 - When focus moves between applications, the AT-SPI `StateChanged:focused` event is emitted.
 - When focus moves within the shell (dock, launcher, status bar), the same events are emitted on the shell's AT-SPI nodes.
 - Screen readers use these events to announce the focused element.
@@ -115,16 +115,16 @@ When `accessibility.screen_reader.enabled = true`:
 
 ### 3.4 Remote Audio for TTS
 
-In a remote LiquidDE session, screen reader audio (TTS output) follows the same path as all session audio:
+In a remote LiquiDE session, screen reader audio (TTS output) follows the same path as all session audio:
 
 ```
 Server: Orca → Speech Dispatcher → PipeWire sink
                                        │
                                        ▼
-                              LiquidDE Audio Worker
+                              LiquiDE Audio Worker
                                        │
                                        ▼ (audio channel, encoded)
-                              LiquidDE Transport
+                              LiquiDE Transport
                                        │
                                        ▼
 Client: Audio Decode → Client Audio Output → Client Speakers
@@ -155,7 +155,7 @@ screen_reader_mode = "server"    # server (Orca via audio channel), client-local
 
 ### 4.1 Universal Focus Rules
 
-All LiquidDE UI elements follow these keyboard navigation rules:
+All LiquiDE UI elements follow these keyboard navigation rules:
 
 | Key | Behavior |
 |-----|----------|
@@ -299,7 +299,7 @@ default_action = "click"    # click, double-click, drag, right-click
 
 ### 6.1 Screen Magnifier
 
-LiquidDE includes a built-in screen magnifier (`liquid-magnifier`) that runs as a compositor-level feature (not an application).
+LiquiDE includes a built-in screen magnifier (`liquid-magnifier`) that runs as a compositor-level feature (not an application).
 
 #### Magnification Modes
 
@@ -436,7 +436,7 @@ flash_duration_ms = 200
 
 ### 7.2 Closed Captions
 
-LiquidDE does not generate captions for arbitrary audio (this is application-level). However:
+LiquiDE does not generate captions for arbitrary audio (this is application-level). However:
 - The `prefers-reduced-data` and closed-caption CSS media queries are supported.
 - Applications that support captions will respect these media queries.
 
@@ -494,7 +494,7 @@ The login screen (see spec.md §21, spec-client.md §25) includes an accessibili
 - On-screen keyboard toggle.
 - Zoom toggle.
 
-These settings persist across reboots via a system-level accessibility config: `/etc/liquidde/accessibility-defaults.toml`.
+These settings persist across reboots via a system-level accessibility config: `/etc/liquide/accessibility-defaults.toml`.
 
 ### 9.3 Keyboard Shortcut Summary
 
@@ -516,7 +516,7 @@ These settings persist across reboots via a system-level accessibility config: `
 | Feature | Audio Source | Route |
 |---------|-------------|-------|
 | Screen reader TTS | Orca → Speech Dispatcher → PipeWire | Server → audio channel → client speakers |
-| Sticky keys beep | LiquidDE compositor → PipeWire | Server → audio channel → client speakers |
+| Sticky keys beep | LiquiDE compositor → PipeWire | Server → audio channel → client speakers |
 | Notification sound | libcanberra → PipeWire | Server → audio channel → client speakers |
 | Visual alert flash | Compositor render | Video channel (rendered into frame) |
 

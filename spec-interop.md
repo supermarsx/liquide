@@ -1,4 +1,4 @@
-# LiquidDE — Desktop Interoperability & Standards Specification
+# LiquiDE — Desktop Interoperability & Standards Specification
 
 > **Status**: Draft
 > **Depends on**: [spec.md](spec.md) (core server), [spec-design.md](spec-design.md) (theming), [spec-system.md](spec-system.md) (system integration)
@@ -7,23 +7,23 @@
 
 ## 1) Overview
 
-LiquidDE is a full desktop environment. Applications running inside a LiquidDE session expect standard freedesktop.org interfaces — D-Bus services, portals, MIME handling, `.desktop` file conventions, icon themes, and tray protocols. This document specifies how LiquidDE implements or bridges each of these contracts.
+LiquiDE is a full desktop environment. Applications running inside a LiquiDE session expect standard freedesktop.org interfaces — D-Bus services, portals, MIME handling, `.desktop` file conventions, icon themes, and tray protocols. This document specifies how LiquiDE implements or bridges each of these contracts.
 
 ### Design Principles
 
-- **Implement, don't shim**: where possible, LiquidDE provides a native Rust implementation of each D-Bus service rather than depending on third-party daemons.
-- **Policy-driven**: every inter-process contract inherits from the LiquidDE policy engine (see spec.md §23). Administrators can restrict portal access, notification rates, tray visibility, and MIME default overrides per user/group/session.
+- **Implement, don't shim**: where possible, LiquiDE provides a native Rust implementation of each D-Bus service rather than depending on third-party daemons.
+- **Policy-driven**: every inter-process contract inherits from the LiquiDE policy engine (see spec.md §23). Administrators can restrict portal access, notification rates, tray visibility, and MIME default overrides per user/group/session.
 - **Remote-aware**: all services account for the fact that the session may be rendered on a remote client. File chooser portals, for example, can optionally surface both server-side and client-side filesystems.
 
 ---
 
 ## 2) D-Bus Services & Interfaces
 
-LiquidDE exposes the following D-Bus session bus services. Each section defines: service name, object paths, interfaces, method/signal signatures, lifecycle, error codes, and security/policy rules.
+LiquiDE exposes the following D-Bus session bus services. Each section defines: service name, object paths, interfaces, method/signal signatures, lifecycle, error codes, and security/policy rules.
 
 ### 2.1 Notification Service — `org.freedesktop.Notifications`
 
-LiquidDE implements the [Desktop Notifications Specification v1.2](https://specifications.freedesktop.org/notification-spec/latest/).
+LiquiDE implements the [Desktop Notifications Specification v1.2](https://specifications.freedesktop.org/notification-spec/latest/).
 
 #### Service Registration
 
@@ -69,7 +69,7 @@ LiquidDE implements the [Desktop Notifications Specification v1.2](https://speci
 | `sound-name` | `s` | Sound theme name |
 | `suppress-sound` | `b` | Suppress notification sound |
 | `transient` | `b` | Transient notification (not persisted) |
-| `x`, `y` | `i` | Position hint (LiquidDE may ignore based on layout policy) |
+| `x`, `y` | `i` | Position hint (LiquiDE may ignore based on layout policy) |
 | `action-icons` | `b` | Interpret action IDs as icon names |
 | `resident` | `b` | Keep notification after action invoked |
 
@@ -82,7 +82,7 @@ LiquidDE implements the [Desktop Notifications Specification v1.2](https://speci
 
 #### Capabilities
 
-LiquidDE reports the following capabilities via `GetCapabilities`:
+LiquiDE reports the following capabilities via `GetCapabilities`:
 
 ```
 ["actions", "body", "body-hyperlinks", "body-images", "body-markup",
@@ -100,7 +100,7 @@ LiquidDE reports the following capabilities via `GetCapabilities`:
 - Notifications with `urgency = 2` (critical) or `expire_timeout = 0` are **persisted** to the notification history.
 - Persisted notifications survive session disconnect/reconnect.
 - The notification history is stored in memory (configurable max: `notification_history_max`, default: 500).
-- Clients can retrieve history via the LiquidDE-specific extension interface (see §2.1.1).
+- Clients can retrieve history via the LiquiDE-specific extension interface (see §2.1.1).
 
 #### Rate Limiting
 
@@ -132,13 +132,13 @@ When a rate limit is exceeded, the `Notify` call returns `org.freedesktop.Notifi
 | `org.freedesktop.Notifications.Error.NotAllowed` | Blocked by policy |
 | `org.freedesktop.Notifications.Error.InvalidData` | Body too large, image too large, malformed hints |
 
-#### 2.1.1 LiquidDE Notification Extensions
+#### 2.1.1 LiquiDE Notification Extensions
 
-LiquidDE provides an additional interface on the same object path:
+LiquiDE provides an additional interface on the same object path:
 
 | Property | Value |
 |----------|-------|
-| Interface | `org.liquidde.Notifications` |
+| Interface | `org.liquide.Notifications` |
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -155,7 +155,7 @@ LiquidDE provides an additional interface on the same object path:
 
 ### 2.2 System Tray — StatusNotifierItem / AppIndicator
 
-LiquidDE supports the [StatusNotifierItem](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/) specification for application tray icons.
+LiquiDE supports the [StatusNotifierItem](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/) specification for application tray icons.
 
 #### Service: StatusNotifierWatcher
 
@@ -234,7 +234,7 @@ Each application's tray icon exposes on its own service name:
 
 For applications that still use the legacy X11 system tray protocol (XEmbed / `_NET_SYSTEM_TRAY`):
 
-1. LiquidDE's XWayland compatibility layer intercepts `_NET_SYSTEM_TRAY_S{screen}` selection requests.
+1. LiquiDE's XWayland compatibility layer intercepts `_NET_SYSTEM_TRAY_S{screen}` selection requests.
 2. The embedded window is captured as a texture and composited into the tray area as a standard icon slot.
 3. Input events (click, scroll) are forwarded to the XEmbed child window via standard X11 events.
 4. The embedded icon appears alongside native StatusNotifierItem icons with no visual distinction beyond possible rendering quality differences.
@@ -245,7 +245,7 @@ For applications that still use the legacy X11 system tray protocol (XEmbed / `_
 Icon lookup follows the [freedesktop Icon Theme Specification](https://specifications.freedesktop.org/icon-theme-spec/latest/):
 
 1. Search order for icon names:
-   1. Current icon theme (configured in LiquidDE settings, default: `LiquidDE`).
+   1. Current icon theme (configured in LiquiDE settings, default: `LiquiDE`).
    2. Parent themes declared in the current theme's `index.theme`.
    3. Fallback theme: `hicolor`.
 2. Within each theme, search directories in this order:
@@ -257,7 +257,7 @@ Icon lookup follows the [freedesktop Icon Theme Specification](https://specifica
    - Scalable (SVG) icons are preferred over bitmap scaling.
    - If no exact match: find closest size, scale down preferred over scale up.
 4. Format priority: SVG > PNG > XPM.
-5. LiquidDE caches resolved icon paths per theme. Cache is invalidated when icon theme directories change (monitored via inotify/kqueue).
+5. LiquiDE caches resolved icon paths per theme. Cache is invalidated when icon theme directories change (monitored via inotify/kqueue).
 
 #### Policy
 
@@ -270,7 +270,7 @@ Icon lookup follows the [freedesktop Icon Theme Specification](https://specifica
 
 ### 2.3 DBusMenu — `com.canonical.dbusmenu`
 
-LiquidDE supports the [DBusMenu protocol](https://wiki.ubuntu.com/DesktopExperienceTeam/ApplicationMenu) for tray icon context menus and global menus.
+LiquiDE supports the [DBusMenu protocol](https://wiki.ubuntu.com/DesktopExperienceTeam/ApplicationMenu) for tray icon context menus and global menus.
 
 | Property | Value |
 |----------|-------|
@@ -292,30 +292,30 @@ LiquidDE supports the [DBusMenu protocol](https://wiki.ubuntu.com/DesktopExperie
 | `LayoutUpdated` | `(ui)` | Layout revision changed |
 | `ItemActivationRequested` | `(iu)` | Item activation requested |
 
-LiquidDE renders DBusMenu trees as native Liquid Glass context menus, applying the standard menu CSS classes (`.liquid-context-menu`).
+LiquiDE renders DBusMenu trees as native Liquid Glass context menus, applying the standard menu CSS classes (`.liquid-context-menu`).
 
 ---
 
 ### 2.4 Desktop Environment Identification
 
-LiquidDE sets the standard environment variables and D-Bus properties for desktop detection:
+LiquiDE sets the standard environment variables and D-Bus properties for desktop detection:
 
 | Mechanism | Key | Value |
 |-----------|-----|-------|
-| Environment variable | `XDG_CURRENT_DESKTOP` | `LiquidDE` |
+| Environment variable | `XDG_CURRENT_DESKTOP` | `LiquiDE` |
 | Environment variable | `XDG_SESSION_TYPE` | `wayland` |
-| Environment variable | `DESKTOP_SESSION` | `liquidde` |
+| Environment variable | `DESKTOP_SESSION` | `liquide` |
 | D-Bus property | `org.freedesktop.portal.Desktop.version` | `(current portal version)` |
 
-Applications may use these to detect they are running under LiquidDE and adjust behavior accordingly.
+Applications may use these to detect they are running under LiquiDE and adjust behavior accordingly.
 
 ---
 
 ## 3) XDG Desktop Portals
 
-LiquidDE implements [`xdg-desktop-portal`](https://flatpak.github.io/xdg-desktop-portal/) interfaces. These are critical for sandboxed applications (Flatpak, Snap) and are increasingly used by non-sandboxed applications.
+LiquiDE implements [`xdg-desktop-portal`](https://flatpak.github.io/xdg-desktop-portal/) interfaces. These are critical for sandboxed applications (Flatpak, Snap) and are increasingly used by non-sandboxed applications.
 
-LiquidDE provides its own portal backend: `xdg-desktop-portal-liquidde`.
+LiquiDE provides its own portal backend: `xdg-desktop-portal-liquide`.
 
 | Property | Value |
 |----------|-------|
@@ -399,7 +399,7 @@ LiquidDE provides its own portal backend: `xdg-desktop-portal-liquidde`.
 | `org.gnome.desktop.interface` | `text-scaling-factor` | `d` | Text scale (1.0 = normal) |
 | `org.gnome.desktop.interface` | `enable-animations` | `b` | Whether animations are enabled |
 
-When LiquidDE theme settings change, `SettingChanged` signals are emitted so applications can react (e.g., switching to dark mode).
+When LiquiDE theme settings change, `SettingChanged` signals are emitted so applications can react (e.g., switching to dark mode).
 
 ### 3.4 Portal: Inhibit / Idle
 
@@ -414,7 +414,7 @@ When LiquidDE theme settings change, `SettingChanged` signals are emitted so app
 **Flags:** `1` = logout, `2` = user-switch, `4` = suspend, `8` = idle.
 
 **Behavior:**
-- When a video player or presentation app inhibits idle, the LiquidDE lock screen timer pauses.
+- When a video player or presentation app inhibits idle, the LiquiDE lock screen timer pauses.
 - Inhibit requests are subject to policy: `portals.inhibit.allow_idle_inhibit` (default: `true`).
 - Maximum inhibit duration: `portals.inhibit.max_duration_sec` (default: `14400` = 4 hours). After this, the inhibit is automatically released.
 - `CreateMonitor` sends `StateChanged` signals with `{ "screensaver-active": b, "session-state": u }`.
@@ -485,7 +485,7 @@ This portal wraps around the `org.freedesktop.Notifications` service (§2.1). Sa
 **Behavior:**
 - Applications can register global keyboard shortcuts via this portal.
 - A consent dialog is shown listing the requested shortcuts.
-- Shortcuts that conflict with LiquidDE system shortcuts are rejected.
+- Shortcuts that conflict with LiquiDE system shortcuts are rejected.
 - Policy `portals.global_shortcuts.enabled` (default: `true`).
 
 ---
@@ -494,7 +494,7 @@ This portal wraps around the `org.freedesktop.Notifications` service (§2.1). Sa
 
 ### 4.1 Parsing Rules
 
-LiquidDE parses `.desktop` files per the [Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry-spec/latest/):
+LiquiDE parses `.desktop` files per the [Desktop Entry Specification](https://specifications.freedesktop.org/desktop-entry-spec/latest/):
 
 - Encoding: UTF-8.
 - Group headers: `[Desktop Entry]`, `[Desktop Action <name>]`.
@@ -545,14 +545,14 @@ Files in earlier directories override later ones (by filename). Entries with `Hi
 
 ### 4.5 Desktop Actions
 
-`.desktop` files may define additional actions (e.g., "New Window", "New Incognito Window") via `Actions=` key and `[Desktop Action <name>]` groups. LiquidDE surfaces these in:
+`.desktop` files may define additional actions (e.g., "New Window", "New Incognito Window") via `Actions=` key and `[Desktop Action <name>]` groups. LiquiDE surfaces these in:
 - Right-click context menu on dock icons.
 - Long-press menu on dock icons (touch mode).
 - App launcher search results (secondary actions).
 
 ### 4.6 `OnlyShowIn` / `NotShowIn` Handling
 
-LiquidDE's `XDG_CURRENT_DESKTOP=LiquidDE`. Entries with `OnlyShowIn` that do not include `LiquidDE` are hidden. Entries with `NotShowIn` that include `LiquidDE` are hidden. LiquidDE also responds to `GNOME` and `XFCE` in these fields (configurable: `desktop.compat_desktops = ["GNOME"]`) to maximize application compatibility.
+LiquiDE's `XDG_CURRENT_DESKTOP=LiquiDE`. Entries with `OnlyShowIn` that do not include `LiquiDE` are hidden. Entries with `NotShowIn` that include `LiquiDE` are hidden. LiquiDE also responds to `GNOME` and `XFCE` in these fields (configurable: `desktop.compat_desktops = ["GNOME"]`) to maximize application compatibility.
 
 ---
 
@@ -560,7 +560,7 @@ LiquidDE's `XDG_CURRENT_DESKTOP=LiquidDE`. Entries with `OnlyShowIn` that do not
 
 ### 5.1 MIME Database
 
-LiquidDE uses the [Shared MIME-info Database](https://specifications.freedesktop.org/shared-mime-info-spec/latest/):
+LiquiDE uses the [Shared MIME-info Database](https://specifications.freedesktop.org/shared-mime-info-spec/latest/):
 
 - Database locations: `$XDG_DATA_HOME/mime/`, `$XDG_DATA_DIRS/mime/`
 - `mime.cache` binary files are preferred for performance.
@@ -583,8 +583,8 @@ Default applications are resolved per the [Association between MIME types and ap
 ```ini
 [Default Applications]
 text/html=firefox.desktop
-text/plain=org.liquidde.TextEditor.desktop
-image/png=org.liquidde.ImageViewer.desktop
+text/plain=org.liquide.TextEditor.desktop
+image/png=org.liquide.ImageViewer.desktop
 
 [Added Associations]
 text/html=chromium.desktop;firefox.desktop
@@ -595,7 +595,7 @@ text/html=vim.desktop
 
 ### 5.3 File Type Handler Registration
 
-Applications register MIME type handling via their `.desktop` file's `MimeType=` key. When a `.desktop` file is installed, `update-desktop-database` rebuilds the MIME cache. LiquidDE monitors these directories and rebuilds its internal cache on changes.
+Applications register MIME type handling via their `.desktop` file's `MimeType=` key. When a `.desktop` file is installed, `update-desktop-database` rebuilds the MIME cache. LiquiDE monitors these directories and rebuilds its internal cache on changes.
 
 ### 5.4 Default Application Prompts
 
@@ -612,18 +612,18 @@ Policy: `mime.allow_user_defaults` (default: `true`) — whether users can set t
 
 ### 6.1 Application Expectations
 
-Applications running inside LiquidDE can expect:
+Applications running inside LiquiDE can expect:
 
 | Capability | Implementation |
 |------------|---------------|
-| Wayland compositor | LiquidDE compositor (wl_compositor, xdg_shell, etc.) |
+| Wayland compositor | LiquiDE compositor (wl_compositor, xdg_shell, etc.) |
 | X11 support | XWayland (optional, enabled by default) |
-| D-Bus session bus | Provided by LiquidDE or systemd --user |
+| D-Bus session bus | Provided by LiquiDE or systemd --user |
 | D-Bus system bus | Host system dbus-daemon |
 | PipeWire | Audio and screencast (required dependency) |
 | Notifications | org.freedesktop.Notifications (§2.1) |
 | System tray | StatusNotifierItem (§2.2) |
-| Portals | xdg-desktop-portal-liquidde (§3) |
+| Portals | xdg-desktop-portal-liquide (§3) |
 | Icon themes | freedesktop icon theme spec (§2.2) |
 | MIME types | shared-mime-info database (§5) |
 | `.desktop` files | Desktop entry spec (§4) |
@@ -631,7 +631,7 @@ Applications running inside LiquidDE can expect:
 
 ### 6.2 Application Permission Prompts
 
-Certain actions require explicit user consent. LiquidDE displays a Liquid Glass permission dialog:
+Certain actions require explicit user consent. LiquiDE displays a Liquid Glass permission dialog:
 
 | Permission | Trigger | Policy Key |
 |------------|---------|------------|
@@ -646,37 +646,37 @@ Certain actions require explicit user consent. LiquidDE displays a Liquid Glass 
 **Permission persistence:**
 - Granted permissions are stored per-application (identified by `.desktop` ID or Flatpak app ID).
 - Permissions persist across sessions unless revoked.
-- Storage: `$XDG_DATA_HOME/liquidde/permissions.db` (SQLite).
+- Storage: `$XDG_DATA_HOME/liquide/permissions.db` (SQLite).
 - Revocation: via Settings app (see spec-settings.md) or `liquidctl permissions` command.
 
 ### 6.3 Flatpak Integration
 
-LiquidDE provides first-class Flatpak support:
+LiquiDE provides first-class Flatpak support:
 
 - Flatpak applications are detected via their `.desktop` exports and listed in the app launcher.
 - Portal calls from Flatpak apps include the `app_id` which is used for permission attribution.
-- `xdg-desktop-portal-liquidde` is registered as the portal backend in `/usr/share/xdg-desktop-portal/portals/liquidde.portal`:
+- `xdg-desktop-portal-liquide` is registered as the portal backend in `/usr/share/xdg-desktop-portal/portals/liquide.portal`:
 
 ```ini
 [portal]
-DBusName=org.freedesktop.impl.portal.desktop.liquidde
+DBusName=org.freedesktop.impl.portal.desktop.liquide
 Interfaces=org.freedesktop.impl.portal.FileChooser;org.freedesktop.impl.portal.OpenURI;org.freedesktop.impl.portal.Settings;org.freedesktop.impl.portal.Screenshot;org.freedesktop.impl.portal.ScreenCast;org.freedesktop.impl.portal.Notification;org.freedesktop.impl.portal.Inhibit;org.freedesktop.impl.portal.Background;org.freedesktop.impl.portal.GlobalShortcuts;org.freedesktop.impl.portal.AppChooser;org.freedesktop.impl.portal.Access
-UseIn=LiquidDE
+UseIn=LiquiDE
 ```
 
 ### 6.4 Snap Integration
 
-LiquidDE does **not** provide a Snap-specific portal backend. Snap applications use the standard `xdg-desktop-portal` interface, which routes to `xdg-desktop-portal-liquidde`.
+LiquiDE does **not** provide a Snap-specific portal backend. Snap applications use the standard `xdg-desktop-portal` interface, which routes to `xdg-desktop-portal-liquide`.
 
 ### 6.5 Sandbox Stance
 
-LiquidDE itself does not sandbox non-Flatpak/Snap applications beyond the session isolation provided by the session jail (see spec.md §19). Applications running natively have the same access as the session user. Flatpak/Snap sandboxing is delegated to those respective runtimes.
+LiquiDE itself does not sandbox non-Flatpak/Snap applications beyond the session isolation provided by the session jail (see spec.md §19). Applications running natively have the same access as the session user. Flatpak/Snap sandboxing is delegated to those respective runtimes.
 
 ---
 
 ## 7) Wayland Protocol Extensions
 
-LiquidDE's compositor supports the following Wayland protocol extensions beyond core `wl_compositor` / `xdg_shell`:
+LiquiDE's compositor supports the following Wayland protocol extensions beyond core `wl_compositor` / `xdg_shell`:
 
 | Protocol | Version | Description |
 |----------|---------|-------------|
@@ -698,15 +698,15 @@ LiquidDE's compositor supports the following Wayland protocol extensions beyond 
 | `zwp_input_method` | v2 | Input method protocol |
 | `org_kde_plasma_window_management` | — | KDE compat: window list for taskbar |
 
-### 7.1 LiquidDE-Specific Protocol Extensions
+### 7.1 LiquiDE-Specific Protocol Extensions
 
-LiquidDE may provide additional custom Wayland protocols for tight shell integration:
+LiquiDE may provide additional custom Wayland protocols for tight shell integration:
 
 | Protocol | Description |
 |----------|-------------|
-| `liquidde_toplevel_theming` | Per-window theme override (glass intensity, accent color) |
-| `liquidde_seamless_window` | Seamless window mode negotiation (see spec.md §14a) |
-| `liquidde_remote_clipboard` | Extended clipboard with progress/cancel for large transfers |
+| `liquide_toplevel_theming` | Per-window theme override (glass intensity, accent color) |
+| `liquide_seamless_window` | Seamless window mode negotiation (see spec.md §14a) |
+| `liquide_remote_clipboard` | Extended clipboard with progress/cancel for large transfers |
 
 These custom protocols are versioned and documented separately. Applications are never **required** to use them.
 
