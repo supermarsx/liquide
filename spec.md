@@ -2,7 +2,7 @@
 
 > **Language**: Rust
 > **License**: MIT
-> **Related specs**: [Client](spec-client.md) · [Web Client](spec-web-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Protocol](spec-protocol-formal.md) · [Rendering](spec-rendering-software.md) · [Performance](spec-performance.md) · [Observability](spec-observability.md) · [Build](spec-build.md) · [Threat Model](spec-threat-model.md) · [Normative](spec-normative.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
+> **Related specs**: [Client](spec-client.md) · [Web Client](spec-web-client.md) · [Mobile Client](spec-mobile.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Protocol](spec-protocol-formal.md) · [Rendering](spec-rendering-software.md) · [Performance](spec-performance.md) · [Observability](spec-observability.md) · [Build](spec-build.md) · [Threat Model](spec-threat-model.md) · [Normative](spec-normative.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
 
 ---
 
@@ -10,7 +10,7 @@
 
 A **remote-first, native desktop environment** built entirely in Rust, designed specifically for remote desktop use-cases:
 
-- **Runs well with *no GPU*** (headless servers, VMs, iGPU-less boxes, cloud instances) but **supports common GPU acceleration** when available.
+- **Runs well with *no GPU*** (headless servers, VMs, iGPU-less boxes, cloud instances) and **offers a first-class GPU Server Mode** with Vulkan compositing, hardware encoding, VRAM budgeting, and GPU sharing support (vGPU, MIG, MPS) when GPUs are available.
 - **Feels like a modern "liquid glass" OS** (depth, translucency, blur, vibrancy) while remaining bandwidth/CPU efficient.
 - **Users customize the DE appearance with CSS** — every visual element is themeable through a well-documented CSS system.
 - **Multi-threaded architecture** where the main thread is strictly an orchestrator — all heavy work (rendering, encoding, I/O, effects) runs on dedicated worker threads to prevent hangs.
@@ -242,6 +242,256 @@ Dedicated Channels:
   - V4L2 M2M (ARM SoCs).
   - VideoToolbox (macOS ARM64 — client-side decode).
 - GPU is **never required** — CPU path is always available and complete.
+
+### GPU Server Mode (First-Class Profile)
+
+While LiquiDE's CPU-only path is the primary deployment target, **GPU Server Mode** elevates GPU-accelerated rendering and encoding to a first-class server profile — not just "optional acceleration" but a fully distinct operating mode with its own resource model, scheduling, quality targets, and administrative tools.
+
+GPU Server Mode is designed for:
+- **VDI at scale with GPUs** — cloud VMs with vGPU (NVIDIA GRID, Intel GVT-g, AMD MxGPU) or dedicated GPU pools.
+- **Power users** — CAD, 3D modeling, visualization, video editing workloads where GPU acceleration is essential.
+- **High-density deployments** — GPU sharing allows more sessions per physical GPU with better quality than CPU-only.
+- **Low-latency scenarios** — GPU compositing + hardware encoding eliminates the CPU bottleneck for frame delivery.
+
+#### GPU Detection & Capability Probing
+
+On session start, the server probes GPU availability:
+
+```
+┌─────────────────────────────────────────┐
+│  GPU Probe Sequence                      │
+│                                          │
+│  1. Enumerate Vulkan physical devices    │
+│  2. Check device type, VRAM, driver ver  │
+│  3. Probe hardware encoder support:      │
+│     - VAAPI (Intel, AMD via Mesa)        │
+│     - NVENC (NVIDIA)                     │
+│     - AMF (AMD via AMVF)                 │
+│  4. Check Vulkan compute capability      │
+│  5. Detect GPU sharing technology:       │
+│     - SR-IOV / vGPU                      │
+│     - MPS (NVIDIA Multi-Process Service) │
+│     - MIG (NVIDIA Multi-Instance GPU)    │
+│     - Time-sliced sharing                │
+│  6. Measure available VRAM               │
+│  7. Run micro-benchmark (optional):      │
+│     - Blur throughput (Vulkan compute)    │
+│     - Encode throughput (HW encoder)     │
+│  8. Select GPU profile                   │
+└─────────────────────────────────────────┘
+```
+
+| Detection Result | Selected Profile | Behavior |
+|-----------------|-----------------|----------|
+| No GPU / no Vulkan | `cpu-only` | Full software rendering, software encoding |
+| GPU present, no HW encoder | `gpu-composite` | Vulkan compositing + blur, software encoding |
+| GPU present, HW encoder | `gpu-full` | Vulkan compositing + blur, hardware encoding |
+| vGPU / SR-IOV instance | `gpu-shared` | GPU-full with VRAM budgeting, encoder sharing |
+| Dedicated GPU per session | `gpu-dedicated` | GPU-full, no sharing constraints |
+
+#### GPU Resource Model
+
+##### Per-Session GPU Budget
+
+Each session in GPU mode is assigned a GPU resource budget:
+
+| Resource | Default Budget | Hard Limit | Enforcement |
+|----------|---------------|-----------|-------------|
+| VRAM | 256 MB | Configurable | Vulkan allocation tracking + fallback to system RAM overflow |
+| Encoder slots | 1 concurrent encode stream | 4 | Hardware encoder session limit |
+| Compute time | Fair-share scheduling | 50% of GPU per session (time-slice) | Vulkan timeline semaphores + driver scheduling |
+| Video decode (if server-side) | 1 decode stream | 2 | Hardware decoder session limit |
+
+##### GPU Sharing Technologies
+
+| Technology | Vendor | Isolation | VRAM Partitioning | Session Density | Latency Overhead |
+|-----------|--------|-----------|-------------------|-----------------|-----------------|
+| **SR-IOV / vGPU** | NVIDIA (GRID), Intel (GVT-g), AMD (MxGPU) | Hardware | Fixed partition (e.g., 1 GB per vGPU) | 8–32 per GPU | <1ms |
+| **MIG** (Multi-Instance GPU) | NVIDIA A100/A30/H100 | Hardware (compute + memory) | Fixed (e.g., 1/7 of GPU) | 2–7 per GPU | <1ms |
+| **MPS** (Multi-Process Service) | NVIDIA | Process-level (shared address space) | Soft quotas | 16–48 per GPU | <0.5ms |
+| **Time-sliced sharing** | All vendors (driver-level) | Context switch | No partitioning (shared VRAM) | 4–16 per GPU | 1–5ms (context switch) |
+| **None (dedicated)** | All | Full GPU per session | All VRAM | 1 per GPU | 0 |
+
+LiquiDE auto-detects the sharing technology and adjusts resource limits accordingly. In vGPU environments, the session sees a virtual GPU with its allocated resources. In MPS/time-sliced environments, LiquiDE enforces soft limits via Vulkan memory budget tracking and compute scheduling.
+
+##### VRAM Budget Management
+
+```
+Session VRAM Budget (e.g., 256 MB)
+├── Compositor surfaces (framebuffers, intermediate)    ~60 MB @ 1080p
+├── Blur textures (downsampled, cached)                 ~20 MB
+├── Shadow cache                                         ~10 MB
+├── Tile buffer (double-buffered tile grid)             ~40 MB @ 1080p
+├── Encoder reference frames (HW encoder managed)       ~80 MB @ 1080p
+├── Font atlas                                           ~10 MB
+├── Cursor cache                                         ~2 MB
+└── Headroom / overflow                                  ~34 MB
+```
+
+When VRAM is exhausted:
+1. Evict shadow cache (LRU).
+2. Reduce blur quality (smaller intermediate textures).
+3. Reduce tile buffer depth (single-buffered).
+4. Fall back to system RAM for overflow allocations (Vulkan `HOST_VISIBLE` memory).
+5. If still insufficient: drop to `gpu-composite` (disable hardware encoder, free encoder VRAM).
+6. Last resort: drop to `cpu-only`.
+
+#### GPU Compositing Pipeline
+
+In GPU mode, the compositor runs entirely on the GPU:
+
+```
+Wayland surface commits
+    │
+    ▼
+Upload surface buffers to GPU (DMA-BUF / VkBuffer import)
+    │
+    ▼
+Vulkan compute shader pipeline:
+    1. Scene graph traversal → per-surface draw commands
+    2. Rounded rectangle clipping (per-surface scissor regions)
+    3. Alpha compositing (Porter-Duff) via compute shader
+    4. Backdrop blur via Kawase blur shader (downscale → blur → upscale → composite)
+    5. Box shadow rendering (Gaussian convolution)
+    6. Cursor overlay composite
+    │
+    ▼
+Output framebuffer (Vulkan VkImage)
+    │
+    ├──► Hardware encoder input (zero-copy: VkImage → VAAPI/NVENC surface)
+    │
+    └──► Damage readback for tile channel (optional: VkImage → host for tile delta)
+```
+
+Key differences from CPU path:
+- **Zero-copy compositing**: Surface buffers from Wayland clients using DMA-BUF are imported directly into Vulkan without CPU-side copies.
+- **Shader-based effects**: Blur, shadows, rounded corners, and alpha compositing run as Vulkan compute shaders — 10–50x faster than CPU SIMD paths.
+- **Encoder zero-copy**: The composited framebuffer is passed directly from Vulkan to the hardware encoder (VAAPI via DMA-BUF export, NVENC via CUDA interop) without readback to CPU memory.
+- **End-to-end GPU**: In the ideal case (DMA-BUF input → Vulkan composite → HW encode → network), the frame **never touches CPU memory**.
+
+#### Hardware Encoder Integration
+
+| Encoder API | GPU Vendor | Codec Support | Session Concurrency | LiquiDE Integration |
+|-------------|-----------|---------------|--------------------|--------------------|
+| **VAAPI** | Intel (iGPU, dGPU), AMD (via Mesa) | H.264, H.265, AV1 (Intel Arc+) | 6–32 (GPU-dependent) | `libva` FFI. DMA-BUF input from Vulkan compositor. |
+| **NVENC** | NVIDIA (Turing+) | H.264, H.265, AV1 (Ada+) | 8 (consumer) / 64 (professional) | NVENC SDK FFI. CUDA context shared with Vulkan via `VK_KHR_external_memory`. |
+| **AMF** | AMD (RDNA+) | H.264, H.265, AV1 (RDNA3+) | 4–16 | AMF SDK FFI. Vulkan interop via `amf::AMFVulkanDevice`. |
+| **V4L2 M2M** | ARM SoCs (RK3588, Jetson) | H.264, H.265 | 2–8 | V4L2 ioctl. DMA-BUF import from Vulkan. |
+
+##### Encoder Selection Priority
+
+In GPU Server Mode, the encoder selection changes:
+
+| Priority | Condition | Selected Encoder |
+|----------|-----------|-----------------|
+| 1 | GPU HW encoder available for negotiated codec | Hardware encoder |
+| 2 | GPU HW encoder unavailable for codec, but available for lower codec | Hardware encoder with codec fallback (e.g., AV1→H.265→H.264) |
+| 3 | Multiple HW encoders (e.g., dual GPU) | Load-balance across encoders |
+| 4 | HW encoder session limit reached | Queue or fall back to software |
+| 5 | No HW encoder / GPU failure | Software encoder (SVT-AV1, OpenH264) |
+
+##### Encoder Quality in GPU Mode
+
+Hardware encoders generally trade quality for speed. LiquiDE compensates:
+
+| Strategy | Description |
+|----------|-------------|
+| Higher bitrate | HW encoder at 1.5–2x the bitrate of software encoder for equivalent visual quality |
+| Lookahead | Enable encoder lookahead (1–4 frames) for better rate control, at the cost of slight latency |
+| B-frames | Enable B-frames for HW encoder when latency budget allows (>25ms additional) |
+| Two-pass for recording | Recording encoder uses two-pass mode (first pass = rate analysis, second = encode) |
+| Perceptual tuning | Enable perceptual encoding hints (SSIM/VMAF optimization mode) when supported |
+
+#### GPU Server Mode SLOs
+
+GPU mode has tighter performance targets than CPU-only:
+
+| Metric | CPU-Only SLO | GPU Mode SLO | Notes |
+|--------|-------------|-------------|-------|
+| Input-to-photon (LAN) | p50 <16ms, p99 <25ms | p50 <10ms, p99 <18ms | Zero-copy pipeline eliminates CPU bottleneck |
+| Frame composite time (1080p) | <8ms | <2ms | Vulkan compute vs CPU SIMD |
+| Frame composite time (4K) | <25ms | <5ms | GPU scales with resolution |
+| Encode time (H.264, 1080p) | <8ms (software) | <2ms (hardware) | HW encoder is 4–10x faster |
+| Encode time (AV1, 1080p) | <16ms (software) | <4ms (hardware AV1) | Only AV1-capable hardware |
+| Blur time (1080p, 7-pass Kawase) | <4ms (cached) | <0.5ms | GPU compute shader |
+| Max concurrent 1080p sessions (1 GPU) | N/A | 16–32 (vGPU), 8 (MIG), 4–8 (time-slice) | Depends on GPU model and sharing |
+| VRAM per session (1080p) | N/A | 200–300 MB | Includes encoder reference frames |
+
+#### GPU Failure Handling
+
+| Failure | Detection | Recovery |
+|---------|-----------|----------|
+| GPU process/context hang (TDR) | Vulkan `VK_ERROR_DEVICE_LOST` | Reset Vulkan device. Compositor re-creates all GPU resources. Sessions experience 1–2 frame drop. If repeated, fall back to CPU. |
+| VRAM exhaustion | `VK_ERROR_OUT_OF_DEVICE_MEMORY` | Evict caches → reduce quality → overflow to system RAM → fall back to cpu-only |
+| Hardware encoder error | Encoder API error code | Retry once. If persistent, mark encoder as failed, fall back to software encoder for this session. |
+| Driver crash | Kernel log / `dmesg` notification | Log error. All sessions on this GPU fall back to CPU. Alert admin via metrics/notification. |
+| GPU hardware failure | No Vulkan device available | Sessions start in cpu-only mode. Admin notified. |
+| vGPU migration | Hypervisor live migration | Vulkan device lost → re-probe → re-initialize. Brief interruption (1–5s). |
+
+#### GPU Mode Configuration
+
+```toml
+[gpu]
+mode = "auto"                            # auto, gpu-full, gpu-composite, cpu-only
+                                          # auto: use GPU if available, fall back to CPU
+
+[gpu.compositor]
+enabled = true                            # use Vulkan compute for compositing
+prefer_compute = true                     # prefer compute shaders over graphics pipeline
+max_vram_compositor_mb = 128              # VRAM budget for compositor (excluding encoder)
+
+[gpu.encoder]
+enabled = true                            # use hardware encoder when available
+prefer_api = "auto"                       # auto, vaapi, nvenc, amf, v4l2
+max_sessions = 0                          # 0 = use hardware limit
+lookahead_frames = 2                      # encoder lookahead (0 = disabled)
+b_frames = false                          # enable B-frames (increases latency by ~1 frame)
+quality_preset = "balanced"               # speed, balanced, quality (maps to encoder preset)
+
+[gpu.sharing]
+technology = "auto"                       # auto, sriov, mig, mps, time-slice, dedicated
+vram_budget_mb = 256                      # per-session VRAM budget
+enforce_vram_limit = true                 # hard-enforce VRAM limit (reject allocations beyond)
+gpu_time_quota_percent = 50               # max GPU compute time per session (time-slice mode)
+
+[gpu.fallback]
+on_gpu_error = "degrade"                  # degrade (fall back to CPU), terminate, retry
+max_retries = 3                           # retry count before permanent fallback
+retry_delay_seconds = 5
+log_gpu_errors = true
+alert_on_fallback = true                  # emit metric/alert when GPU → CPU fallback occurs
+
+[gpu.monitoring]
+vram_usage_warn_percent = 80              # warn when VRAM usage exceeds this
+encoder_queue_warn_depth = 4              # warn when encoder queue exceeds this
+report_gpu_metrics = true                 # expose GPU metrics via Prometheus
+```
+
+#### GPU Policy Keys
+
+| Policy Key | Type | Resolution | Description |
+|------------|------|-----------|-------------|
+| `gpu.mode` | enum | `highest_precedence` | GPU mode for sessions in this scope |
+| `gpu.max_vram_mb` | int | `min` | Per-session VRAM cap |
+| `gpu.encoder_enabled` | bool | `deny_overrides` | Allow hardware encoder |
+| `gpu.max_sessions_per_gpu` | int | `min` | Session density limit per GPU |
+| `gpu.allow_dedicated` | bool | `deny_overrides` | Allow dedicated GPU per session |
+
+#### GPU Metrics (Prometheus)
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `liquide_gpu_vram_used_bytes` | gauge | `device`, `session_id` | VRAM usage per session |
+| `liquide_gpu_vram_total_bytes` | gauge | `device` | Total VRAM per device |
+| `liquide_gpu_encoder_active_sessions` | gauge | `device`, `api` | Active HW encoder sessions |
+| `liquide_gpu_encoder_queue_depth` | gauge | `device` | Encoder queue depth |
+| `liquide_gpu_composite_time_seconds` | histogram | `device` | GPU composite time |
+| `liquide_gpu_encode_time_seconds` | histogram | `device`, `codec` | HW encode time |
+| `liquide_gpu_fallback_total` | counter | `device`, `reason` | GPU → CPU fallback events |
+| `liquide_gpu_errors_total` | counter | `device`, `error_type` | GPU errors |
+| `liquide_gpu_temperature_celsius` | gauge | `device` | GPU temperature (if exposed) |
+| `liquide_gpu_utilization_percent` | gauge | `device` | GPU utilization (if exposed) |
+
 
 ### Font Stack
 - **FreeType** for rasterization.
@@ -3119,19 +3369,172 @@ LiquiDE supports a **seamless window mode** where individual remote application 
 - A terminal in seamless mode can be further offloaded: the client creates a native OS window and renders the terminal content locally from character grid data.
 - This combination produces the most efficient result: zero server encoding, native window, pixel-perfect text.
 
+#### Per-OS Taskbar / Dock Integration
+
+In seamless mode, each remote application window integrates into the client OS's native taskbar or dock as if it were a local application. The LiquiDE client creates real native windows and registers them with the OS window manager.
+
+| Platform | Taskbar Integration | Implementation |
+|----------|-------------------|----------------|
+| **Windows** | Each seamless window appears as a separate taskbar button with live thumbnail preview (`DwmSetWindowAttribute`). App grouping uses `AppUserModelID` mapped from the remote `app_id`. Jump lists populated from server-reported recent files. | Win32 `HWND` per window. `ITaskbarList4` for progress bars, overlay icons, thumbnail toolbars. |
+| **macOS** | Each seamless app appears in the Dock with its icon. Clicking the Dock icon raises all windows for that app. App menu bar switches context per focused seamless window. Mission Control / Exposé shows seamless windows alongside local windows. | `NSWindow` per window. `NSApplication` delegate coordinates Dock icon and app activation. `NSRunningApplication` entries via Launch Services. |
+| **Linux (Wayland)** | Each seamless window is an `xdg_toplevel` on the local compositor. Appears in GNOME Activities / KDE taskbar / panel normally. `app_id` mapped for correct grouping. Desktop entry (`.desktop`) files generated or referenced for proper theming. | `wl_surface` + `xdg_toplevel` per window. `xdg-activation-v1` for focus stealing prevention. |
+| **Linux (X11)** | Each seamless window is a top-level X11 window with correct `WM_CLASS` and `_NET_WM_PID`. Taskbar grouping follows EWMH conventions. | `XCreateWindow` per window. EWMH/ICCCM properties set. NET_WM_WINDOW_TYPE set per window type. |
+
+#### Taskbar Features in Seamless Mode
+
+| Feature | Windows | macOS | Linux |
+|---------|---------|-------|-------|
+| App icon in taskbar/dock | Yes | Yes | Yes |
+| Live thumbnail preview | Yes (DWM) | No (not a macOS concept) | Compositor-dependent |
+| Progress bar overlay | Yes (`ITaskbarList3::SetProgressValue`) | Yes (Dock badge bounce / NSTouchBar) | No standard |
+| Window grouping by app | Yes (`AppUserModelID`) | Yes (Dock groups by app) | Yes (`app_id`/`WM_CLASS`) |
+| Badge / notification count | Yes (overlay icon) | Yes (Dock badge number) | Yes (Unity Launcher API / desktop entry) |
+| Jump list / recent files | Yes (`ICustomDestinationList`) | No (use app Dock menu instead) | No standard |
+| Alt+Tab / Task Switcher | Yes (native) | Yes (Cmd+Tab) | Yes (native) |
+| Snap / tile with local windows | Yes (Windows Snap) | Yes (macOS tiling, Stage Manager) | Yes (compositor tiling) |
+| Pin to taskbar | Yes | Yes (Keep in Dock) | Yes (add to favorites) |
+
+#### System Tray Integration
+
+Remote applications that create system tray icons (via `StatusNotifierItem` / `org.freedesktop.StatusNotifierItem` on the server) are forwarded to the client's native system tray:
+
+```
+Server: Remote app creates StatusNotifierItem
+    │
+    ▼
+liquid-session: Intercepts D-Bus StatusNotifierItem registration
+    │
+    ▼
+Protocol: seamless_tray_icon_create {
+    item_id, app_id, icon_data, tooltip,
+    menu_model (list of {label, action, icon, submenu, separator})
+}
+    │
+    ▼
+Client: Creates native system tray icon
+    - Windows: Shell_NotifyIcon (NOTIFYICONDATA)
+    - macOS: NSStatusItem
+    - Linux: StatusNotifierItem (forwarded) or XEmbed fallback
+```
+
+| Message | Direction | Fields |
+|---------|-----------|--------|
+| `seamless_tray_icon_create` | Server → Client | `item_id`, `app_id`, `icon_data`, `tooltip`, `menu_model` |
+| `seamless_tray_icon_update` | Server → Client | `item_id`, changed fields (icon, tooltip, menu) |
+| `seamless_tray_icon_destroy` | Server → Client | `item_id` |
+| `seamless_tray_icon_activate` | Client → Server | `item_id`, `action` (left-click, right-click, scroll) |
+| `seamless_tray_menu_action` | Client → Server | `item_id`, `action_id` |
+
+#### Notification Forwarding
+
+Remote desktop notifications (via `org.freedesktop.Notifications` on the server) are forwarded to the client's native notification system:
+
+| Platform | Native API | Features Forwarded |
+|----------|-----------|-------------------|
+| **Windows** | Toast notifications (`ToastNotificationManager`) | Title, body, icon, actions (buttons), urgency, sound hint |
+| **macOS** | `UNUserNotificationCenter` | Title, subtitle, body, icon, actions, sound |
+| **Linux** | `org.freedesktop.Notifications` D-Bus (passthrough) | Title, body, icon, actions, urgency, expire timeout |
+
+Notification flow:
+1. Remote application sends a D-Bus notification via `org.freedesktop.Notifications.Notify`.
+2. `liquid-session` intercepts the notification (the session *is* the notification daemon when in seamless mode).
+3. Notification is serialized and sent to the client via `seamless_notification` message.
+4. Client renders a native OS notification.
+5. If the user clicks an action button on the notification, the client sends `seamless_notification_action` back to the server.
+6. Server dispatches the action to the original requesting application via D-Bus.
+
+```
+seamless_notification {
+    notification_id, app_id, summary, body, icon_data,
+    urgency (low/normal/critical), expire_timeout_ms,
+    actions: [{action_id, label}],
+    hints: {category, sound_name, desktop_entry}
+}
+
+seamless_notification_action {
+    notification_id, action_id
+}
+
+seamless_notification_closed {
+    notification_id, reason (expired/dismissed/action/revoked)
+}
+```
+
+#### Drag-and-Drop Between Local and Remote Windows
+
+LiquiDE supports drag-and-drop operations between seamless remote windows and local windows:
+
+| Direction | Supported Types | Implementation |
+|-----------|----------------|----------------|
+| Local → Remote | Files, text, URIs | Client starts local DnD operation. On drop onto seamless window, client sends `seamless_dnd_drop` with data. Server injects matching Wayland `wl_data_offer`. |
+| Remote → Local | Text, URIs, images | Server detects drag starting on a seamless window. Sends `seamless_dnd_start` to client. Client creates local `DoDragDrop` / `NSPasteboard` / `wl_data_source`. On drop to local window, data is committed locally. |
+| Remote → Remote | All types | Normal Wayland DnD (handled server-side, seamless encoding follows the drag visual) |
+| File transfers | Files | Drag of file from local → remote triggers file upload via file transfer channel (§14.1). File appears in session's upload directory. |
+
+| Message | Direction | Fields |
+|---------|-----------|--------|
+| `seamless_dnd_start` | Server → Client | `source_window_id`, `offered_mime_types`, `icon_data` |
+| `seamless_dnd_motion` | Server → Client | `x`, `y` (in virtual desktop coordinates) |
+| `seamless_dnd_drop` | Client → Server | `target_window_id`, `mime_type`, `data` |
+| `seamless_dnd_finished` | Server → Client | `accepted` |
+| `seamless_dnd_cancel` | Either → Either | (drag cancelled by user or timeout) |
+
+#### Multi-Monitor in Seamless Mode
+
+Seamless windows can span multiple client monitors:
+
+- The client reports its monitor layout (positions, sizes, DPI) to the server.
+- The server's virtual desktop coordinate space is mapped to the client's physical monitor layout.
+- Windows can be moved between client monitors by the user — the server receives `client_window_move` and updates the virtual coordinate mapping.
+- DPI scaling per monitor: each seamless window is scaled according to the monitor it is primarily on (>50% area).
+- When a window straddles two monitors with different DPI, the client uses the higher DPI and scales the lower-DPI portion.
+
+#### Window Type Mapping
+
+Server Wayland window types are mapped to native client window types:
+
+| Server (Wayland) | Windows | macOS | Linux (Wayland) |
+|-----------------|---------|-------|-----------------|
+| `xdg_toplevel` (normal) | `WS_OVERLAPPEDWINDOW` | `NSWindow` (titled, resizable) | `xdg_toplevel` |
+| `xdg_toplevel` (dialog) | `WS_OVERLAPPED \| WS_DLGFRAME` | `NSPanel` (floating) | `xdg_toplevel` (parent set) |
+| `xdg_popup` (menu) | `WS_POPUP` (borderless) | `NSMenu` or borderless `NSWindow` | `xdg_popup` |
+| `xdg_popup` (tooltip) | `WS_POPUP` + `TTS_BALLOON` | `NSPopover` or borderless window | Tooltip surface |
+| `zwlr_layer_surface` (overlay) | `WS_EX_TOPMOST` + `WS_EX_TOOLWINDOW` | `NSPanel` (floating, nonactivating) | Layer shell (if compositor supports) |
+
 #### Seamless Mode Limitations
 - Additional per-window encoding overhead on the server (separate damage tracking and encode regions).
 - Transient windows (menus, tooltips, dropdowns) may flicker or misposition if they extend beyond their parent window bounds. The server groups these with their parent.
 - Audio remains session-wide (not per-window spatial audio).
 - DE shell elements (dock, status bar) are not shown by default — optionally presented as their own native windows (`shell_as_window = true`).
+- Drag-and-drop of files is limited to the file transfer mechanism (no instant local file path injection).
+- Client-local accessibility tools may not be able to inspect remote window content (see §23a for accessibility models).
+- Alt+Tab ordering between local and remote windows is managed by the client OS — z-order synchronization may have slight latency.
 
 #### Seamless Mode Configuration (Server-Side)
 ```toml
 # Per-user session.toml
 [seamless]
 enabled = false                           # user preference for seamless mode
+default_mode = "desktop"                  # "desktop" (normal) or "seamless" (remote apps as native windows)
 exclude_apps = ["liquide-desktop"]       # apps that stay on the virtual desktop
 shell_as_window = false                   # show dock/status bar as separate native windows
+forward_notifications = true              # forward remote notifications to client native notifications
+forward_tray_icons = true                 # forward remote tray icons to client system tray
+dnd_enabled = true                        # drag-and-drop between local and remote windows
+dnd_max_payload_mb = 50                   # max DnD payload size
+
+[seamless.taskbar]
+show_app_icons = true                     # app icons in client taskbar
+show_progress = true                      # progress bar overlays
+group_by_app = true                       # group windows by app_id
+generate_desktop_entries = true           # create .desktop files for seamless apps (Linux)
+jump_list_recent_files = 10               # number of recent files in jump lists (Windows)
+
+[seamless.notifications]
+forward = true
+urgency_threshold = "low"                 # forward notifications at this urgency or above
+sound = "native"                          # "native" (client sound), "remote" (server sound), "none"
+max_concurrent = 5                        # max visible notifications before stacking
 ```
 
 ### Notifications
@@ -4876,6 +5279,561 @@ background_timeout_min = 480             # 8 hours background
 
 ---
 
+## 16a) Session Recording & Replay
+
+Session recording captures the entire visual, audio, and metadata content of a remote desktop session into a structured file for later playback, compliance auditing, incident investigation, helpdesk support, and training.
+
+### Recording Architecture
+
+```
+liquid-session
+├── Compositor → Frame buffer (post-composite, pre-encode)
+│                    │
+│                    ▼
+│              ┌──────────────────┐
+│              │  Recording Tap   │ ◄── zero-copy: reads from same DMA buffer
+│              │  (optional,      │     as the encoder. No re-composite.
+│              │   per-session)   │
+│              └────────┬─────────┘
+│                       │
+│                       ▼
+│              ┌──────────────────┐
+│              │  Recording       │ AV1 low-bitrate encode (dedicated encoder
+│              │  Encoder         │ instance, not shared with live stream).
+│              └────────┬─────────┘     Alternatively: same codec as live
+│                       │               stream with separate quality settings.
+│                       ▼
+│              ┌──────────────────┐
+│              │  Recording       │
+│              │  Muxer (.lqr)   │ ◄── writes to disk or streams to
+│              └────────┬─────────┘     recording storage backend
+│                       │
+│                       ▼
+│              ┌──────────────────┐
+│              │  Storage Backend │ local disk / NFS / S3 / SFTP
+│              └──────────────────┘
+│
+├── Input Worker ──► Recording Tap (input events interleaved)
+├── Audio Worker ──► Recording Tap (audio frames interleaved)
+├── Clipboard ──► Recording Tap (clipboard events, optionally redacted)
+└── Session Events ──► Recording Tap (window open/close, app launch, login/logout)
+```
+
+The recording tap is a **passive observer** — it reads from the compositor's output buffer after compositing but independently of the live encoding pipeline. This means:
+- **No performance impact on the live session** beyond the recording encoder's CPU cost (isolated to its own thread / cgroup budget).
+- **Recording can use a different codec or quality** than the live stream (e.g., AV1 for better compression at archival bitrate).
+- **Recording can be started/stopped at any time** without disrupting the session.
+
+### Recording Format (`.lqr`)
+
+LiquiDE recordings use a custom container format (`.lqr` — LiquiDE Recording) that stores multiplexed video, audio, metadata, and event streams with full seeking support.
+
+#### Container Structure
+
+```
+┌─────────────────────────────────────────────┐
+│ LQR File Header                              │
+│   magic: "LQR\x01"                          │
+│   version: u16                               │
+│   created_at: u64 (Unix timestamp µs)        │
+│   duration_us: u64                           │
+│   session_id: String                         │
+│   user: String (or "[redacted]")             │
+│   server: String                             │
+│   resolution: (u32, u32)                     │
+│   recording_policy: String                   │
+│   encryption: EncryptionInfo                 │
+├─────────────────────────────────────────────┤
+│ Stream Directory                             │
+│   stream[0]: video  (codec, dimensions, fps) │
+│   stream[1]: audio  (codec, sample_rate, ch) │
+│   stream[2]: input  (event log)              │
+│   stream[3]: clipboard (event log)           │
+│   stream[4]: session_events (event log)      │
+│   stream[5]: annotations (text markers)      │
+├─────────────────────────────────────────────┤
+│ Seek Index                                   │
+│   Keyframe positions at 10-second intervals  │
+│   Event stream byte offsets per keyframe     │
+├─────────────────────────────────────────────┤
+│ Interleaved Packets                          │
+│   [stream_id: u8] [timestamp_us: u64]        │
+│   [payload_len: u32] [payload: bytes]        │
+│   ...                                        │
+├─────────────────────────────────────────────┤
+│ Trailer                                      │
+│   Final seek index copy (for append-mode)    │
+│   SHA-256 integrity hash of all packets      │
+│   Digital signature (optional, Ed25519)      │
+└─────────────────────────────────────────────┘
+```
+
+#### Stream Details
+
+| Stream | Codec / Format | Default Settings | Notes |
+|--------|---------------|-----------------|-------|
+| Video | AV1 (SVT-AV1, CRF 35) | 1080p, 10 fps capture (adaptive: higher during activity) | Keyframe every 10s. Resolution follows session. |
+| Audio | Opus, 48 kHz mono | 32 kbps | Both playback and capture (if enabled) mixed into single stream. |
+| Input | CBOR event log | All keyboard/mouse/touch events | Timestamps relative to recording start. |
+| Clipboard | CBOR event log | Clipboard offers + content (text only; images optionally redacted) | Redaction policy configurable. |
+| Session Events | CBOR event log | Window create/destroy, app launch/exit, resize, focus changes | Non-PII metadata. |
+| Annotations | CBOR list of `{timestamp, author, text}` | Admin or automated annotations (e.g., "DLP violation detected") | Added during recording or post-hoc. |
+
+#### Adaptive Frame Rate
+
+The recording encoder uses adaptive frame capture to minimize storage:
+
+| Session Activity | Capture FPS | Notes |
+|-----------------|------------|-------|
+| Active input (typing, mouse movement) | 10–15 fps | Sufficient for compliance review |
+| Window transitions / animations | Up to 30 fps | Captures transient UI states |
+| Idle (no input, no damage) | 0.5 fps (1 frame every 2s) | Proves screen state, minimal storage |
+| Full-screen video playback | 5 fps | Reduces redundancy (user is watching, not acting) |
+
+Typical storage: **50–200 MB per hour** at 1080p with adaptive capture.
+
+### Recording Modes
+
+| Mode | Trigger | User Notification | Privacy | Use Case |
+|------|---------|------------------|---------|----------|
+| **Policy-enforced** | Always-on per policy | Mandatory persistent indicator in status bar + session start banner | Highest compliance burden | Financial services, healthcare, government |
+| **Admin-initiated** | Admin starts recording via `liquidctl` or Manager UI | Mandatory indicator appears when recording starts | Admin audit trail | Incident investigation, suspected misuse |
+| **User-initiated** | User starts recording from session menu | Self-recording, no indicator needed | User owns recording | Self-training, demo creation, bug reports |
+| **Support-initiated** | Helpdesk triggers recording during remote assistance | Mandatory indicator + consent dialog | Combined admin+user consent | Support session documentation |
+
+### Privacy & Consent
+
+#### Notification Requirements
+
+| Recording Mode | Status Bar Indicator | Session Start Banner | Consent Dialog | Audio Announcement |
+|---------------|---------------------|--------------------|-----------------|--------------------|
+| Policy-enforced | Red dot + "Recording" text, always visible, cannot be hidden | "This session is being recorded per organizational policy" | None (consent implicit in employment/usage agreement) | Optional (configurable) |
+| Admin-initiated | Red dot + "Recording" text, appears when started | None | Optional (configurable: `require_consent = true`) | None |
+| User-initiated | Green dot + "Recording" (self-indicator only) | None | None | None |
+| Support-initiated | Red dot + "Recording" + "Support recording active" | None | Required consent dialog with accept/decline | None |
+
+#### Recording Indicator Protocol
+
+The server sends a control message to the client when recording state changes:
+
+```
+RecordingStateChanged {
+    recording: bool,
+    mode: "policy" | "admin" | "user" | "support",
+    initiated_by: String (user ID, or "policy"),
+    started_at: u64 (timestamp),
+    indicator_dismissable: bool (false for policy/admin/support),
+}
+```
+
+The client MUST render the recording indicator. The indicator cannot be removed by the user for non-user-initiated recordings. The client spec (spec-client.md) defines the visual rendering of the indicator.
+
+#### Data Redaction
+
+Administrators can configure what data is included or redacted in recordings:
+
+| Data Type | Redaction Option | Default | Notes |
+|-----------|-----------------|---------|-------|
+| Screen video | Cannot redact (purpose of recording) | Included | — |
+| Audio playback | `redact_audio_playback` | Included | Muted in recording if redacted |
+| Audio capture (mic) | `redact_audio_capture` | **Redacted** | Microphone audio excluded by default |
+| Keyboard input log | `redact_keyboard` | Included (events only, not keystrokes displayed on screen) | For compliance: which keys were pressed |
+| Mouse input log | `redact_mouse` | Included | Click positions and movement |
+| Clipboard content | `redact_clipboard_content` | **Redacted** (offers logged, content omitted) | Content may contain passwords/PII |
+| Clipboard offers | `redact_clipboard_offers` | Included | MIME types only, no content |
+| Window titles | `redact_window_titles` | Included | May reveal document names |
+| Application names | `redact_app_names` | Included | Which apps were used |
+
+### Recording Storage
+
+#### Storage Backends
+
+| Backend | Configuration | Use Case | Notes |
+|---------|--------------|----------|-------|
+| Local filesystem | `path = "/var/lib/liquide/recordings/"` | Single-server | Simplest. Use with log rotation. |
+| NFS / shared filesystem | `path = "/mnt/recordings/"` | Multi-server with shared storage | Standard NFS mount. |
+| S3-compatible object store | `s3_bucket`, `s3_prefix`, `s3_region`, `s3_endpoint` | Cloud / large-scale | Streaming upload. Multipart. |
+| SFTP | `sftp_host`, `sftp_path`, `sftp_user`, `sftp_key` | Secure transfer to archive | Uploads after recording ends. |
+
+#### Retention Policy
+
+```toml
+[recording.retention]
+max_age_days = 90                    # auto-delete recordings older than this
+max_storage_gb = 500                 # total storage cap (oldest deleted first)
+archive_after_days = 30              # move to cold storage after 30 days
+archive_backend = "s3"               # cold storage backend
+legal_hold_tag = "hold"              # recordings tagged "hold" are never auto-deleted
+```
+
+#### Encryption at Rest
+
+Recordings are encrypted at rest using AES-256-GCM:
+
+| Component | Key Source |
+|-----------|-----------|
+| Per-recording data encryption key (DEK) | Random 256-bit key generated at recording start |
+| Key encryption key (KEK) | Derived from server master key or HSM |
+| Key wrapping | DEK encrypted with KEK, stored in `.lqr` header |
+| Integrity | SHA-256 over all packets + Ed25519 signature (optional) |
+
+The server master key is configured in `[recording.encryption]`. HSM/KMS integration is supported for enterprise deployments.
+
+### Playback
+
+#### Playback Methods
+
+| Method | Implementation | Features |
+|--------|---------------|----------|
+| `liquidctl recording play <file>` | CLI player, opens in LiquiDE client | Full playback with seek, speed control, event overlay |
+| Manager UI built-in player | Web-based player in `liquid-manager` | Streaming playback, no download needed, annotations |
+| Export to MP4 | `liquidctl recording export <file> --format mp4` | Standard video for sharing outside LiquiDE ecosystem |
+| Third-party player (exported) | Standard MP4/MKV | Video only, no event overlay |
+
+#### Playback Features
+
+- **Seek**: Jump to any timestamp (keyframe-based, <500ms seek time).
+- **Speed control**: 0.25x – 8x playback speed.
+- **Event overlay**: Toggle display of keyboard inputs, mouse clicks (visual ripple), clipboard events, window events as translucent overlay.
+- **Timeline markers**: Annotations shown as markers on the timeline scrubber.
+- **Search**: Text search through keyboard input log and window title events.
+- **Screenshot extraction**: Export individual frames as PNG.
+- **Audit trail**: Playback access is logged (who viewed which recording, when).
+
+### Recording Configuration
+
+```toml
+[recording]
+enabled = false                      # master switch
+mode = "policy"                      # policy, admin-only, user-only, disabled
+storage_backend = "local"            # local, s3, sftp
+storage_path = "/var/lib/liquide/recordings/"
+
+[recording.video]
+codec = "av1"                        # av1, h264, vp9
+crf = 35                             # quality (lower = better, more storage)
+max_fps = 15                         # max capture frame rate
+adaptive_fps = true                  # reduce FPS during idle
+resolution = "session"               # "session" (match session) or "720p", "1080p"
+
+[recording.audio]
+include_playback = true              # record session audio output
+include_capture = false              # record microphone input (default: off)
+codec = "opus"
+bitrate_kbps = 32
+
+[recording.redaction]
+redact_audio_capture = true
+redact_clipboard_content = true
+redact_keyboard = false
+redact_mouse = false
+redact_window_titles = false
+
+[recording.retention]
+max_age_days = 90
+max_storage_gb = 500
+archive_after_days = 30
+archive_backend = "local"
+
+[recording.encryption]
+enabled = true
+method = "aes-256-gcm"
+key_source = "config"                # config, hsm, kms
+# master_key = "..."                 # only if key_source = "config"
+
+[recording.notification]
+show_indicator = true                # cannot be false for policy/admin modes
+show_session_banner = true
+audio_announcement = false
+consent_required = false             # for admin-initiated recordings
+```
+
+### Recording Policy Keys
+
+Recording integrates with the formal policy engine (§15):
+
+| Policy Key | Type | Resolution | Description |
+|------------|------|-----------|-------------|
+| `recording.enabled` | bool | `deny_overrides` | Whether recording is active for this scope |
+| `recording.mode` | enum | `highest_precedence` | Recording mode: `policy`, `admin-only`, `user-only` |
+| `recording.include_audio` | bool | `deny_overrides` | Include audio in recording |
+| `recording.include_clipboard` | bool | `deny_overrides` | Include clipboard content |
+| `recording.max_retention_days` | int | `min` | Maximum retention (lower wins for compliance) |
+| `recording.allow_user_download` | bool | `deny_overrides` | Allow users to download their own recordings |
+| `recording.require_consent` | bool | `deny_overrides` (deny = require) | Require consent dialog for admin recordings |
+
+### Recording Audit Events
+
+| Event | Level | Fields |
+|-------|-------|--------|
+| `recording.started` | `info` | `session_id`, `mode`, `initiated_by`, `recording_id` |
+| `recording.stopped` | `info` | `session_id`, `recording_id`, `duration_seconds`, `file_size_bytes` |
+| `recording.consent_granted` | `info` | `session_id`, `user`, `recording_id` |
+| `recording.consent_denied` | `warn` | `session_id`, `user`, `recording_id` (recording not started) |
+| `recording.playback` | `info` | `recording_id`, `viewer_user`, `access_method` |
+| `recording.exported` | `info` | `recording_id`, `exported_by`, `format` |
+| `recording.deleted` | `info` | `recording_id`, `deleted_by`, `reason` (retention/manual) |
+| `recording.retention_purge` | `info` | `count`, `total_bytes_freed`, `oldest_age_days` |
+
+---
+
+## 16b) Remote Assistance & Shadow Sessions
+
+Remote assistance allows administrators, helpdesk agents, or invited users to observe and optionally interact with another user's live session, with explicit consent flows and full audit trails.
+
+### Terminology
+
+| Term | Definition |
+|------|-----------|
+| **Owner** | The user who owns the session being observed |
+| **Observer** | The assisting party (admin, helpdesk, invited peer) |
+| **Shadow session** | An observer's view-only or interactive connection to the owner's session |
+| **Consent** | Explicit owner approval for an observer to join |
+| **Escalation** | Upgrading an observer from view-only to interactive control |
+
+### Assistance Modes
+
+| Mode | Observer Capabilities | Owner Visibility | Consent Required | Use Case |
+|------|----------------------|-----------------|-----------------|----------|
+| **View-only** | See screen + audio. No input. | Sees observer cursor (ghost). Indicator in status bar. | Yes (default) | Support diagnosis, training observation |
+| **Interactive** | Full input (keyboard, mouse). Owner input also active (shared control). | Sees two cursors (owner = primary, observer = ghost). Indicator. | Yes (explicit escalation consent) | Hands-on support, pair programming |
+| **Exclusive control** | Full input. Owner input temporarily blocked (can reclaim). | Full-screen notification "Remote control active". | Yes (separate consent) | Critical troubleshooting requiring uninterrupted control |
+| **Stealth observation** | See screen. No indicator shown to owner. | None (owner unaware). | **Admin policy only** — no user consent. Audit-logged. | Compliance monitoring, insider threat investigation |
+
+Stealth observation is a sensitive capability. It is:
+- **Disabled by default** in the server configuration.
+- Requires explicit `assistance.stealth_enabled = true` in server config.
+- Requires the observer to have the `stealth_observe` permission (typically restricted to security/compliance roles).
+- **Every second** of stealth observation is audit-logged with the observer identity.
+- Subject to legal requirements in many jurisdictions — admin is warned at enable time.
+
+### Assistance Flow
+
+#### Standard Request Flow (Observer-Initiated)
+
+```
+Observer (Admin/Helpdesk)                    Server                     Owner (User)
+        │                                       │                          │
+        │  ── AssistanceRequest ──────────────►  │                          │
+        │     {target_session, mode: "view",     │                          │
+        │      reason: "Ticket #1234"}           │                          │
+        │                                       │  ── ConsentPrompt ────►  │
+        │                                       │     {observer_name,       │
+        │                                       │      observer_role,       │
+        │                                       │      mode: "view",        │
+        │                                       │      reason, timeout: 60s}│
+        │                                       │                          │
+        │                                       │  ◄── ConsentResponse ──  │
+        │                                       │     {accepted: true}      │
+        │                                       │                          │
+        │  ◄── AssistanceGranted ──────────────  │                          │
+        │     {shadow_session_id, token}         │                          │
+        │                                       │                          │
+        │  ═══ Shadow connection established ═══════════════════════════   │
+        │  (Observer receives live frame stream) │  (Indicator appears)    │
+```
+
+#### Owner-Initiated Request (Invite)
+
+```
+Owner (User)                            Server                     Observer (Invited)
+     │                                       │                          │
+     │  ── AssistanceInvite ──────────────►  │                          │
+     │     {invite_code_length: 6,           │                          │
+     │      mode: "interactive",             │                          │
+     │      expires_in: 300s}                │                          │
+     │                                       │                          │
+     │  ◄── InviteCreated ─────────────────  │                          │
+     │     {code: "A3X-9K2",                │                          │
+     │      url: "https://remote/assist/..."}│                          │
+     │                                       │                          │
+     │  (Owner shares code via phone/chat)   │                          │
+     │                                       │                          │
+     │                                       │  ◄── JoinWithCode ─────  │
+     │                                       │     {code: "A3X-9K2"}    │
+     │                                       │                          │
+     │  (No consent dialog — owner initiated)│                          │
+     │                                       │                          │
+     │  ═══ Shadow connection established ═══════════════════════════   │
+```
+
+#### Escalation Flow (View → Interactive)
+
+```
+Observer                                Server                     Owner
+     │                                       │                          │
+     │  ── EscalationRequest ─────────────►  │                          │
+     │     {mode: "interactive"}              │                          │
+     │                                       │  ── EscalationPrompt ──► │
+     │                                       │     {"Observer requests    │
+     │                                       │      keyboard+mouse       │
+     │                                       │      control. Allow?"}    │
+     │                                       │                          │
+     │                                       │  ◄── EscalationResponse  │
+     │                                       │     {accepted: true}      │
+     │                                       │                          │
+     │  ◄── EscalationGranted ─────────────  │                          │
+     │     (Observer can now send input)      │  (Indicator updates)    │
+```
+
+### Observer Capabilities & Limits
+
+| Capability | View-Only | Interactive | Exclusive | Stealth |
+|-----------|-----------|------------|-----------|---------|
+| See screen | Yes | Yes | Yes | Yes |
+| Hear audio | Yes (configurable) | Yes | Yes | Yes (configurable) |
+| Move mouse | Ghost cursor only (visual indicator, no server-side effect) | Yes | Yes | No cursor |
+| Keyboard input | No | Yes | Yes | No |
+| Clipboard access | No | Read-only | Read/write | No |
+| File transfer | No | No (separate permission) | No (separate permission) | No |
+| Request control escalation | Yes (→ interactive) | Yes (→ exclusive) | N/A | No |
+| Observer cursor visible to owner | Yes (ghost) | Yes (ghost, different color) | Yes (replaces owner cursor) | No |
+| Status bar indicator | Yes | Yes | Yes (+ full-screen banner) | No |
+| Max concurrent observers | 5 (configurable) | 2 | 1 | 3 |
+| Recording integration | Observer join/leave logged | Input attributed to observer | Input attributed | Stealth audit log |
+
+### Observer Cursor
+
+When multiple users interact with the same session, each user's cursor is distinguished:
+
+| Cursor | Appearance | Label |
+|--------|-----------|-------|
+| Owner | Normal system cursor | None |
+| Observer (view-only) | Translucent ghost cursor (50% opacity), accent-colored ring | Observer display name |
+| Observer (interactive) | Solid cursor with colored ring (different color per observer) | Observer display name |
+| Observer (exclusive) | Normal cursor (owner cursor hidden) | "Remote Control" label |
+
+Cursor rendering follows the design language in spec-design.md. Ghost cursors use `mix-blend-mode: screen` and are rendered as a CSS-styled overlay.
+
+### Chat Channel
+
+During a remote assistance session, a **text chat channel** is available between the owner and observers:
+
+- Messages are sent over a dedicated reliable data channel (part of the assistance session, not the main session channels).
+- Chat is displayed as a small floating panel (glass-themed, anchored to bottom-right, resizable).
+- Chat history is persisted for the duration of the assistance session.
+- Chat messages are logged in the audit trail.
+- Optionally included in session recordings.
+
+### Assistance Protocol Messages
+
+| Message | Direction | Fields |
+|---------|-----------|--------|
+| `AssistanceRequest` | Observer → Server | `target_session_id`, `mode`, `reason`, `observer_credentials` |
+| `ConsentPrompt` | Server → Owner | `observer_name`, `observer_role`, `mode`, `reason`, `timeout_seconds` |
+| `ConsentResponse` | Owner → Server | `accepted`, `restrictions` (e.g., "view-only, no audio") |
+| `AssistanceGranted` | Server → Observer | `shadow_session_id`, `token`, `capabilities` |
+| `AssistanceDenied` | Server → Observer | `reason` ("declined", "timeout", "policy") |
+| `AssistanceInvite` | Owner → Server | `mode`, `expires_seconds`, `max_uses` |
+| `InviteCreated` | Server → Owner | `code`, `url`, `expires_at` |
+| `JoinWithCode` | Observer → Server | `code`, `observer_identity` |
+| `EscalationRequest` | Observer → Server | `target_mode` |
+| `EscalationPrompt` | Server → Owner | `observer_name`, `target_mode` |
+| `EscalationResponse` | Owner → Server | `accepted` |
+| `EscalationGranted` | Server → Observer | `new_capabilities` |
+| `AssistanceEnd` | Any → Server | `reason` ("observer_left", "owner_revoked", "timeout", "admin_terminated") |
+| `ChatMessage` | Any ↔ Any | `sender`, `text`, `timestamp` |
+| `AnnotationAdd` | Observer → Server | `text`, `timestamp` (annotation on recording timeline) |
+| `OwnerReclaimControl` | Owner → Server | (immediately revokes exclusive control) |
+
+### Assistance Consent UI
+
+The consent dialog rendered on the owner's session:
+
+```
+┌──────────────────────────────────────────────────────┐
+│                    Remote Assistance                  │
+│                                                      │
+│    ┌────┐                                            │
+│    │ 👤 │  Alex (Helpdesk Agent)                    │
+│    └────┘  requests to VIEW your session.            │
+│                                                      │
+│    Reason: "Investigating ticket #1234 — reported    │
+│    printing issue"                                   │
+│                                                      │
+│    They will be able to:                             │
+│    ✓ See your screen                                 │
+│    ✓ See your audio output                           │
+│    ✗ Control your keyboard or mouse                  │
+│    ✗ Access your clipboard                           │
+│                                                      │
+│    ┌──────────┐  ┌──────────┐  ┌─────────────────┐  │
+│    │  Allow   │  │  Deny    │  │  Allow (this     │  │
+│    │          │  │          │  │  time, 30 min)  │  │
+│    └──────────┘  └──────────┘  └─────────────────┘  │
+│                                                      │
+│    This request expires in 45 seconds                │
+└──────────────────────────────────────────────────────┘
+```
+
+If the owner does not respond within the timeout (default: 60s), the request is automatically denied.
+
+### Assistance Configuration
+
+```toml
+[assistance]
+enabled = true
+max_concurrent_observers = 5         # per session
+invitation_expiry_seconds = 300      # invite code expiry
+consent_timeout_seconds = 60         # auto-deny after timeout
+
+[assistance.modes]
+view_only = true                     # allow view-only shadow
+interactive = true                   # allow interactive (shared control)
+exclusive = true                     # allow exclusive control
+stealth = false                      # stealth observation (DISABLED by default)
+
+[assistance.stealth]
+# Only effective if stealth = true above
+enabled = false
+required_role = "security_admin"     # role required to initiate stealth
+audit_interval_seconds = 1           # audit log entry frequency
+max_duration_minutes = 60            # hard time limit per stealth session
+legal_notice = "Stealth observation may be subject to legal requirements in your jurisdiction."
+
+[assistance.permissions]
+helpdesk_can_request = true          # helpdesk role can initiate requests
+admin_can_force = false              # admin can bypass consent (NOT recommended)
+user_can_invite = true               # users can create invite codes
+
+[assistance.recording]
+auto_record = true                   # auto-start recording when assistance begins
+include_chat = true                  # include chat messages in recording
+```
+
+### Assistance Policy Keys
+
+| Policy Key | Type | Resolution | Description |
+|------------|------|-----------|-------------|
+| `assistance.enabled` | bool | `deny_overrides` | Allow remote assistance |
+| `assistance.allow_interactive` | bool | `deny_overrides` | Allow interactive mode |
+| `assistance.allow_exclusive` | bool | `deny_overrides` | Allow exclusive control |
+| `assistance.stealth_enabled` | bool | `deny_overrides` | Allow stealth observation |
+| `assistance.auto_record` | bool | `deny_overrides` (deny = always record) | Auto-record assistance sessions |
+| `assistance.user_can_invite` | bool | `deny_overrides` | Allow users to generate invite codes |
+| `assistance.max_observers` | int | `min` | Max simultaneous observers |
+
+### Assistance Audit Events
+
+| Event | Level | Fields |
+|-------|-------|--------|
+| `assistance.requested` | `info` | `observer`, `target_session`, `mode`, `reason` |
+| `assistance.consent_granted` | `info` | `owner`, `observer`, `mode`, `restrictions` |
+| `assistance.consent_denied` | `info` | `owner`, `observer`, `mode` |
+| `assistance.consent_timeout` | `info` | `owner`, `observer` |
+| `assistance.started` | `info` | `shadow_session_id`, `observer`, `target_session`, `mode` |
+| `assistance.escalated` | `warn` | `shadow_session_id`, `observer`, `from_mode`, `to_mode` |
+| `assistance.owner_reclaimed` | `info` | `shadow_session_id`, `observer` |
+| `assistance.ended` | `info` | `shadow_session_id`, `reason`, `duration_seconds` |
+| `assistance.stealth_started` | `warn` | `observer`, `target_session`, `justification` |
+| `assistance.stealth_active` | `info` | `observer`, `target_session` (every `audit_interval_seconds`) |
+| `assistance.stealth_ended` | `warn` | `observer`, `target_session`, `duration_seconds` |
+| `assistance.chat_message` | `debug` | `shadow_session_id`, `sender`, `text_length` |
+| `assistance.invite_created` | `info` | `owner`, `code_hash`, `mode`, `expires_at` |
+| `assistance.invite_used` | `info` | `code_hash`, `observer`, `owner` |
+
+---
+
 ## 17) Observability & Operations
 
 ### Metrics (Prometheus)
@@ -5612,6 +6570,7 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 
 ### vNext
 - Web client (WebRTC) — see [spec-web-client.md](spec-web-client.md).
+- Mobile clients (iOS, Android) — see [spec-mobile.md](spec-mobile.md).
 - Camera passthrough.
 - USB redirection.
 - RDP compatibility layer.
@@ -5622,6 +6581,10 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 - Plugin SDK and documentation.
 - Session supervisor process model.
 - BSOD crash screen (client-rendered).
+- Session recording & replay (compliance).
+- Remote assistance / shadow sessions.
+- Seamless app streaming (full per-OS taskbar, tray, notifications, DnD).
+- GPU Server Mode (first-class profile with VRAM budgeting, encoder integration).
 
 ### Codec Legal & Packaging Policy
 
@@ -5999,6 +6962,80 @@ A release may proceed if:
 - Verify custom scrubbing patterns (`additional_patterns`) are applied.
 - Verify bundle size < 10 MB without coredump.
 
+### Session Recording & Replay
+- Verify recording starts automatically when `recording.enabled = true` and mode is `policy`.
+- Verify recording indicator (red dot) appears in status bar for policy/admin recordings and cannot be hidden.
+- Verify recording indicator does NOT appear for stealth observation (server does not send indicator).
+- Verify `.lqr` file contains all streams: video, audio, input, clipboard, session events, annotations.
+- Verify seek index allows seeking to any 10-second interval within 500ms.
+- Verify adaptive frame rate: 10–15 fps during typing, 0.5 fps during idle, up to 30 fps during transitions.
+- Verify recording storage: local filesystem, S3, SFTP backends all write successfully.
+- Verify encryption at rest: `.lqr` file is AES-256-GCM encrypted with DEK wrapped by KEK.
+- Verify Ed25519 digital signature on `.lqr` file validates correctly.
+- Verify data redaction: clipboard content excluded when `redact_clipboard_content = true`.
+- Verify data redaction: audio capture excluded by default.
+- Verify playback: `liquidctl recording play` opens client with seek, speed control, event overlay.
+- Verify export: `liquidctl recording export --format mp4` produces valid MP4.
+- Verify retention: recordings older than `max_age_days` are automatically purged.
+- Verify legal hold: recordings tagged with `legal_hold_tag` are never auto-deleted.
+- Verify consent dialog: admin-initiated recording with `require_consent = true` shows consent dialog.
+- Verify consent denied: recording does not start when user declines.
+- Verify recording audit events: `recording.started`, `recording.stopped`, `recording.playback` emitted.
+- Verify playback audit: accessing a recording logs viewer identity and timestamp.
+- Verify recording does not degrade live session performance (< 5% CPU overhead).
+- Verify policy key `recording.enabled` with `deny_overrides` resolution.
+
+### Remote Assistance & Shadow Sessions
+- Verify observer-initiated request: `AssistanceRequest` triggers `ConsentPrompt` on owner session.
+- Verify consent dialog: shows observer name, role, mode, reason, and timeout countdown.
+- Verify consent timeout: request auto-denied after `consent_timeout_seconds` (default 60s).
+- Verify consent granted: observer receives live frame stream within 2 seconds.
+- Verify view-only mode: observer can see screen but input events are rejected by server.
+- Verify interactive mode: observer keyboard and mouse events are accepted and merged with owner input.
+- Verify exclusive control: owner input is blocked, observer has full control. Owner can reclaim via `OwnerReclaimControl`.
+- Verify ghost cursor: observer cursor appears as translucent overlay with name label on owner screen.
+- Verify escalation: view-only → interactive requires separate consent prompt and acceptance.
+- Verify invite code: owner generates code, observer uses `JoinWithCode`, connection established without consent dialog.
+- Verify invite expiry: code expires after `invitation_expiry_seconds`.
+- Verify max observers: connection rejected when `max_concurrent_observers` exceeded.
+- Verify chat channel: text messages flow bidirectionally between owner and observer(s).
+- Verify stealth observation: disabled by default. When enabled, no indicator shown to owner. Audit log entry every second.
+- Verify stealth requires role: observer without `stealth_observe` permission is rejected.
+- Verify assistance auto-records when `assistance.recording.auto_record = true`.
+- Verify all audit events: `assistance.requested`, `assistance.consent_granted`, `assistance.started`, `assistance.escalated`, `assistance.ended`.
+- Verify stealth audit events: `assistance.stealth_started` (warn), `assistance.stealth_active` (info, per-second), `assistance.stealth_ended`.
+- Verify recording includes observer input attribution (which events came from observer vs owner).
+
+### Seamless App Streaming (Extended)
+- Verify per-OS taskbar integration: Windows (taskbar button with thumbnail), macOS (Dock icon with window activation), Linux (xdg_toplevel with `app_id`).
+- Verify window grouping by app: multiple windows from same `app_id` grouped in taskbar.
+- Verify system tray forwarding: remote `StatusNotifierItem` creates native tray icon on client.
+- Verify tray icon context menu: `seamless_tray_menu_action` triggers correct action on server.
+- Verify notification forwarding: remote D-Bus notification appears as native OS notification on client.
+- Verify notification action: clicking action button on client notification sends `seamless_notification_action` to server.
+- Verify drag-and-drop: local file dropped on seamless window triggers file upload.
+- Verify drag-and-drop: remote text dragged from seamless window can be dropped into local app.
+- Verify window type mapping: dialog windows, popups, tooltips mapped to correct native types per platform.
+- Verify multi-monitor seamless: windows can be moved between client monitors with correct DPI scaling.
+- Verify seamless + external keyboard: keyboard shortcut Ctrl+C/V works across local and remote context.
+
+### GPU Server Mode
+- Verify GPU detection: Vulkan physical device enumeration succeeds on machines with GPU.
+- Verify auto-profile selection: `gpu-full` selected when HW encoder is available.
+- Verify `cpu-only` fallback: session starts successfully when no GPU present.
+- Verify GPU compositing: Vulkan compute shader pipeline composites surfaces correctly (pixel-compare with CPU path).
+- Verify zero-copy: DMA-BUF import from Wayland client → Vulkan → encoder without CPU readback.
+- Verify VAAPI encoding: H.264 hardware encode produces valid bitstream.
+- Verify NVENC encoding: H.264/H.265 hardware encode via NVENC SDK.
+- Verify encoder fallback: software encoder used when HW encoder session limit reached.
+- Verify VRAM budget: session respects `vram_budget_mb` (reject allocations beyond).
+- Verify VRAM exhaustion recovery: caches evicted, quality reduced, eventually falls back to CPU.
+- Verify GPU error recovery: `VK_ERROR_DEVICE_LOST` triggers device reset and GPU resource re-creation.
+- Verify GPU metrics: `liquide_gpu_vram_used_bytes`, `liquide_gpu_encode_time_seconds`, `liquide_gpu_fallback_total` emitted.
+- Verify GPU SLOs: input-to-photon p50 <10ms on LAN with GPU mode.
+- Verify GPU sharing: multiple sessions on same GPU (MPS or time-slice) operate concurrently without corruption.
+- Verify policy key `gpu.mode` controls GPU profile selection.
+
 ---
 
 ## 25) Failure Modes & Mishap Hardening
@@ -6337,7 +7374,8 @@ The crash screen is **never** streamed as encoded video frames from the server. 
 
 - **Client**:
   - `LiquidClient` — native client for Windows/macOS/Linux (see [spec-client.md](spec-client.md)).
-  - Optional web client.
+  - Web client (see [spec-web-client.md](spec-web-client.md)).
+  - Mobile clients — iOS and Android (see [spec-mobile.md](spec-mobile.md)).
 
 - **Gateway**:
   - `liquid-gateway` — NAT traversal gateway (see [spec-gateway.md](spec-gateway.md)).
@@ -6353,6 +7391,8 @@ The crash screen is **never** streamed as encoded video frames from the server. 
   - Troubleshooting playbook.
   - API reference.
   - Plugin development guide.
+  - GPU server mode deployment guide.
+  - Mobile client deployment guide (MDM configuration, App Store / Play Store distribution).
 
 - **Plugin SDK**:
   - `liquide-plugin-sdk` — Rust crate for developing WASM plugins.
@@ -6361,6 +7401,22 @@ The crash screen is **never** streamed as encoded video frames from the server. 
 - **Crash Reporting**:
   - Crash report format specification.
   - Crash collection and analysis tooling.
+
+- **Session Recording**:
+  - `.lqr` recording format specification.
+  - `liquidctl recording` CLI tooling (play, export, list, manage).
+  - Recording storage backend integrations (local, S3, SFTP).
+  - Manager UI recording browser and player.
+
+- **Remote Assistance**:
+  - Shadow session protocol implementation.
+  - Consent flow UI components (client-rendered).
+  - Chat channel implementation.
+  - Invite code system.
+
+- **Mobile Shared Library**:
+  - `libmobileclient` — shared Rust core library for iOS (.xcframework) and Android (.so).
+  - UniFFI binding generation for Swift and Kotlin.
 
 ---
 

@@ -43,6 +43,9 @@ liquide/
 │   ├── liquide-gateway/            # gateway binary (liquid-gateway)
 │   ├── liquide-client/             # client binary (liquidclient)
 │   ├── liquide-client-renderer/    # client-side rendering (wgpu/softbuffer)
+│   ├── liquide-mobile-core/        # shared Rust library for mobile clients (iOS + Android)
+│   ├── liquide-recording/          # session recording engine (.lqr format, muxer, storage backends)
+│   ├── liquide-assistance/         # remote assistance / shadow session engine
 │   ├── liquide-manager/            # management web UI backend
 │   ├── liquide-manager-frontend/   # management web UI frontend (static assets)
 │   ├── liquide-ctl/                # CLI tool binary (liquidctl)
@@ -158,6 +161,12 @@ The crate dependency graph flows from shared libraries to binaries:
     │liquide-client  │  │liquide-ctl     │  │liquide-manager│
     │ (binary)       │  │ (binary)        │ │ (binary)      │
     └────────────────┘  └────────────────┘  └──────────────┘
+
+    ┌──────────────────┐  ┌───────────────────┐  ┌──────────────────┐
+    │liquide-mobile-   │  │liquide-recording  │  │liquide-assistance│
+    │core (lib, iOS/   │  │ (library)         │  │ (library)        │
+    │Android)          │  │                   │  │                  │
+    └──────────────────┘  └───────────────────┘  └──────────────────┘
 ```
 
 ### Key Shared Crate: `liquide-protocol`
@@ -195,7 +204,16 @@ Both server and client depend on this crate, ensuring protocol compatibility is 
 | `aarch64-unknown-linux-gnu` | 2 | Linux ARM64 client. CI build. |
 | `aarch64-pc-windows-msvc` | 2 | Windows ARM64 client. CI build. |
 
-### 4.3 Tier Definitions
+### 4.3 Mobile Client Targets
+
+| Target Triple | Platform | Tier | Notes |
+|--------------|----------|------|-------|
+| `aarch64-apple-ios` | iOS / iPadOS | 1 | Mobile core library (.xcframework). Full CI. |
+| `aarch64-apple-ios-sim` | iOS Simulator | 1 | Simulator build for CI testing. |
+| `aarch64-linux-android` | Android ARM64 | 1 | Mobile core library (.so). Full CI. |
+| `x86_64-linux-android` | Android x86_64 | 2 | Emulator build. CI smoke test. |
+
+### 4.5 Tier Definitions
 
 | Tier | Build in CI | Tests in CI | Release Artifact | Support Level |
 |------|------------|------------|-----------------|---------------|
@@ -203,7 +221,7 @@ Both server and client depend on this crate, ensuring protocol compatibility is 
 | **Tier 2** | Yes (every PR) | Build + basic smoke test | Yes | Best-effort, bugs are P2 |
 | **Tier 3** | Nightly only | Build only | No | Community-supported |
 
-### 4.4 Build Profiles
+### 4.6 Build Profiles
 
 ```toml
 # Cargo.toml workspace [profile] section
@@ -268,6 +286,8 @@ opt-level = 1                        # some optimization for fuzzing speed
 | `serde` / `toml` | Config parsing | Pin major version |
 | `zbus` | D-Bus communication | Pin major version |
 | `nix` | Linux syscall wrappers | Pin major version |
+| `uniffi` | FFI bindings (mobile: Swift/Kotlin) | Pin minor version |
+| `ash` | Vulkan bindings (GPU server mode) | Pin minor version |
 
 ### 5.3 `cargo-deny` Configuration
 
