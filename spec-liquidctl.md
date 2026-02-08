@@ -536,6 +536,57 @@ Benchmark a specific encoder.
 
 ---
 
+### `liquidctl usb`
+
+Manage USB device forwarding.
+
+#### `liquidctl usb status`
+
+```
+$ liquidctl usb status
+
+USB/IP Subsystem: enabled
+  Active forwards:   3 devices across 2 sessions
+  Bandwidth:         12 Mbps total
+
+Per-Session:
+  s-001 (alice):     2 devices (USB drive, YubiKey)
+  s-002 (bob):       1 device (printer)
+```
+
+#### `liquidctl usb list`
+
+List USB devices forwarded in a session.
+
+```
+$ liquidctl usb list --session s-001
+
+Session s-001 (alice):
+  ID       VID:PID      Class           Device Name              Status
+  usb-01   0781:5583    mass-storage    SanDisk Ultra USB 3.0    connected
+  usb-02   1050:0407    security-key    YubiKey 5 NFC            connected
+```
+
+#### `liquidctl usb disconnect <session-id> <device-id>`
+
+Disconnect a forwarded USB device.
+
+```
+$ liquidctl usb disconnect s-001 usb-01
+Disconnect USB device usb-01 (SanDisk Ultra USB 3.0) from session s-001? [y/N] y
+Device usb-01 disconnected. Safely ejected.
+```
+
+Options:
+- `--confirm` — skip interactive confirmation.
+- `--force` — force disconnect without safe eject.
+
+#### `liquidctl usb disconnect-all <session-id>`
+
+Disconnect all forwarded USB devices from a session.
+
+---
+
 ### `liquidctl logs`
 
 View and manage logs.
@@ -555,13 +606,79 @@ $ liquidctl logs tail --level info
 Options:
 - `--level <level>` — filter by log level.
 - `--session <id>` — filter by session.
-- `--subsystem <name>` — filter by subsystem (session, transport, encoder, etc.).
+- `--subsystem <name>` — filter by subsystem (server, session, auth, render, encode, transport, audio, clipboard, usb, input, policy, metrics, audit).
 - `--since <time>` — show logs since a time.
 - `--follow` — stay attached and stream new logs.
 
 #### `liquidctl logs search <pattern>`
 
 Search historical logs.
+
+```
+$ liquidctl logs search "login_failure" --since 24h --subsystem auth
+
+2025-01-15 09:12:44  WARN  [auth] login_failure user=unknown IP=198.51.100.99 reason=invalid_password
+2025-01-15 09:12:47  WARN  [auth] login_failure user=unknown IP=198.51.100.99 reason=invalid_password
+2025-01-15 09:12:49  WARN  [auth] login_failure user=unknown IP=198.51.100.99 reason=invalid_password
+2025-01-15 09:12:49  WARN  [auth] rate_limit_lockout IP=198.51.100.99 duration=600s
+```
+
+Options:
+- `--subsystem <name>` — filter by subsystem.
+- `--session <id>` — filter by session correlation ID.
+- `--since <time>` — time range start.
+- `--until <time>` — time range end.
+- `--limit <n>` — max entries.
+
+#### `liquidctl logs config`
+
+View and modify per-subsystem log levels at runtime.
+
+```
+$ liquidctl logs config
+
+Log Subsystems:
+  Subsystem     Level    Log File
+  server        info     /var/log/liquidde/server.log
+  session       info     /var/log/liquidde/session.log
+  auth          info     /var/log/liquidde/auth.log
+  render        warn     /var/log/liquidde/render.log
+  encode        warn     /var/log/liquidde/encode.log
+  transport     info     /var/log/liquidde/transport.log
+  audio         warn     /var/log/liquidde/audio.log
+  clipboard     info     /var/log/liquidde/clipboard.log
+  usb           info     /var/log/liquidde/usb.log
+  input         warn     /var/log/liquidde/input.log
+  policy        info     /var/log/liquidde/policy.log
+  metrics       warn     /var/log/liquidde/metrics.log
+  audit         info     /var/log/liquidde/audit.log (immutable)
+
+General:
+  Format:       json
+  Base dir:     /var/log/liquidde
+  Max file:     100 MB
+  Rotation:     10 files, compressed
+  Syslog:       disabled
+```
+
+#### `liquidctl logs level <subsystem> <level>`
+
+Change log level for a subsystem at runtime (hot-reload, no restart).
+
+```
+$ liquidctl logs level render debug
+Set render log level to debug.
+Configuration reloaded.
+```
+
+#### `liquidctl logs rotate`
+
+Force log rotation for all or specific subsystems.
+
+```
+$ liquidctl logs rotate --subsystem auth
+Rotated auth.log → auth.log.1.gz
+```
 
 ---
 

@@ -283,9 +283,31 @@ timeout_sec = 10
 ### Transport Security
 - All connections (client ↔ gateway, gateway ↔ server) use TLS 1.3.
 - Certificate management:
-  - ACME/Let's Encrypt for public gateways.
+  - **ACME/Let's Encrypt** (automatic):
+    - Gateway can automatically obtain and renew TLS certificates via ACME protocol.
+    - Supports HTTP-01 and TLS-ALPN-01 challenge types.
+    - Auto-renewal before expiry (configurable threshold, default: 30 days before).
+    - Staging environment support for testing.
+    - Multiple domain names and SANs supported.
   - Enterprise PKI.
   - Self-signed with fingerprint verification.
+- Auto TLS configuration:
+  ```toml
+  [tls]
+  acme_enabled = true
+  acme_provider = "letsencrypt"        # letsencrypt, letsencrypt-staging, zerossl, custom
+  acme_domain = "gateway.example.com"
+  acme_email = "admin@example.com"
+  acme_challenge = "tls-alpn-01"       # http-01, tls-alpn-01
+  acme_renew_before_days = 30
+  acme_http_listen = "0.0.0.0:80"     # only for http-01 challenge
+  acme_additional_domains = []         # SANs
+  min_tls_version = "1.3"
+
+  # Manual certificate (used when acme_enabled = false)
+  cert = "/etc/liquid-gateway/cert.pem"
+  key = "/etc/liquid-gateway/key.pem"
+  ```
 
 ### Server Authentication
 - Servers must authenticate to register with the gateway.
@@ -310,6 +332,121 @@ timeout_sec = 10
   - Policy enforcement actions.
 - Log format: structured JSON.
 - Export: file, syslog, or webhook.
+
+### Intrusion Prevention (fail2ban Integration)
+- Gateway emits structured authentication events for fail2ban monitoring.
+- **Built-in fail2ban jails** ship with the gateway:
+  - `liquid-gateway-auth` — ban IPs after repeated client authentication failures.
+  - `liquid-gateway-brute` — ban IPs attempting rapid connection attempts.
+  - `liquid-gateway-scan` — ban IPs probing service ports without valid protocol.
+- Jail configuration (shipped as `/etc/fail2ban/jail.d/liquid-gateway.conf`):
+  ```ini
+  [liquid-gateway-auth]
+  enabled = true
+  filter = liquid-gateway-auth
+  logpath = /var/log/liquid-gateway/auth.log
+  maxretry = 5
+  findtime = 600
+  bantime = 3600
+
+  [liquid-gateway-brute]
+  enabled = true
+  filter = liquid-gateway-brute
+  logpath = /var/log/liquid-gateway/auth.log
+  maxretry = 20
+  findtime = 60
+  bantime = 86400
+
+  [liquid-gateway-scan]
+  enabled = true
+  filter = liquid-gateway-scan
+  logpath = /var/log/liquid-gateway/gateway.log
+  maxretry = 3
+  findtime = 60
+  bantime = 86400
+  ```
+- Built-in rate limiting (independent of fail2ban):
+  - Configurable per-IP connection rate limits.
+  - Progressive delay after failed authentication.
+  - Automatic IP blocking after threshold.
+
+### Service Obfuscation
+- The gateway supports hiding its identity from network scanners and unauthorized probes.
+- **Protocol obfuscation**:
+  - Connection attempts without a valid protocol header receive no response (silent drop).
+  - Configurable banner/identification:
+    - `default` — identifies as liquid-gateway.
+    - `minimal` — returns only protocol version.
+    - `hidden` — no identification; unknown clients get connection reset.
+    - `custom` — administrator-defined response.
+  - TLS SNI validation: only accept connections for configured domain names.
+- **Port knocking** (optional):
+  - Client must send a specific packet sequence before the gateway accepts connections.
+  - Sequence shared as part of the client profile.
+- **Fingerprint reduction**:
+  - TLS certificate does not include product-specific fields.
+  - Server timing responses randomized.
+  - Error responses are generic.
+- Configuration:
+  ```toml
+  [security.obfuscation]
+  service_banner = "hidden"            # default, minimal, hidden, custom
+  custom_banner = ""
+  silent_drop_unknown = true
+  sni_validation = true                # reject connections with wrong SNI
+  allowed_sni_domains = ["gateway.example.com"]
+  port_knocking_enabled = false
+  port_knocking_sequence = [7331, 8442, 9553]
+  port_knocking_timeout_sec = 10
+  timing_randomization = true
+  fingerprint_reduction = true
+  ```
+
+### Extensive Logging
+The gateway has a comprehensive logging system:
+
+#### Log Subsystems
+
+| Subsystem | Log File | Contents |
+|-----------|----------|----------|
+| `gateway` | `gateway.log` | Gateway lifecycle, config changes, listener events |
+| `auth` | `auth.log` | Client & server authentication attempts, failures, bans |
+| `routing` | `routing.log` | Routing decisions, server selection, load balancing |
+| `relay` | `relay.log` | Relay session events, bandwidth, connection splicing |
+| `server-reg` | `server-reg.log` | Server registration, deregistration, health checks |
+| `health` | `health.log` | Health check results, server status changes |
+| `audit` | `audit.log` | Security events (immutable, append-only) |
+
+#### Log Configuration
+```toml
+[logging]
+base_dir = "/var/log/liquid-gateway"
+format = "json"                        # json, text, syslog
+max_file_size_mb = 100
+max_files = 10
+compress_rotated = true
+syslog_enabled = false
+syslog_facility = "local1"
+syslog_address = "127.0.0.1:514"
+
+[logging.levels]
+gateway = "info"
+auth = "info"
+routing = "info"
+relay = "warn"
+server_reg = "info"
+health = "warn"
+audit = "info"
+```
+
+#### Log Features
+- **Correlation IDs**: every log entry includes a connection ID and session ID.
+- **Structured fields**: all entries are key-value structured, not free-form text.
+- **Log rotation**: automatic rotation by size with configurable retention.
+- **Syslog forwarding**: RFC 5424 syslog support.
+- **Webhook forwarding**: send log events to external systems via HTTP webhook.
+- **Audit log immutability**: append-only with HMAC integrity verification.
+- **Sensitive data redaction**: tokens, keys, and credentials are never logged.
 
 ---
 
@@ -344,9 +481,15 @@ tls_key = "/etc/liquid-gateway/key.pem"
 # ─── TLS ────────────────────────────────────────────────────
 [tls]
 acme_enabled = true
+acme_provider = "letsencrypt"
 acme_domain = "gateway.example.com"
 acme_email = "admin@example.com"
+acme_challenge = "tls-alpn-01"
+acme_renew_before_days = 30
 min_tls_version = "1.3"
+# Manual certificate (when acme_enabled = false)
+cert = "/etc/liquid-gateway/cert.pem"
+key = "/etc/liquid-gateway/key.pem"
 
 # ─── Authentication ─────────────────────────────────────────
 [auth]
@@ -417,6 +560,46 @@ webhook_url = ""
 [metrics]
 prometheus_enabled = true
 prometheus_listen = "127.0.0.1:9101"
+
+# ─── Security ─────────────────────────────────────────────
+[security]
+rate_limit_enabled = true
+rate_limit_max_attempts = 5
+rate_limit_window_sec = 300
+rate_limit_lockout_sec = 600
+progressive_delay = true
+
+[security.obfuscation]
+service_banner = "hidden"            # default, minimal, hidden, custom
+custom_banner = ""
+silent_drop_unknown = true
+sni_validation = true                # reject connections with wrong SNI
+allowed_sni_domains = ["gateway.example.com"]
+port_knocking_enabled = false
+port_knocking_sequence = [7331, 8442, 9553]
+port_knocking_timeout_sec = 10
+timing_randomization = true
+fingerprint_reduction = true
+
+# ─── Logging ──────────────────────────────────────────────
+[logging]
+base_dir = "/var/log/liquid-gateway"
+format = "json"                        # json, text, syslog
+max_file_size_mb = 100
+max_files = 10
+compress_rotated = true
+syslog_enabled = false
+syslog_facility = "local1"
+syslog_address = "127.0.0.1:514"
+
+[logging.levels]
+gateway = "info"
+auth = "info"
+routing = "info"
+relay = "warn"
+server_reg = "info"
+health = "warn"
+audit = "info"
 
 # ─── Management API ────────────────────────────────────────
 [management_api]

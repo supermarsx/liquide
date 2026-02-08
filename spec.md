@@ -126,11 +126,14 @@ Main Thread (Orchestrator)
 Worker Thread Pool
 ├── Render Workers (1–N) — compositing, rasterization, effects
 ├── Encode Workers (1–N per codec) — frame encoding
-├── Transport Workers — packet assembly, send/receive
+├── Transport Workers — packet assembly, send/receive, channel mux
 ├── Input Worker — keyboard, mouse, touch event processing
-├── Audio Worker — bidirectional audio mixing/capture
-├── Media Worker — camera, USB passthrough
+├── Audio Worker — bidirectional audio mixing/capture (dedicated channel)
+├── Clipboard Worker — clipboard sync (dedicated channel)
+├── USB/IP Worker — USB device forwarding (dedicated channel, disabled by default)
+├── Media Worker — camera passthrough
 ├── Policy Engine — evaluates client/server policy rules
+├── Logging Worker — async structured log writing
 └── Metrics Worker — telemetry collection, stream analysis
 ```
 
@@ -178,8 +181,13 @@ The main thread **never** performs blocking work. It runs an async event loop (t
 Client Input → Transport → Input Worker → Compositor
 Compositor → Render Workers → Frame Graph → Damage Tracker
 Damage Tracker → Encode Workers → Transport Workers → Client
-Audio (bidirectional) ←→ Audio Worker ←→ Transport
-Camera/USB ←→ Media Worker ←→ Transport
+
+Dedicated Channels:
+  Audio (bidirectional) ←→ Audio Worker ←→ Transport [audio channel]
+  Clipboard ←→ Clipboard Worker ←→ Transport [clipboard channel]
+  USB/IP ←→ USB/IP Worker ←→ Transport [usb channel]
+  Camera ←→ Media Worker ←→ Transport [video channel]
+  Cursor ←→ separate cursor channel (out-of-band)
 ```
 
 ---
@@ -232,6 +240,36 @@ Camera/USB ←→ Media Worker ←→ Transport
 - Subpixel rendering configurable (may be disabled for remote to avoid codec artifacts).
 - Font hinting modes: none, slight, medium, full.
 
+### Client-Assisted Font Rendering
+- The server can **offload font rendering to the client** whenever the client supports it.
+- Instead of rasterizing text into pixels on the server, the server sends:
+  - Font data (or font references if the client has the font locally).
+  - Glyph IDs, positions, sizes, colors, and shaping results.
+  - Layout metadata (line breaks, text direction, decorations).
+- The client rasterizes text locally using its own GPU or CPU, producing **pixel-perfect, sharp text** at the client's native DPI with no codec artifacts.
+- Benefits:
+  - **Eliminates text compression artifacts** — text is never encoded through a lossy video codec.
+  - **Reduces bandwidth** — glyph data is far smaller than pixel data for text-heavy content.
+  - **Perfect subpixel rendering** — client renders with its native subpixel layout.
+  - **DPI independence** — text re-renders cleanly at any scale without server involvement.
+- Font offload modes:
+  - `auto` (default) — offload when client supports it and bandwidth savings are significant.
+  - `always` — always offload text rendering to client.
+  - `never` — always server-render text (traditional mode).
+  - `hybrid` — offload static/UI text, server-render dynamic/application text.
+- Font synchronization:
+  - Server sends a font manifest at session start listing required fonts.
+  - Client reports which fonts it has locally.
+  - Missing fonts are transferred once and cached on the client.
+  - Font cache is persistent across sessions (configurable max size).
+- Configurable in `server.toml`:
+  ```toml
+  [offload]
+  font_rendering = "auto"         # auto, always, never, hybrid
+  font_cache_max_mb = 200         # max font cache size on client
+  font_sync_on_connect = true     # sync fonts at connection time
+  ```
+
 ### "Liquid Glass" Rendering Without Melting the CPU
 
 #### 1. Blur Caching
@@ -271,7 +309,30 @@ Camera/USB ←→ Media Worker ←→ Transport
 - When wallpaper is disabled, glass surfaces use a configurable solid tint.
 - Wallpaper changes invalidate the cache and trigger a one-time recompute.
 
-#### 5. Partial Caches for Static Regions
+#### 5. Client-Side Wallpaper Caching
+- The server can instruct the client to **cache wallpaper assets locally**.
+- On connection, the server sends a wallpaper manifest (hash, dimensions, last modified).
+- If the client already has the wallpaper cached, no transfer is needed — the client confirms the hash.
+- If the wallpaper has changed, the server sends the new wallpaper once; the client caches it persistently.
+- The client composites the cached wallpaper locally behind glass surfaces, reducing server-side render cost and bandwidth.
+- Fully configurable behavior:
+  ```toml
+  [performance]
+  wallpaper_client_cache = "auto"     # auto, always, never
+  wallpaper_client_cache_max_mb = 500 # max local wallpaper cache size
+  wallpaper_client_composite = true   # client composites wallpaper behind glass
+  wallpaper_client_blur = true        # client computes wallpaper blur locally
+  wallpaper_cache_ttl_days = 30       # expire cached wallpapers after N days
+  wallpaper_preload_on_connect = true # send wallpaper during connection handshake
+  ```
+- Cache modes:
+  - `auto` (default) — cache on client when bandwidth savings are significant (wallpaper size > threshold).
+  - `always` — always cache on client regardless of size.
+  - `never` — server always renders wallpaper, no client caching.
+- The client wallpaper cache persists across sessions and across server reconnections.
+- Cache eviction: LRU with configurable max size. Expired entries purged automatically.
+
+#### 6. Partial Caches for Static Regions
 - **Status bars**, dock backgrounds, and other rarely-changing regions maintain cached rasterizations.
 - Cache hit: blit from cache (nearly free).
 - Cache invalidation: only on content change (clock tick, notification badge, etc.).
@@ -281,7 +342,7 @@ Camera/USB ←→ Media Worker ←→ Transport
   - `disabled` — always re-render (useful for debugging or specific use cases).
   - `level:<N>` — set cache aggressiveness (1 = minimal caching, 5 = aggressive caching).
 
-#### 6. Animation Policy
+#### 7. Animation Policy
 - Default animations are **event-driven** (input/transition) rather than constant.
 - Frame rate caps for UI-only animation (e.g., 30 fps) while cursor/input stays responsive.
 - Idle state: 1–2 fps or pure "only-on-change" mode.
@@ -496,8 +557,9 @@ Camera/USB ←→ Media Worker ←→ Transport
   - **Cursor rendering**: client draws cursor locally (already default).
   - **Window chrome**: server sends window geometry + theme data, client renders chrome locally.
   - **Simple animations**: server sends animation parameters, client interpolates.
-  - **Text rendering**: server sends glyph data + positions, client rasterizes.
-- Offload level configurable: `none`, `cursor-only` (default), `chrome`, `full`.
+  - **Text rendering**: server sends glyph data + positions, client rasterizes (see §6 Client-Assisted Font Rendering).
+  - **Full offload**: all UI chrome and text rendered client-side, only application content streamed.
+- Offload level configurable: `none`, `cursor-only` (default), `chrome`, `text`, `full`.
 - Reduces bandwidth and improves perceived latency for UI elements.
 
 ### Benchmarks on Start
@@ -519,45 +581,146 @@ Camera/USB ←→ Media Worker ←→ Transport
 ### Audio
 - **Playback** (server → client): PulseAudio/PipeWire virtual sink captures server audio.
 - **Microphone** (client → server): client captures mic, sends to virtual source on server.
-- Audio codecs: Opus (default), AAC, raw PCM (LAN mode).
+- **Audio can be entirely disabled** for lightweight mode — no audio threads, no audio processing, no bandwidth usage.
+
+#### Audio Codecs
+| Codec | Type | Notes |
+|-------|------|-------|
+| **Opus** | Lossy | Default. Best quality/latency balance for voice and music. 6–510 kbps. |
+| **AAC** (LC, HE, HEv2) | Lossy | Wide compatibility. Good for music at higher bitrates. |
+| **MP3** (LAME) | Lossy | Legacy compatibility. Decode-only on server, full on client. |
+| **Vorbis** (OGG) | Lossy | Open, good quality. Alternative to AAC. |
+| **FLAC** | Lossless | LAN mode or high-fidelity requirements. |
+| **ALAC** | Lossless | Apple ecosystem compatibility. |
+| **PCM** (raw) | Uncompressed | LAN/localhost mode. Zero latency, high bandwidth. |
+| **G.711 (μ-law/A-law)** | Lossy | Narrowband voice. Ultra-low CPU. |
+| **G.722** | Lossy | Wideband voice. Low CPU, good for voice-only. |
+| **Speex** | Lossy | Legacy voice codec. Low CPU. |
+| **WMA** | Lossy | Windows ecosystem compatibility. |
+
+- Codec selection per direction (playback/microphone can use different codecs).
+- Codec auto-negotiation based on content type:
+  - Voice detected → low-bitrate voice codec (Opus voice mode, G.722).
+  - Music/media detected → high-quality codec (Opus music mode, AAC, FLAC).
+  - Silence detected → codec pauses, zero bandwidth.
+
+#### Audio Configuration
 - Configurable:
   - Sample rate (8kHz – 48kHz).
-  - Channels (mono, stereo, 5.1).
-  - Bitrate.
+  - Channels (mono, stereo, 5.1, 7.1).
+  - Bitrate (per direction).
   - Buffer size / latency target.
-- Audio transport can use a dedicated channel (separate from video) for independent QoS.
+  - Codec preference order.
+- Audio transport uses a **dedicated channel** (separate from video) for independent QoS.
 - Mute/volume controls exposed to both client and server policies.
+- **Disable audio entirely**:
+  ```toml
+  [audio]
+  enabled = false                    # disables all audio subsystem
+  ```
+  When disabled, no audio threads are started, no virtual sinks are created, and no audio bandwidth is consumed.
 
 ### Camera / Webcam Passthrough
 - Client webcam forwarded to a virtual V4L2 device on the server.
 - Server applications see a standard camera.
-- Encoding: MJPEG or H.264 for camera stream.
+- Encoding: MJPEG or H.264 for camera stream (negotiated).
 - Resolution and FPS negotiated between client capability and server policy.
 - Privacy: camera passthrough requires explicit client approval per session.
+- **Fully configurable on both sides**:
+  - Server policy controls whether camera passthrough is allowed, per user/group.
+  - Client controls which camera device to share and when.
+  - Either side can disable at any time during the session.
+  - Configuration:
+    ```toml
+    # Server-side (server.toml)
+    [camera]
+    passthrough_enabled = false           # server allows camera passthrough
+    max_resolution = "1920x1080"
+    max_fps = 30
+    allowed_codecs = ["mjpeg", "h264"]
+    default_codec = "mjpeg"
+    require_client_approval = true        # client must explicitly approve
 
-### USB Device Redirection
-- USB devices on the client can be forwarded to the server.
+    # Client-side (config.toml)
+    [camera]
+    passthrough_enabled = false           # client allows camera passthrough
+    device = "auto"
+    resolution = "auto"
+    fps = 30
+    auto_enable_on_connect = false        # never auto-enable, always ask
+    preview_before_share = true           # show preview before sharing
+    ```
+
+### USB Device Redirection (USB/IP)
+- USB devices on the client can be forwarded to the server via a **USB/IP-based protocol**.
+- **Disabled by default** — must be explicitly enabled in server configuration.
+- **Runs as its own dedicated thread** — USB/IP processing is fully isolated from the render/encode pipeline:
+  - Dedicated USB Worker thread handles device enumeration, attach/detach, data transfer.
+  - Uses a **dedicated transport channel** (separate from video, audio, clipboard).
+  - Thread can be disabled entirely when USB redirection is off (zero overhead).
 - Supports:
   - Storage devices (USB drives, SD cards).
   - Printers.
   - Smart card readers.
-  - Generic USB devices (via USB/IP-style protocol).
+  - Security keys (FIDO2/U2F).
+  - Generic USB devices (via USB/IP protocol).
+  - Composite devices (multi-function).
+- USB/IP implementation:
+  - Compatible with Linux kernel `usbip` protocol for device import/export.
+  - Client runs USB/IP device server, server runs USB/IP client (VHCI).
+  - Encrypted channel — USB data tunneled through the session's transport encryption.
+  - Latency-sensitive devices (smart cards, security keys) get priority scheduling.
 - Policy-controlled:
   - Whitelist/blacklist by VID/PID.
+  - Whitelist/blacklist by device class.
   - Per-user permissions.
-  - Audit logging of device attach/detach.
+  - Per-group permissions.
+  - Audit logging of device attach/detach and data transfer statistics.
+- Configuration:
+  ```toml
+  [usb]
+  enabled = false                      # disabled by default
+  transport_channel = "dedicated"      # dedicated, shared
+  allowed_device_classes = ["mass-storage", "printer", "smartcard", "security-key"]
+  allowed_vid_pid = []                 # empty = allow all (when enabled)
+  blocked_vid_pid = []
+  max_devices_per_session = 5
+  max_bandwidth_mbps = 50              # per-session USB bandwidth cap
+  audit_log = true
+  ```
 
 ---
 
 ## 11) Clipboard & Data Channels
 
-### Clipboard Types
+### Dedicated Transport Channels
+LiquidDE uses **separate, dedicated transport channels** for different data types. Each channel operates independently with its own QoS, priority, and flow control:
+
+| Channel | Priority | Reliability | Notes |
+|---------|----------|-------------|-------|
+| **Control** | Highest | Reliable | Session control, auth, keepalives |
+| **Input** | Highest | Reliable | Keyboard, mouse, touch events |
+| **Cursor** | High | Unreliable (latest-wins) | Cursor position, shape updates |
+| **Video** | Medium | Semi-reliable | Encoded frames, tiles |
+| **Clipboard** | Medium | Reliable | Clipboard sync data |
+| **Audio** | Medium | Unreliable (jitter-buffered) | Playback and microphone streams |
+| **USB** | Low-Medium | Reliable | USB/IP device data |
+| **File Transfer** | Low | Reliable | File uploads/downloads |
+
+- Each channel can use a different transport if hybrid transport is enabled.
+- Channels can be independently enabled/disabled without affecting others.
+- Bandwidth allocation is configurable per channel with priority-based scheduling.
+- Channel multiplexing: all channels can share a single transport connection (QUIC streams) or use separate connections.
+
+### Clipboard Channel
+
+#### Clipboard Types
 - **Text** (UTF-8) — default, always enabled.
 - **Rich text** (HTML/RTF) — optional.
 - **Images** — optional (size limit configurable).
 - **File list** — optional (maps to file transfer channel).
 
-### Clipboard Policy Engine
+#### Clipboard Policy Engine
 Configurable per session/user/group with extensive options:
 
 - **Direction control**:
@@ -596,11 +759,43 @@ Configurable per session/user/group with extensive options:
 - Relative and absolute mode.
 - High-precision scroll (smooth scrolling).
 - Button forward: all buttons including back/forward.
-- **Cursor fluidity** — see [spec-client.md](spec-client.md) §7 for cursor settings.
+- **Cursor fluidity** — see [spec-client.md](spec-client.md) §7 for cursor settings, including the dual cursor mode (local dot + server-authoritative position).
 
-### Touch (future)
-- Gestures mapped to shell actions.
-- Pinch-to-zoom mapped to scaling.
+### Touch & Tablet Support
+- **Full touchscreen input forwarding**: touch events from the client are forwarded to the server as native touch events.
+- Gestures mapped to shell actions:
+  - Swipe up from bottom — open app launcher.
+  - Swipe down from top — notification shade.
+  - Three-finger swipe — workspace switch.
+  - Pinch-to-zoom — mapped to Ctrl+scroll or native zoom (configurable).
+  - Long press — right-click.
+  - Two-finger tap — right-click (alternative).
+- **Pen/stylus support**: pressure, tilt, and button events forwarded for drawing applications.
+- Multi-touch events forwarded with full touch point tracking (up to 10 simultaneous points).
+
+### Tablet Mode (Server-Side)
+- **Disabled by default** — must be explicitly enabled.
+- When enabled, the DE adapts its layout for touch-friendly operation:
+  - Larger hit targets (minimum 56×56px, up from 44×44px).
+  - On-screen keyboard auto-shows when text input is focused.
+  - Dock switches to a tablet-friendly bottom bar with larger icons.
+  - Window management simplifies: windows default to maximized, swipe gestures for switching.
+  - Status bar becomes taller (40px) with larger touch areas.
+  - App launcher uses a grid layout with larger icons.
+  - Notification shade becomes swipe-accessible.
+- Tablet mode can be toggled at runtime without session restart.
+- Tablet mode CSS classes applied to root: `.liquid-tablet-mode`.
+- Configuration:
+  ```toml
+  [tablet_mode]
+  enabled = false                      # disabled by default
+  auto_detect = false                  # auto-enable when touch-only client connects
+  on_screen_keyboard = true            # show on-screen keyboard in tablet mode
+  gesture_navigation = true            # enable swipe gestures
+  larger_hit_targets = true            # increase minimum touch target size
+  default_maximized = true             # new windows open maximized
+  dock_style = "tablet"                # tablet, desktop (use desktop dock in tablet mode)
+  ```
 
 ---
 
@@ -672,6 +867,74 @@ Each user session runs in one of:
 - Alt+Tab window switcher optimized for remote (shows live thumbnails if bandwidth allows, else icons).
 - Window animations governed by CSS transitions and effect budget.
 
+### Extensive Window Tiling
+LiquidDE includes a full-featured tiling window manager that coexists with the floating mode:
+
+#### Tiling Layouts
+- **Split horizontal** (side-by-side) — default for 2-window tiling.
+- **Split vertical** (top/bottom).
+- **Quadrant** — 4 equal quadrants, snap windows to any corner.
+- **Three-column** — center master + side columns.
+- **Spiral/Fibonacci** — each new window takes half the remaining space.
+- **Stacking** — tabbed windows within a tile region.
+- **Custom grid** — user-defined row/column layouts with configurable ratios.
+
+#### Tiling Behavior
+- **Mode switching**: toggle between tiling and floating per workspace or globally.
+  - `floating` (default) — traditional free-form window management.
+  - `tiling` — all new windows auto-tile into the active layout.
+  - `hybrid` — manual tiling (snap to tile zones) with floating as default.
+- **Snap zones**: when dragging a window, semi-transparent zone previews appear at screen edges and corners.
+- **Keyboard-driven tiling**:
+  - `Super + Arrow` — tile to half/quarter.
+  - `Super + Enter` — toggle focused window fullscreen within tile.
+  - `Super + Shift + Arrow` — swap tiled window positions.
+  - `Super + [1-9]` — switch tile layout preset.
+  - All shortcuts configurable in `keybindings.toml`.
+- **Resize handles**: drag tile borders to resize adjacent tiles proportionally.
+- **Gap/margin between tiles**: configurable `--liquid-tile-gap` (default: 8px), set to 0 for gapless.
+- **Per-workspace layouts**: each virtual workspace can have a different tiling layout.
+- **Window rules**: per-application rules for tiling behavior:
+  ```toml
+  [[window_rules]]
+  app_id = "firefox"
+  tile_behavior = "tiling"          # tiling, floating, force-floating
+  default_tile_zone = "master"
+
+  [[window_rules]]
+  app_id = "dialog-*"
+  tile_behavior = "force-floating"  # dialogs always float
+  ```
+- **Saved layouts**: save and restore complete tiling arrangements with named presets.
+
+#### Tiling Configuration
+```toml
+[tiling]
+enabled = true
+default_mode = "hybrid"             # floating, tiling, hybrid
+default_layout = "split-horizontal" # split-horizontal, split-vertical, quadrant, three-column, spiral, stacking, custom
+gap = 8                             # pixels between tiles
+outer_gap = 8                       # pixels between tiles and screen edges
+snap_threshold = 32                 # pixels from edge to trigger snap preview
+animate_tile = true                 # animate window tile transitions
+master_ratio = 0.55                 # master window width ratio (for three-column, spiral)
+respect_min_size = true             # respect window minimum size hints
+tiling_indicator = true             # show visual indicator when tiling mode is active
+
+[tiling.custom_grid]
+rows = 2
+columns = 3
+ratios_cols = [0.25, 0.50, 0.25]
+ratios_rows = [0.5, 0.5]
+```
+
+#### Tiling CSS Classes
+- `.liquid-window.tiled` — window in tiled mode.
+- `.liquid-window.tiled.master` — master tile window.
+- `.liquid-tile-preview` — snap zone preview overlay.
+- `.liquid-tile-indicator` — tiling mode indicator.
+- Full CSS reference in [spec-design.md](spec-design.md).
+
 ### Notifications
 - "Stacking" to avoid animation storms.
 - Do-not-disturb mode.
@@ -696,7 +959,61 @@ Each user session runs in one of:
   - PAM.
   - LDAP/AD via PAM.
   - OIDC (optional).
-  - Multi-factor authentication (TOTP).
+  - Multi-factor authentication (see below).
+  - Certificate-based authentication (see below).
+
+#### Multi-Factor Authentication (MFA)
+- **TOTP** (Time-based One-Time Password) — Google Authenticator, Authy, etc.
+- **Hardware security tokens** — FIDO2/U2F (YubiKey, SoloKey, etc.).
+  - WebAuthn protocol for token registration and challenge/response.
+  - Multiple tokens can be registered per user (backup tokens).
+- **Smart card authentication** — PIV/CAC smart cards.
+  - PKCS#11 interface for smart card access.
+  - Certificate-based identity verification.
+  - Supported reader types forwarded via USB/IP when needed.
+- **Platform biometrics** (client-side):
+  - **Windows**: Windows Hello (fingerprint, face recognition, PIN).
+  - **macOS**: Touch ID.
+  - **Linux**: fprintd (fingerprint), polkit integration.
+  - Biometric verification happens on the client; an attestation token is sent to the server.
+  - Server never receives raw biometric data.
+- MFA configuration:
+  ```toml
+  [auth]
+  mfa_enabled = true
+  mfa_required = false                 # true = MFA mandatory for all users
+  mfa_methods = ["totp", "fido2", "smartcard", "biometric"]
+  mfa_grace_period_sec = 0             # seconds before MFA is required after password
+  mfa_remember_device_days = 30        # 0 = always require MFA
+
+  [auth.fido2]
+  relying_party_id = "liquidde.example.com"
+  attestation = "none"                 # none, indirect, direct
+
+  [auth.smartcard]
+  pkcs11_module = "/usr/lib/opensc-pkcs11.so"
+  ca_certificates = ["/etc/liquidde/smartcard-ca.pem"]
+  require_pin = true
+  ```
+
+#### Certificate-Based Authentication
+- Mutual TLS (mTLS) for client authentication.
+- Client presents a certificate signed by a trusted CA.
+- Certificate fields mapped to user identity:
+  - Common Name (CN) → username.
+  - Subject Alternative Names (SAN) → additional identity attributes.
+  - Organization (O) → group membership.
+- Certificate revocation checking: CRL or OCSP.
+- Configuration:
+  ```toml
+  [auth.certificate]
+  enabled = false
+  client_ca_file = "/etc/liquidde/client-ca.pem"
+  crl_file = "/etc/liquidde/crl.pem"
+  ocsp_enabled = false
+  ocsp_responder_url = ""
+  username_field = "CN"                # CN, SAN:email, SAN:upn
+  ```
 
 ### Authorization & Policy Engine
 
@@ -738,6 +1055,111 @@ Policies enforced on the client side:
   - USB device attach/detach.
   - Administrative actions.
 
+### Intrusion Prevention (fail2ban Integration)
+- LiquidDE integrates with **fail2ban** for automated intrusion prevention.
+- Server emits structured authentication events to a log file or syslog that fail2ban can monitor.
+- **Built-in fail2ban jails** ship with the server:
+  - `liquidde-auth` — ban IPs after repeated authentication failures.
+  - `liquidde-brute` — ban IPs attempting rapid connection attempts.
+  - `liquidde-proto` — ban IPs sending malformed protocol messages.
+- Jail configuration (shipped as `/etc/fail2ban/jail.d/liquidde.conf`):
+  ```ini
+  [liquidde-auth]
+  enabled = true
+  filter = liquidde-auth
+  logpath = /var/log/liquidde/auth.log
+  maxretry = 5
+  findtime = 600
+  bantime = 3600
+  action = iptables-multiport[name=liquidde, port="3389,3390"]
+
+  [liquidde-brute]
+  enabled = true
+  filter = liquidde-brute
+  logpath = /var/log/liquidde/auth.log
+  maxretry = 20
+  findtime = 60
+  bantime = 86400
+
+  [liquidde-proto]
+  enabled = true
+  filter = liquidde-proto
+  logpath = /var/log/liquidde/server.log
+  maxretry = 3
+  findtime = 60
+  bantime = 86400
+  ```
+- Built-in rate limiting (independent of fail2ban):
+  - Configurable max login attempts per IP per time window.
+  - Progressive delay after failed attempts (exponential backoff).
+  - IP lockout duration configurable.
+- Server configuration:
+  ```toml
+  [security]
+  fail2ban_log = "/var/log/liquidde/auth.log"
+  fail2ban_log_format = "syslog"       # syslog, json
+  rate_limit_enabled = true
+  rate_limit_max_attempts = 5
+  rate_limit_window_sec = 300
+  rate_limit_lockout_sec = 600
+  progressive_delay = true
+  ```
+
+### Session Jails (Sandboxing)
+- Each user session can be **jailed** in an isolated environment for security hardening.
+- Jail types:
+  - `none` — no additional isolation (trusts OS user separation).
+  - `namespace` — Linux user/mount/PID/network namespaces for lightweight isolation.
+  - `seccomp` — syscall filtering to restrict session capabilities.
+  - `container` — full container isolation (bubblewrap, systemd-nspawn).
+  - `combined` — namespace + seccomp + limited capabilities.
+- Configurable per user, per group, or globally:
+  ```toml
+  [sessions]
+  jail_type = "namespace"               # none, namespace, seccomp, container, combined
+  jail_allowed_paths = ["/home", "/tmp", "/usr", "/bin", "/lib"]
+  jail_denied_syscalls = ["ptrace", "mount", "reboot"]
+  jail_network = "host"                 # host, isolated, none
+  jail_max_processes = 200
+  jail_max_memory_mb = 4096
+  jail_max_disk_mb = 10240
+  ```
+- Resource limits enforced via cgroups v2:
+  - CPU shares / quota.
+  - Memory limit (hard and soft).
+  - I/O bandwidth limits.
+  - Process count limits.
+
+### Service Obfuscation
+- LiquidDE supports hiding its identity from network scanners and unauthorized probes.
+- **Protocol obfuscation**:
+  - The initial handshake can be disguised to not reveal the service type.
+  - Connection attempts without a valid protocol version header receive no response (silent drop).
+  - Configurable banner/identification:
+    - `default` — identifies as LiquidDE (standard).
+    - `minimal` — returns only a protocol version, no product name.
+    - `hidden` — no identification whatsoever; unknown clients get connection reset.
+    - `custom` — administrator-defined response string.
+- **Port knocking** (optional):
+  - Before the service port accepts connections, the client must send a specific sequence of packets to other ports.
+  - Sequence configurable, shared as part of the connection profile.
+- **Service fingerprint reduction**:
+  - TLS certificate does not include product-specific fields by default.
+  - Server timing responses are randomized to prevent fingerprinting.
+  - Error responses are generic (no stack traces, no version numbers).
+- Configuration:
+  ```toml
+  [security.obfuscation]
+  service_banner = "hidden"            # default, minimal, hidden, custom
+  custom_banner = ""
+  silent_drop_unknown = true           # silently drop non-LiquidDE connections
+  port_knocking_enabled = false
+  port_knocking_sequence = [7331, 8442, 9553]
+  port_knocking_timeout_sec = 10
+  timing_randomization = true
+  fingerprint_reduction = true
+  ```
+
 ---
 
 ## 16) Stream Analysis
@@ -778,6 +1200,69 @@ Policies enforced on the client side:
 - Structured logs (JSON option).
 - Per-session log correlation ID.
 - Configurable log levels per subsystem.
+
+### Extensive Logging System
+LiquidDE has a comprehensive, per-component logging system designed for production debugging, auditing, and monitoring:
+
+#### Log Subsystems
+Each subsystem logs independently with its own configurable log level:
+
+| Subsystem | Log File | Contents |
+|-----------|----------|----------|
+| `server` | `server.log` | Server lifecycle, config changes, listener events |
+| `session` | `session.log` | Session start/stop/resume, user activity |
+| `auth` | `auth.log` | Login attempts, MFA events, cert validation, lockouts |
+| `render` | `render.log` | Compositor events, cache hits/misses, effect budget |
+| `encode` | `encode.log` | Encoder selection, frame timing, bitrate changes |
+| `transport` | `transport.log` | Connection events, transport switches, packet loss |
+| `audio` | `audio.log` | Audio device events, codec negotiation, buffer underruns |
+| `clipboard` | `clipboard.log` | Clipboard sync events (metadata only by default) |
+| `usb` | `usb.log` | Device attach/detach, transfer statistics |
+| `input` | `input.log` | Input device events, layout changes (no keystrokes logged) |
+| `policy` | `policy.log` | Policy evaluation, enforcement actions |
+| `metrics` | `metrics.log` | Periodic metric snapshots |
+| `audit` | `audit.log` | Security-relevant events (immutable, append-only) |
+
+#### Log Configuration
+```toml
+[logging]
+base_dir = "/var/log/liquidde"
+format = "json"                       # json, text, syslog
+max_file_size_mb = 100                # per log file
+max_files = 10                        # rotation count
+compress_rotated = true               # gzip rotated logs
+unified_log = false                   # true = all subsystems to one file
+syslog_enabled = false
+syslog_facility = "local0"
+syslog_address = "127.0.0.1:514"
+
+# Per-subsystem log levels
+[logging.levels]
+server = "info"
+session = "info"
+auth = "info"                          # always at least "info" for security
+render = "warn"
+encode = "warn"
+transport = "info"
+audio = "warn"
+clipboard = "info"
+usb = "info"
+input = "warn"
+policy = "info"
+metrics = "warn"
+audit = "info"                         # always at least "info"
+```
+
+#### Log Features
+- **Correlation IDs**: every log entry includes a session ID and request ID for tracing across subsystems.
+- **Structured fields**: all log entries are key-value structured, not free-form text.
+- **Log rotation**: automatic rotation by size or time with configurable retention.
+- **Compression**: rotated logs compressed with gzip automatically.
+- **Syslog forwarding**: all logs can be forwarded to a remote syslog server (RFC 5424).
+- **Log streaming**: real-time log streaming via `liquidctl logs tail` (see [spec-liquidctl.md](spec-liquidctl.md)).
+- **Audit log immutability**: audit logs are append-only, with HMAC integrity verification.
+- **Sensitive data redaction**: passwords, tokens, and keys are never logged; clipboard content is hashed, not stored.
+- **Performance**: logging is async and uses lock-free buffers — logging never blocks the render/encode pipeline.
 
 ### Admin Tools
 - See [spec-liquidctl.md](spec-liquidctl.md) for the full `liquidctl` CLI specification.
@@ -854,9 +1339,24 @@ allow_plaintext_localhost = true
 [auth]
 provider = "pam"                      # local, pam, ldap, oidc
 mfa_enabled = false
-mfa_provider = "totp"
+mfa_required = false
+mfa_methods = ["totp", "fido2", "smartcard", "biometric"]
+mfa_remember_device_days = 30
 max_login_attempts = 5
 lockout_duration_sec = 300
+
+[auth.certificate]
+enabled = false
+client_ca_file = ""
+username_field = "CN"
+
+[auth.fido2]
+relying_party_id = ""
+attestation = "none"
+
+[auth.smartcard]
+pkcs11_module = ""
+require_pin = true
 
 # ─── Sessions ───────────────────────────────────────────────
 [sessions]
@@ -908,12 +1408,19 @@ congestion_algorithm = "bbr"          # bbr, cubic
 
 # ─── Audio ──────────────────────────────────────────────────
 [audio]
+enabled = true                        # false = disable audio entirely
 playback_enabled = true
 microphone_enabled = true
-codec = "opus"                        # opus, aac, pcm
+default_codec = "opus"                # opus, aac, vorbis, flac, alac, pcm, g711, g722, speex, mp3, wma
+allowed_codecs = ["opus", "aac", "vorbis", "flac", "pcm", "g722"]
+codec_negotiation = "auto"            # auto, fixed
 sample_rate = 48000
-channels = "stereo"
+channels = "stereo"                   # mono, stereo, 5.1, 7.1
 buffer_ms = 20
+playback_bitrate = 128000             # bps
+microphone_bitrate = 64000            # bps
+silence_detection = true              # pause codec on silence
+transport_channel = "dedicated"       # dedicated, shared
 
 # ─── Camera ─────────────────────────────────────────────────
 [camera]
@@ -922,11 +1429,16 @@ max_resolution = "1280x720"
 max_fps = 30
 codec = "mjpeg"
 
-# ─── USB ────────────────────────────────────────────────────
+# ─── USB/IP ──────────────────────────────────────────────────
 [usb]
+enabled = false                       # disabled by default
 redirection_enabled = false
+transport_channel = "dedicated"       # dedicated, shared
+allowed_device_classes = ["mass-storage", "printer", "smartcard", "security-key"]
 allowed_vid_pid = []                  # empty = allow all (when enabled)
 blocked_vid_pid = []
+max_devices_per_session = 5
+max_bandwidth_mbps = 50
 audit_log = true
 
 # ─── Clipboard ──────────────────────────────────────────────
@@ -946,7 +1458,10 @@ listen = "0.0.0.0:3389"
 
 # ─── Client Rendering Offload ──────────────────────────────
 [offload]
-level = "cursor-only"                 # none, cursor-only, chrome, full
+level = "cursor-only"                 # none, cursor-only, chrome, text, full
+font_rendering = "auto"              # auto, always, never, hybrid
+font_cache_max_mb = 200
+font_sync_on_connect = true
 
 # ─── Gateway ────────────────────────────────────────────────
 [gateway]
@@ -954,6 +1469,51 @@ enabled = false
 gateway_url = ""
 reverse_connect = false
 registration_token = ""
+
+# ─── Tiling ────────────────────────────────────────────────
+[tiling]
+enabled = true
+default_mode = "hybrid"
+default_layout = "split-horizontal"
+gap = 8
+outer_gap = 8
+master_ratio = 0.55
+
+# ─── Tablet Mode ───────────────────────────────────────────
+[tablet_mode]
+enabled = false
+auto_detect = false
+on_screen_keyboard = true
+gesture_navigation = true
+
+# ─── Security ──────────────────────────────────────────────
+[security]
+fail2ban_log = "/var/log/liquidde/auth.log"
+rate_limit_enabled = true
+rate_limit_max_attempts = 5
+rate_limit_window_sec = 300
+
+[security.obfuscation]
+service_banner = "default"
+silent_drop_unknown = false
+port_knocking_enabled = false
+
+# ─── Logging ───────────────────────────────────────────────
+[logging]
+base_dir = "/var/log/liquidde"
+format = "json"
+max_file_size_mb = 100
+max_files = 10
+compress_rotated = true
+syslog_enabled = false
+
+[logging.levels]
+server = "info"
+session = "info"
+auth = "info"
+render = "warn"
+encode = "warn"
+transport = "info"
 
 # ─── Metrics ────────────────────────────────────────────────
 [metrics]

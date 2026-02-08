@@ -883,6 +883,146 @@ When enabled (`prefers-reduced-motion` or DE setting):
 }
 ```
 
+### 7.11 Tiling
+
+```css
+/* Snap zone preview (shown when dragging a window near an edge/corner) */
+.liquid-tile-preview {
+  position: fixed;
+  background: var(--liquid-tile-preview-bg, rgba(0, 122, 255, 0.15));
+  border: var(--liquid-tile-preview-border, 2px solid var(--liquid-accent));
+  border-radius: var(--liquid-radius);
+  z-index: 900;
+  pointer-events: none;
+  animation: tile-preview-appear var(--liquid-duration-fast) var(--liquid-ease-out);
+}
+
+@keyframes tile-preview-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Tiled window adjustments */
+.liquid-window.tiled {
+  border-radius: var(--liquid-radius-sm);   /* reduced radius when tiled */
+  box-shadow: var(--liquid-shadow-sm);      /* lighter shadow when tiled */
+}
+
+.liquid-window.tiled .titlebar {
+  height: 32px;                              /* slightly shorter titlebar */
+}
+
+/* Tiling mode indicator */
+.liquid-tile-indicator {
+  position: fixed;
+  top: calc(var(--liquid-statusbar-height, 28px) + var(--liquid-space-2));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--liquid-space-1) var(--liquid-space-3);
+  background: var(--liquid-bg-tooltip);
+  backdrop-filter: blur(var(--liquid-glass-blur-light));
+  border: 1px solid var(--liquid-border-subtle);
+  border-radius: var(--liquid-radius-full);
+  font-size: var(--liquid-font-size-xs);
+  color: var(--liquid-text-secondary);
+  z-index: 998;
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+/* Resize handle between tiles */
+.liquid-tile-resize-handle {
+  position: absolute;
+  background: transparent;
+  z-index: 901;
+  cursor: col-resize;   /* or row-resize for horizontal splits */
+}
+
+.liquid-tile-resize-handle:hover {
+  background: var(--liquid-accent);
+  opacity: 0.5;
+}
+```
+
+### 7.12 Tablet Mode
+
+```css
+/* Tablet mode root adjustments */
+.liquid-tablet-mode {
+  --liquid-statusbar-height: var(--liquid-tablet-statusbar-height, 40px);
+  --liquid-dock-icon-size: var(--liquid-tablet-dock-icon-size, 56px);
+}
+
+/* Larger touch targets */
+.liquid-tablet-mode .liquid-btn {
+  min-width: var(--liquid-tablet-min-target, 56px);
+  min-height: var(--liquid-tablet-min-target, 56px);
+  font-size: var(--liquid-font-size-md);
+}
+
+.liquid-tablet-mode .liquid-input {
+  height: 48px;
+  font-size: var(--liquid-font-size-md);
+}
+
+/* Dock in tablet mode */
+.liquid-tablet-mode .liquid-dock {
+  border-radius: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  transform: none;
+  justify-content: space-evenly;
+  padding: var(--liquid-space-2) var(--liquid-space-4);
+}
+
+/* Status bar in tablet mode */
+.liquid-tablet-mode .liquid-status-bar {
+  height: var(--liquid-tablet-statusbar-height, 40px);
+  font-size: var(--liquid-font-size-sm);
+  padding: 0 var(--liquid-space-4);
+}
+
+/* Windows default to maximized in tablet mode */
+.liquid-tablet-mode .liquid-window {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Launcher uses grid layout in tablet mode */
+.liquid-tablet-mode .liquid-launcher {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border-radius: 0;
+}
+
+.liquid-tablet-mode .liquid-launcher .results {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: var(--liquid-space-4);
+  padding: var(--liquid-space-4);
+}
+
+.liquid-tablet-mode .liquid-launcher .app-item {
+  flex-direction: column;
+  text-align: center;
+  padding: var(--liquid-space-3);
+}
+
+.liquid-tablet-mode .liquid-launcher .app-item .app-icon {
+  width: 56px;
+  height: 56px;
+}
+```
+
 ---
 
 ## 8) Iconography
@@ -1065,6 +1205,7 @@ Example — "Flat Minimal" theme (no glass):
 | `.liquid-window.focused` | Focused window |
 | `.liquid-window.maximized` | Maximized window |
 | `.liquid-window.tiled` | Tiled/snapped window |
+| `.liquid-window.tiled.master` | Master tile window |
 | `.liquid-window .titlebar` | Window title bar |
 | `.liquid-window .title` | Window title text |
 | `.liquid-window .window-btn` | Window control button (generic) |
@@ -1072,6 +1213,14 @@ Example — "Flat Minimal" theme (no glass):
 | `.liquid-window .minimize-btn` | Minimize button |
 | `.liquid-window .maximize-btn` | Maximize button |
 | `.liquid-window .content` | Window content area |
+
+#### Tiling
+| Selector | Element |
+|----------|---------|
+| `.liquid-tile-preview` | Snap zone preview overlay (shown when dragging) |
+| `.liquid-tile-indicator` | Tiling mode indicator (shown when tiling is active) |
+| `.liquid-tile-gap` | Gap between tiled windows (styled via `--liquid-tile-gap`) |
+| `.liquid-tile-resize-handle` | Drag handle between adjacent tiles |
 
 #### Status Bar
 | Selector | Element |
@@ -1144,6 +1293,19 @@ Example — "Flat Minimal" theme (no glass):
 | `.liquid-large-text` | Large text mode |
 | `.liquid-performance-minimal` | Reduced effects mode |
 | `.liquid-glass` | Generic glass effect mixin |
+| `.liquid-tablet-mode` | Tablet mode root (applied when tablet mode enabled) |
+
+#### Tablet Mode
+| Selector | Element |
+|----------|---------|
+| `.liquid-tablet-mode` | Root class when tablet mode is active |
+| `.liquid-tablet-mode .liquid-dock` | Dock adapted for touch (larger icons, bottom bar) |
+| `.liquid-tablet-mode .liquid-status-bar` | Taller status bar (40px) with larger touch areas |
+| `.liquid-tablet-mode .liquid-launcher` | Grid layout launcher with larger icons |
+| `.liquid-tablet-mode .liquid-window` | Windows default to maximized |
+| `.liquid-tablet-mode .liquid-btn` | Buttons with larger minimum touch targets (56×56px) |
+| `.liquid-tablet-mode .liquid-input` | Taller input fields for touch |
+| `.liquid-tablet-mode .liquid-notification` | Notifications accessible via swipe gesture |
 
 ### 11.4 Custom Properties Reference (Complete)
 
@@ -1197,6 +1359,13 @@ Example — "Flat Minimal" theme (no glass):
 | `--liquid-duration-normal` | `200ms` | Normal animation |
 | `--liquid-duration-slow` | `300ms` | Slow animation |
 | `--liquid-ease-default` | `cubic-bezier(0.4, 0, 0.2, 1)` | Default easing |
+| `--liquid-tile-gap` | `8px` | Gap between tiled windows |
+| `--liquid-tile-outer-gap` | `8px` | Gap between tiles and screen edges |
+| `--liquid-tile-preview-bg` | `rgba(0,122,255,0.15)` | Snap zone preview background |
+| `--liquid-tile-preview-border` | `2px solid var(--liquid-accent)` | Snap zone preview border |
+| `--liquid-tablet-min-target` | `56px` | Minimum touch target in tablet mode |
+| `--liquid-tablet-statusbar-height` | `40px` | Status bar height in tablet mode |
+| `--liquid-tablet-dock-icon-size` | `56px` | Dock icon size in tablet mode |
 
 ---
 

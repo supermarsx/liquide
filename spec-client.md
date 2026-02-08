@@ -46,33 +46,44 @@ The client runs on Windows (x86_64, ARM64), Linux (x86_64, ARM64), and macOS (AR
 Main Thread (UI / Event Loop)
 ├── Window management, input capture
 ├── Connection state machine
+├── Machine manager (multi-server)
 └── UI rendering (client chrome only)
 
 Decode Worker(s)
 ├── Video frame decoding (CPU or GPU)
 ├── Tile decompression
+├── Font rendering offload (when enabled)
 └── Frame queue management
 
 Present Worker
 ├── Frame presentation with vsync
-├── Cursor compositing
+├── Cursor compositing (+ dual cursor rendering)
+├── Wallpaper compositing (when client-cached)
 └── Client-side rendering offload
 
-Audio Worker
+Audio Worker (dedicated channel)
 ├── Playback (server → speakers)
 ├── Capture (microphone → server)
 └── Audio buffering / jitter
 
+Clipboard Worker (dedicated channel)
+├── Clipboard sync (bidirectional)
+└── Large transfer queuing
+
+USB/IP Worker (dedicated channel, disabled by default)
+├── Device enumeration and forwarding
+└── USB data transfer
+
 Transport Worker(s)
 ├── Packet send/receive
+├── Channel multiplexing (video, audio, clipboard, USB, cursor)
 ├── Transport negotiation
 ├── Encryption/decryption
 └── Congestion feedback
 
 Media Worker
 ├── Camera capture → encode → send
-├── USB device forwarding
-└── Clipboard sync
+└── Camera device management
 ```
 
 ### Rendering Backend (Client UI Only)
@@ -196,11 +207,41 @@ Media Worker
 - High-precision scroll forwarding.
 - All mouse buttons forwarded (left, right, middle, back, forward, etc.).
 
-### Touch Input (Tablet/Touch Screens)
+### Touch Input (Full Support)
+- **Full touchscreen input forwarding**: all touch events sent to the server as native touch events.
 - Touch events forwarded as either:
-  - Mouse events (default on desktop).
-  - Native touch events (if server supports touch protocol).
-- Pinch-to-zoom mapped to Ctrl+scroll (configurable).
+  - Mouse events (default on non-touch-optimized DE).
+  - Native touch events (when server has tablet mode or touch-aware apps).
+- Multi-touch support: up to 10 simultaneous touch points tracked.
+- **Gesture mapping** (client-side, configurable):
+  - Pinch-to-zoom → Ctrl+scroll (default) or native zoom.
+  - Long press → right-click.
+  - Two-finger tap → right-click (alternative).
+  - Three-finger swipe → workspace switch (forwarded to DE).
+  - Four-finger swipe → overview / task switcher.
+  - Swipe from edge → configurable per edge.
+- **Pen/stylus support**:
+  - Pressure sensitivity forwarded (0.0–1.0 range, full resolution).
+  - Tilt (X and Y axis) forwarded.
+  - Barrel button and eraser events forwarded.
+  - Compatible with Wacom, Apple Pencil (via iPad sidecar apps), Surface Pen, and generic HID styluses.
+- Touch settings:
+  ```toml
+  [input.touch]
+  enabled = true
+  mode = "auto"                        # auto, mouse-emulation, native-touch
+  gesture_mapping = true               # enable client-side gesture recognition
+  long_press_ms = 500                  # ms before long press registers as right-click
+  pinch_zoom_action = "ctrl+scroll"    # ctrl+scroll, native-zoom, disabled
+  edge_swipe_enabled = true
+  palm_rejection = true                # ignore accidental palm touches
+
+  [input.stylus]
+  enabled = true
+  pressure_curve = "linear"            # linear, soft, firm, custom
+  tilt_enabled = true
+  barrel_button_action = "right-click" # right-click, middle-click, custom
+  ```
 
 ---
 
@@ -215,6 +256,7 @@ Cursor responsiveness is critical for a "feels local" experience. The client imp
 | **Local prediction** | Client moves cursor locally immediately, server confirms/corrects | Always (default) |
 | **Server-rendered** | Cursor position comes from server only | High-bandwidth LAN |
 | **Hidden local** | Local cursor hidden, server cursor drawn in stream | Legacy/compatibility |
+| **Dual cursor** | Local dot shows immediate position, server cursor shows authoritative position | High-latency connections |
 
 ### Local Prediction (Default)
 - On mouse move, client immediately updates cursor position locally.
@@ -223,12 +265,51 @@ Cursor responsiveness is critical for a "feels local" experience. The client imp
 - If local and server positions diverge (e.g., due to server-side cursor constraints), client smoothly corrects.
 - Correction is interpolated over 2-3 frames to avoid visible jumps.
 
+### Dual Cursor Mode
+- The client renders **two cursor indicators** simultaneously:
+  - A **local dot** (small, semi-transparent circle) that tracks the mouse instantly with zero latency.
+  - The **server cursor** (full cursor icon) that shows the actual server-side cursor position, which arrives after RTT.
+- The local dot allows the user to see where they are pointing immediately.
+- The server cursor confirms the actual position and shows the correct cursor shape (arrow, pointer, text beam, etc.).
+- Over time, the server cursor "catches up" to the local dot as the server processes input.
+- **Smoothing strategies** for the server cursor in dual mode:
+  - `linear` — server cursor moves linearly toward the latest server-reported position.
+  - `spring` — spring physics simulation for natural-feeling motion (configurable stiffness/damping).
+  - `bezier` — cubic bezier interpolation for smooth arcs.
+  - `none` — server cursor jumps directly to reported position (no smoothing).
+- Dual cursor is particularly useful for high-latency connections (>50ms RTT) where local prediction may diverge noticeably.
+- Configuration:
+  ```toml
+  [cursor]
+  mode = "dual"                       # local-predict, server-rendered, hidden-local, dual
+  dual_local_dot_size = 8             # px, size of the local dot indicator
+  dual_local_dot_color = "accent"     # accent, white, custom (#RRGGBB)
+  dual_local_dot_opacity = 0.6
+  dual_smoothing = "spring"           # linear, spring, bezier, none
+  dual_spring_stiffness = 300
+  dual_spring_damping = 20
+  dual_bezier_duration_ms = 50
+  ```
+
+### Cursor Smoothing (All Modes)
+- Smoothing applies to all cursor modes that involve server position updates:
+  - **Local prediction**: smoothing applied during correction when local and server diverge.
+  - **Server-rendered**: smoothing applied to interpolate between position updates.
+  - **Dual cursor**: smoothing applied to the server cursor display.
+- Global smoothing settings:
+  ```toml
+  [cursor]
+  smoothing_enabled = true
+  smoothing_strategy = "spring"       # linear, spring, bezier, none
+  smoothing_max_distance = 200        # px, beyond this distance jump instead of smooth
+  ```
+
 ### Cursor Settings
 Extensive configurability:
 
 ```toml
 [cursor]
-mode = "local-predict"          # local-predict, server-rendered, hidden-local
+mode = "local-predict"          # local-predict, server-rendered, hidden-local, dual
 prediction_enabled = true
 correction_interpolation = true
 correction_frames = 3           # frames to interpolate correction over
@@ -239,6 +320,13 @@ hide_on_idle = true
 hide_delay_ms = 5000
 cursor_trail = false            # for accessibility
 high_contrast_cursor = false
+smoothing_enabled = true
+smoothing_strategy = "spring"   # linear, spring, bezier, none
+# Dual cursor mode settings
+dual_local_dot_size = 8
+dual_local_dot_color = "accent"
+dual_local_dot_opacity = 0.6
+dual_smoothing = "spring"
 ```
 
 ### Cursor Channel
@@ -289,6 +377,10 @@ max_history = 20                     # local clipboard history
 
 ## 9) Audio Settings
 
+### Audio Enable/Disable
+- Audio can be **entirely disabled** for lightweight sessions — no audio threads, no audio processing.
+- When disabled, the audio worker thread is not started and no audio bandwidth is consumed.
+
 ### Playback (Server → Client)
 - Server audio plays through client's default output device.
 - Output device selectable in client settings.
@@ -302,10 +394,16 @@ max_history = 20                     # local clipboard history
 - Push-to-talk option with configurable key.
 - Noise suppression option (client-side processing).
 
+### Audio Codec Preferences
+- Client can express codec preferences to the server during negotiation.
+- Supported codecs: Opus, AAC, Vorbis, FLAC, ALAC, PCM, G.711, G.722, Speex, MP3, WMA.
+- Codec preference order configurable.
+
 ### Audio Settings
 
 ```toml
 [audio]
+enabled = true                     # false = disable audio entirely
 playback_enabled = true
 playback_device = "auto"           # auto = default device
 playback_volume = 100              # 0-100
@@ -315,6 +413,7 @@ microphone_push_to_talk = false
 microphone_ptt_key = "F13"
 noise_suppression = true
 buffer_mode = "auto"               # auto, low-latency, balanced, stable
+preferred_codecs = ["opus", "aac", "vorbis"]  # preference order
 ```
 
 ---
@@ -536,7 +635,7 @@ show_audio_controls = true
 
 # ─── Cursor ─────────────────────────────────────────────────
 [cursor]
-mode = "local-predict"
+mode = "local-predict"             # local-predict, server-rendered, hidden-local, dual
 prediction_enabled = true
 correction_interpolation = true
 correction_frames = 3
@@ -545,6 +644,11 @@ cursor_theme = "auto"
 hide_on_idle = true
 hide_delay_ms = 5000
 high_contrast_cursor = false
+smoothing_enabled = true
+smoothing_strategy = "spring"
+dual_local_dot_size = 8
+dual_local_dot_color = "accent"
+dual_smoothing = "spring"
 
 # ─── Input ──────────────────────────────────────────────────
 [input]
@@ -553,6 +657,18 @@ release_key = "ctrl+alt+shift"
 keyboard_layout = "auto"           # auto = detect local, or specific layout
 forward_system_shortcuts = false   # true in fullscreen by default
 mouse_relative_mode = "auto"
+
+[input.touch]
+enabled = true
+mode = "auto"                      # auto, mouse-emulation, native-touch
+gesture_mapping = true
+long_press_ms = 500
+palm_rejection = true
+
+[input.stylus]
+enabled = true
+pressure_curve = "linear"
+tilt_enabled = true
 
 # ─── Clipboard ──────────────────────────────────────────────
 [clipboard]
@@ -568,6 +684,7 @@ max_history = 20
 
 # ─── Audio ──────────────────────────────────────────────────
 [audio]
+enabled = true                     # false = disable audio entirely
 playback_enabled = true
 playback_device = "auto"
 playback_volume = 100
@@ -577,6 +694,7 @@ microphone_push_to_talk = false
 microphone_ptt_key = "F13"
 noise_suppression = true
 buffer_mode = "auto"
+preferred_codecs = ["opus", "aac", "vorbis"]
 
 # ─── Camera ─────────────────────────────────────────────────
 [camera]
@@ -615,11 +733,239 @@ shortcut = "ctrl+shift+s"
 position = "top-left"
 opacity = 0.8
 show_graphs = false
+
+# ─── Font Offload ──────────────────────────────────────────
+[font_offload]
+enabled = "auto"
+font_cache_max_mb = 200
+subpixel_rendering = "auto"
+hinting = "slight"
+
+# ─── Wallpaper Cache ──────────────────────────────────────
+[wallpaper_cache]
+enabled = "auto"
+max_cache_mb = 500
+compute_blur_locally = true
+cache_ttl_days = 30
+
+# ─── Credentials ──────────────────────────────────────────
+[credentials]
+storage_mode = "os-keychain"
+auto_lock_timeout_min = 30
+auto_fill = true
+
+# ─── Multi-Machine ────────────────────────────────────────
+[machines]
+show_online_status = true
+ping_interval_sec = 60
+show_thumbnails = true
+
+# ─── Logging ──────────────────────────────────────────────
+[logging]
+enabled = true
+log_level = "info"
+format = "text"
+max_file_size_mb = 50
+max_files = 5
 ```
 
 ---
 
-## 16) Client Policies
+## 16) Multi-Machine Management
+
+LiquidClient can manage connections to **multiple remote servers** from a single interface.
+
+### Machine Manager
+- The connection dialog includes a **machine list** showing all saved servers.
+- Each machine entry shows:
+  - Server name and address.
+  - Connection status (online/offline/unknown — via periodic ping).
+  - Last connected time.
+  - Session status (active session available for resume, or none).
+  - Thumbnail of last session screenshot (optional).
+- Operations per machine:
+  - **Connect** — start or resume a session.
+  - **Edit** — modify connection profile.
+  - **Duplicate** — create a copy of the profile.
+  - **Delete** — remove with confirmation.
+  - **Move to folder** — organize machines into folders/groups.
+  - **Wake-on-LAN** — send WOL packet (configurable MAC address per machine).
+
+### Machine Groups / Folders
+- Machines can be organized into folders (e.g., "Work", "Home Lab", "Production").
+- Folders are collapsible in the connection dialog.
+- Drag-and-drop reordering within and between folders.
+
+### Credential Storage (AES-256 Encrypted)
+- Saved credentials are **encrypted at rest** using AES-256-GCM.
+- Encryption key derived from:
+  - **OS keychain integration** (preferred):
+    - **Windows**: Windows Credential Manager (DPAPI).
+    - **macOS**: macOS Keychain.
+    - **Linux**: libsecret (GNOME Keyring, KDE Wallet).
+  - **Master password** (fallback): user-provided password, key derived via Argon2id.
+  - **Combined**: OS keychain + master password for maximum security.
+- Credential file: `~/.config/liquidclient/credentials.enc` (Linux/macOS) or `%APPDATA%\LiquidClient\credentials.enc` (Windows).
+- Credentials store:
+  - Username.
+  - Password (encrypted).
+  - MFA secrets (TOTP seeds, encrypted).
+  - Client certificates and private keys (encrypted).
+  - API tokens (encrypted).
+- Credential management:
+  - Auto-lock after configurable idle timeout.
+  - Clear all credentials option.
+  - Export/import (encrypted archive, requires password).
+  - Never auto-fill without user consent (configurable).
+- Configuration:
+  ```toml
+  [credentials]
+  storage_mode = "os-keychain"          # os-keychain, master-password, combined
+  auto_lock_timeout_min = 30            # 0 = never auto-lock
+  auto_fill = true                      # auto-fill username/password on connect
+  require_confirmation = false           # ask before auto-filling
+  remember_mfa = false                   # remember MFA secrets
+  credential_file = ""                   # custom path (default: platform-specific)
+  ```
+
+### Multi-Machine Configuration
+
+```toml
+[machines]
+show_online_status = true              # periodic ping to check server status
+ping_interval_sec = 60                 # how often to check server status
+show_thumbnails = true                 # show last session screenshots
+thumbnail_update_on_disconnect = true  # capture thumbnail on disconnect
+wol_enabled = false                    # enable Wake-on-LAN feature
+
+[[machines.entries]]
+name = "Work Server"
+address = "work.example.com:3389"
+folder = "Work"
+profile = "work-profile"
+wol_mac = ""
+notes = "Main development machine"
+
+[[machines.entries]]
+name = "Home Lab"
+address = "192.168.1.100:3389"
+folder = "Home"
+profile = "home-profile"
+wol_mac = "AA:BB:CC:DD:EE:FF"
+```
+
+---
+
+## 17) Client-Side Font Rendering
+
+When the server has font offload enabled, the client handles text rendering locally:
+
+### How It Works
+1. Server sends a font manifest listing required fonts (name, style, weight, hash).
+2. Client checks its local font cache and reports which fonts are available.
+3. Missing fonts are transferred from the server and cached locally.
+4. During the session, the server sends **glyph layout data** instead of rendered pixels for text regions:
+   - Glyph IDs, positions (x, y), font reference, size, color.
+   - Text decorations (underline, strikethrough).
+   - Text shadow parameters.
+5. Client rasterizes glyphs locally using FreeType/HarfBuzz (or platform-native text rendering).
+6. Rendered text is composited into the frame before presentation.
+
+### Font Cache
+- Fonts cached persistently in `~/.config/liquidclient/font-cache/` (Linux) or platform equivalent.
+- Cache indexed by font hash — identical fonts across servers share cache entries.
+- Configurable max cache size; LRU eviction.
+- Cache can be pre-warmed from previous sessions.
+
+### Font Rendering Settings
+
+```toml
+[font_offload]
+enabled = "auto"                       # auto, always, never
+font_cache_dir = ""                    # default: platform-specific
+font_cache_max_mb = 200
+subpixel_rendering = "auto"            # auto, always, never
+hinting = "slight"                     # none, slight, medium, full
+use_platform_renderer = false          # true = use DirectWrite/CoreText/Pango
+```
+
+---
+
+## 18) Client-Side Wallpaper Caching
+
+The client can cache and composite wallpapers locally to reduce bandwidth:
+
+### How It Works
+1. On connection, server sends a wallpaper descriptor (hash, dimensions, format).
+2. Client checks if the wallpaper is already cached locally.
+3. If cached: no transfer needed; client composites locally.
+4. If not cached: server sends the wallpaper once; client caches it.
+5. Client renders the wallpaper behind glass surfaces, applying blur locally.
+6. Only non-wallpaper regions need to be streamed from the server.
+
+### Wallpaper Cache Settings
+
+```toml
+[wallpaper_cache]
+enabled = "auto"                       # auto, always, never
+cache_dir = ""                         # default: platform-specific
+max_cache_mb = 500
+compute_blur_locally = true            # client computes glass blur on wallpaper
+cache_ttl_days = 30                    # expire old wallpapers
+preload_on_connect = true              # fetch wallpaper during handshake
+```
+
+---
+
+## 19) Client Logging
+
+### Log System
+- Client has its own structured logging system for debugging and diagnostics.
+- Log subsystems:
+
+| Subsystem | Contents |
+|-----------|----------|
+| `client` | Application lifecycle, UI events |
+| `connection` | Connection attempts, transport negotiation, disconnects |
+| `auth` | Authentication events (no credentials logged) |
+| `decode` | Decoder selection, frame timing, errors |
+| `present` | Frame presentation, vsync events, dropped frames |
+| `audio` | Audio device events, buffer underruns, codec changes |
+| `input` | Input device events, capture mode changes (no keystrokes) |
+| `clipboard` | Clipboard sync events (metadata only) |
+| `usb` | USB device events, forwarding status |
+| `transport` | Transport events, switches, packet loss |
+| `cursor` | Cursor mode changes, prediction accuracy |
+
+### Log Configuration
+
+```toml
+[logging]
+enabled = true
+log_dir = ""                           # default: platform-specific
+log_level = "info"                     # trace, debug, info, warn, error
+format = "text"                        # text, json
+max_file_size_mb = 50
+max_files = 5
+compress_rotated = true
+
+[logging.levels]
+client = "info"
+connection = "info"
+auth = "info"
+decode = "warn"
+present = "warn"
+audio = "warn"
+input = "warn"
+clipboard = "info"
+usb = "info"
+transport = "info"
+cursor = "warn"
+```
+
+---
+
+## 20) Client Policies
 
 The server can push policies to the client that override or restrict local settings:
 
@@ -645,7 +991,7 @@ The server can push policies to the client that override or restrict local setti
 
 ---
 
-## 17) Gateway Connection
+## 21) Gateway Connection
 
 When connecting through a LiquidDE Gateway (see [spec-gateway.md](spec-gateway.md)):
 
@@ -674,7 +1020,7 @@ prefer_direct = true               # prefer direct connection if possible
 
 ---
 
-## 18) Keyboard Shortcuts (Defaults)
+## 22) Keyboard Shortcuts (Defaults)
 
 | Action | Shortcut | Configurable |
 |--------|----------|-------------|
@@ -693,7 +1039,7 @@ All shortcuts configurable in `config.toml` under `[shortcuts]`.
 
 ---
 
-## 19) Accessibility
+## 23) Accessibility
 
 - **High contrast mode**: client chrome and overlays use high contrast colors.
 - **Large cursor**: configurable cursor size up to 64px.
@@ -704,7 +1050,7 @@ All shortcuts configurable in `config.toml` under `[shortcuts]`.
 
 ---
 
-## 20) Error Handling & Reconnection
+## 24) Error Handling & Reconnection
 
 ### Connection Loss
 - On connection drop, client immediately shows "Reconnecting..." overlay.
@@ -731,7 +1077,7 @@ show_last_frame = true             # keep last frame visible during reconnect
 
 ---
 
-## 21) Deliverables
+## 25) Deliverables
 
 - `liquidclient` — native desktop application binary.
 - Platform-specific installers:
@@ -743,7 +1089,7 @@ show_last_frame = true             # keep last frame visible during reconnect
 
 ---
 
-## 22) Test Plan
+## 26) Test Plan
 
 ### Functional
 - Connect/disconnect/reconnect on each platform.

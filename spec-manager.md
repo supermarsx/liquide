@@ -139,10 +139,23 @@ The management server is a **simple Node.js application** that is **disabled by 
 - **Configuration diff**: show changes before applying.
 - **Template management**: save and apply configuration templates across servers.
 
+### Log Explorer
+- **Centralized log viewer** across all managed servers and gateways.
+- **Per-subsystem filtering**: select which log subsystem(s) to view (server, session, auth, render, encode, transport, audio, clipboard, usb, input, policy, metrics, audit).
+- **Log level filtering**: trace, debug, info, warn, error.
+- **Live streaming**: real-time log tail via WebSocket, with pause/resume.
+- **Search**: full-text search across log entries with regex support.
+- **Correlation view**: click a session ID to see all log entries across all subsystems for that session.
+- **Log level management**: change per-subsystem log levels at runtime from the UI (per server).
+- **Download**: export filtered log entries as JSON or text file.
+- **Log health**: show log file sizes, rotation status, and disk usage per server.
+
 ### Audit Log Viewer
 - Searchable, filterable view of audit events from all servers and gateways.
 - Filters: event type, user, server, time range, severity.
 - Export to CSV/JSON.
+- **Integrity verification**: verify HMAC integrity of audit log entries from the UI.
+- **Timeline view**: visual timeline of security events for a user or session.
 
 ---
 
@@ -277,7 +290,12 @@ The management server exposes its own API (used by the web frontend and optional
 | `GET` | `/api/v1/gateways/{name}` | Gateway details |
 | `GET` | `/api/v1/metrics` | Metrics snapshot |
 | `GET` | `/api/v1/audit` | Audit log (with pagination & filters) |
+| `GET` | `/api/v1/logs` | Log entries (with subsystem, level, session filters) |
+| `PUT` | `/api/v1/servers/{name}/logs/levels` | Change per-subsystem log levels |
+| `POST` | `/api/v1/servers/{name}/logs/rotate` | Force log rotation |
+| `GET` | `/api/v1/audit/verify` | Verify audit log HMAC integrity |
 | `WS` | `/ws/v1/metrics` | WebSocket stream of real-time metrics |
+| `WS` | `/ws/v1/logs` | WebSocket stream of real-time log entries |
 
 ---
 
@@ -298,8 +316,9 @@ The management server exposes its own API (used by the web frontend and optional
 6. **Policies** — policy viewer/editor.
 7. **Gateways** — gateway management (if applicable).
 8. **Metrics** — full metrics dashboard with graphs.
-9. **Audit** — audit log viewer.
-10. **Settings** — management UI settings, user account.
+9. **Logs** — centralized log explorer with per-subsystem filtering and live streaming.
+10. **Audit** — audit log viewer with integrity verification.
+11. **Settings** — management UI settings, user account.
 
 ### UX Principles
 - Real-time updates (no manual refresh needed).
