@@ -208,6 +208,10 @@ The receiver reassembles fragments by channel and sequence number. Fragments mus
 | `0x001A` | `ResizeAck` | S → C | Server acknowledges resize |
 | `0x001B` | `SessionLock` | S → C | Session locked |
 | `0x001C` | `SessionUnlock` | C → S | Unlock request (with credentials) |
+| `0x0020` | `AssetManifest` | S → C | List of session assets with content hashes (icon/cursor/theme cache) |
+| `0x0021` | `AssetRequest` | C → S | Client requests specific assets (cache misses) |
+| `0x0022` | `AssetData` | S → C | Asset payload (icon, cursor, theme resource) |
+| `0x0023` | `AssetManifestAck` | C → S | Client confirms manifest received with list of cache hits |
 
 ### 5.2 Emergency Channel Messages (0x01)
 
@@ -478,6 +482,45 @@ TouchEvent = {
     x: float32,
     y: float32,
     timestamp_us: uint,
+}
+```
+
+### 8.6 CBOR Schema: Asset Cache Messages
+
+```cddl
+AssetManifest = {
+    manifest_version: uint,                    ; monotonic version for diff detection
+    assets: [+ AssetEntry],
+}
+
+AssetEntry = {
+    asset_id: text,                            ; e.g., "icon:firefox:48", "cursor:default:left_ptr"
+    category: text,                            ; "icon", "cursor", "theme", "avatar", "shell"
+    content_hash: bytes,                       ; SHA-256 truncated to 16 bytes
+    size: uint,                                ; size in bytes
+    mime_type: text,                           ; "image/png", "image/svg+xml", "image/x-icon"
+    ? inline_data: bytes,                      ; present if size < inline_threshold (saves round-trip)
+    ? metadata: {* text => any},               ; optional: icon sizes, theme name, etc.
+}
+
+AssetManifestAck = {
+    manifest_version: uint,
+    cached_assets: [+ text],                   ; asset_ids the client already has (cache hits)
+    requested_assets: [+ text],                ; asset_ids the client needs (cache misses)
+}
+
+AssetRequest = {
+    asset_ids: [+ text],                       ; batch request for multiple assets
+    ? preferred_format: text,                  ; optional format preference ("png", "svg", "ico")
+    ? preferred_sizes: [+ uint],               ; optional size preference (e.g., [48, 64])
+}
+
+AssetData = {
+    asset_id: text,
+    content_hash: bytes,
+    mime_type: text,
+    data: bytes,                               ; asset content
+    ? is_last: bool,                           ; true if this is the last asset in a batch response
 }
 ```
 
@@ -832,6 +875,7 @@ The following components are fuzzing targets for security and robustness:
 | Fragmentation | Send messages > 65535 bytes | Reassembly produces correct data |
 | Ordering | Verify per-channel ordering | No out-of-order processing |
 | Rate limiting | Exceed notification/clipboard limits | Correct error codes returned |
+| Asset caching | AssetManifest/Request/Data round-trip | Client receives and caches assets correctly; cache hits skip transfer |
 
 ### 13.2 Conformance Test Runner
 

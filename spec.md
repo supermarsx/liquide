@@ -342,7 +342,70 @@ Dedicated Channels:
 - The client wallpaper cache persists across sessions and across server reconnections.
 - Cache eviction: LRU with configurable max size. Expired entries purged automatically.
 
-#### 6. Partial Caches for Static Regions
+#### 6. Icon & Asset Caching
+
+LiquidDE supports **client-side caching of application icons, shell assets, and UI resources** to reduce repeated transmission of static assets across sessions.
+
+**What is cached:**
+
+| Asset Type | Description | Typical Size |
+|-----------|-------------|-------------|
+| Application icons | `.desktop` file icons (all sizes: 16–256px + SVG) | 5–50 KB each |
+| Tray icons | StatusNotifierItem icons and overlays | 1–10 KB each |
+| Cursor themes | Cursor images for all shapes in the active cursor theme | 50–200 KB total |
+| Shell assets | Dock icons, status bar icons, launcher category icons | 10–100 KB total |
+| Notification icons | App icons shown in notification toasts | 5–20 KB each |
+| Theme assets | Glass textures, UI pattern images, theme-specific graphics | 50–500 KB total |
+| User avatars | Session user and login screen avatars | 5–64 KB each |
+
+**How it works:**
+
+1. **Server-side manifest**: at session start (after `ServerHello`), the server sends an **asset manifest** listing all assets the session will reference. Each entry contains:
+   - Asset ID (unique string, e.g., `icon:firefox:48`, `cursor:default:left_ptr`).
+   - Content hash (SHA-256 truncated to 128 bits).
+   - Size in bytes.
+   - MIME type.
+   - Category (icon, cursor, theme, avatar).
+
+2. **Client cache check**: the client checks its local asset cache against the manifest. For each asset:
+   - **Cache hit** (hash matches): asset is not transferred. Client uses cached version.
+   - **Cache miss** (hash mismatch or absent): client requests the asset from the server.
+
+3. **Lazy transfer**: cache misses are transferred on-demand with priority ordering:
+   - Cursor theme assets: highest priority (needed immediately for cursor rendering).
+   - Dock/shell icons: high priority (visible immediately).
+   - Application icons: medium priority (transferred as apps appear).
+   - Theme assets, notification icons: low priority (transferred in background).
+
+4. **Transfer protocol**: assets are sent on the control channel as `AssetData` messages (see spec-protocol-formal.md). Small assets (< 4 KB) are inlined in the manifest. Larger assets are requested individually.
+
+5. **Automatic by default**: asset caching is enabled automatically. No user configuration is needed. The client detects optimal behavior based on:
+   - **Platform rendering support**: the client reports its icon rendering capabilities (SVG support, icon sizes supported, HiDPI scale factor) in the `ClientHello` capabilities block.
+   - **OS conventions**: the server sends icons in formats matching the client OS:
+     - **Linux client**: SVG preferred, PNG fallback. freedesktop icon theme sizes.
+     - **Windows client**: ICO or PNG at Windows-standard sizes (16, 20, 24, 32, 40, 48, 64, 256). Taskbar icons for seamless windows.
+     - **macOS client**: ICNS or PNG at macOS standard sizes (16, 32, 64, 128, 256, 512, 1024). Retina-scaled (@2x) variants.
+     - **Browser client**: PNG or SVG at rendered sizes only.
+
+6. **Cache persistence**: the asset cache persists across sessions and server reconnections. Cached assets are keyed by `(server_fingerprint, asset_id, content_hash)`.
+
+7. **Cache invalidation**: when the server's asset manifest changes (new theme, icon update, avatar change), only changed assets are re-transferred. The content hash ensures stale assets are replaced.
+
+**Configuration (server-side):**
+
+```toml
+[performance.asset_cache]
+enabled = true                       # master switch
+inline_threshold_bytes = 4096        # assets smaller than this are inlined in manifest
+icon_format_preference = "auto"      # auto (client-dependent), svg, png
+send_retina_variants = true          # send @2x icons for HiDPI clients
+cursor_theme_preload = true          # preload entire cursor theme on connect
+max_manifest_size_mb = 2             # max asset manifest size (limits total tracked assets)
+```
+
+**Client cache behavior** is configured in the client config (see spec-client.md).
+
+#### 7. Partial Caches for Static Regions
 - **Status bars**, dock backgrounds, and other rarely-changing regions maintain cached rasterizations.
 - Cache hit: blit from cache (nearly free).
 - Cache invalidation: only on content change (clock tick, notification badge, etc.).
@@ -352,13 +415,13 @@ Dedicated Channels:
   - `disabled` — always re-render (useful for debugging or specific use cases).
   - `level:<N>` — set cache aggressiveness (1 = minimal caching, 5 = aggressive caching).
 
-#### 7. Animation Policy
+#### 8. Animation Policy
 - Default animations are **event-driven** (input/transition) rather than constant.
 - Frame rate caps for UI-only animation (e.g., 30 fps) while cursor/input stays responsive.
 - Idle state: 1–2 fps or pure "only-on-change" mode.
 - All animation durations and curves configurable via CSS.
 
-#### 8. Color Management
+#### 9. Color Management
 
 LiquidDE provides server-side color management for accurate rendering:
 

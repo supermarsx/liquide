@@ -852,6 +852,15 @@ max_cache_mb = 500
 compute_blur_locally = true
 cache_ttl_days = 30
 
+# ─── Icon & Asset Cache ──────────────────────────────────
+[asset_cache]
+enabled = true
+max_cache_mb = 200
+cache_ttl_days = 60
+preload_on_connect = true
+allow_svg = true
+log_cache_stats = false
+
 # ─── Credentials ──────────────────────────────────────────
 [credentials]
 storage_mode = "os-keychain"
@@ -1102,6 +1111,83 @@ font_cache_max_mb = 200
 subpixel_rendering = "auto"            # auto, always, never
 hinting = "slight"                     # none, slight, medium, full
 use_platform_renderer = false          # true = use DirectWrite/CoreText/Pango
+```
+
+### Icon & Asset Cache
+
+The client maintains a persistent cache of application icons, cursor themes, shell assets, and other static resources. This eliminates redundant asset transfers across sessions and reduces bandwidth usage — especially on reconnect.
+
+#### Cache Architecture
+
+```
+~/.config/liquidclient/asset-cache/     (Linux)
+~/Library/Caches/LiquidClient/assets/   (macOS)
+%LOCALAPPDATA%\LiquidClient\assets\     (Windows)
+├── index.db                            (SQLite: asset_id, server_fingerprint, hash, size, last_used)
+├── icons/
+│   ├── <hash>.png
+│   ├── <hash>.svg
+│   └── <hash>.ico
+├── cursors/
+│   └── <theme_name>/
+│       ├── left_ptr.png
+│       └── ...
+├── theme/
+│   └── <hash>.bin
+└── avatars/
+    └── <server>_<user>_<hash>.png
+```
+
+#### Protocol Flow
+
+1. After `ServerHello`, the server sends an `AssetManifest` message listing all session assets with content hashes.
+2. The client compares manifest entries against the local cache index.
+3. For **cache hits**: no action needed. The client uses its cached copy.
+4. For **cache misses**: the client sends `AssetRequest` messages for missing assets, batched by priority.
+5. The server responds with `AssetData` messages. Small assets (< 4 KB) may be inlined directly in the manifest.
+6. Newly received assets are written to the cache and indexed.
+
+#### OS-Aware Icon Delivery
+
+The client advertises its platform and rendering capabilities in `ClientHello`:
+
+```cbor
+capabilities: {
+    "asset_cache": true,
+    "icon_formats": ["svg", "png"],        # Linux client
+    "icon_sizes": [16, 24, 32, 48, 64, 128, 256],
+    "hidpi_scale": 2.0,
+    "platform_icon_format": "freedesktop", # freedesktop, win32-ico, macos-icns
+}
+```
+
+The server uses this to select the optimal icon format and sizes:
+
+| Client Platform | Icon Format | Sizes | Notes |
+|----------------|-------------|-------|-------|
+| Linux | SVG (preferred) or PNG | 16, 24, 32, 48, 64, 128, 256 | freedesktop icon theme standard |
+| Windows | PNG or ICO | 16, 20, 24, 32, 40, 48, 64, 256 | Windows taskbar/seamless window icons |
+| macOS | PNG | 16, 32, 64, 128, 256, 512 | @2x retina variants auto-generated |
+| Browser (WebSocket) | PNG or SVG | Rendered sizes only | Minimizes transfer; no icon theme cache |
+
+#### Cache Invalidation
+
+- **Per-asset**: the server's manifest includes a content hash for each asset. If the hash changes (e.g., app icon updated, theme changed), the client replaces its cached copy.
+- **Bulk invalidation**: if the server switches icon theme or cursor theme, it sends a new manifest. The client diff-syncs the cache.
+- **TTL-based eviction**: assets not referenced by any server manifest for `cache_ttl_days` are evicted.
+- **LRU eviction**: when cache exceeds `max_cache_mb`, least-recently-used assets are evicted.
+
+#### Configuration
+
+```toml
+# ─── Icon & Asset Cache ──────────────────────────────────
+[asset_cache]
+enabled = true                     # automatic by default
+max_cache_mb = 200                 # maximum cache size
+cache_ttl_days = 60                # expire assets not used for N days
+preload_on_connect = true          # preload cursor + dock icons during connection
+allow_svg = true                   # allow SVG icon caching (requires SVG render support)
+log_cache_stats = false            # log hit/miss rates on disconnect
 ```
 
 ### Window-Level Offload
