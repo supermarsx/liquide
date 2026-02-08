@@ -522,11 +522,38 @@ LiquiDE provides server-side color management for accurate rendering:
 - **FPS limiter**: configurable per session, per policy, or auto-adaptive.
 
 #### Mode B — Tile / Bitmap Stream (crisp text, static content)
-- Screen partitioned into tiles (configurable: 32×32 to 256×256).
+- Screen partitioned into tiles (configurable: 32×32 to 256×256, default: 64×64).
 - Per tile:
-  - Hash-based change detection.
-  - Compress changed tiles with selected tile codec.
-- Best for: terminals, code editors, dashboards, documents.
+  - Hash-based change detection (CRC-32C of raw pixel data).
+  - **Adaptive delta encoding**: when a tile changes, the encoder chooses the most efficient strategy:
+
+| Strategy | Condition | Method |
+|----------|-----------|--------|
+| **Skip** | Tile hash unchanged from previous frame | No data sent (zero bandwidth) |
+| **XOR delta** | < 50% of pixels changed (measured by XOR population count) | Compute XOR of current tile against previous tile, compress the XOR bitmap. Client applies XOR to reconstruct. |
+| **Full tile** | ≥ 50% of pixels changed, or no previous tile cached (first frame) | Compress entire tile bitmap and send. |
+| **Copy** | Tile is identical to another tile in the same frame (e.g., solid background) | Reference to the already-sent tile by index (2-byte overhead). |
+| **Solid fill** | All pixels in the tile are the same color | Single RGBA value (4 bytes). |
+
+- **Delta decision heuristic**: after XOR, count non-zero bytes. If non-zero ratio < `tile.delta_threshold` (default: `0.50`), send XOR delta. Otherwise, send full tile. The threshold auto-tunes based on observed compression ratios — if the XOR delta compresses larger than the full tile, the threshold is lowered.
+- **Previous tile buffer**: the server maintains a per-tile ring buffer (depth 1 by default, configurable to 2 for lossy-recovery scenarios). The client maintains a matching buffer. Both sides stay in sync because the server explicitly flags each tile as `full`, `delta`, `copy`, `solid`, or `skip`.
+- **Tile compression pipeline**: `raw pixels → [XOR delta] → codec compress → transport`. The codec compress step uses the selected tile codec (Zstd, LZ4, PNG, QOI, WebP, raw).
+- **Scrolling optimization**: when the compositor detects a scroll operation (surface commits with `wl_surface.offset`), the tile grid is shifted and only the newly exposed strip of tiles is sent. The server transmits a `TileScroll` message with the scroll vector, and the client shifts its tile buffer accordingly — avoiding full-screen re-encoding for scroll events.
+- Best for: terminals, code editors, dashboards, documents, remote admin tools.
+
+**Tile encoding configuration:**
+
+```toml
+[performance.tile]
+tile_size = 64                      # tile dimension in pixels (32, 64, 128, 256)
+codec = "zstd"                      # zstd, lz4, png, qoi, webp, raw
+delta_enabled = true                # enable XOR delta encoding
+delta_threshold = 0.50              # pixel change ratio below which XOR delta is used
+solid_detect = true                 # detect and optimize solid-color tiles
+copy_detect = true                  # detect duplicate tiles within the same frame
+scroll_detect = true                # detect scroll operations and send scroll vectors
+color_depth = "rgb888"              # rgb888 (24-bit), rgba8888 (32-bit), rgb565 (16-bit, lossy)
+```
 
 #### Hybrid Mode
 - The system **automatically hybridizes**: video for large moving regions, tiles for text regions.
@@ -646,6 +673,11 @@ LiquiDE provides server-side color management for accurate rendering:
   - **"Balanced"**.
   - **"Bandwidth saver"**.
   - **"LAN"** (maximum quality, minimal compression).
+- **Tile delta optimization**:
+  - XOR delta computation uses SIMD (AVX2/NEON) for popcount and comparison — < 0.1ms per 64×64 tile.
+  - Solid-fill detection is fused with the hash pass (zero additional cost).
+  - Copy detection uses a hash table of already-sent tile hashes within the current batch.
+  - Scroll vector detection piggybacks on compositor damage events (`wl_surface.offset`).
 
 ### Transport
 - MTU-optimized packetization (see §8).
@@ -3019,6 +3051,8 @@ background_timeout_min = 480             # 8 hours background
   - Transport mode in use (QUIC, TCP, etc.).
   - Encryption scheme in use.
   - Dirty region ratio (% of screen changing per frame).
+  - Tile delta ratio (% of tiles sent as XOR delta vs. full).
+  - Tile skip ratio (% of tiles unchanged and skipped).
   - Cache hit rates (blur, wallpaper, partial regions).
   - Effect budget utilization.
 - Accessible via:
@@ -3037,6 +3071,9 @@ background_timeout_min = 480             # 8 hours background
 - Bandwidth in/out (total, per channel).
 - Packet loss / RTT.
 - Dirty region ratio.
+- Tile delta ratio (XOR delta vs. full tile).
+- Tile skip ratio (unchanged tiles).
+- Tile scroll events per second.
 - Encode time per frame.
 - Active sessions count.
 - CPU and memory usage per session.

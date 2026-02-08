@@ -51,7 +51,8 @@ Main Thread (UI / Event Loop)
 
 Decode Worker(s)
 ├── Video frame decoding (CPU or GPU)
-├── Tile decompression
+├── Tile decompression + XOR delta application
+├── Tile buffer management (per-tile previous-frame cache)
 ├── Font rendering offload (when enabled)
 └── Frame queue management
 
@@ -582,6 +583,12 @@ adaptive_quality = true            # accept server quality adjustments
 bandwidth_limit = 0                # 0 = unlimited, or Kbps
 fps_limit = 0                      # 0 = unlimited, or FPS cap
 prefer_tile_mode = false           # bias toward tile encoding for text work
+
+[performance.tile]
+# Client-side tile settings (server controls encoding; these affect decode/present)
+tile_buffer_memory_mb = 32         # max memory for tile previous-frame buffers
+verify_checksums = false           # verify tile data integrity (debug, adds latency)
+gpu_upload = true                  # upload decoded tiles to GPU texture (vs. CPU blit)
 ```
 
 ---
@@ -599,6 +606,7 @@ prefer_tile_mode = false           # bias toward tile encoding for text work
   - **Encryption**: active encryption scheme.
   - **Resolution**: remote resolution and DPI.
   - **Cache**: hit rates for blur/wallpaper/partial caches.
+  - **Tile mode**: active/inactive, tile grid dimensions, delta ratio, skip ratio, scroll events/sec.
   - **Effect budget**: current utilization %.
 - **Overlay position**: configurable (top-left default, any corner).
 - **Overlay opacity**: configurable.
@@ -830,6 +838,11 @@ adaptive_quality = true
 bandwidth_limit = 0
 fps_limit = 0
 prefer_tile_mode = false
+
+[performance.tile]
+tile_buffer_memory_mb = 32
+verify_checksums = false
+gpu_upload = true
 
 # ─── Stream Overlay ─────────────────────────────────────────
 [stream_overlay]
@@ -1640,6 +1653,10 @@ See [spec-protocol-formal.md](spec-protocol-formal.md) §9 for full emergency ch
 
 ### Performance
 - Decode throughput (CPU and GPU paths).
+- Tile decode throughput: XOR delta application, full tile decompression, solid fill, copy.
+- Tile buffer memory stays within configured limit.
+- Tile scroll: client shifts buffer correctly, no visual glitch on fast scrolling.
+- Tile key frame request: full resync after induced desync produces pixel-perfect match.
 - Input-to-display latency.
 - Cursor prediction accuracy.
 - Memory usage under sustained sessions.

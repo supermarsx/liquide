@@ -52,6 +52,7 @@ Each logical data stream is assigned a **channel ID**. Channels are multiplexed 
 | `0x00` | Control | Bidirectional | Reliable | Ordered | Highest |
 | `0x01` | Emergency | Bidirectional | Reliable | Ordered | Highest (parallel to control) |
 | `0x10` | Video | Server → Client | Unreliable (lossy OK) | Ordered per-frame | High |
+| `0x12` | Tile | Server → Client | Reliable | Ordered per-batch | High |
 | `0x11` | Cursor | Server → Client | Unreliable | Latest-wins | Highest media |
 | `0x20` | Audio (playback) | Server → Client | Unreliable | Ordered | High |
 | `0x21` | Audio (capture) | Client → Server | Unreliable | Ordered | High |
@@ -96,7 +97,7 @@ On a single TCP/QUIC connection, channels are multiplexed using the frame header
 
 | Transport | Channels |
 |-----------|----------|
-| TCP (TLS) | `0x00` Control, `0x01` Emergency, `0x30` Clipboard, `0x31` File Transfer, `0x40` USB/IP, `0x50` Input, `0xF0` Plugin IPC |
+| TCP (TLS) | `0x00` Control, `0x01` Emergency, `0x12` Tile, `0x30` Clipboard, `0x31` File Transfer, `0x40` USB/IP, `0x50` Input, `0xF0` Plugin IPC |
 | UDP (DTLS) | `0x10` Video, `0x11` Cursor, `0x20`/`0x21` Audio, `0x60` Camera |
 
 On QUIC transport, all channels use QUIC streams. Unreliable channels use QUIC datagrams (RFC 9221) when available.
@@ -245,7 +246,30 @@ The emergency channel operates *independently* of the control channel. It is des
 | `0x1005` | `CodecSwitch` | S → C | Server switching codecs |
 | `0x1006` | `KeyFrameRequest` | C → S | Client requests a key frame (after packet loss) |
 
-### 5.4 Cursor Channel Messages (0x11)
+### 5.4 Tile Channel Messages (0x12)
+
+The tile channel carries bitmap-based screen updates. It is used when the session (or a region of the session) operates in tile/bitmap mode. The tile channel is **reliable** — tile data must arrive intact because XOR deltas depend on the client having the correct previous tile state.
+
+| Type Code | Name | Direction | Description |
+|-----------|------|-----------|-------------|
+| `0x1201` | `TileConfig` | S → C | Tile grid configuration (tile size, grid dimensions, color depth) |
+| `0x1202` | `TileBatch` | S → C | Batch of tile updates for a single frame |
+| `0x1203` | `TileBatchAck` | C → S | Client acknowledges a tile batch (for flow control) |
+| `0x1204` | `TileScroll` | S → C | Scroll optimization: shift the tile grid by a vector |
+| `0x1205` | `TileKeyFrame` | S → C | Full tile grid snapshot (all tiles as full, no deltas) |
+| `0x1206` | `TileKeyFrameRequest` | C → S | Client requests a full tile refresh (after desync or reconnect) |
+| `0x1207` | `TileModeSwitch` | S → C | Server switches region between video and tile mode |
+
+**Message details:**
+
+- **`TileConfig`** — sent once when the tile channel opens, and again if the tile grid changes (e.g., resize). Tells the client the tile size, grid width/height (in tiles), and pixel format.
+- **`TileBatch`** — the primary data message. Contains a sequence of tile updates for a single compositor frame. Each tile update in the batch carries its grid coordinates and encoding type (`full`, `delta`, `copy`, `solid`, `skip`). Tiles flagged `skip` are omitted from the batch (implicitly unchanged).
+- **`TileBatchAck`** — sent by the client after processing a `TileBatch`. Includes the batch sequence number. The server uses this for flow control (avoids sending more batches than the client can process).
+- **`TileScroll`** — an optimization message: the server detected a scroll event and sends a scroll vector (dx, dy in tiles). The client shifts its tile buffer by this vector before applying the follow-up `TileBatch` (which contains only the newly exposed tiles).
+- **`TileKeyFrame`** — a full refresh of the entire tile grid. Sent on initial connection, after reconnect, or when the client sends `TileKeyFrameRequest`. All tiles are `full` type (no deltas). This is the tile-mode equivalent of a video key frame.
+- **`TileModeSwitch`** — informs the client that a rectangular region of the screen is switching between video mode and tile mode (for hybrid encoding). Contains the region bounds and the target mode.
+
+### 5.5 Cursor Channel Messages (0x11)
 
 | Type Code | Name | Direction | Description |
 |-----------|------|-----------|-------------|
@@ -253,7 +277,7 @@ The emergency channel operates *independently* of the control channel. It is des
 | `0x1102` | `CursorShape` | S → C | Cursor image/shape change |
 | `0x1103` | `CursorVisibility` | S → C | Cursor show/hide |
 
-### 5.5 Audio Channel Messages (0x20, 0x21)
+### 5.6 Audio Channel Messages (0x20, 0x21)
 
 | Type Code | Name | Direction | Description |
 |-----------|------|-----------|-------------|
@@ -262,7 +286,7 @@ The emergency channel operates *independently* of the control channel. It is des
 | `0x2003` | `AudioMute` | Both | Mute/unmute |
 | `0x2004` | `AudioVolume` | Both | Volume level change |
 
-### 5.6 Clipboard Channel Messages (0x30)
+### 5.7 Clipboard Channel Messages (0x30)
 
 | Type Code | Name | Direction | Description |
 |-----------|------|-----------|-------------|
@@ -274,7 +298,7 @@ The emergency channel operates *independently* of the control channel. It is des
 | `0x3006` | `ClipboardProgress` | Both | Transfer progress for large items |
 | `0x3007` | `ClipboardCancel` | Both | Cancel ongoing transfer |
 
-### 5.7 Input Channel Messages (0x50)
+### 5.8 Input Channel Messages (0x50)
 
 | Type Code | Name | Direction | Description |
 |-----------|------|-----------|-------------|
@@ -442,7 +466,84 @@ Rect = {
 }
 ```
 
-### 8.5 CBOR Schema: Input Events
+### 8.5 CBOR Schema: Tile Channel
+
+```cddl
+TileConfig = {
+    tile_size: uint,                           ; tile dimension in pixels (32, 64, 128, 256)
+    grid_width: uint,                          ; number of tiles horizontally
+    grid_height: uint,                         ; number of tiles vertically
+    pixel_format: text,                        ; "rgb888", "rgba8888", "rgb565"
+    codec: text,                               ; "zstd", "lz4", "png", "qoi", "webp", "raw"
+    delta_enabled: bool,                       ; whether XOR deltas are used
+    screen_width: uint,                        ; actual screen width in pixels
+    screen_height: uint,                       ; actual screen height in pixels
+}
+
+TileBatch = {
+    batch_id: uint,                            ; monotonic batch counter
+    timestamp_us: uint,                        ; capture timestamp
+    tile_count: uint,                          ; number of tile updates in this batch
+    tiles: [+ TileUpdate],                     ; the tile updates
+    ? scroll_precede: TileScrollVector,        ; if set, apply scroll before tiles
+}
+
+TileUpdate = {
+    x: uint,                                   ; tile grid column (0-based)
+    y: uint,                                   ; tile grid row (0-based)
+    encoding: text,                            ; "full", "delta", "copy", "solid"
+    ? data: bytes,                             ; compressed tile data (full or XOR delta)
+    ? copy_source: uint,                       ; index into this batch's tile list (for "copy")
+    ? solid_color: bytes,                      ; 3 or 4 bytes RGBA (for "solid")
+    ? data_size: uint,                         ; uncompressed size hint (for pre-allocation)
+}
+
+; Encoding type semantics:
+; "full"  — `data` contains the full tile bitmap, codec-compressed.
+;           Client replaces tile buffer at (x, y) with decoded data.
+; "delta" — `data` contains XOR of (current tile ^ previous tile), codec-compressed.
+;           Client decompresses, XORs with its buffered tile at (x, y), stores result.
+; "copy"  — tile is identical to another tile in this batch.
+;           `copy_source` is the index of the source tile in the `tiles` array.
+;           Client copies the decoded tile from that index.
+; "solid" — tile is a single solid color.
+;           `solid_color` is the RGBA value. Client fills tile buffer at (x, y).
+; Tiles that are unchanged ("skip") are NOT included in the batch.
+
+TileBatchAck = {
+    batch_id: uint,                            ; batch being acknowledged
+    decode_time_us: uint,                      ; time to decode + apply this batch
+}
+
+TileScrollVector = {
+    dx: int,                                   ; horizontal scroll in tiles (positive = right)
+    dy: int,                                   ; vertical scroll in tiles (positive = down)
+}
+
+TileScroll = {
+    scroll: TileScrollVector,
+    timestamp_us: uint,
+}
+
+TileKeyFrame = {
+    batch_id: uint,
+    timestamp_us: uint,
+    tile_count: uint,
+    tiles: [+ TileUpdate],                     ; all tiles, all "full" encoding
+}
+
+TileKeyFrameRequest = {
+    reason: text,                              ; "reconnect", "desync", "user"
+}
+
+TileModeSwitch = {
+    region: Rect,                              ; screen region in pixels
+    mode: text,                                ; "video", "tile"
+    timestamp_us: uint,
+}
+```
+
+### 8.6 CBOR Schema: Input Events
 
 ```cddl
 KeyEvent = {
@@ -485,7 +586,7 @@ TouchEvent = {
 }
 ```
 
-### 8.6 CBOR Schema: Asset Cache Messages
+### 8.7 CBOR Schema: Asset Cache Messages
 
 ```cddl
 AssetManifest = {
@@ -727,7 +828,51 @@ The emergency channel has its own heartbeat independent of the control channel:
                           └────────┘
 ```
 
-### 10.3 Audio Channel State Machine
+### 10.3 Tile Channel State Machine
+
+```
+                    ┌────────────┐
+                    │  Inactive  │ (channel not opened)
+                    └──────┬─────┘
+                           │ ChannelOpen
+                           ▼
+                    ┌────────────┐
+                    │ Configuring│ (TileConfig sent, awaiting ack)
+                    └──────┬─────┘
+                           │ ChannelOpenAck
+                           ▼
+                    ┌────────────┐
+                    │ Key Frame  │ (sending initial TileKeyFrame)
+                    └──────┬─────┘
+                           │ TileKeyFrame sent + ack
+                           ▼
+                    ┌────────────┐
+                    │ Streaming  │ (TileBatch flow)
+                    └──┬──┬──┬──┘
+                       │  │  │
+      TileKeyFrameReq │  │  │ TileConfig (resize)
+                       │  │  ▼
+                       │  │ ┌────────────┐
+                       │  │ │Reconfiguring│ (new grid size, sends TileConfig)
+                       │  │ └──────┬─────┘
+                       │  │        │ Ack → Key Frame → Streaming
+                       │  │        ▼
+                       ▼  │   Streaming
+                 Key Frame│
+            (full refresh)│ ChannelClose
+                       │  ▼
+                       ▼ ┌────────┐
+                  Streaming│ Closed │
+                          └────────┘
+```
+
+**Key behaviors:**
+- On entering **Key Frame** state, the server sends a `TileKeyFrame` containing every tile as `full`. The client replaces its entire tile buffer. This synchronizes client and server tile state.
+- During **Streaming**, the server sends `TileBatch` messages with adaptive delta encoding. `TileScroll` messages can precede a `TileBatch` when a scroll is detected.
+- A `TileKeyFrameRequest` from the client (e.g., after detecting tile corruption or on reconnect) transitions the server back to **Key Frame** state.
+- On **Reconfiguring** (triggered by window resize), the tile grid is re-computed. The server sends a new `TileConfig` followed by a `TileKeyFrame` for the new grid dimensions.
+
+### 10.4 Audio Channel State Machine
 
 ```
                     ┌────────────┐
@@ -767,6 +912,8 @@ The emergency channel has its own heartbeat independent of the control channel:
 | Compositor render | < 5ms | < 5ms | < 10ms |
 | Encode (H.264) | < 5ms | < 5ms | < 10ms |
 | Encode (AV1) | < 8ms | < 8ms | < 15ms |
+| Tile batch encode (64×64) | < 3ms | < 3ms | < 5ms |
+| Tile XOR delta (64×64) | < 0.1ms | < 0.1ms | < 0.1ms |
 | Transport (packetize + send) | < 2ms | < 2ms | < 3ms |
 | Client decode | < 3ms | < 3ms | < 5ms |
 | Cursor update | < 5ms | < 5ms + RTT | < 5ms |
@@ -779,6 +926,9 @@ The emergency channel has its own heartbeat independent of the control channel:
 | Frame rate (1080p, balanced) | 60 FPS sustained |
 | Frame rate (4K, balanced) | 30 FPS sustained, 60 FPS achievable |
 | Frame rate (idle, no damage) | 0 FPS (no frames sent when nothing changes) |
+| Tile batch rate (1080p, active typing) | 30–60 batches/sec |
+| Tile skip ratio (static screen) | > 99% (only cursor blink tiles sent) |
+| Tile delta savings (vs. full tile, typical UI) | 60–90% bandwidth reduction |
 | Audio stream | 48kHz stereo, Opus, < 128kbps |
 | Clipboard (text, < 1MB) | < 100ms end-to-end |
 | File transfer | Limited by network bandwidth |
@@ -876,6 +1026,13 @@ The following components are fuzzing targets for security and robustness:
 | Ordering | Verify per-channel ordering | No out-of-order processing |
 | Rate limiting | Exceed notification/clipboard limits | Correct error codes returned |
 | Asset caching | AssetManifest/Request/Data round-trip | Client receives and caches assets correctly; cache hits skip transfer |
+| Tile key frame | TileConfig → TileKeyFrame, all tiles full | Client reconstructs full screen from tiles |
+| Tile delta | TileBatch with XOR deltas | Client applies XOR, result matches server bitmap |
+| Tile scroll | TileScroll + TileBatch for exposed strip | Client shifts buffer, exposed tiles are correct |
+| Tile copy/solid | TileBatch with copy and solid tiles | Client fills/copies correctly, pixel-perfect match |
+| Tile mode switch | TileModeSwitch video↔tile | Client transitions regions without artifacts |
+| Tile resize | Resize → TileConfig → TileKeyFrame | Client reconfigures grid, no desync |
+| Tile key frame request | Client sends TileKeyFrameRequest | Server responds with full TileKeyFrame |
 
 ### 13.2 Conformance Test Runner
 
@@ -897,6 +1054,10 @@ Outputs a pass/fail report per test case.
 - State machine: all transition paths, including error paths.
 - Sequence numbering: duplicate detection, wrap-around at 2^32.
 - Timestamp: monotonicity, wrap-around handling.
+- Tile: TileBatch round-trip with all encoding types (full, delta, copy, solid).
+- Tile: XOR delta produces pixel-identical result to full tile on client.
+- Tile: TileScroll + TileBatch produces correct shifted buffer.
+- Tile: TileKeyFrame fully resynchronizes client after induced desync.
 
 ### Security
 - TLS: verify only TLS 1.3 is accepted. Downgrade attack rejected.
