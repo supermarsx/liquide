@@ -1,7 +1,7 @@
 # LiquidDE Design Language — Specification
 
 > **License**: MIT
-> **Related specs**: [Server/DE](spec.md) · [Client](spec-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md)
+> **Related specs**: [Server/DE](spec.md) · [Client](spec-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
 
 ---
 
@@ -103,7 +103,54 @@ This document serves as both a design specification and the authoritative CSS do
 }
 ```
 
-### 2.2 Light Theme Override
+### 2.2 Theme Presets
+
+LiquidDE ships with **four built-in theme presets**. The base palette above serves as the **Standard** (default) dark theme. Three additional presets are defined in separate specification files:
+
+| Preset | ID | Type | Description | Spec |
+|--------|----|------|-------------|------|
+| **Standard** | `liquid-glass` | Dark (cool) | Default Liquid Glass — cool blue tones | This document (§2.1) |
+| **Night** | `night` | Dark (OLED) | True black backgrounds, restrained glass, OLED-optimized | [spec-theme-night.md](spec-theme-night.md) |
+| **Sunset** | `sunset` | Dark (warm) | Amber/orange tones, warm glass tint, full effects | [spec-theme-sunset.md](spec-theme-sunset.md) |
+| **Midday** | `midday` | Light (warm) | Tarnished off-white, warm linen tones, inverted contrast | [spec-theme-midday.md](spec-theme-midday.md) |
+
+Theme presets are activated via:
+- **Server-side**: `[appearance] theme = "night"` in `session.toml` or `server.toml`.
+- **Client-side**: `[general] theme = "night"` in client `config.toml`.
+- **CSS**: `@import "/etc/liquidde/themes/night.css";` in user's `theme.css`.
+
+Each preset provides a complete CSS class (`.liquid-theme-night`, `.liquid-theme-sunset`, `.liquid-theme-midday`) that overrides all relevant custom properties. The class is applied to the document root alongside any accessibility or mode classes.
+
+#### Theme Selection Priority
+1. User preference (`~/.config/liquidde/session.toml` → `[appearance] theme`).
+2. System default (`/etc/liquidde/server.toml` → `[appearance] default_theme`).
+3. `"liquid-glass"` (Standard dark theme) if no preference is set.
+
+#### Theme Metadata Files
+Each preset has a metadata file at `/etc/liquidde/themes/<id>.toml` containing:
+```toml
+[theme]
+id = "sunset"
+name = "Sunset"
+description = "Warm dark theme with amber and orange tones"
+type = "dark"          # dark, light
+author = "LiquidDE"
+version = "1.0.0"
+
+[theme.tags]
+warm = true
+low_eye_strain = true
+
+[theme.wallpaper]
+default = "sunset-amber.jpg"
+fallback_color = "#1A1008"
+```
+
+Custom themes follow the same format and are placed in `/etc/liquidde/themes/` (system-wide) or `~/.config/liquidde/themes/` (per-user).
+
+### 2.3 Light Theme Override (Legacy)
+
+The legacy `.liquid-theme-light` class is retained for backwards compatibility but users should prefer the **Midday** preset for light mode:
 
 ```css
 .liquid-theme-light {
@@ -121,8 +168,8 @@ This document serves as both a design specification and the authoritative CSS do
 }
 ```
 
-### 2.3 Accent Color Customization
-Users can set any accent color:
+### 2.4 Accent Color Customization
+Users can set any accent color on top of any theme preset:
 ```css
 :root {
   --liquid-accent: #FF6B35;   /* custom orange accent */
@@ -1894,8 +1941,11 @@ Example — "Flat Minimal" theme (no glass):
 #### System
 | Selector | Element |
 |----------|---------|
-| `.liquid-theme-dark` | Dark theme root |
-| `.liquid-theme-light` | Light theme root |
+| `.liquid-theme-dark` | Dark theme root (legacy) |
+| `.liquid-theme-light` | Light theme root (legacy) |
+| `.liquid-theme-night` | Night theme preset (OLED dark) |
+| `.liquid-theme-sunset` | Sunset theme preset (warm dark) |
+| `.liquid-theme-midday` | Midday theme preset (tarnished white light) |
 | `.liquid-high-contrast` | High contrast mode |
 | `.liquid-large-text` | Large text mode |
 | `.liquid-performance-minimal` | Reduced effects mode |

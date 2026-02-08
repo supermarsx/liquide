@@ -2,7 +2,7 @@
 
 > **Language**: Rust
 > **License**: MIT
-> **Related specs**: [Client](spec-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md)
+> **Related specs**: [Client](spec-client.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
 
 ---
 
@@ -748,12 +748,20 @@ Configurable per session/user/group with extensive options:
 ### Keyboard
 - **Layout-aware scancodes**: server-side layout mapping.
 - **Extensive keyboard layout support**: 50+ layouts selectable per session.
-  - QWERTY (US, UK, etc.), AZERTY, QWERTZ, Dvorak, Colemak, etc.
-  - CJK input method support (IME).
-  - Custom layout definition files.
+  - QWERTY (US, UK, Australian, Canadian, Irish, etc.), AZERTY (French, Belgian), QWERTZ (German, Swiss, Hungarian, Czech).
+  - Dvorak, Colemak, Colemak-DH, Workman, Norman.
+  - CJK input method support (IME): Chinese (Pinyin, Wubi, Cangjie, Bopomofo), Japanese (Romaji, Kana), Korean (Hangul 2-Set, 3-Set).
+  - Indic scripts: Devanagari (Hindi, Marathi, Sanskrit), Bengali, Tamil, Telugu, Kannada, Malayalam, Gujarati, Punjabi (Gurmukhi).
+  - Arabic, Hebrew, Persian (Farsi), Urdu.
+  - Cyrillic: Russian (JCUKEN), Ukrainian, Bulgarian, Serbian.
+  - Greek, Georgian, Armenian, Ethiopic (Amharic, Tigrinya).
+  - Thai (Kedmanee, Pattachote), Vietnamese (Telex, VNI, VIQR).
+  - Turkish (Q, F), Azerbaijani, Kazakh, Uzbek.
+  - Custom layout definition files (XKB-compatible format).
 - **Keystroke capture and forward**: client captures all keystrokes (including system shortcuts like Alt+Tab, Super, Ctrl+Alt+Del) and forwards them to the remote session when the client window has focus.
 - **No 'sticky modifiers' under latency**: modifier key state tracked precisely.
 - **Dead keys and compose sequences** supported.
+- **Input method framework**: built-in lightweight IME framework for CJK and complex script input, with support for external IBus/Fcitx protocol bridging.
 
 ### Mouse
 - Relative and absolute mode.
@@ -799,6 +807,229 @@ Configurable per session/user/group with extensive options:
 
 ---
 
+## 12b) Internationalization (i18n) & Localization
+
+### Overview
+LiquidDE provides comprehensive internationalization support. All user-facing text in the DE shell, login screen, settings, and built-in applications is translatable. The i18n system covers UI translations, keyboard layouts, date/time formatting, number formatting, and text directionality.
+
+### Supported Languages
+
+LiquidDE ships with translations for 40+ languages. The translation framework supports any additional language through community-contributed message catalogs.
+
+#### Tier 1 — Full Translation + Full QA
+- English (en-US, en-GB, en-AU)
+- German (de-DE, de-AT, de-CH)
+- French (fr-FR, fr-CA, fr-BE)
+- Spanish (es-ES, es-MX, es-AR)
+- Portuguese (pt-BR, pt-PT)
+- Japanese (ja-JP)
+- Chinese Simplified (zh-CN)
+- Chinese Traditional (zh-TW, zh-HK)
+- Korean (ko-KR)
+- Russian (ru-RU)
+
+#### Tier 2 — Full Translation
+- Italian (it-IT)
+- Dutch (nl-NL, nl-BE)
+- Polish (pl-PL)
+- Czech (cs-CZ)
+- Hungarian (hu-HU)
+- Romanian (ro-RO)
+- Turkish (tr-TR)
+- Arabic (ar-SA, ar-EG)
+- Hebrew (he-IL)
+- Hindi (hi-IN)
+- Thai (th-TH)
+- Vietnamese (vi-VN)
+- Indonesian (id-ID)
+- Malay (ms-MY)
+- Swedish (sv-SE)
+- Norwegian (nb-NO, nn-NO)
+- Danish (da-DK)
+- Finnish (fi-FI)
+- Ukrainian (uk-UA)
+- Greek (el-GR)
+
+#### Tier 3 — Community Translation
+- Any additional language supported through community-contributed `.ftl` (Fluent) message catalogs.
+- Community translations are loaded from `/etc/liquidde/i18n/` or `~/.config/liquidde/i18n/`.
+
+### Translation Framework
+
+#### Message Format
+- Translation uses **Project Fluent** (`.ftl` files) — a modern localization system designed for natural-sounding translations.
+- Fluent supports pluralization, gender, number formatting, and complex grammatical rules natively.
+- Message files are stored at:
+  - System: `/etc/liquidde/i18n/<locale>/messages.ftl`
+  - User overrides: `~/.config/liquidde/i18n/<locale>/messages.ftl`
+- Example message file:
+  ```ftl
+  # /etc/liquidde/i18n/de-DE/messages.ftl
+  login-greeting-morning = Guten Morgen
+  login-greeting-afternoon = Guten Tag
+  login-greeting-evening = Guten Abend
+  login-submit = Anmelden
+  login-error-invalid = Falscher Benutzername oder Passwort
+  dock-open-launcher = Starter öffnen
+  settings-title = Einstellungen
+  settings-display = Anzeige
+  settings-keyboard = Tastatur
+  settings-language = Sprache
+  notification-connected = Verbunden mit { $server }
+  session-idle-warning =
+      { $minutes ->
+          [one] Sitzung wird in { $minutes } Minute gesperrt
+         *[other] Sitzung wird in { $minutes } Minuten gesperrt
+      }
+  ```
+
+#### Fallback Chain
+1. User's selected locale (e.g., `de-AT`).
+2. Language base (e.g., `de-DE`).
+3. English (`en-US`) as ultimate fallback.
+4. Raw message key if no translation exists (development/debug only).
+
+### Keyboard Layout Configuration
+
+Full keyboard layout specification with variants and options:
+
+```toml
+# ~/.config/liquidde/keyboard-layout.toml
+
+[keyboard]
+layout = "us"                            # primary layout
+variant = ""                             # layout variant (e.g., "dvorak", "colemak", "intl")
+model = "pc105"                          # keyboard model
+options = ["compose:ralt"]               # XKB options
+
+# Additional layouts (switchable at runtime)
+[[keyboard.additional]]
+layout = "de"
+variant = ""
+label = "DE"                             # indicator label in status bar
+
+[[keyboard.additional]]
+layout = "ru"
+variant = "phonetic"
+label = "RU"
+
+# Layout switching
+[keyboard.switching]
+method = "hotkey"                        # hotkey, indicator-click, both
+hotkey = "super+space"                   # shortcut to cycle layouts
+show_indicator = true                    # show current layout in status bar
+indicator_format = "short"               # short (US), long (English (US)), flag
+per_window = true                        # remember layout per window (vs. global)
+```
+
+#### Supported Keyboard Layouts (Complete List)
+
+| Region | Layouts |
+|--------|---------|
+| **Americas** | us, us(intl), us(dvorak), us(colemak), us(workman), br, ca, ca(fr), latam |
+| **Western Europe** | gb, ie, de, de(neo), fr, fr(bepo), es, pt, it, nl, be, be(iso-alternate), ch, ch(fr), at |
+| **Northern Europe** | se, no, dk, fi, is |
+| **Eastern Europe** | pl, cz, sk, hu, ro, bg, bg(phonetic), rs, rs(latin), hr, si, ee, lt, lv |
+| **Cyrillic** | ru, ru(phonetic), ua, by, kz, mk |
+| **Greek/Turkish** | gr, tr, tr(f), az |
+| **Middle East** | ara, il, ir, pk |
+| **South Asia** | in(deva), in(beng), in(taml), in(telu), in(knda), in(mlym), in(gujr), in(guru) |
+| **East Asia** | jp, kr, cn, tw |
+| **Southeast Asia** | th, th(pattachote), vn, my, id |
+| **Other** | ge, am, et, dz, ma, tn, eg, ph, za |
+
+### Regional Format Settings
+
+Date, time, number, and currency formatting respect the user's locale:
+
+```toml
+# ~/.config/liquidde/session.toml
+
+[locale]
+language = "en-US"                       # UI language (message catalog)
+region = "en-US"                         # regional formats (numbers, dates, currency)
+# Override individual format categories:
+date_format = "auto"                     # auto (from region), iso8601, us, european, japanese
+time_format = "auto"                     # auto (from region), 24h, 12h
+first_day_of_week = "auto"              # auto (from region), monday, sunday, saturday
+number_format = "auto"                   # auto (from region), period-comma (1,234.56), comma-period (1.234,56), space-comma (1 234,56)
+currency_format = "auto"                 # auto (from region), symbol-before ($1.00), symbol-after (1.00€)
+measurement_system = "auto"              # auto (from region), metric, imperial
+temperature_unit = "auto"                # auto (from region), celsius, fahrenheit
+paper_size = "auto"                      # auto (from region), a4, letter
+```
+
+#### Date & Time Format Examples
+
+| Locale | Date (long) | Date (short) | Time | First Day |
+|--------|-------------|--------------|------|-----------|
+| en-US | Saturday, February 8, 2026 | 2/8/2026 | 2:30 PM | Sunday |
+| en-GB | Saturday, 8 February 2026 | 08/02/2026 | 14:30 | Monday |
+| de-DE | Samstag, 8. Februar 2026 | 08.02.2026 | 14:30 | Monday |
+| ja-JP | 2026年2月8日 土曜日 | 2026/02/08 | 14:30 | Sunday |
+| ar-SA | السبت، ٨ فبراير ٢٠٢٦ | ٨/٢/٢٠٢٦ | ٢:٣٠ م | Saturday |
+| zh-CN | 2026年2月8日 星期六 | 2026/2/8 | 14:30 | Monday |
+| ko-KR | 2026년 2월 8일 토요일 | 2026. 2. 8. | 오후 2:30 | Sunday |
+| pt-BR | sábado, 8 de fevereiro de 2026 | 08/02/2026 | 14:30 | Sunday |
+| ru-RU | суббота, 8 февраля 2026 г. | 08.02.2026 | 14:30 | Monday |
+| hi-IN | शनिवार, 8 फ़रवरी 2026 | 8/2/2026 | 2:30 अपराह्न | Sunday |
+
+#### Number Format Examples
+
+| Locale | Number | Currency | Percentage |
+|--------|--------|----------|------------|
+| en-US | 1,234,567.89 | $1,234.56 | 85.5% |
+| de-DE | 1.234.567,89 | 1.234,56 € | 85,5 % |
+| fr-FR | 1 234 567,89 | 1 234,56 € | 85,5 % |
+| ja-JP | 1,234,567.89 | ¥1,235 | 85.5% |
+| hi-IN | 12,34,567.89 | ₹1,234.56 | 85.5% |
+
+### Text Directionality (BiDi)
+
+- LiquidDE supports **right-to-left (RTL)** text layout for Arabic, Hebrew, Persian, and Urdu locales.
+- When an RTL language is the primary locale:
+  - Status bar layout mirrors (clock/tray on left, app menus on right).
+  - Dock position defaults mirror (though user can override).
+  - Settings panels, dialogs, and list layouts mirror horizontally.
+  - Notification slide direction reverses (enters from left instead of right).
+- **Mixed BiDi content** is handled within text fields using the Unicode Bidirectional Algorithm (UBA).
+- CSS logical properties are used throughout the DE shell (e.g., `margin-inline-start` instead of `margin-left`) so layouts adapt automatically.
+
+### Font Support
+
+- **Font fallback chains** are locale-aware. When a glyph is not available in the primary font, the system falls back through locale-appropriate fonts:
+  - CJK: Noto Sans CJK (SC/TC/JP/KR variants selected per locale).
+  - Indic: Noto Sans Devanagari, Bengali, Tamil, etc.
+  - Arabic: Noto Sans Arabic, Noto Naskh Arabic.
+  - Thai: Noto Sans Thai.
+- **Font rendering**: HarfBuzz is used for complex script shaping (Arabic ligatures, Indic conjuncts, Thai character composition).
+- **System fonts shipped**: Inter (Latin), JetBrains Mono (monospace), Noto Sans (universal fallback), Noto Sans CJK, Noto Sans Arabic, Noto Sans Devanagari, Noto Sans Thai.
+
+### Server-Side i18n Configuration
+
+```toml
+# /etc/liquidde/server.toml
+
+[i18n]
+default_locale = "en-US"                 # system default language
+available_locales = ["en-US", "en-GB", "de-DE", "fr-FR", "ja-JP", "zh-CN", "ko-KR", "es-ES", "pt-BR", "ru-RU", "ar-SA", "hi-IN"]
+fallback_locale = "en-US"
+message_dir = "/etc/liquidde/i18n"       # system message catalogs
+allow_user_translations = true           # allow user-provided .ftl overrides
+keyboard_layout_dir = "/etc/liquidde/xkb" # custom XKB layout directory
+```
+
+### i18n in Login Screen
+
+- The login screen language is determined by:
+  1. Client-side language preference (if set).
+  2. Server's `default_locale`.
+- The login screen language selector (bottom-right utility area) allows changing the locale before authentication.
+- Changing the login screen language reloads all translatable text (greeting, button labels, error messages, placeholders) immediately.
+- Clock and date formatting on the login screen respect the selected locale.
+
+---
+
 ## 13) Session Management & Isolation
 
 ### Session Manager Responsibilities
@@ -826,11 +1057,81 @@ Each user session runs in one of:
 - Each user has their own DE configuration directory: `~/.config/liquidde/`.
 - Contains:
   - `theme.css` — user's CSS customizations.
-  - `session.toml` — DE preferences (dock position, wallpaper, layout).
+  - `session.toml` — DE preferences (dock position, wallpaper, layout, locale, appearance).
   - `keybindings.toml` — custom keyboard shortcuts.
   - `keyboard-layout.toml` — preferred keyboard layout and variants.
+  - `avatar.png` — user's profile avatar image (see User Profile & Avatar below).
 - Defaults inherited from system config, user overrides take priority.
 - Config changes apply live (no session restart needed for most settings).
+
+### User Profile & Avatar
+
+Each user has a profile that includes display metadata used on the login screen, lock screen, and within the DE shell.
+
+#### Avatar Image
+
+- **Storage location**: `~/.config/liquidde/avatar.png` (per-user, on the server).
+- **Supported formats**: PNG (preferred), JPEG, WebP. All formats are internally converted and stored as PNG.
+- **Dimensions**: source images are automatically cropped and resized. Final stored size: 256×256px (the server generates scaled versions as needed: 128×128 for dock/tray, 120×120 for login screen, 64×64 for small contexts, 32×32 for notifications).
+- **Maximum upload size**: 2 MB (pre-crop/resize). Configurable per-server.
+- **Circular crop**: the avatar is always displayed in a circular mask. The upload flow allows the user to position and resize a circular crop region on rectangular source images.
+- **Fallback**: if no avatar is set, the system generates an initials-based avatar using the first letter of the username (or first+last initial if a display name is configured). The initials are rendered in the accent color on a frosted glass circle. This generated fallback is **visually indistinguishable** from users who have simply not uploaded an avatar — this is critical for user enumeration prevention on the login screen.
+- **Anti-enumeration**: when the server responds to a username submission during login, it always returns an avatar response (real avatar or generated initials fallback) with identical timing and response format. See §15 Login Screen for details.
+
+#### Avatar Management
+
+Users can manage their avatar through:
+1. **Settings app** → Profile section → Avatar editor.
+   - Upload from file (PNG, JPEG, WebP).
+   - Crop and position using a circular crop overlay.
+   - Preview before applying.
+   - Remove avatar (revert to initials fallback).
+2. **CLI**: `liquidctl user avatar set <path>` / `liquidctl user avatar remove`.
+3. **Management UI**: administrators can set/remove avatars for any user.
+
+#### Avatar API (Server-Side)
+
+```
+POST   /api/v1/users/{username}/avatar     Upload avatar (multipart/form-data, field: "avatar")
+GET    /api/v1/users/{username}/avatar      Get avatar image (returns PNG, or 204 No Content for initials fallback)
+DELETE /api/v1/users/{username}/avatar      Remove avatar
+```
+
+- Upload endpoint accepts PNG, JPEG, or WebP. Server crops and resizes to 256×256.
+- Server generates and caches scaled variants (128, 120, 64, 32px).
+- Avatar cache invalidation: when avatar changes, all sessions for the user receive an avatar update notification. Lock screens update immediately.
+
+#### User Display Name
+
+- Optional display name for richer profile display.
+- Stored in `~/.config/liquidde/session.toml`:
+  ```toml
+  [profile]
+  display_name = "Alice Johnson"           # optional, shown on lock screen and login greeting
+  avatar = "avatar.png"                    # relative to ~/.config/liquidde/
+  initials_override = ""                   # override auto-generated initials (e.g., "AJ")
+  ```
+- If no display name is set, the Unix username is displayed.
+
+#### Avatar Transfer
+
+- **Login screen**: after username submission, the server sends the avatar (if it exists) or a generated initials SVG to the client. Transfer size: ≤64KB (120px avatar). The client caches avatars keyed on `server_address + username + avatar_hash`.
+- **Lock screen**: avatar is already cached from the session start. If the avatar changes during the session, the lock screen updates on next display.
+- **Client cache**: cached avatars persist across connections. Cache keyed on `(server_address, username, avatar_hash)`. Cache size configurable in client `[wallpaper_cache]` section.
+
+#### Server Avatar Configuration
+
+```toml
+# /etc/liquidde/server.toml
+
+[avatar]
+enabled = true                           # allow user avatars
+max_upload_size_bytes = 2097152          # 2 MB
+stored_size = 256                        # stored avatar size (px, square)
+allowed_formats = ["png", "jpeg", "webp"]
+generate_initials_fallback = true        # generate initials avatar when none uploaded
+default_avatar = ""                      # path to server-wide default avatar (blank = initials)
+```
 
 ---
 
@@ -1780,6 +2081,30 @@ log_level = "info"                    # trace, debug, info, warn, error
 log_format = "json"                   # json, text
 data_dir = "/var/lib/liquidde"
 
+# ─── Appearance ──────────────────────────────────────────────
+[appearance]
+default_theme = "liquid-glass"        # liquid-glass, night, sunset, midday, custom
+theme_dir = "/etc/liquidde/themes"    # system theme directory
+allow_user_themes = true              # allow users to override theme
+wallpaper_dir = "/etc/liquidde/wallpapers"
+
+# ─── Internationalization ────────────────────────────────────
+[i18n]
+default_locale = "en-US"
+available_locales = ["en-US", "en-GB", "de-DE", "fr-FR", "ja-JP", "zh-CN", "ko-KR", "es-ES", "pt-BR", "ru-RU", "ar-SA", "hi-IN"]
+fallback_locale = "en-US"
+message_dir = "/etc/liquidde/i18n"
+allow_user_translations = true
+keyboard_layout_dir = "/etc/liquidde/xkb"
+
+# ─── Avatar ──────────────────────────────────────────────────
+[avatar]
+enabled = true
+max_upload_size_bytes = 2097152       # 2 MB
+stored_size = 256                     # px, square
+allowed_formats = ["png", "jpeg", "webp"]
+generate_initials_fallback = true
+
 # ─── Listening ──────────────────────────────────────────────
 [[listen]]
 address = "0.0.0.0:3389"
@@ -2154,9 +2479,12 @@ Full CSS documentation in [spec-design.md](spec-design.md).
    - Performance profiles.
    - Clipboard policy.
    - Display & scaling.
-   - Keyboard layout selection.
+   - Keyboard layout selection and switching configuration.
+   - Language & regional format settings (locale, date/time format, number format).
+   - Theme preset selector (Standard, Night, Sunset, Midday) with live preview.
    - Theme/CSS editor with live preview.
    - Dock configuration.
+   - User profile editor (display name, avatar upload/crop/remove).
 
 4. **Task Monitor**
    - Shows CPU, RAM, encode load, FPS, latency.

@@ -2,7 +2,7 @@
 
 > **Language**: Rust
 > **License**: MIT
-> **Related specs**: [Server/DE](spec.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md)
+> **Related specs**: [Server/DE](spec.md) · [Gateway](spec-gateway.md) · [Management UI](spec-manager.md) · [liquidctl CLI](spec-liquidctl.md) · [Design Language](spec-design.md) · [Night Theme](spec-theme-night.md) · [Sunset Theme](spec-theme-sunset.md) · [Midday Theme](spec-theme-midday.md)
 
 ---
 
@@ -812,6 +812,20 @@ show_online_status = true
 ping_interval_sec = 60
 show_thumbnails = true
 
+[machines.thumbnails]
+enabled = true
+capture_on_disconnect = true
+capture_on_lock = true
+capture_periodic = false
+blur_on_capture = true
+blur_radius = 8
+format = "webp"
+quality = 75
+max_width = 480
+encryption = "none"
+max_cache_mb = 100
+stale_threshold_days = 7
+
 # ─── Logging ──────────────────────────────────────────────
 [logging]
 enabled = true
@@ -847,6 +861,94 @@ LiquidClient can manage connections to **multiple remote servers** from a single
 - Machines can be organized into folders (e.g., "Work", "Home Lab", "Production").
 - Folders are collapsible in the connection dialog.
 - Drag-and-drop reordering within and between folders.
+
+### Machine Thumbnails
+
+Machine thumbnails provide a visual preview of the last known session state for each saved server. They help users quickly identify and differentiate between multiple remote machines at a glance.
+
+#### Thumbnail Capture
+
+Thumbnails are captured at specific moments during the session lifecycle:
+
+| Trigger | Description | Default |
+|---------|-------------|---------|
+| **Disconnect** | Capture the last visible frame when the client disconnects (graceful or unplanned). | Enabled |
+| **Lock** | Capture before the lock screen replaces the session display. | Enabled |
+| **Periodic** | Capture a thumbnail at regular intervals during an active session. | Disabled |
+| **Manual** | User triggers capture via keyboard shortcut or menu. | Always available |
+| **Session resume available** | Server reports a resumable session — client uses the last captured thumbnail. | Enabled |
+
+- **Privacy safeguard**: thumbnails are captured from the **client-side frame buffer** (post-decode, pre-display). No additional server interaction required. The server never receives or stores session thumbnails — they are entirely client-local.
+- **Blur on capture**: thumbnails are optionally Gaussian-blurred on capture to prevent sensitive content from being readable in the machine list. Default: light blur (8px radius on the scaled-down image). Can be disabled for full clarity or increased for privacy.
+- **Capture excludes overlays**: the stream analysis overlay and fullscreen toolbar are excluded from thumbnail capture. Only the remote session content is captured.
+
+#### Thumbnail Format & Storage
+
+- **Format**: WebP (lossy, quality 75) by default. JPEG fallback if WebP encoding is unavailable.
+- **Resolution**: captured at the session's native resolution, then downscaled to a maximum of **480×270px** (16:9) or **480×360px** (4:3) — whichever matches the session aspect ratio. Further variants generated:
+  - **Large**: 480px wide — used for hover preview and detail view.
+  - **Small**: 160px wide — used for the machine list grid/tile view.
+  - **Tiny**: 80px wide — used for the machine list compact/row view.
+- **File size**: typically 15–50 KB per thumbnail (large variant). All three variants stored.
+- **Storage location**:
+  - **Linux**: `~/.config/liquidclient/thumbnails/`
+  - **macOS**: `~/Library/Application Support/LiquidClient/thumbnails/`
+  - **Windows**: `%APPDATA%\LiquidClient\thumbnails\`
+- **File naming**: `<server_address_hash>_<timestamp>.webp` — each machine retains only the most recent thumbnail (old thumbnails are replaced).
+- **Multi-monitor sessions**: for sessions with multiple virtual monitors, the thumbnail captures the primary monitor by default. Optionally, a tiled composite of all monitors can be generated.
+
+#### Thumbnail Display in Machine Manager
+
+- **Machine list entry**: each machine card/row in the connection dialog shows the thumbnail alongside the server name, status, and metadata.
+- **Layout modes**:
+  - **Grid/Tile view**: thumbnail prominently displayed as the card background with server name and status overlaid at the bottom. Large variant used.
+  - **List/Row view**: small thumbnail displayed as a square preview to the left of the server name and metadata. Tiny variant used.
+  - **Detail panel**: when a machine is selected, the large thumbnail is shown in a detail panel alongside full connection info, session status, and action buttons.
+- **Hover preview**: hovering over a machine entry in any view shows the large thumbnail in a glass-styled popover with session metadata (last connected, resolution, session duration).
+- **No thumbnail fallback**: if no thumbnail is available (never connected or thumbnails disabled), a placeholder is shown:
+  - Glass-tinted panel with the server's first letter or a monitor icon.
+  - Text: "No preview available" in `var(--liquid-text-tertiary)`.
+- **Thumbnail freshness indicator**: a subtle timestamp ("2 hours ago", "3 days ago") overlaid on the thumbnail corner shows when it was captured. Thumbnails older than a configurable threshold (default: 7 days) are dimmed to indicate staleness.
+- **Session resume badge**: if the server reports an active session available for resume, the thumbnail gets a small "Resume" badge in the corner, visually indicating the session is still alive.
+- **Animated transition**: when connecting to a machine, the thumbnail smoothly scales up and cross-fades into the live session stream.
+
+#### Thumbnail Security & Privacy
+
+- Thumbnails are stored **unencrypted** on disk by default (they are visual previews, not credentials). However, encryption can be enabled:
+  - `encryption = "none"` — stored as plain image files (default).
+  - `encryption = "os-keychain"` — encrypted using OS keychain-derived key (same as credential storage).
+  - `encryption = "master-password"` — encrypted with the master password key.
+- **Auto-clear**: thumbnails can be automatically deleted after a configurable period or on client exit.
+- **Clear all thumbnails**: available in client settings for quick cleanup.
+- **Per-machine disable**: thumbnails can be disabled for specific machines (e.g., sensitive production servers):
+  ```toml
+  [[machines.entries]]
+  name = "Production DB"
+  address = "prod-db.internal:3389"
+  thumbnail_enabled = false              # no thumbnail captured for this machine
+  ```
+
+#### Thumbnail Configuration
+
+```toml
+[machines.thumbnails]
+enabled = true                            # master toggle for thumbnail system
+capture_on_disconnect = true              # capture when disconnecting
+capture_on_lock = true                    # capture before session locks
+capture_periodic = false                  # periodic capture during session
+capture_interval_sec = 300                # interval for periodic capture (5 min)
+blur_on_capture = true                    # apply privacy blur to thumbnails
+blur_radius = 8                           # px, blur radius (0 = no blur)
+format = "webp"                           # webp, jpeg
+quality = 75                              # encoding quality (1-100)
+max_width = 480                           # px, maximum thumbnail width
+multi_monitor = "primary"                 # primary, composite (tiled all monitors)
+encryption = "none"                       # none, os-keychain, master-password
+auto_clear_days = 0                       # 0 = never auto-clear; >0 = clear after N days
+clear_on_exit = false                     # delete all thumbnails when client exits
+max_cache_mb = 100                        # maximum total thumbnail storage
+stale_threshold_days = 7                  # dim thumbnails older than this
+```
 
 ### Credential Storage (AES-256 Encrypted)
 - Saved credentials are **encrypted at rest** using AES-256-GCM.
