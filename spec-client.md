@@ -1470,6 +1470,52 @@ For connection-fatal and server-unreachable types, the client generates the cras
 - Screen reader support: all elements have ARIA labels. Error code and description announced on display.
 - High-contrast mode: glass effects replaced with solid backgrounds, thicker borders.
 
+#### Crash Log Grab
+
+The crash screen allows the user to view and download crash logs directly from the client window:
+
+1. **Stack trace display**: the crash screen shows a scrollable stack trace panel. Users can scroll through the full trace, select text, and copy it to the system clipboard (Ctrl+C).
+2. **"View Full Log" button**: expands the crash screen to show a full-screen log viewer with the last 100 lines of the session log. The log viewer uses monospace font with syntax highlighting for log levels (ERROR = red, WARN = orange, INFO = white, DEBUG = gray).
+3. **"Download Report" button**: generates and downloads a crash report file:
+   - Format: JSON (`.json`) or tarball (`.tar.gz` if coredump is included).
+   - The client requests the full report from the server supervisor via the **emergency channel** (see below).
+   - The report is streamed in chunks, reassembled on the client, and offered for save via the OS file save dialog.
+   - Report contents: error code, stack trace, session metadata (ID, user, uptime), system info (OS, kernel, CPU, memory), last 100 log lines.
+   - Sanitized: no screen content, no credentials, no user data. Content hashes only.
+4. **"Copy Error" button**: copies a formatted error summary (error code + description + first 10 stack frames) to the system clipboard for pasting into support tickets.
+
+#### Emergency Channel
+
+The client maintains a **dedicated emergency channel** (channel `0x01`) that operates independently of the session control channel. This channel is established during the initial TLS handshake and terminates at the server supervisor daemon (`liquid-desktopd`), not the session process.
+
+**Why this matters**: when a `liquid-session` process crashes, the control channel (which routes through the session process) dies. The emergency channel bypasses the session process entirely, allowing the client to:
+
+- Receive `CrashInfo` messages from the supervisor.
+- Request and stream crash logs and full crash reports.
+- Request a session restart and receive progress updates.
+- Maintain a heartbeat with the supervisor (even when the session is dead).
+- Receive server shutdown notifications.
+- Request real-time diagnostic data (memory, CPU, session list).
+
+**Emergency channel keepalive**: the client sends `HeartbeatEmergency` every 10 seconds. If 3 consecutive heartbeats are missed (30 seconds), the client transitions to the "Server Unreachable" crash screen (the most severe variant).
+
+**Log streaming**: the client can request real-time log forwarding from the server via the emergency channel. Log entries arrive as `SessionLogStream` messages with timestamp, level, subsystem, and message. This enables live debugging during degraded operation (e.g., a plugin is crashing repeatedly, and the admin wants to watch the logs in real time from the client).
+
+See [spec-protocol-formal.md](spec-protocol-formal.md) §9 for full emergency channel protocol specification, message schemas, and state machine.
+
+#### Color Management (Client-Side)
+
+- The client receives video frames in sRGB color space (or the server-configured ICC profile).
+- The client does **not** apply additional color transforms by default — the server's rendering is authoritative.
+- Optional: `color.profile_hint` in client config sends the client's display characteristics to the server:
+  ```toml
+  [color]
+  profile_hint = ""              # path to client display ICC profile (informational, sent to server)
+  force_srgb = true              # assume sRGB output (default; disable for wide-gamut displays)
+  ```
+- On wide-gamut displays (P3, Adobe RGB), `force_srgb = false` and a `profile_hint` allows the server to render in a wider gamut (if supported).
+- HDR passthrough: not supported in the initial release. The client always presents SDR content.
+
 ---
 
 ## 26) Deliverables

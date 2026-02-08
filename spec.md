@@ -358,6 +358,34 @@ Dedicated Channels:
 - Idle state: 1–2 fps or pure "only-on-change" mode.
 - All animation durations and curves configurable via CSS.
 
+#### 8. Color Management
+
+LiquidDE provides server-side color management for accurate rendering:
+
+- **ICC Profile Handling**:
+  - The compositor applies ICC color profiles when rendering.
+  - Default profile: sRGB (the de facto standard for web and desktop content).
+  - Custom ICC profiles can be loaded per virtual monitor via config: `display.icc_profile = "/path/to/profile.icc"`.
+  - The server applies the profile during compositing — the output framebuffer is in the target color space before encoding.
+  - Rendering intent: perceptual (default), configurable to relative colorimetric, absolute colorimetric, or saturation.
+
+- **Client Display Color**:
+  - The encoded video stream is in sRGB by default (or the configured server-side profile).
+  - The **client** is responsible for applying its own display ICC profile (monitor calibration). This is outside LiquidDE's control — it depends on the client OS and display hardware.
+  - The client config includes `color.profile_hint` to inform the server of the client's display characteristics (gamut, white point). The server can use this to optimize rendering, but it is informational only.
+
+- **HDR (High Dynamic Range)**:
+  - HDR is **not** supported in the initial release.
+  - The compositor renders in SDR (8-bit per channel, sRGB/rec.709 gamut).
+  - Future HDR support would require: HDR-capable codec profiles (H.265 Main 10, AV1 with HDR10 metadata), PQ/HLG transfer functions, and HDR-aware compositing.
+  - Config placeholder: `display.hdr = false` (reserved for future use).
+
+- **Gamma / Brightness Controls**:
+  - Virtual gamma adjustment: `display.gamma = 1.0` (range: 0.5–2.0). Applied as a post-compositing transfer function.
+  - Virtual brightness adjustment: `display.brightness = 100` (range: 10–100, percentage). Applied as a linear scale on the output.
+  - Night mode color temperature: handled separately (see spec-settings.md §7.1).
+  - These adjustments affect the encoded video stream — the client receives already-adjusted frames.
+
 ---
 
 ## 7) Remote Display Model
@@ -774,6 +802,7 @@ LiquidDE uses **separate, dedicated transport channels** for different data type
 | **Audio** | Medium | Unreliable (jitter-buffered) | Playback and microphone streams |
 | **USB** | Low-Medium | Reliable | USB/IP device data |
 | **File Transfer** | Low | Reliable | File uploads/downloads |
+| **Emergency** | Highest | Reliable | Crash info, supervisor heartbeat, log streaming (see [spec-protocol-formal.md](spec-protocol-formal.md) §9) |
 
 - Each channel can use a different transport if hybrid transport is enabled.
 - Channels can be independently enabled/disabled without affecting others.
@@ -787,6 +816,82 @@ LiquidDE uses **separate, dedicated transport channels** for different data type
 - **Rich text** (HTML/RTF) — optional.
 - **Images** — optional (size limit configurable).
 - **File list** — optional (maps to file transfer channel).
+
+#### MIME Type Mapping Rules
+
+Clipboard data is exchanged with explicit MIME types. The conversion rules are:
+
+| Source Format | Wire MIME Type | Notes |
+|--------------|---------------|-------|
+| Plain text | `text/plain;charset=utf-8` | Always available |
+| HTML rich text | `text/html` | Sanitized: scripts removed, styles inlined |
+| RTF | `text/rtf` | Passed through unchanged |
+| PNG image | `image/png` | Preferred image format |
+| JPEG image | `image/jpeg` | Lossy — only if source is JPEG |
+| BMP image | `image/bmp` | Converted to PNG on wire if `convert_bmp = true` |
+| SVG image | `image/svg+xml` | Sanitized (same rules as avatar SVG, see §13) |
+| URI list | `text/uri-list` | One URI per line, `\r\n` separated |
+| File list | `application/x-liquidde-file-list` | Maps to file transfer channel (see below) |
+| Custom | `application/octet-stream` | Opaque binary — passed through if policy allows |
+
+When a clipboard offer contains multiple formats, the receiver requests in preference order: `text/html` > `text/plain` for text; `image/png` > `image/jpeg` for images. Applications that offer multiple representations should include all of them.
+
+#### Size Limits & Chunking
+
+- Maximum clipboard item size: `max_size_bytes` (default: 10 MB, configurable).
+- Items exceeding 64 KB are transferred using **chunked transfer**:
+  1. Sender sends `ClipboardOffer` with `size_hint` (total bytes if known, 0 if unknown).
+  2. Receiver sends `ClipboardRequest` for the desired MIME type.
+  3. Sender transmits `ClipboardData` messages with sequential chunk data (max 32 KB per chunk).
+  4. Sender transmits `ClipboardDataEnd` with total size and SHA-256 hash.
+  5. Receiver verifies hash and size match.
+- **Progress reporting**: for transfers > 256 KB, `ClipboardProgress` messages are sent every 64 KB with `bytes_sent` / `total_bytes`. The client displays a progress indicator.
+- **Cancellation**: either side can send `ClipboardCancel` at any time during a chunked transfer. The partial data is discarded.
+- **Timeout**: if no chunk is received for 30 seconds, the transfer is cancelled automatically.
+
+#### Filename Sanitization (File List Clipboard)
+
+When clipboard contains file URIs, filenames are sanitized before use:
+- Path traversal characters (`..`, leading `/`) are stripped.
+- Null bytes and control characters (0x00–0x1F) are removed.
+- Filenames exceeding 255 bytes are truncated (preserving extension).
+- If the destination filename already exists: `filename (1).ext`, `filename (2).ext`, etc.
+- Reserved names on target OS are prefixed (e.g., `CON` → `_CON` on Windows-hosted sessions, though LiquidDE is Linux-native this matters for file transfers to Windows clients).
+
+#### Clipboard History
+
+- LiquidDE maintains a clipboard history ring buffer per session.
+- History size: `clipboard_history_size` (default: 25 items, max: 100).
+- History stores: MIME type, size, timestamp, source application (if detectable via D-Bus), content hash (SHA-256).
+- **Content storage**: text items are stored verbatim up to 1 MB. Image items store a thumbnail (128×128 PNG). Larger items store only metadata (MIME type, size, hash).
+- History is accessible via:
+  - `Super+V` keyboard shortcut (opens clipboard history overlay).
+  - Clipboard history WASM plugin extension point (see §14b).
+  - `org.liquidde.Clipboard.GetHistory()` D-Bus method.
+- History is cleared on session lock if `privacy.clipboard_clear_on_lock = true`.
+- History does not survive session restart (in-memory only).
+
+#### Audit Metadata
+
+Every clipboard operation generates an audit event (if audit logging is enabled):
+
+```json
+{
+  "event": "clipboard_transfer",
+  "timestamp": "2025-01-15T16:22:31.123Z",
+  "session_id": "s-042",
+  "user": "alice",
+  "direction": "server_to_client",
+  "mime_type": "text/plain;charset=utf-8",
+  "size_bytes": 1234,
+  "content_hash": "sha256:a1b2c3d4...",
+  "source_app": "org.gnome.Terminal",
+  "policy_result": "allowed",
+  "transfer_duration_ms": 12
+}
+```
+
+Content is **never** stored in audit logs. Only metadata (MIME type, size, hash) is recorded. This enables compliance auditing without exposing sensitive clipboard content.
 
 #### Clipboard Policy Engine
 Configurable per session/user/group with extensive options:
@@ -808,6 +913,9 @@ Configurable per session/user/group with extensive options:
   1. **"Drag & drop into session"** (client uploads to server).
   2. **"Browse server files"** (read-only or read-write).
 - Size limits, rate limits, and allowed file type filters all configurable.
+- Filename conflict resolution: auto-rename with numeric suffix (see clipboard filename sanitization above).
+- Transfer progress: reported to client UI for display in drag-and-drop overlay.
+- Resumable transfers: if a file transfer is interrupted (network drop), it can be resumed from the last acknowledged byte offset on reconnection.
 
 ---
 
@@ -2987,6 +3095,8 @@ allowed_types = ["text/plain", "text/html", "image/png"]
 rate_limit_per_min = 60
 content_inspection = false
 audit_log = true
+clipboard_history_size = 25              # max items in clipboard history ring buffer (0 = disabled)
+convert_bmp_to_png = true                # convert BMP clipboard images to PNG on wire
 
 # ─── RDP Compatibility ─────────────────────────────────────
 [rdp_compat]

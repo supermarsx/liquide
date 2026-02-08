@@ -2688,6 +2688,11 @@ Example — "Flat Minimal" theme (no glass):
 | `--liquid-crash-trace-bg` | `rgba(0,0,0,0.6)` | Crash screen stack trace container background |
 | `--liquid-crash-text` | `#FFFFFF` | Crash screen primary text color |
 | `--liquid-crash-text-muted` | `rgba(255,255,255,0.5)` | Crash screen secondary/metadata text |
+| `--liquid-color-profile` | `srgb` | Active color profile (srgb, display-p3, custom) |
+| `--liquid-night-mode-temperature` | `6500` | Night mode color temperature in Kelvin |
+| `--liquid-night-mode-opacity` | `0` | Night mode tint overlay opacity (0 = off, 1 = full) |
+| `--liquid-brightness` | `1.0` | Virtual brightness multiplier (0.1–1.0) |
+| `--liquid-gamma` | `1.0` | Virtual gamma value (0.5–2.0) |
 
 ---
 
