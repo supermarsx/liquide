@@ -216,6 +216,92 @@ Dedicated Channels:
 - Applications see a standard Wayland compositor.
 - XWayland bridge available for legacy X11 apps.
 
+#### XWayland Support Policy
+
+XWayland enables legacy X11 applications (e.g., older GTK2 apps, Wine/Proton, some Java apps, many Electron apps with `--ozone-platform=x11`) to run inside the Wayland compositor. LiquiDE takes a **pragmatic but bounded** approach to XWayland:
+
+**Supported (Tier 1 — tested, bugs are P1):**
+
+| Feature | Notes |
+|---------|-------|
+| Basic window management | Map, unmap, resize, move, focus, close |
+| Clipboard (text, images) | Uses Wayland clipboard protocol with XWayland bridge (`wl_data_device` ↔ X11 selection) |
+| Keyboard input (standard layouts) | Via `wl_seat` keyboard → X11 `XKeyEvent` |
+| Mouse input (absolute, buttons, scroll) | Via `wl_seat` pointer → X11 `XMotionEvent`, `XButtonEvent` |
+| Window decorations | Server-side decorations rendered by the compositor (X11 apps get CSD=off) |
+| Drag-and-drop (within X11 apps) | XDND protocol handled internally by XWayland |
+| Window type mapping | `_NET_WM_WINDOW_TYPE` → `xdg_toplevel` / `xdg_popup` mapping |
+
+**Supported (Tier 2 — best-effort, bugs are P2):**
+
+| Feature | Notes |
+|---------|-------|
+| Drag-and-drop (X11 ↔ Wayland) | XDND ↔ `wl_data_device` bridge. Known edge cases with complex MIME types. |
+| Multi-monitor (X11 app spanning monitors) | X11 apps see a single logical screen. `_NET_WM_FULLSCREEN_MONITORS` not supported. |
+| X11 selections (PRIMARY, SECONDARY) | PRIMARY selection (middle-click paste) forwarded. SECONDARY not supported. |
+| Custom cursors (X11 `XDefineCursor`) | Converted to Wayland cursor. Performance may degrade with frequent changes. |
+| `_NET_WM_STRUT` (panel reservation) | Mapped to `layer_shell` exclusive zones with best-effort positioning. |
+
+**Not supported (by design):**
+
+| Feature | Reason | Alternative |
+|---------|--------|-------------|
+| Direct X11 rendering (`MIT-SHM`, DRI2/DRI3) | Requires GPU and breaks remote model | Use Wayland-native rendering path (XWayland uses `wl_shm` for buffer submission) |
+| X11 screen capture (`XGetImage`, `XShm`) | Security: applications should not capture other windows | Use portal-based screenshot API (`xdg-desktop-portal`) |
+| `XTEST` extension | Security: synthetic input injection | Not available (applications that require it won't work) |
+| `Xrandr` for display configuration | Confusing with remote display management | Compositor manages display layout; X11 apps see the result |
+| Complex X11 visuals (depth 8, 16) | Only 32-bit (ARGB) output supported | Apps must handle truecolor |
+
+**Known hard edges in XWayland under remote desktop:**
+
+1. **Popup positioning**: X11 popups use absolute screen coordinates (`OverrideRedirect` windows). In a remote session, the "screen" is the remote virtual display, not the client's monitor. Popups that appear near screen edges may be clipped if the remote display is larger than the client viewport. Mitigation: the compositor applies `xdg_popup.constraint_adjustment` rules to XWayland popups, clamping them to visible area.
+2. **Focus stealing**: X11 has no focus-stealing prevention by default. LiquiDE applies the same `xdg-activation-v1` rules to XWayland windows — focus requests from background X11 apps are denied and trigger an urgent flag on the taskbar instead.
+3. **Clipboard MIME mismatch**: X11 uses `TARGETS` atom to advertise clipboard formats, while Wayland uses MIME strings. The XWayland bridge maps common formats (UTF8_STRING → `text/plain;charset=utf-8`, PIXMAP → `image/png`) but obscure X11-specific targets may not translate. Unknown targets are dropped with a debug log.
+
+### Known Implementation Hard Edges
+
+This section documents non-obvious implementation challenges that affect correctness and interoperability. Implementors must handle these explicitly.
+
+#### Popup & Transient Window Positioning
+
+Popups (menus, tooltips, dropdowns, combobox lists, autocomplete) are the most fragile category of windows in a remote desktop:
+
+| Problem | Cause | Mitigation |
+|---------|-------|------------|
+| **Popup clipped at viewport edge** | Remote Wayland popup anchored near screen edge. Client viewport may be smaller or scrolled. | Compositor applies `xdg_positioner.constraint_adjustment` (flip, slide, resize). Client-side: smooth scroll to reveal popup if partially offscreen. |
+| **Popup placed on wrong monitor** | Multi-monitor with different scales. Popup anchor resolved on server coordinates, but client monitor layout differs. | Server sends popup geometry in logical coordinates. Client maps to local monitor. If mapping fails, popup placed at cursor position as fallback. |
+| **Fractional-scale coordinate rounding** | At 125% or 150% scale, popup anchor coordinates may round to off-by-one pixel positions, causing visual misalignment. | All anchor calculations use fixed-point arithmetic internally (24.8 format). Only the final render step rounds to device pixels. Gap fills use subpixel anti-aliasing. |
+| **Popup z-order vs. native windows** | In seamless mode, remote popups must appear above local windows that are behind the parent remote window. | Popup windows created as child windows (`WS_POPUP` on Windows, `NSPanel` with `floatingPanel` on macOS) with `level` above the parent window. |
+
+#### Drag-and-Drop Correctness
+
+Inter-application DnD (especially cross-toolkit: GTK ↔ Qt ↔ X11 ↔ native client) has known sharp edges:
+
+| Problem | Cause | Mitigation |
+|---------|-------|------------|
+| **MIME type mismatch** | GTK offers `text/uri-list`, Qt offers `application/x-qt-mime-type-name`. | Normalize to canonical MIME types on the wire. Server-side adapter maps toolkit-specific types to standard MIME: `text/uri-list` for file paths, `text/plain` for text, `image/png` for images. Unknown types passed through unchanged. |
+| **DnD across XWayland boundary** | Drag from Wayland app to X11 app (or vice versa). XDND ↔ `wl_data_device` bridge must translate formats and coordinates. | XWayland bridge handles XDND ↔ Wayland DnD conversion. Known issue: drag cursors may flicker during the transition. |
+| **DnD to local client in seamless mode** | User drops file from remote window onto local desktop. | Client converts `text/uri-list` (with remote `file://` URIs) into file transfer requests. Transfer happens asynchronously — user sees a progress indicator. |
+| **DnD cancel/escape** | Drag started but user presses Escape or moves outside valid drop target. Race condition between input event and DnD state machine. | Both client and server implement a 100ms timeout on DnD state transitions. If a drag enters an ambiguous state, it is force-cancelled with `wl_data_source.cancelled` / `DnDCancel` on the wire. |
+
+#### Clipboard MIME Correctness
+
+| Problem | Cause | Mitigation |
+|---------|-------|------------|
+| **`text/html` with embedded images** | HTML clipboard data may reference `cid:` or `data:` URIs for inline images. Some apps embed base64 images; others expect external resources. | Server sanitizes HTML: convert `cid:` references to inline `data:` URIs. Strip external resource references (security). Warn if sanitized HTML exceeds max clipboard size. |
+| **Incremental transfer stalls** | Large clipboard items (multi-MB images) transferred in chunks. Slow network causes UI freeze if clipboard paste blocks on completion. | Non-blocking clipboard: paste immediately inserts placeholder ("Loading clipboard...") and updates async when data arrives. Text paste is always immediate (buffered). Image paste shows progressive loading. |
+| **MIME negotiation failure** | Client requests MIME type that server doesn't support. Or server offers format that no client app can handle. | Server always offers `text/plain;charset=utf-8` as a fallback for any text-containing clipboard item. For images, always include `image/png` alongside native formats. |
+| **Platform-specific clipboard quirks** | macOS `NSPasteboardType` names differ from MIME strings. Windows uses `CF_*` clipboard format IDs. | Client-side adapter between platform clipboard API and MIME-based wire protocol. Maps: `NSPasteboardTypeString` ↔ `text/plain`, `CF_UNICODETEXT` ↔ `text/plain;charset=utf-8`, `CF_DIB` ↔ `image/bmp` (converted to `image/png` on wire). |
+
+#### IME Composition Across the Network
+
+| Problem | Cause | Mitigation |
+|---------|-------|------------|
+| **Composition state appears stale** | Network latency means the preedit string shown on the server is one RTT behind the user's typing. Fast typists see their composition "lag". | Client-side composition: the client renders preedit text locally (overlay on the session view) and only sends committed text to the server. The server's inline preedit is used as confirmation — if it diverges from client-side prediction, the client re-syncs. This is opt-in (default: server-side composition, which is simpler but laggier). |
+| **IME candidate window positioning** | Candidate window is rendered by the server compositor. Position is based on cursor rectangle sent by the focused app. In a remote session, the candidate window must appear near the cursor ON THE CLIENT. | Server sends candidate window as a popup surface with anchor coordinates. Client places it at the corresponding local position (accounting for viewport zoom/scroll). If client-side composition is active, the client renders its own candidate window locally. |
+| **CJK on non-CJK client platform** | Windows/macOS client connecting to a Linux server with IBus/Fcitx5. Client OS keyboard does not have CJK layout. | The remote IME runs on the server. Client forwards raw key events (physical scancodes). The server's IME interprets them according to the server-side layout. This works but the client's input language indicator may be misleading — the toolbar shows the server's active IME. |
+| **Dead key conflicts** | Client OS intercepts dead keys (e.g., macOS Option+e for acute accent). These are consumed locally and never reach the server. | Client sends `key_dead` protocol event when a dead key is consumed locally, so the server knows the next character will be composed. Alternatively, user can enable "raw key passthrough" mode (keyboard lock) where all keys are forwarded to the server. |
+
 ---
 
 ## 6) Rendering Stack
@@ -1001,6 +1087,59 @@ color_depth = "rgb888"              # rgb888 (24-bit), rgba8888 (32-bit), rgb565
   - Bandwidth probing.
   - Interactive-traffic-optimized pacing.
 
+#### Channel Priority & Pacing
+
+LiquiDE multiplexes several data streams over a shared transport. Under congestion, not all streams are equal. The transport layer enforces a **strict priority hierarchy** and **pacing rules** that are normative:
+
+**Priority levels (highest first):**
+
+| Priority | Channel(s) | Scheduling Rule |
+|----------|-----------|-----------------|
+| **P0 — Emergency** | Emergency (0x01) | Always sent immediately. Never queued. Pre-empts all other channels. |
+| **P1 — Input** | Input (0x50) | Sent within 1ms of arrival. Never delayed by video/tile backlog. Input events are small (<100 bytes) and MUST NOT wait behind large video frames in the send queue. |
+| **P2 — Cursor** | Cursor (0x11) | Sent as datagrams (unreliable). Independent of video frame pacing. Cursor updates bypass the send queue entirely on QUIC/UDP. |
+| **P3 — Audio** | Audio playback (0x20), Audio capture (0x21) | Paced at the audio frame rate (typically 50 fps = 20ms frames for Opus). Audio MUST NOT starve — if bandwidth is insufficient for both audio and video, audio wins. Underrun budget: max 1 audio frame drop per 10 seconds. |
+| **P4 — Control** | Control (0x00) | Reliable, ordered. Moderate priority. Protocol signaling, resize, codec switch. |
+| **P5 — Video/Tile** | Video (0x10), Tile (0x12) | Consumes remaining bandwidth after P0–P4 are satisfied. Subject to adaptive quality reduction under congestion. |
+| **P6 — Bulk** | Clipboard (0x30), File Transfer (0x31), USB (0x40), Camera (0x60), Plugin IPC (0xF0) | Best-effort. Throttled aggressively under congestion. File transfers paused entirely if bandwidth < 2 Mbps. |
+
+**Pacing algorithm:**
+
+```
+Every send_interval (1ms default):
+  1. Drain P0 (emergency) — unlimited, immediate.
+  2. Drain P1 (input) — send all queued input events.
+  3. Drain P2 (cursor) — send latest cursor position (coalesce if multiple queued).
+  4. Drain P3 (audio) — send next audio frame if due (20ms cadence).
+     If audio frame was delayed by >5ms, log metric (liquide_audio_schedule_delay_seconds).
+  5. Calculate remaining_budget = estimated_bandwidth * send_interval - bytes_sent_p0_p3.
+  6. Drain P4 (control) — send up to min(remaining_budget * 0.1, queued_control_bytes).
+  7. Drain P5 (video/tile) — send up to remaining_budget * 0.85 worth of video/tile data.
+     If send queue > 80% full: signal encoder to reduce quality/FPS (backpressure).
+  8. Drain P6 (bulk) — send up to remaining_budget * 0.05.
+     If bandwidth < 2 Mbps: pause all bulk transfers.
+```
+
+**Starvation guarantees:**
+
+| Stream | Guarantee |
+|--------|-----------|
+| Audio | Never starved. If total bandwidth < audio bitrate (typically ~32 kbps), audio still sends, video suspends entirely. |
+| Input | Never queued behind video. Worst-case input delay from transport layer: 1ms (one pacing interval). |
+| Cursor | Datagram delivery — bypasses TCP/QUIC stream head-of-line blocking. Worst case: cursor update lost (re-sent on next mouse move). |
+| Video | Adapts to available bandwidth. Under severe congestion: FPS reduced, resolution reduced, quality reduced. Video is the "shock absorber" of the system. |
+
+**Observability counters:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `liquide_transport_pacing_interval_seconds` | histogram | Actual pacing interval (should be ~1ms) |
+| `liquide_transport_priority_bytes_total` | counter (label: `priority`) | Bytes sent per priority level |
+| `liquide_transport_priority_starvation_total` | counter (label: `priority`) | Times a priority level was starved (budget exhausted by higher priority) |
+| `liquide_transport_audio_schedule_delay_seconds` | histogram | Audio frame scheduling delay beyond target |
+| `liquide_transport_input_queue_delay_seconds` | histogram | Time input events spend in send queue |
+| `liquide_transport_video_backpressure_active` | gauge | 1 when video backpressure is active, 0 otherwise |
+
 ### Multiple Listening Modes
 - Server can listen on **multiple addresses and ports simultaneously**.
 - Different listeners can use different transports:
@@ -1353,6 +1492,82 @@ window_offload_apps = []               # app_ids eligible for window-level offlo
   enabled = false                    # disables all audio subsystem
   ```
   When disabled, no audio threads are started, no virtual sinks are created, and no audio bandwidth is consumed.
+
+#### Audio-Video Synchronization
+
+Audio and video travel on separate channels with independent delivery characteristics (audio: jitter-buffered unreliable; video: lossy unreliable or reliable tiles). When network conditions or CPU pressure cause the video frame rate to drop, explicit A/V sync rules prevent lip-sync drift and maintain perceptual quality.
+
+**Sync Model**
+
+The session maintains a **presentation clock** (microseconds since session start) that both audio and video timestamps reference. The client uses this shared timeline to align audio playback with video frame presentation:
+
+```
+Audio pipeline:
+  Server capture → Opus encode → transport → client jitter buffer → decode → present at timestamp_us
+
+Video pipeline:
+  Server capture → encode → transport → client decode → present at timestamp_us
+
+Sync point: client presentation scheduler aligns audio and video using timestamp_us from each stream.
+```
+
+**Drift Tolerance & Correction**
+
+| Drift Range | Classification | Client Behavior |
+|------------|----------------|-----------------|
+| ±15ms | In sync | No correction. Human perception threshold for lip-sync. |
+| 15–40ms audio ahead | Minor drift (audio early) | Delay audio presentation by inserting silence padding (1 frame). Correction is imperceptible. |
+| 15–40ms video ahead | Minor drift (video early) | Hold video frame for 1 extra frame period before presenting. Audio continues uninterrupted. |
+| 40–120ms | Moderate drift | Gradual correction: adjust audio playout rate by ±2% (time-stretch via Opus decoder resampling). No sudden jumps. Emit `warn`-level metric. |
+| 120–500ms | Severe drift | Hard resync: drop video frames to catch up (if video is behind) OR skip audio to catch up (if audio is behind, insert 10ms silence crossfade to mask the skip). Emit `error`-level metric. |
+| >500ms | Desync | Treat as stream discontinuity. Client resets presentation clock to the latest video keyframe timestamp. Audio buffer is flushed and refilled. Brief audible glitch is acceptable. Emit `error` metric + trigger `KeyFrameRequest`. |
+
+**Behavior During Video Frame Rate Drop**
+
+When the server reduces video FPS (due to CPU pressure, bandwidth constraints, or idle screen):
+
+| Video FPS | Audio Behavior | Rationale |
+|-----------|---------------|-----------|
+| 60 → 30 fps | Audio continues at full rate (48kHz). No change. | Audio is independent of video frame rate. 33ms frame intervals are well within sync tolerance. |
+| 30 → 15 fps | Audio continues at full rate. Sync correction active if drift exceeds 15ms. | 66ms frame intervals may cause visible drift. Gradual time-stretch keeps sync. |
+| 15 → 5 fps (idle) | Audio continues at full rate. Sync correction suspended — audio free-runs. | During idle, there is no meaningful visual content to sync against. |
+| 5 → 1 fps (deep idle) | Audio continues if active. Sync disabled. | Audio and video are decoupled during deep idle. |
+| 0 fps (screen frozen) | Audio continues. Client shows last frame. Sync is irrelevant. | Audio-only scenario (e.g., music playback on static screen). |
+| FPS recovers (e.g., 5 → 60) | Resync within 100ms using gradual correction. No audio interruption. | On activity resume, smooth resync preferred over hard reset. |
+
+**Priority Rules During Congestion**
+
+Audio is priority P3 (above video at P5) in the pacing algorithm (see §7d priority table). During bandwidth contention:
+
+1. **Audio is never dropped to make room for video.** Audio packets are small (~100 bytes per 20ms frame at Opus 64kbps) and are always transmitted.
+2. **Video is the shock absorber.** Video FPS and quality are reduced first. Tile batches are throttled. Audio stream remains at full quality.
+3. **If bandwidth is insufficient for even audio**, the connection is in a critically degraded state. The client shows a "Poor connection" indicator. Audio bitrate is reduced to minimum (Opus 6kbps mono). Video is paused entirely.
+
+**Audio Jitter Buffer**
+
+The client maintains a jitter buffer to absorb network timing variance:
+
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| `audio.jitter_buffer_ms` | `60` | `20–200` | Target jitter buffer depth |
+| `audio.jitter_buffer_adaptive` | `true` | — | Auto-adjust buffer depth based on measured jitter |
+| `audio.max_jitter_buffer_ms` | `200` | `60–500` | Maximum buffer depth before dropping oldest packets |
+
+When the jitter buffer overflows (more audio arriving than can be played, e.g., after a network stall recovery), the **oldest** packets are dropped (prefer latency over completeness — a brief audio gap is better than accumulating delay).
+
+When the jitter buffer underflows (no audio arriving), the client plays silence for up to 200ms, then shows a "connection unstable" indicator.
+
+**Configuration**
+
+```toml
+[audio.sync]
+enabled = true                       # enable A/V sync correction
+drift_tolerance_ms = 15              # below this, no correction applied
+max_time_stretch_percent = 2         # max audio rate adjustment (±%)
+hard_resync_threshold_ms = 120       # above this, hard resync (frame drop/skip)
+desync_threshold_ms = 500            # above this, full clock reset
+suspend_sync_below_fps = 10          # disable sync correction when video FPS is below this
+```
 
 ### Camera / Webcam Passthrough
 - Client webcam forwarded to a virtual V4L2 device on the server.
@@ -2463,6 +2678,83 @@ When a session process terminates unexpectedly (non-zero exit, signal):
   - `cpu.stat` — CPU usage tracking.
 - When a session approaches resource limits (>90% memory, >95% PIDs), a warning is sent to the client.
 - The supervisor itself has minimal resource footprint — it performs no rendering, encoding, or heavy computation.
+
+#### Admission Control & Capacity Planning
+
+CPU-only video encoding does not scale as intuitively as GPU-accelerated encoding. Multi-user servers hit CPU walls when too many sessions demand high-quality video encoding simultaneously. The supervisor enforces **admission control** to prevent oversubscription:
+
+**Per-session resource budgets:**
+
+| Resource | Default Budget | Hard Limit | Enforcement |
+|----------|---------------|------------|-------------|
+| CPU cores (cgroup `cpu.max`) | 2 cores (200000/100000 us) | 6 cores | cgroup v2 CPU controller. Session is throttled, not killed. |
+| Encoder threads | 2 | 4 | Session-level config. Encoder thread pool capped. |
+| Memory (cgroup `memory.max`) | 512 MB | 1 GB | cgroup v2 memory controller. OOM events monitored. |
+| PIDs (cgroup `pids.max`) | 256 | 1024 | cgroup v2 PIDs controller. |
+| I/O bandwidth | 10 MB/s | 50 MB/s | cgroup v2 IO controller. |
+| Network bandwidth (outbound) | 20 Mbps | 50 Mbps | Transport-level send rate cap. |
+
+**Admission control rules:**
+
+The supervisor tracks total host CPU and memory capacity. Before spawning a new session, it checks:
+
+```
+admission_check():
+  available_cpu = host_cores - reserved_cores - sum(active_session_cpu_budgets)
+  available_memory = host_memory - reserved_memory - sum(active_session_memory_budgets)
+
+  if available_cpu < new_session_cpu_budget:
+    reject with "server at capacity" (or queue if waiting is allowed)
+  if available_memory < new_session_memory_budget:
+    reject with "server at capacity"
+
+  # Encoder-specific check:
+  active_video_sessions = count(sessions where video encoding is active)
+  if active_video_sessions >= max_concurrent_video_sessions:
+    allow session but force tile-only mode (no video encoding)
+```
+
+**Configuration:**
+
+```toml
+[admission]
+enabled = true
+reserved_cpu_cores = 2                   # reserved for supervisor + OS
+reserved_memory_mb = 1024                # reserved for supervisor + OS
+max_sessions = 0                         # 0 = auto-calculate from resources
+max_concurrent_video_sessions = 0        # 0 = auto-calculate (host_cores / 2)
+queue_enabled = false                    # queue sessions when at capacity
+queue_timeout_sec = 30                   # timeout for queued sessions
+deny_4k_below_cores = 8                 # deny 4K resolution if host has < N cores
+deny_60fps_below_cores = 4              # force 30fps cap if host has < N cores
+```
+
+**Auto-downgrade under host pressure:**
+
+When the host is under sustained CPU pressure (>85% total CPU for >10 seconds), the supervisor applies progressive downgrades to existing sessions:
+
+| Host CPU Usage | Action | Recovery |
+|---------------|--------|----------|
+| 85–90% | Reduce max FPS for all sessions by 20% (e.g., 60→48, 30→24) | Restore when <80% for 30s |
+| 90–95% | Force all sessions to tile-only mode (disable video encoding). Send `CodecSwitch` to clients. | Restore video when <85% for 60s |
+| 95–100% | Reduce tile quality (increase compression, skip cosmetic tiles). Disable blur/shadows globally. | Restore when <90% for 60s |
+| Sustained >95% for 60s | Notify admin. Consider suspending least-recently-active sessions. | Admin intervention |
+
+**Encoder mode selection policy (CPU-only):**
+
+The default encoding strategy prioritizes tile mode for most UI and reserves video encoding for specific scenarios:
+
+| Content Type | Encoding Mode | Rationale |
+|-------------|--------------|-----------|
+| Static UI (text, forms, menus) | Tile (Zstd lossless) | Zero visual loss. Low CPU. High skip ratio (most tiles unchanged). |
+| Text editing / terminal | Tile (Zstd lossless) | Lossless text is non-negotiable for readability. |
+| Smooth scrolling | Tile with `TileScroll` optimization | Scroll vector + newly exposed tiles. Very efficient. |
+| Embedded video / media player | Video (H.264/AV1) | Only when bandwidth allows. Dynamically scoped to the video region only. |
+| Fast full-screen animation | Video (H.264) | Full-screen damage triggers video mode. Tile mode would overwhelm bandwidth. |
+| Window drag/resize | Video (H.264, low quality) | Transient — switches back to tile mode when motion stops. |
+| Idle / cursor blink only | Neither (skip) | Zero CPU, zero bandwidth. |
+
+This means a typical office workload (text editor + browser + terminal) uses almost no video encoding CPU — tile mode handles it efficiently. Video encoding activates only for the 5–10% of screen time that involves motion.
 
 ### Session Lifecycle State Model
 

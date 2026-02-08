@@ -59,6 +59,88 @@ Internet                          │  Private Network
 - Gateway forwards encrypted traffic (does not decrypt session data).
 - Higher latency, gateway must handle bandwidth.
 
+#### Relay Encryption Model
+
+The gateway's "zero-decrypt relay" property is a hard security invariant. To ensure implementations cannot accidentally degrade to TLS-terminating relay, the exact key layering is specified for each connection mode:
+
+```
+Mode 1: Broker-Only
+════════════════════
+
+Client ◄─── TLS (client ↔ gateway) ───► Gateway    (signaling only)
+Client ◄─── TLS (client ↔ server)  ───► Server     (direct session, no gateway in path)
+
+Identity chain:
+  - Client authenticates gateway's TLS cert during signaling.
+  - Gateway authenticates client (optional gateway-level auth).
+  - Gateway returns server address + one-time session ticket.
+  - Client opens new TLS/QUIC connection to server directly.
+  - Client authenticates server's TLS cert (separate from gateway cert).
+  - Server authenticates client via session ticket + user auth.
+  → Gateway exits the data path entirely after brokering.
+
+
+Mode 2: Full Relay (zero-decrypt)
+══════════════════════════════════
+
+Client ◄─── Inner TLS (client ↔ server) ───► Server
+       └──── Outer TLS (client ↔ gateway) ──┘
+  └────── Outer TLS (gateway ↔ server) ─────┘
+
+Wire: [ Outer TLS (C↔GW) [ Inner TLS (C↔S) [ LiquiDE session data ] ] ]
+
+Key endpoints:
+  - Outer TLS (client ↔ gateway): authenticates the gateway. Gateway terminates this.
+  - Outer TLS (gateway ↔ server): authenticates the server to the gateway (mTLS). Gateway terminates this.
+  - Inner TLS (client ↔ server): end-to-end. Gateway sees only opaque ciphertext.
+    The inner session uses a TLS connection whose handshake is tunneled through the
+    gateway's relay. The client validates the server's certificate in the inner TLS
+    handshake — the gateway cannot MITM this layer.
+
+Identity chain:
+  - Client authenticates gateway (outer TLS cert).
+  - Gateway authenticates server (outer mTLS cert).
+  - Client authenticates server (inner TLS cert — independent of gateway).
+  - Server authenticates client (inner session auth: user credentials / token).
+  → Gateway can see packet sizes and timing but NOT session content.
+
+
+Mode 3: TURN-Style Relay
+═════════════════════════
+
+Same as Full Relay (Mode 2) when relay is active.
+If ICE negotiation succeeds → transitions to Broker-Only (Mode 1) equivalent.
+
+
+Mode 4: Reverse Connection
+══════════════════════════
+
+Server ──── persistent control channel (TLS, server ↔ gateway) ───► Gateway
+Client ◄─── Outer TLS (client ↔ gateway) ───► Gateway
+
+On session request:
+  1. Gateway signals server via control channel: "client X wants session".
+  2. Server opens new outbound TLS connection to gateway.
+  3. Gateway splices: client's outer tunnel ←→ server's outbound tunnel.
+  4. Client and server perform inner TLS handshake through the splice.
+
+Wire (after splice): [ Spliced tunnel [ Inner TLS (C↔S) [ LiquiDE session ] ] ]
+
+The splice is a byte-level TCP/QUIC stream forward — the gateway does NOT
+unwrap or inspect the inner TLS layer.
+```
+
+**Normative requirements:**
+
+| Requirement | Mode(s) | Enforcement |
+|-------------|---------|-------------|
+| Gateway MUST NOT hold or access the inner TLS session key | 2, 3, 4 | The inner TLS handshake uses the server's certificate, which the gateway does not possess. |
+| Client MUST validate the server's certificate in the inner TLS handshake independently | 2, 3, 4 | Client certificate store includes server CAs. Gateway cert ≠ server cert. |
+| If inner TLS handshake fails, client MUST abort the session (not fall back to outer-only) | 2, 3, 4 | Implementation requirement. Client must not treat outer TLS as sufficient. |
+| Gateway MAY inspect outer TLS metadata (SNI, ALPN) for routing | All | Required for multi-server routing. |
+| Gateway MUST NOT log, cache, or inspect inner session bytes | 2, 3, 4 | Relay operates at byte-stream level. Configurable audit logs record only metadata (session ID, timestamp, byte count). |
+| Relay mode MUST be detectable by the client | 2, 3, 4 | Client `SessionInfo` displays whether the connection is direct or relayed. |
+
 #### 3. TURN-Style Relay
 - Gateway provides relay candidates.
 - Client and server attempt direct connection first (ICE-like).

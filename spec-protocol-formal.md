@@ -246,6 +246,36 @@ The emergency channel operates *independently* of the control channel. It is des
 | `0x1005` | `CodecSwitch` | S → C | Server switching codecs |
 | `0x1006` | `KeyFrameRequest` | C → S | Client requests a key frame (after packet loss) |
 
+#### Video Frame Loss Recovery
+
+Keyframes are sacred — loss of a keyframe or corruption of the decoder state results in visual corruption until the next keyframe. The protocol defines explicit recovery mechanisms:
+
+| Scenario | Detection | Recovery | Max Black-Screen Time |
+|----------|-----------|----------|-----------------------|
+| **Delta frame lost** (unreliable transport) | Client detects sequence gap in `FrameHeader.seq` | Client sends `KeyFrameRequest`. Server generates IDR within 1 frame period. Client discards delta frames until IDR arrives. | 1–2 frame periods (~16–66ms) |
+| **Keyframe lost** (unreliable transport) | Client detects gap AND `FrameHeader.is_keyframe = true` in the missing range | Client sends `KeyFrameRequest` with `urgent = true`. Server generates IDR immediately (bypasses encoder queue). | 1 frame period (~16ms) |
+| **Decoder error** (corrupt bitstream) | Client decoder returns error | Client sends `KeyFrameRequest` with `reason = "decode_error"`. Client resets decoder state. Server generates IDR. | 1–2 frame periods |
+| **Prolonged loss** (>500ms without valid frame) | Client timeout on frame arrival | Client sends `KeyFrameRequest`. If no response in 1s, requests transport-level reconnect. Shows "Reconnecting..." overlay after 2s. | 500ms (overlay at 2s) |
+| **Reconnect / resume** | New transport established | Server sends IDR as first frame on reconnect (mandatory). No client request needed. | 0 (first frame is always IDR) |
+
+**Keyframe protection strategy by transport:**
+
+| Transport | Keyframe Protection | Rationale |
+|-----------|-------------------|-----------|
+| QUIC (unreliable datagrams) | Keyframes sent on a **reliable QUIC stream** (not datagrams). Delta frames use datagrams. | Keyframes are too large and important to lose. Reliable delivery adds ~1 RTT worst-case but guarantees arrival. |
+| UDP (raw) | Keyframes use **FEC (Forward Error Correction)**: Reed-Solomon with 20% redundancy (configurable). Delta frames have no FEC. | FEC protects against loss without RTT penalty. 20% overhead is acceptable for keyframes (~1/sec). |
+| TCP / TLS-TCP | Inherently reliable — no special handling needed. | TCP retransmits all lost segments. |
+| WebRTC data channels | Keyframes sent on a **reliable** data channel. Delta frames on unreliable channel (`maxRetransmits: 0`). | Same split as QUIC: reliability for keyframes, speed for deltas. |
+
+**IDR generation constraints:**
+
+- Server MUST generate an IDR frame within 1 frame period of receiving `KeyFrameRequest`.
+- Server MUST NOT rely solely on periodic keyframe intervals (I-frame interval) for recovery — explicit client-requested IDR is required.
+- Server SHOULD insert periodic IDR frames at configurable intervals (default: every 5 seconds) as a safety net even without client requests.
+- IDR frames are always sent as complete (not fragmented across unreliable packets) on reliable channels.
+
+**Maximum black-screen-time SLO:** the client MUST NOT display a corrupted or frozen frame for more than **500ms** before either recovering (via IDR) or showing a user-visible "Reconnecting..." overlay. This is a hard enterprise SLO — visual corruption is never silently tolerated.
+
 ### 5.4 Tile Channel Messages (0x12)
 
 The tile channel carries bitmap-based screen updates. It is used when the session (or a region of the session) operates in tile/bitmap mode. The tile channel is **reliable** — tile data must arrive intact because XOR deltas depend on the client having the correct previous tile state.
@@ -268,6 +298,21 @@ The tile channel carries bitmap-based screen updates. It is used when the sessio
 - **`TileScroll`** — an optimization message: the server detected a scroll event and sends a scroll vector (dx, dy in tiles). The client shifts its tile buffer by this vector before applying the follow-up `TileBatch` (which contains only the newly exposed tiles).
 - **`TileKeyFrame`** — a full refresh of the entire tile grid. Sent on initial connection, after reconnect, or when the client sends `TileKeyFrameRequest`. All tiles are `full` type (no deltas). This is the tile-mode equivalent of a video key frame.
 - **`TileModeSwitch`** — informs the client that a rectangular region of the screen is switching between video mode and tile mode (for hybrid encoding). Contains the region bounds and the target mode.
+
+#### Tile Channel Loss Recovery
+
+The tile channel uses a **reliable** transport (ordered, retransmitted) because XOR deltas are stateful — a single lost tile corrupts all subsequent deltas for that grid position. Recovery mechanisms:
+
+| Scenario | Detection | Recovery |
+|----------|-----------|----------|
+| **Transport-level loss** (TCP/QUIC stream retransmit) | Handled by transport | Automatic retransmit. No protocol-level action needed. Adds latency equal to ~1 RTT. |
+| **Tile grid desync** (client state diverges from server's expectation) | Client detects delta that produces visual artifacts (optional CRC check per tile) | Client sends `TileKeyFrameRequest`. Server responds with full `TileKeyFrame` (all tiles as `full`, no deltas). |
+| **Reconnect / resume** | New transport established | Server MUST send `TileConfig` + `TileKeyFrame` as the first tile-channel messages. Client discards all buffered tile state. |
+| **Mode switch (video → tile)** | `TileModeSwitch` received | Server sends full tiles for the switched region (no delta possible since client has no prior tile state for that region). |
+
+**Tile CRC verification (optional, configurable):**
+
+Each `TileBatch` optionally includes a per-tile CRC-32 of the expected client-side tile state after applying the update. The client can verify the CRC after applying deltas. If a mismatch is detected, the client sends `TileKeyFrameRequest` for the affected region. This catches silent corruption from bugs or memory errors, not just transport loss. Enabled by default in debug/test builds, disabled in production for performance (adds ~2% CPU overhead).
 
 ### 5.5 Cursor Channel Messages (0x11)
 
