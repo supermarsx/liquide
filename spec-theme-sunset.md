@@ -364,14 +364,14 @@ To activate Sunset theme:
 
 ### Server-side (per-user)
 ```toml
-# ~/.config/liquidde/session.toml
+# ~/.config/liquide/session.toml
 [appearance]
 theme = "sunset"
 ```
 
 ### Server-side (system default)
 ```toml
-# /etc/liquidde/server.toml
+# /etc/liquide/server.toml
 [appearance]
 default_theme = "sunset"
 ```
@@ -385,8 +385,8 @@ theme = "sunset"
 
 ### CSS override file
 ```css
-/* ~/.config/liquidde/theme.css */
-@import "/etc/liquidde/themes/sunset.css";
+/* ~/.config/liquide/theme.css */
+@import "/etc/liquide/themes/sunset.css";
 
 /* Optional: shift accent toward deeper amber */
 :root {
@@ -399,7 +399,7 @@ theme = "sunset"
 ## 10) Theme Metadata
 
 ```toml
-# /etc/liquidde/themes/sunset.toml
+# /etc/liquide/themes/sunset.toml
 [theme]
 id = "sunset"
 name = "Sunset"

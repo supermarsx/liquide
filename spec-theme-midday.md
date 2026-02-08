@@ -484,14 +484,14 @@ To activate Midday theme:
 
 ### Server-side (per-user)
 ```toml
-# ~/.config/liquidde/session.toml
+# ~/.config/liquide/session.toml
 [appearance]
 theme = "midday"
 ```
 
 ### Server-side (system default)
 ```toml
-# /etc/liquidde/server.toml
+# /etc/liquide/server.toml
 [appearance]
 default_theme = "midday"
 ```
@@ -505,8 +505,8 @@ theme = "midday"
 
 ### CSS override file
 ```css
-/* ~/.config/liquidde/theme.css */
-@import "/etc/liquidde/themes/midday.css";
+/* ~/.config/liquide/theme.css */
+@import "/etc/liquide/themes/midday.css";
 
 /* Optional: cooler off-white variant */
 :root {
@@ -540,7 +540,7 @@ For users who need maximum contrast in light mode:
 ## 11) Theme Metadata
 
 ```toml
-# /etc/liquidde/themes/midday.toml
+# /etc/liquide/themes/midday.toml
 [theme]
 id = "midday"
 name = "Midday"

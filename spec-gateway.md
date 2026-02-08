@@ -193,7 +193,7 @@ prefer_direct = true               # attempt direct connection first
   [gateway]
   tags = { gpu = "true", team = "engineering", location = "us-west" }
   ```
-- Clients can request routing based on tags: `liquidclient --gateway-tag gpu=true`.
+- Clients can request routing based on tags: `liquiclient --gateway-tag gpu=true`.
 
 ---
 

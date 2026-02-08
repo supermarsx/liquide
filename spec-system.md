@@ -491,8 +491,8 @@ When `liquid-session` starts a user session, it sets the following environment v
 | `DISPLAY` | `:N` (if XWayland enabled) | X11 display number |
 | `XDG_RUNTIME_DIR` | `/run/user/<uid>` | Runtime directory |
 | `DBUS_SESSION_BUS_ADDRESS` | `unix:path=/run/user/<uid>/bus` | Session D-Bus |
-| `LIQUIDDE_SESSION_ID` | `<session-id>` | LiquiDE session identifier |
-| `LIQUIDDE_VERSION` | `<version>` | LiquiDE version string |
+| `LIQUIDE_SESSION_ID` | `<session-id>` | LiquiDE session identifier |
+| `LIQUIDE_VERSION` | `<version>` | LiquiDE version string |
 | `GDK_BACKEND` | `wayland` | GTK backend hint |
 | `QT_QPA_PLATFORM` | `wayland` | Qt platform hint |
 | `SDL_VIDEODRIVER` | `wayland` | SDL backend hint |

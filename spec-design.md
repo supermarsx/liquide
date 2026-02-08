@@ -7,7 +7,7 @@
 
 ## 0) Overview
 
-The **Liquid Glass** design language defines the visual identity of LiquiDE — both the remote desktop environment and the LiquidClient application. Every visual element is implemented through a CSS-driven theming engine, making the entire appearance customizable by users and administrators.
+The **Liquid Glass** design language defines the visual identity of LiquiDE — both the remote desktop environment and the LiquiClient application. Every visual element is implemented through a CSS-driven theming engine, making the entire appearance customizable by users and administrators.
 
 This document serves as both a design specification and the authoritative CSS documentation for theming LiquiDE.
 
@@ -2696,9 +2696,9 @@ Example — "Flat Minimal" theme (no glass):
 
 ---
 
-## 12) Client-Side Design (LiquidClient)
+## 12) Client-Side Design (LiquiClient)
 
-The LiquidClient application uses the same Liquid Glass design language:
+The LiquiClient application uses the same Liquid Glass design language:
 
 ### 12.1 Connection Dialog
 - Centered glass panel on a dark gradient background.

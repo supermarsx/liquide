@@ -103,7 +103,7 @@ Session s-001
   User:           alice
   Started:        2025-01-15 14:22:31 UTC
   Duration:       2h 14m 33s
-  Client:         LiquidClient 0.1.0 (macOS ARM64)
+  Client:         LiquiClient 0.1.0 (macOS ARM64)
   Client IP:      203.0.113.42
   Transport:      QUIC (v1)
   Encryption:     TLS 1.3 (AES-256-GCM)
@@ -638,7 +638,7 @@ Stream live logs.
 ```
 $ liquidctl logs tail --level info
 
-2025-01-15T16:22:31Z INFO  [session] Session s-013 started: user=dave, client=LiquidClient/0.1.0
+2025-01-15T16:22:31Z INFO  [session] Session s-013 started: user=dave, client=LiquiClient/0.1.0
 2025-01-15T16:22:31Z INFO  [transport] QUIC connection established: s-013, RTT=14ms
 2025-01-15T16:22:32Z INFO  [encoder] Encoder selected: h264/x264 (ultrafast) for s-013
 ```

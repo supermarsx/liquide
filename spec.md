@@ -20,7 +20,7 @@ A **remote-first, native desktop environment** built entirely in Rust, designed 
 - **Multi-platform server**: x86_64 and ARM64 (Linux), with ARM64 support for macOS-hosted VMs and ARM Linux boards.
 - Supports **multiple transport strategies** including QUIC, UDP, TCP, TLS, switchable and hybridizable on the fly.
 
-Working name: **LiquiDE** (server) + **LiquidClient** (client, see [spec-client.md](spec-client.md)).
+Working name: **LiquiDE** (server) + **LiquiClient** (client, see [spec-client.md](spec-client.md)).
 
 ---
 
@@ -1854,7 +1854,7 @@ ratios_rows = [0.5, 0.5]
 
 ### Seamless Window Mode
 
-LiquiDE supports a **seamless window mode** where individual remote application windows are "detached" from the LiquidClient container and presented as **native OS windows** on the client's local desktop. This is analogous to Citrix Seamless Windows, RDP RemoteApp, or VMware Unity mode.
+LiquiDE supports a **seamless window mode** where individual remote application windows are "detached" from the LiquiClient container and presented as **native OS windows** on the client's local desktop. This is analogous to Citrix Seamless Windows, RDP RemoteApp, or VMware Unity mode.
 
 #### Server-Side Behavior
 - When a client requests seamless mode (or when configured as default), the server:
@@ -3137,7 +3137,7 @@ audit = "info"                         # always at least "info"
   - Audio playback.
   - Drive redirection (basic).
 - Limitations documented: not all LiquiDE features available via RDP (e.g., no hybrid tile+video, no transport switching).
-- Useful for environments where installing LiquidClient is not possible.
+- Useful for environments where installing LiquiClient is not possible.
 
 ---
 
@@ -3932,7 +3932,7 @@ The crash screen is **never** streamed as encoded video frames from the server. 
   - `liquidctl` — admin CLI (see [spec-liquidctl.md](spec-liquidctl.md)).
 
 - **Client**:
-  - `LiquidClient` — native client for Windows/macOS/Linux (see [spec-client.md](spec-client.md)).
+  - `LiquiClient` — native client for Windows/macOS/Linux (see [spec-client.md](spec-client.md)).
   - Optional web client.
 
 - **Gateway**:

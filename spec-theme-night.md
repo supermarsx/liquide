@@ -306,14 +306,14 @@ To activate Night theme:
 
 ### Server-side (per-user)
 ```toml
-# ~/.config/liquidde/session.toml
+# ~/.config/liquide/session.toml
 [appearance]
 theme = "night"
 ```
 
 ### Server-side (system default)
 ```toml
-# /etc/liquidde/server.toml
+# /etc/liquide/server.toml
 [appearance]
 default_theme = "night"
 ```
@@ -327,8 +327,8 @@ theme = "night"
 
 ### CSS override file
 ```css
-/* ~/.config/liquidde/theme.css */
-@import "/etc/liquidde/themes/night.css";
+/* ~/.config/liquide/theme.css */
+@import "/etc/liquide/themes/night.css";
 
 /* Optional: further customization on top of Night */
 :root {
@@ -341,7 +341,7 @@ theme = "night"
 ## 10) Theme Metadata
 
 ```toml
-# /etc/liquidde/themes/night.toml
+# /etc/liquide/themes/night.toml
 [theme]
 id = "night"
 name = "Night"
