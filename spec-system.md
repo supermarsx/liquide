@@ -663,6 +663,9 @@ A LiquiDE server package installs:
 | `/etc/pam.d/liquide-session` | PAM service file |
 | `/usr/share/man/man1/liquidctl.1.gz` | Man page |
 | `/usr/share/man/man8/liquid-desktopd.8.gz` | Man page |
+| `/usr/lib/systemd/system/liquide-flatpak-update.timer` | Flatpak auto-update timer |
+| `/usr/lib/systemd/system/liquide-flatpak-update.service` | Flatpak auto-update unit |
+| `/usr/share/polkit-1/rules.d/50-liquide-flatpak.rules` | Flatpak polkit rules |
 
 ### 13.2 sysusers.d — `/usr/lib/sysusers.d/liquide.conf`
 
@@ -688,7 +691,105 @@ The `--local-session` flag starts a single-user local session (useful for develo
 
 ---
 
-## 14) Test Plan
+## 14) Flatpak Infrastructure
+
+LiquiDE treats Flatpak as the primary third-party application delivery mechanism. This section specifies how Flatpak is integrated at the system level.
+
+### 14.1 Dependencies
+
+| Package | Version | Required |
+|---------|---------|----------|
+| `flatpak` | 1.14+ | Yes (hard dependency) |
+| `xdg-desktop-portal` | 1.16+ | Yes (pulled by portal backend) |
+| `appstream` | 0.16+ | Recommended (AppStream metadata parsing) |
+
+The LiquiDE installer checks for Flatpak and installs it via the system package manager if missing. If Flatpak cannot be installed (e.g., restricted base image), the Software Center and `liquidctl flatpak` commands are disabled — all other LiquiDE functionality is unaffected.
+
+### 14.2 Flathub First-Boot Setup
+
+On first session start (or when no Flatpak remotes are configured), `liquid-desktopd` runs:
+
+```bash
+flatpak remote-add --system --if-not-exists flathub \
+    https://flathub.org/repo/flathub.flatpakrepo
+```
+
+This is skipped if policy `flatpak.flathub.enabled = false`.
+
+### 14.3 Flatpak systemd Integration
+
+LiquiDE provides a systemd timer for automatic Flatpak updates:
+
+```ini
+# /usr/lib/systemd/system/liquide-flatpak-update.timer
+[Unit]
+Description=LiquiDE Flatpak Auto-Update Timer
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=3600
+
+[Install]
+WantedBy=timers.target
+```
+
+```ini
+# /usr/lib/systemd/system/liquide-flatpak-update.service
+[Unit]
+Description=LiquiDE Flatpak Auto-Update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/liquidctl flatpak update --system --noninteractive
+ExecStartPost=/usr/bin/liquidctl flatpak gc --unused-runtimes
+User=root
+```
+
+Per-user Flatpak updates are triggered by `liquid-session` on login (if updates are available and `flatpak.auto_update = true`).
+
+### 14.4 Filesystem Paths (Flatpak-Specific)
+
+| Path | Purpose | Owner |
+|------|---------|-------|
+| `/var/lib/flatpak/` | System-wide Flatpak installs | `root:root` |
+| `/var/lib/flatpak/repo/` | OSTree repository | `root:root` |
+| `/var/lib/flatpak/app/` | Installed applications | `root:root` |
+| `/var/lib/flatpak/runtime/` | Installed runtimes | `root:root` |
+| `/var/lib/flatpak/overrides/` | System-wide permission overrides | `root:root` |
+| `/var/lib/flatpak/exports/share/` | Exported `.desktop`, icons, D-Bus services | `root:root` |
+| `~/.local/share/flatpak/` | Per-user Flatpak installs | `<user>:<user>` |
+| `~/.local/share/flatpak/overrides/` | Per-user permission overrides | `<user>:<user>` |
+| `~/.var/app/<app-id>/` | Per-app user data (XDG dirs inside sandbox) | `<user>:<user>` |
+| `~/.cache/liquide/software-center/` | AppStream + screenshot cache | `<user>:<user>` |
+
+### 14.5 Polkit Rules
+
+System-wide Flatpak operations (install/remove to `/var/lib/flatpak/`) require polkit authentication. LiquiDE ships a polkit rule:
+
+```javascript
+// /usr/share/polkit-1/rules.d/50-liquide-flatpak.rules
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.Flatpak.app-install" ||
+        action.id == "org.freedesktop.Flatpak.app-uninstall" ||
+        action.id == "org.freedesktop.Flatpak.runtime-install" ||
+        action.id == "org.freedesktop.Flatpak.runtime-uninstall" ||
+        action.id == "org.freedesktop.Flatpak.modify-repo" ||
+        action.id == "org.freedesktop.Flatpak.update") {
+        if (subject.isInGroup("liquide")) {
+            return polkit.Result.AUTH_ADMIN_KEEP;
+        }
+    }
+});
+```
+
+Users in the `liquide` group are prompted for admin password once (cached for the session) for system-wide Flatpak operations. Per-user installs (`--user`) do not require polkit.
+
+---
+
+## 15) Test Plan
 
 ### Functional
 - `liquid-desktopd.service` starts successfully, reports ready via sd_notify.
@@ -715,3 +816,7 @@ The `--local-session` flag starts a single-user local session (useful for develo
 - Crash reports are written to correct paths with correct permissions.
 - Log rotation works at configured thresholds.
 - tmpfiles.d creates directories on boot.
+- Flatpak: Flathub remote is added on first boot.
+- Flatpak: `liquide-flatpak-update.timer` fires and updates apps successfully.
+- Flatpak: polkit rule grants install permission to `liquide` group members.
+- Flatpak: `flatpak.enabled = false` disables all Flatpak operations.

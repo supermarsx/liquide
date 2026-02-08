@@ -3636,6 +3636,14 @@ Full CSS documentation in [spec-design.md](spec-design.md).
    - Stream analysis dashboard.
    - Per-session resource usage.
 
+5. **Software Center**
+   - Browse, install, update, and remove Flatpak applications from Flathub and other configured remotes.
+   - Permission management for sandboxed apps.
+   - Integrated with LiquiDE update system.
+   - See [spec-addons.md §15](spec-addons.md) for full specification.
+
+> **Third-party applications**: LiquiDE uses **Flatpak** as the primary mechanism for users to install third-party applications. Flathub is configured out of the box. Flatpak apps run inside standard sandboxes and interact with LiquiDE through `xdg-desktop-portal-liquide`. Full Flatpak support — including policy controls, auto-updates, runtime management, and CLI integration — is specified in [spec-interop.md §6.3](spec-interop.md), [spec-system.md §14](spec-system.md), [spec-updates.md §9](spec-updates.md), and [spec-liquidctl.md §3.15](spec-liquidctl.md).
+
 ---
 
 ## 22) Implementation Plan

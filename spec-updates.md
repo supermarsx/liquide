@@ -388,9 +388,85 @@ When a client connects to a server with a different version:
 
 ---
 
-## 9) Release Lifecycle
+## 9) Flatpak Application Updates
 
-### 9.1 Release Cadence
+Flatpak applications installed via the Software Center (or `liquidctl flatpak install`) are updated through a dedicated pipeline that integrates with the LiquiDE update infrastructure.
+
+### 9.1 Update Check
+
+Flatpak update checks are triggered by:
+
+1. **systemd timer** — `liquide-flatpak-update.timer` (see spec-system.md §14.3) for system-wide installs.
+2. **Session login** — `liquid-session` checks for per-user Flatpak updates on session start.
+3. **Manual** — `liquidctl flatpak update --check` or the Software Center "Updates" tab.
+4. **Periodic** — controlled by `flatpak.auto_update_schedule` policy (default: `daily`).
+
+```bash
+# Check for available Flatpak updates
+liquidctl flatpak update --check
+
+# Example output:
+Available Flatpak updates:
+  org.mozilla.firefox          124.0 → 124.0.1   (12 MB)
+  org.gimp.GIMP                2.10.36 → 2.10.38 (45 MB)
+  org.freedesktop.Platform     23.08.15 → 23.08.16 (runtime, 200 MB)
+Total download: 257 MB
+```
+
+### 9.2 Update Application
+
+```bash
+# Update all Flatpak apps
+liquidctl flatpak update
+
+# Update a specific app
+liquidctl flatpak update org.mozilla.firefox
+
+# Update system-wide installs (requires polkit)
+liquidctl flatpak update --system
+
+# Non-interactive (for systemd service / scripting)
+liquidctl flatpak update --system --noninteractive
+```
+
+**Update behavior:**
+- Updates are downloaded as OSTree deltas (bandwidth-efficient).
+- Running apps are **not** interrupted — the update is deployed alongside the current version. The new version takes effect on next launch.
+- The Software Center shows a toast: "Firefox was updated to 124.0.1" with a "Restart app" action if the app is currently running.
+
+### 9.3 Auto-Update
+
+When `flatpak.auto_update = true`:
+
+1. LiquiDE downloads and applies Flatpak updates in the background.
+2. A notification is shown: "N applications were updated" with an action to view details in the Software Center.
+3. No app restarts are forced — users launch the updated version next time.
+
+**Bandwidth awareness:** Auto-updates respect the session's network state. If the connection is metered (detected via NetworkManager `metered` property or policy `flatpak.auto_update_on_metered = false`), auto-updates are deferred until an unmetered connection is available.
+
+### 9.4 Runtime Updates
+
+Flatpak runtimes (`org.freedesktop.Platform`, `org.kde.Platform`, etc.) are updated alongside application updates. If a runtime update would break a pinned version (see `flatpak.pinned_runtimes` policy), the pinned runtime is preserved and the update is skipped with a warning.
+
+### 9.5 Rollback
+
+Flatpak supports per-app rollback to the previous version:
+
+```bash
+# Rollback Firefox to the previous commit
+liquidctl flatpak rollback org.mozilla.firefox
+
+# List available commits for an app
+liquidctl flatpak history org.mozilla.firefox
+```
+
+The Software Center also provides a "Revert to previous version" option in the app detail page's version history.
+
+---
+
+## 10) Release Lifecycle
+
+### 10.1 Release Cadence
 
 | Channel | Cadence | Support |
 |---------|---------|---------|
@@ -398,7 +474,7 @@ When a client connects to a server with a different version:
 | LTS | Annually | 2 years of security fixes |
 | Patch | As needed | Backported to current stable + current LTS |
 
-### 9.2 End-of-Life
+### 10.2 End-of-Life
 
 When a version reaches end-of-life:
 - No further patches are released.
@@ -408,7 +484,7 @@ When a version reaches end-of-life:
 
 ---
 
-## 10) Test Plan
+## 11) Test Plan
 
 ### Functional
 - Version negotiation between all component combinations (see §3.1 matrix).
@@ -417,6 +493,11 @@ When a version reaches end-of-life:
 - Rollback restores previous version and reverts database schema.
 - Config migration transforms old format correctly and creates backups.
 - Database migrations run in order, are transactional, and are idempotent.
+- Flatpak update check lists available app and runtime updates with correct versions and sizes.
+- Flatpak update apply downloads and installs updates without interrupting running apps.
+- Flatpak auto-update fires on schedule and respects metered network policy.
+- Flatpak rollback reverts an app to the previous OSTree commit.
+- Flatpak runtime pinning prevents unwanted runtime updates.
 
 ### Security
 - Signature verification rejects tampered manifests.

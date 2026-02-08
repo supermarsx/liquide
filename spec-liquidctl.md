@@ -1150,6 +1150,233 @@ View supervisor logs. `--session` filters to a specific session. `--follow` tail
 
 ---
 
+### 3.15 `liquidctl flatpak` — Flatpak Application Management
+
+Manage Flatpak applications, runtimes, and remotes. These commands proxy to the system Flatpak installation with LiquiDE policy enforcement and structured output.
+
+#### `liquidctl flatpak search <query>`
+
+Search Flathub (and other configured remotes) for applications.
+
+```
+$ liquidctl flatpak search firefox
+
+ID                       Name            Version   Remote    Description
+org.mozilla.firefox      Firefox         124.0.1   flathub   Fast, private & safe web browser
+org.mozilla.Thunderbird  Thunderbird     115.8.0   flathub   Email, calendar, and contacts
+io.gitlab.librewolf      LibreWolf       124.0     flathub   Privacy-focused Firefox fork
+```
+
+Options:
+- `--remote <name>` — search only a specific remote.
+
+#### `liquidctl flatpak install <app-id> [--user|--system] [--noninteractive] [--no-deps]`
+
+Install a Flatpak application.
+
+```
+$ liquidctl flatpak install org.mozilla.firefox
+
+Installing org.mozilla.firefox from flathub...
+
+Permissions requested:
+  ✓ Network access
+  ✓ Wayland
+  ✓ GPU acceleration (DRI)
+  ⚠ Filesystem: home (read/write)
+  ⚠ X11 fallback
+
+Proceed? [Y/n] y
+
+Downloading:  org.mozilla.firefox  [=========>          ]  65%  (156/241 MB)
+Installing:   Done.
+```
+
+Options:
+- `--user` — install for current user only (default).
+- `--system` — install system-wide (requires polkit).
+- `--noninteractive` — skip permission review prompt (for scripting).
+- `--no-deps` — do not install runtime dependencies (advanced).
+
+#### `liquidctl flatpak remove <app-id> [--user|--system] [--delete-data] [--noninteractive]`
+
+Remove a Flatpak application.
+
+```
+$ liquidctl flatpak remove org.mozilla.firefox
+
+Remove Firefox?
+  App data in ~/.var/app/org.mozilla.firefox/ will be kept.
+  Use --delete-data to also remove app data.
+
+Proceed? [Y/n] y
+Removing:     Done.
+```
+
+Options:
+- `--delete-data` — also remove `~/.var/app/<app-id>/`.
+- `--noninteractive` — skip confirmation.
+
+#### `liquidctl flatpak list [--user|--system|--all] [--columns <cols>]`
+
+List installed Flatpak applications.
+
+```
+$ liquidctl flatpak list
+
+ID                       Name            Version   Size      Remote    Scope
+org.mozilla.firefox      Firefox         124.0.1   241 MB    flathub   user
+org.gimp.GIMP            GIMP            2.10.36   312 MB    flathub   system
+org.videolan.VLC         VLC             3.0.20    145 MB    flathub   user
+```
+
+Options:
+- `--user` — show only per-user installs.
+- `--system` — show only system-wide installs.
+- `--all` — show all (default).
+- `--runtimes` — also show installed runtimes.
+- `--columns <cols>` — customize output columns.
+
+#### `liquidctl flatpak update [<app-id>] [--user|--system] [--check] [--noninteractive]`
+
+Update Flatpak applications and runtimes.
+
+```
+$ liquidctl flatpak update
+
+Checking for updates...
+  org.mozilla.firefox     124.0 → 124.0.1   (12 MB)
+  org.gimp.GIMP           2.10.36 → 2.10.38 (45 MB)
+
+Downloading: [===================>]  100%
+Updated 2 applications.
+```
+
+Options:
+- `<app-id>` — update a specific app only.
+- `--check` — check for updates without applying.
+- `--system` — update system-wide installs.
+- `--noninteractive` — do not prompt.
+
+#### `liquidctl flatpak permissions <app-id>`
+
+Show the effective permissions of a Flatpak application.
+
+```
+$ liquidctl flatpak permissions org.mozilla.firefox
+
+Permissions for org.mozilla.firefox (Firefox):
+
+  Filesystem:
+    ✓ home         (read/write)
+    ✓ /tmp         (read/write)
+    ✗ host         (denied by override)
+
+  Network:
+    ✓ network
+
+  Sockets:
+    ✓ wayland
+    ✗ x11          (denied by override)
+    ✓ pulseaudio
+
+  Devices:
+    ✓ dri
+
+  D-Bus (session):
+    ✓ org.freedesktop.Notifications
+    ✓ org.freedesktop.portal.*
+
+  Source: manifest + user override (~/.local/share/flatpak/overrides/org.mozilla.firefox)
+```
+
+#### `liquidctl flatpak override <app-id> [options]`
+
+Set permission overrides for a Flatpak application.
+
+```bash
+# Grant filesystem access
+liquidctl flatpak override org.mozilla.firefox --filesystem=~/Downloads
+
+# Deny network
+liquidctl flatpak override org.mozilla.firefox --no-network
+
+# Deny X11
+liquidctl flatpak override org.mozilla.firefox --nosocket=x11
+
+# Reset all overrides to manifest defaults
+liquidctl flatpak override org.mozilla.firefox --reset
+```
+
+Options mirror `flatpak override` flags: `--filesystem`, `--nofilesystem`, `--socket`, `--nosocket`, `--device`, `--nodevice`, `--share`, `--unshare`, `--talk-name`, `--no-talk-name`, `--reset`.
+
+#### `liquidctl flatpak remote-list`
+
+List configured Flatpak remotes.
+
+```
+$ liquidctl flatpak remote-list
+
+Name          URL                                          Scope    Enabled
+flathub       https://dl.flathub.org/repo/               system   yes
+flathub-beta  https://dl.flathub.org/beta-repo/           system   no
+myrepo        https://example.com/repo/                   user     yes
+```
+
+#### `liquidctl flatpak remote-add <name> <url|.flatpakrepo> [--user|--system]`
+
+Add a Flatpak remote repository.
+
+```bash
+liquidctl flatpak remote-add myrepo https://example.com/repo.flatpakrepo
+```
+
+#### `liquidctl flatpak remote-remove <name> [--force]`
+
+Remove a Flatpak remote. `--force` also removes all apps installed from that remote.
+
+#### `liquidctl flatpak rollback <app-id>`
+
+Rollback a Flatpak app to the previous OSTree commit.
+
+```
+$ liquidctl flatpak rollback org.mozilla.firefox
+
+Rollback org.mozilla.firefox:
+  Current: 124.0.1 (commit a1b2c3d)
+  Target:  124.0   (commit e4f5g6h)
+
+Proceed? [Y/n] y
+Rolled back to 124.0.
+```
+
+#### `liquidctl flatpak history <app-id> [--limit N]`
+
+Show version/commit history for a Flatpak app.
+
+```
+$ liquidctl flatpak history org.mozilla.firefox
+
+Commit      Version   Date                 Size
+a1b2c3d     124.0.1   2025-02-05 10:00     241 MB   (current)
+e4f5g6h     124.0     2025-02-01 08:30     240 MB
+i7j8k9l     123.0.1   2025-01-15 12:15     238 MB
+```
+
+#### `liquidctl flatpak gc [--unused-runtimes] [--dry-run]`
+
+Garbage-collect unused Flatpak data.
+
+```bash
+# Remove unused runtimes
+liquidctl flatpak gc --unused-runtimes
+
+# Preview what would be removed
+liquidctl flatpak gc --unused-runtimes --dry-run
+```
+
+---
+
 ## 4) Shell Completion
 
 `liquidctl` generates shell completions:
@@ -1251,3 +1478,14 @@ Use remote profiles: `liquidctl --server @prod sessions list`.
 - `liquidctl crash export` produces valid, importable JSON/tar archives.
 - `liquidctl supervisor status` reports accurate session process states.
 - `liquidctl supervisor restart` successfully restarts a failed session.
+- `liquidctl flatpak search` returns matching Flathub results.
+- `liquidctl flatpak install` installs app with runtime, shows permissions, respects policy.
+- `liquidctl flatpak remove` removes app, `--delete-data` clears `~/.var/app/`.
+- `liquidctl flatpak list` shows installed apps with correct metadata.
+- `liquidctl flatpak update` downloads and applies updates, `--check` shows available only.
+- `liquidctl flatpak permissions` shows effective permissions with override sources.
+- `liquidctl flatpak override` modifies per-app sandbox permissions.
+- `liquidctl flatpak remote-add/remote-remove/remote-list` manages remotes correctly.
+- `liquidctl flatpak rollback` reverts to previous commit.
+- `liquidctl flatpak history` shows commit history with versions and dates.
+- `liquidctl flatpak gc` removes unused runtimes, `--dry-run` previews without acting.

@@ -1207,7 +1207,7 @@ MimeType=application/vnd.flatpak.ref;application/vnd.flatpak.repo;
 
 ## 16) Shared Infrastructure
 
-### 15.1 Common Application Conventions
+### 16.1 Common Application Conventions
 
 All LiquiDE built-in applications follow these conventions:
 
@@ -1224,7 +1224,7 @@ All LiquiDE built-in applications follow these conventions:
 | **Undo** | Destructive actions show an undo toast for 5 seconds before committing |
 | **Print** | Use the LiquiDE print dialog (which routes through the portal) |
 
-### 15.2 Icon Theme Entries
+### 16.2 Icon Theme Entries
 
 All built-in apps register icons in the LiquiDE icon theme at standard sizes (16, 24, 32, 48, 64, 128, 256, scalable SVG):
 
@@ -1243,10 +1243,11 @@ All built-in apps register icons in the LiquiDE icon theme at standard sizes (16
 | Font Viewer | `preferences-desktop-font` |
 | Character Map | `accessories-character-map` |
 | Color Picker | `color-picker` |
+| Software Center | `liquid-software-center` |
 
 Icon names follow the [freedesktop Icon Naming Specification](https://specifications.freedesktop.org/icon-naming-spec/latest/) where applicable. LiquiDE-specific icons (not in the spec) are provided in the LiquiDE icon theme and fallback to hicolor.
 
-### 15.3 MIME Type Registrations
+### 16.3 MIME Type Registrations
 
 Built-in apps register as handlers for their supported MIME types in their `.desktop` files (see each app's entry above). Default associations are set in `/usr/share/applications/liquide-mimeapps.list`:
 
@@ -1265,11 +1266,13 @@ application/zip=liquid-archive.desktop
 application/x-tar=liquid-archive.desktop
 application/gzip=liquid-archive.desktop
 application/x-7z-compressed=liquid-archive.desktop
+application/vnd.flatpak.ref=liquid-software-center.desktop
+application/vnd.flatpak.repo=liquid-software-center.desktop
 ```
 
 Users can override these defaults via Settings → Default Applications or via `xdg-mime`.
 
-### 15.4 D-Bus Conventions
+### 16.4 D-Bus Conventions
 
 Each app optionally provides a D-Bus interface for programmatic control:
 
@@ -1279,8 +1282,9 @@ Each app optionally provides a D-Bus interface for programmatic control:
 | Text Editor | `org.liquide.Edit` | `Open(s)`, `OpenAtLine(si)` |
 | Terminal | `org.liquide.Terminal` | `Open()`, `RunCommand(s)` |
 | Screenshot | `org.liquide.Screenshot` | `CaptureRegion()`, `CaptureWindow()`, `CaptureScreen()` |
+| Software Center | `org.liquide.SoftwareCenter` | `ShowApp(s)`, `InstallApp(s)`, `ShowUpdates()` |
 
-### 15.5 Liquid UI Toolkit
+### 16.5 Liquid UI Toolkit
 
 All built-in apps are written in Rust using `liquid-ui`, LiquiDE's own UI toolkit:
 
@@ -1290,7 +1294,7 @@ All built-in apps are written in Rust using `liquid-ui`, LiquiDE's own UI toolki
 4. Glass blur effects on window backgrounds are composited by the LiquiDE compositor — the app requests a translucent surface and the compositor applies blur behind it.
 5. Third-party GTK/Qt applications still work normally inside LiquiDE sessions via standard Wayland and XWayland support. Only the **built-in** apps use `liquid-ui` directly.
 
-### 15.6 Global Policy
+### 16.6 Global Policy
 
 | Policy Key | Default | Description |
 |-----------|---------|-------------|
@@ -1300,7 +1304,7 @@ All built-in apps are written in Rust using `liquid-ui`, LiquiDE's own UI toolki
 
 ---
 
-## 16) Test Plan
+## 17) Test Plan
 
 ### Functional (Per App)
 
@@ -1319,6 +1323,7 @@ All built-in apps are written in Rust using `liquid-ui`, LiquiDE's own UI toolki
 | Font Viewer | All installed fonts listed, preview renders correctly, install/remove user fonts, character grid displays all glyphs, waterfall view |
 | Character Map | Unicode categories correct, search by name/codepoint works, copy produces correct character, recent/favorites persist |
 | Color Picker | Eyedropper picks correct color, all color space conversions are accurate, contrast checker matches WCAG spec, palette import/export |
+| Software Center | Browse Flathub categories, search apps, install/remove Flatpak app with progress, update all, permission editor toggles, `.flatpakref`/`.flatpakrepo` MIME handling, offline AppStream fallback, policy gates (block install/remove) |
 
 ### Integration
 
