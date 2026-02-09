@@ -1,0 +1,86 @@
+; LiquiDE Protocol -- Input Channel Messages
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/input.cddl
+;
+; Input channel (0x50) message schemas.
+; The input channel is client-to-server for event data; the only
+; server-to-client messages are InputSyncResponse and CompositionRequest.
+; Integer keys are used on the wire for compactness.
+
+; --- Type code 0x5001 (KeyDown) / 0x5002 (KeyUp) ---
+KeyEvent = {
+    0: tstr,                           ; type ("down", "up")
+    1: uint,                           ; scancode (hardware scancode)
+    2: uint,                           ; keysym (XKB keysym)
+    3: uint,                           ; modifiers (bitmask: shift=1, ctrl=2, alt=4, super=8, capslock=16)
+    ? 4: tstr,                         ; text (UTF-8 text produced by this keypress)
+    5: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x5003 ---
+MouseMoveEvent = {
+    0: tstr,                           ; mode ("absolute", "relative")
+    1: float32,                        ; x (position or delta)
+    2: float32,                        ; y (position or delta)
+    3: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x5004 ---
+MouseButtonEvent = {
+    0: tstr,                           ; type ("down", "up")
+    1: uint,                           ; button (1=left, 2=middle, 3=right, 4+=extra)
+    2: float32,                        ; x
+    3: float32,                        ; y
+    4: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x5005 ---
+ScrollEvent = {
+    0: tstr,                           ; axis ("vertical", "horizontal")
+    1: float32,                        ; delta (positive = down/right)
+    2: bool,                           ; discrete (true for click-wheel, false for smooth)
+    3: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x5006 (TouchDown) / 0x5007 (TouchMove) / 0x5008 (TouchUp) / 0x5009 (TouchCancel) ---
+TouchEvent = {
+    0: tstr,                           ; type ("down", "move", "up", "cancel")
+    1: uint,                           ; id (touch point ID)
+    2: float32,                        ; x
+    3: float32,                        ; y
+    4: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x500C ---
+TextInput = {
+    0: tstr,                           ; text (committed UTF-8 text from client IME)
+    1: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x500D ---
+CompositionUpdate = {
+    0: tstr,                           ; phase ("begin", "update", "commit", "cancel")
+    ? 1: tstr,                         ; preedit_string (current composition string)
+    ? 2: uint,                         ; cursor_begin (byte offset of cursor start in preedit)
+    ? 3: uint,                         ; cursor_end (byte offset of cursor end in preedit)
+    4: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x500E ---
+CompositionRequest = {
+    0: bool,                           ; activate (true = activate IME, false = deactivate)
+    ? 1: tstr,                         ; input_type ("text", "number", "email", "url", "password")
+    ? 2: Rect,                         ; cursor_rect (text cursor position for IME popup placement)
+}
+
+; --- Type code 0x500A ---
+InputSyncRequest = {
+    ? 0: uint,                         ; timestamp_us
+}
+
+; --- Type code 0x500B ---
+InputSyncResponse = {
+    0: uint,                           ; modifier_state (current modifier bitmask: shift=1, ctrl=2, alt=4, super=8, capslock=16)
+    1: uint,                           ; button_state (current mouse button bitmask: left=1, middle=2, right=4)
+    ? 2: uint,                         ; timestamp_us
+}

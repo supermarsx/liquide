@@ -1,0 +1,42 @@
+; LiquiDE Protocol -- Common Types
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/common.cddl
+;
+; Shared type definitions used across all channel schemas.
+; Integer keys are used on the wire; string names are documentation only.
+
+session-id = tstr .size (1..64)
+error-code = uint
+protocol-version = tstr               ; e.g., "proto/1"
+timestamp-us = uint                    ; microseconds since session start
+
+; Generic rectangle used for damage regions, tile regions, etc.
+Rect = {
+    x: uint,
+    y: uint,
+    width: uint,
+    height: uint,
+}
+
+; Channel configuration as exchanged in ServerHello
+ChannelConfig = {
+    0: tstr,                           ; name
+    1: tstr,                           ; direction: "s2c" | "c2s" | "bidirectional"
+    2: bool,                           ; reliable
+    3: tstr,                           ; compression: "none" | "lz4" | "zstd"
+}
+
+; Channel IDs (informative — numeric constants)
+; 0x00 = Control
+; 0x01 = Emergency
+; 0x10 = Video
+; 0x11 = Cursor
+; 0x12 = Tile
+; 0x20 = Audio (playback)
+; 0x21 = Audio (capture)
+; 0x30 = Clipboard
+; 0x31 = File Transfer
+; 0x40 = USB/IP
+; 0x50 = Input
+; 0x60 = Camera
+; 0xF0 = Plugin IPC

@@ -1,0 +1,32 @@
+; LiquiDE Protocol -- Cursor Channel Messages
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/cursor.cddl
+;
+; Cursor channel (0x11) message schemas.
+; The cursor channel is server-to-client only and uses latest-wins ordering.
+; Integer keys are used on the wire for compactness.
+
+; --- Type code 0x1101 ---
+CursorPosition = {
+    0: uint,                           ; x (cursor x position in pixels)
+    1: uint,                           ; y (cursor y position in pixels)
+    2: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x1102 ---
+CursorShape = {
+    0: bstr,                           ; shape_hash (SHA-256 truncated to 16 bytes, for caching)
+    ? 1: uint,                         ; width (pixels)
+    ? 2: uint,                         ; height (pixels)
+    ? 3: uint,                         ; hotspot_x (pixels from left)
+    ? 4: uint,                         ; hotspot_y (pixels from top)
+    ? 5: bstr,                         ; image_data (RGBA pixel data; present only for new shapes)
+    ? 6: tstr,                         ; format ("rgba8888", "png", "svg")
+    ? 7: float32,                      ; scale (display scale factor for this cursor image)
+}
+
+; --- Type code 0x1103 ---
+CursorVisibility = {
+    0: bool,                           ; visible (true = show, false = hide)
+    ? 1: uint,                         ; timestamp_us
+}

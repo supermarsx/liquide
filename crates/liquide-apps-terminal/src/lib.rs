@@ -1,0 +1,1 @@
+//! liquide-apps-terminal stub

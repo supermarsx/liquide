@@ -1,0 +1,1 @@
+//! liquide-manager stub

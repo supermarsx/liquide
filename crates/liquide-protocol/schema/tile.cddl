@@ -1,0 +1,116 @@
+; LiquiDE Protocol -- Tile Channel Messages
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/tile.cddl
+;
+; Tile channel (0x12) message schemas.
+; The tile channel carries bitmap-based screen updates and is reliable.
+; Integer keys are used on the wire for compactness.
+
+; Import: Rect, timestamp-us from common.cddl
+
+; --- Type code 0x1201 ---
+TileConfig = {
+    0: uint,                           ; tile_size (pixels: 32, 64, 128, 256)
+    1: uint,                           ; grid_width (number of tiles horizontally)
+    2: uint,                           ; grid_height (number of tiles vertically)
+    3: tstr,                           ; pixel_format ("rgb888", "rgba8888", "rgb565", "rgb101010", "rgba1010102", "rgba16161616")
+    4: tstr,                           ; codec ("zstd", "lz4", "png", "qoi", "webp", "raw")
+    5: bool,                           ; delta_enabled (whether XOR deltas are used)
+    6: uint,                           ; screen_width (actual screen width in pixels)
+    7: uint,                           ; screen_height (actual screen height in pixels)
+}
+
+; --- Type code 0x1202 ---
+TileBatch = {
+    0: uint,                           ; batch_id (monotonic batch counter)
+    1: uint,                           ; timestamp_us (capture timestamp)
+    2: uint,                           ; tile_count (number of tile updates in this batch)
+    3: [+ TileUpdate],                 ; tiles (the tile updates)
+    ? 4: TileScrollVector,             ; scroll_precede (if set, apply scroll before tiles)
+}
+
+TileUpdate = {
+    0: uint,                           ; x (tile grid column, 0-based)
+    1: uint,                           ; y (tile grid row, 0-based)
+    2: tstr,                           ; encoding ("full", "delta", "copy", "solid")
+    ? 3: bstr,                         ; data (compressed tile data for "full" or XOR delta for "delta")
+    ? 4: uint,                         ; copy_source (index into this batch's tile list, for "copy")
+    ? 5: bstr,                         ; solid_color (3 or 4 bytes RGBA, for "solid")
+    ? 6: uint,                         ; data_size (uncompressed size hint for pre-allocation)
+}
+
+; Encoding type semantics:
+; "full"  -- data contains the full tile bitmap, codec-compressed.
+;            Client replaces tile buffer at (x, y) with decoded data.
+; "delta" -- data contains XOR of (current tile ^ previous tile), codec-compressed.
+;            Client decompresses, XORs with its buffered tile at (x, y), stores result.
+; "copy"  -- tile is identical to another tile in this batch.
+;            copy_source is the index of the source tile in the tiles array.
+;            Client copies the decoded tile from that index.
+; "solid" -- tile is a single solid color.
+;            solid_color is the RGBA value. Client fills tile buffer at (x, y).
+; Tiles that are unchanged ("skip") are NOT included in the batch.
+
+; --- Compressed Tile Data Header ---
+; When encoding is "full" or "delta", the data bytes field begins with
+; an 8-byte CompressedTileHeader followed by the compressed payload.
+;
+; On-wire layout (little-endian):
+;   bytes 0-1:  uncompressed_size (uint16)
+;   byte  2:    row_count         (uint8)
+;   bytes 3-4:  scan_width        (uint16)
+;   bytes 5-6:  body_size         (uint16)
+;   byte  7:    flags             (uint8)
+;   bytes 8+:   compressed payload (body_size bytes)
+;
+; The header enables:
+;   - Decoder pre-allocation of the output buffer (uncompressed_size)
+;   - Row-aligned progressive decode (row_count x scan_width)
+;   - Row-level delta detection (flags bit 1)
+
+CompressedTileHeader = (
+    uncompressed_size: uint,           ; total uncompressed tile size in bytes
+    row_count: uint,                   ; number of scanlines (typically tile_size)
+    scan_width: uint,                  ; bytes per scanline = tile_width x bytes_per_pixel
+    body_size: uint,                   ; compressed payload size following this header
+    flags: uint,                       ; bit 0: reduced color depth (4bpp or 8bpp)
+                                       ; bit 1: row-delta encoded (scanlines XOR against previous)
+                                       ; bits 2-7: reserved (must be 0)
+)
+
+; --- Type code 0x1203 ---
+TileBatchAck = {
+    0: uint,                           ; batch_id (batch being acknowledged)
+    1: uint,                           ; decode_time_us (time to decode + apply this batch)
+}
+
+TileScrollVector = {
+    0: int,                            ; dx (horizontal scroll in tiles, positive = right)
+    1: int,                            ; dy (vertical scroll in tiles, positive = down)
+}
+
+; --- Type code 0x1204 ---
+TileScroll = {
+    0: TileScrollVector,               ; scroll vector
+    1: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x1205 ---
+TileKeyFrame = {
+    0: uint,                           ; batch_id
+    1: uint,                           ; timestamp_us
+    2: uint,                           ; tile_count
+    3: [+ TileUpdate],                 ; tiles (all tiles, all "full" encoding)
+}
+
+; --- Type code 0x1206 ---
+TileKeyFrameRequest = {
+    0: tstr,                           ; reason ("reconnect", "desync", "user")
+}
+
+; --- Type code 0x1207 ---
+TileModeSwitch = {
+    0: Rect,                           ; region (screen region in pixels)
+    1: tstr,                           ; mode ("video", "tile")
+    2: uint,                           ; timestamp_us
+}

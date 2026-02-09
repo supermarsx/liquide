@@ -1,0 +1,31 @@
+[package]
+name = "liquide-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Per-user session process for the Liquide desktop environment"
+
+[[bin]]
+name = "liquid-session"
+path = "src/main.rs"
+
+[dependencies]
+liquide-common.workspace = true
+liquide-protocol.workspace = true
+liquide-transport.workspace = true
+liquide-compositor.workspace = true
+liquide-renderer-cpu.workspace = true
+liquide-encoder.workspace = true
+liquide-shell.workspace = true
+liquide-plugin-host.workspace = true
+liquide-css.workspace = true
+liquide-input.workspace = true
+liquide-clipboard.workspace = true
+liquide-audio.workspace = true
+liquide-interop.workspace = true
+liquide-a11y.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+anyhow.workspace = true

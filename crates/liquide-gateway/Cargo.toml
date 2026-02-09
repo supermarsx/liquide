@@ -1,0 +1,21 @@
+[package]
+name = "liquide-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Network gateway that terminates remote client connections and routes them to sessions"
+
+[[bin]]
+name = "liquid-gateway"
+path = "src/main.rs"
+
+[dependencies]
+liquide-common.workspace = true
+liquide-protocol.workspace = true
+liquide-transport.workspace = true
+liquide-crypto.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+anyhow.workspace = true

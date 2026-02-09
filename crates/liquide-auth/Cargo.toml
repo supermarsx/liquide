@@ -1,0 +1,14 @@
+[package]
+name = "liquide-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Authentication providers: PAM, LDAP, OIDC, MFA, and certificate-based auth"
+
+[dependencies]
+liquide-common.workspace = true
+liquide-crypto.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+serde.workspace = true

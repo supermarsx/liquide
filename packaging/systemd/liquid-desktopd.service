@@ -1,0 +1,21 @@
+[Unit]
+Description=Liquid Desktop Daemon
+Documentation=https://github.com/nickvidal/liquide
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/liquid-desktopd
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

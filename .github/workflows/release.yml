@@ -1,0 +1,249 @@
+# LiquiDE Release Pipeline
+# Triggered on version tag push (v*). Builds release artifacts for all
+# tier 1 and tier 2 targets, generates checksums, and creates a GitHub release.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Tier 1 targets
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            tier: 1
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            tier: 1
+            cross: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            tier: 1
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            tier: 1
+          # Tier 2 targets
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            tier: 2
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            tier: 2
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            tier: 2
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            tier: 2
+            cross: true
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            tier: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libpipewire-0.3-dev \
+            libpam0g-dev \
+            libdbus-1-dev \
+            libfreetype-dev \
+            libfontconfig-dev \
+            libharfbuzz-dev \
+            libvulkan-dev \
+            libva-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.cross == true
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Install musl tools
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get install -y musl-tools
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: release-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            release-${{ matrix.target }}-cargo-
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package artifacts (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          BINARIES=$(find target/${{ matrix.target }}/release -maxdepth 1 -type f -executable -name 'liquid*')
+          for bin in $BINARIES; do
+            cp "$bin" dist/
+          done
+          cd dist
+          tar czf ../liquide-${{ github.ref_name }}-${{ matrix.target }}.tar.gz *
+
+      - name: Package artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Get-ChildItem "target/${{ matrix.target }}/release/liquid*.exe" | Copy-Item -Destination dist/
+          Compress-Archive -Path dist/* -DestinationPath "liquide-${{ github.ref_name }}-${{ matrix.target }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            liquide-*.tar.gz
+            liquide-*.zip
+          retention-days: 5
+
+  test:
+    name: Release Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libpipewire-0.3-dev \
+            libpam0g-dev \
+            libdbus-1-dev \
+            libfreetype-dev \
+            libfontconfig-dev \
+            libharfbuzz-dev \
+            libvulkan-dev \
+            libva-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Run full test suite
+        run: cargo test --workspace --all-features
+
+  checksums:
+    name: Generate Checksums
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd artifacts
+          sha256sum liquide-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: artifacts/SHA256SUMS.txt
+
+  publish:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: checksums
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: Download checksums
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: artifacts
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | head -n 2 | tail -n 1)
+          if [ -z "$PREV_TAG" ]; then
+            echo "body=Initial release." >> "$GITHUB_OUTPUT"
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" "$PREV_TAG".."${{ github.ref_name }}")
+            {
+              echo "body<<EOF"
+              echo "## Changes since $PREV_TAG"
+              echo ""
+              echo "$CHANGELOG"
+              echo ""
+              echo "## Checksums (SHA-256)"
+              echo '```'
+              cat artifacts/SHA256SUMS.txt
+              echo '```'
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: LiquiDE ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.body }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+          files: |
+            artifacts/liquide-*
+            artifacts/SHA256SUMS.txt

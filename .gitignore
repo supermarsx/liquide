@@ -3,3 +3,4 @@ tmpclaude-*
 .claude/
 *.jsonl
 spec.zip
+/target

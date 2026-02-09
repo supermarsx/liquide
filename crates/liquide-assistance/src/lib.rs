@@ -1,0 +1,1 @@
+//! liquide-assistance stub

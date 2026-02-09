@@ -1,0 +1,13 @@
+[package]
+name = "liquide-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared utilities for the Liquide project: logging, config parsing, error types"
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+toml.workspace = true
+anyhow.workspace = true

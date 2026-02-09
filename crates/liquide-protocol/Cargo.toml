@@ -1,0 +1,13 @@
+[package]
+name = "liquide-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Wire format, CBOR schemas, message types, channel IDs, and protocol version constants"
+
+[dependencies]
+liquide-common.workspace = true
+serde.workspace = true
+ciborium.workspace = true
+bytes.workspace = true
+thiserror.workspace = true

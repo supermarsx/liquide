@@ -1,0 +1,250 @@
+; LiquiDE Protocol -- Control Channel Messages
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/control.cddl
+;
+; Control channel (0x00) message schemas.
+; Integer keys are used on the wire for compactness; string key names
+; in comments are documentation only.
+
+; Import common types (conceptual -- CDDL tools resolve via file include)
+; session-id, error-code, protocol-version defined in common.cddl
+; ChannelConfig defined in common.cddl
+
+; --- Type code 0x0001 ---
+ClientHello = {
+    0: protocol-version,               ; protocol_version ("proto/1")
+    1: [+ tstr],                       ; supported_transports ("quic", "tcp+udp", "tcp-only", "websocket")
+    2: [+ tstr],                       ; supported_codecs ("h264", "h265", "av1", "vp9")
+    3: {* tstr => any},                ; client_capabilities
+    4: tstr,                           ; client_version
+    5: tstr,                           ; client_platform ("linux-x86_64", "windows-x86_64", etc.)
+    ? 6: bstr,                         ; session_resume_token (for reconnect)
+    ? 7: tstr,                         ; client_name
+    ? 8: [+ tstr],                     ; supported_audio_codecs ("opus", "aac")
+    ? 9: [+ tstr],                     ; supported_compressions ("lz4", "zstd")
+    ? 10: DisplayInfo,                 ; display information
+}
+
+DisplayInfo = {
+    0: uint,                           ; width
+    1: uint,                           ; height
+    2: float32,                        ; scale_factor
+    3: uint,                           ; refresh_rate (Hz)
+}
+
+; --- Type code 0x0002 ---
+ServerHello = {
+    0: protocol-version,               ; selected protocol version
+    1: tstr,                           ; selected_transport
+    2: session-id,                     ; session_id
+    3: {* tstr => any},                ; server_capabilities
+    4: tstr,                           ; server_version
+    ? 5: bstr,                         ; session_resume_token
+    ? 6: uint,                         ; heartbeat_interval_ms
+    ? 7: tstr,                         ; server_name
+    ? 8: tstr,                         ; selected_video_codec
+    ? 9: tstr,                         ; selected_audio_codec
+    ? 10: {* uint => ChannelConfig},   ; channels (channel_id => config)
+    ? 11: {* tstr => bool},            ; features
+}
+
+; --- Type code 0x0003 ---
+Ping = {
+    0: uint,                           ; ping_id
+    1: uint,                           ; timestamp_us (sender timestamp)
+}
+
+; --- Type code 0x0004 ---
+Pong = {
+    0: uint,                           ; ping_id (echoed from Ping)
+    1: uint,                           ; original_timestamp_us (echoed sender timestamp)
+    2: uint,                           ; responder_timestamp_us
+}
+
+; --- Type code 0x0005 ---
+ChannelOpen = {
+    0: uint,                           ; channel_id
+    1: tstr,                           ; channel_name
+    ? 2: {* tstr => any},              ; channel_params
+    ? 3: tstr,                         ; plugin_id (for virtual channels 0xF0+)
+}
+
+; --- Type code 0x0006 ---
+ChannelOpenAck = {
+    0: uint,                           ; channel_id
+    ? 1: {* tstr => any},              ; channel_params (negotiated)
+}
+
+; --- Type code 0x0007 ---
+ChannelOpenReject = {
+    0: uint,                           ; channel_id
+    1: tstr,                           ; reason ("unsupported_channel", "policy_denied", "virtual_channel_limit")
+}
+
+; --- Type code 0x0008 ---
+ChannelClose = {
+    0: uint,                           ; channel_id
+    ? 1: tstr,                         ; reason
+}
+
+; --- Type code 0x0009 ---
+ChannelSuspend = {
+    0: uint,                           ; channel_id
+    ? 1: tstr,                         ; reason
+}
+
+; --- Type code 0x000A ---
+ChannelResume = {
+    0: uint,                           ; channel_id
+}
+
+; --- Type code 0x0010 ---
+LoginPrompt = {
+    0: [+ tstr],                       ; available_methods ("password", "totp", "fido2", etc.)
+    ? 1: bstr,                         ; avatar_png (JPEG/PNG image bytes, <= 32KB)
+    ? 2: bool,                         ; session_resume_available
+    ? 3: tstr,                         ; server_greeting
+}
+
+; --- Type code 0x0011 ---
+LoginResponse = {
+    0: tstr,                           ; method ("password", "totp", "fido2", etc.)
+    1: bstr,                           ; credential (encrypted under TLS)
+    ? 2: bstr,                         ; mfa_token (second-factor response)
+}
+
+; --- Type code 0x0012 ---
+LoginSuccess = {
+    0: session-id,                     ; session_id
+    1: bstr,                           ; session_token
+    2: {* tstr => any},                ; session_features (negotiated capabilities)
+    ? 3: uint,                         ; token_lifetime_sec
+}
+
+; --- Type code 0x0013 ---
+LoginFailure = {
+    0: error-code,                     ; error_code
+    1: tstr,                           ; reason ("invalid_credentials", "account_locked", "mfa_required")
+    ? 2: uint,                         ; retry_after_sec
+    ? 3: uint,                         ; remaining_attempts
+}
+
+; --- Type code 0x0014 ---
+SessionInfo = {
+    0: session-id,                     ; session_id
+    1: tstr,                           ; user
+    ? 2: {* tstr => any},              ; session_metadata
+    ? 3: uint,                         ; session_uptime_sec
+}
+
+; --- Type code 0x0015 ---
+Disconnect = {
+    0: error-code,                     ; error_code
+    1: tstr,                           ; reason
+    ? 2: bool,                         ; reconnect_allowed
+}
+
+; --- Type code 0x0016 ---
+ConfigUpdate = {
+    0: tstr,                           ; config_key
+    1: any,                            ; config_value
+    ? 2: uint,                         ; effective_timestamp_us
+}
+
+; --- Type code 0x0017 ---
+PolicyUpdate = {
+    0: tstr,                           ; policy_key
+    1: any,                            ; policy_value
+    ? 2: tstr,                         ; reason
+}
+
+; --- Type code 0x0018 ---
+Capabilities = {
+    0: tstr,                           ; action: "advertise" | "request" | "confirm" | "reject"
+    1: {* tstr => any},                ; capabilities (capability_id => capability_value)
+    ? 2: uint,                         ; request_id (correlates request/confirm/reject)
+}
+
+; --- Type code 0x0019 ---
+Resize = {
+    0: uint,                           ; width
+    1: uint,                           ; height
+    ? 2: float32,                      ; scale_factor
+    ? 3: uint,                         ; refresh_rate (Hz)
+}
+
+; --- Type code 0x001A ---
+ResizeAck = {
+    0: uint,                           ; width (server-applied)
+    1: uint,                           ; height (server-applied)
+    ? 2: float32,                      ; scale_factor (server-applied)
+}
+
+; --- Type code 0x001B ---
+SessionLock = {
+    ? 0: tstr,                         ; reason
+    ? 1: uint,                         ; lock_timestamp_us
+}
+
+; --- Type code 0x001C ---
+SessionUnlock = {
+    0: bstr,                           ; credential
+    ? 1: tstr,                         ; method
+}
+
+; --- Type code 0x0020 ---
+AssetManifest = {
+    0: uint,                           ; manifest_version (monotonic)
+    1: [+ AssetEntry],                 ; assets
+}
+
+AssetEntry = {
+    0: tstr,                           ; asset_id (e.g., "icon:firefox:48", "cursor:default:left_ptr")
+    1: tstr,                           ; category ("icon", "cursor", "theme", "avatar", "shell")
+    2: bstr,                           ; content_hash (SHA-256 truncated to 16 bytes)
+    3: uint,                           ; size (bytes)
+    4: tstr,                           ; mime_type ("image/png", "image/svg+xml", "image/x-icon")
+    ? 5: bstr,                         ; inline_data (present if size < inline_threshold)
+    ? 6: {* tstr => any},              ; metadata
+}
+
+; --- Type code 0x0021 ---
+AssetRequest = {
+    0: [+ tstr],                       ; asset_ids (batch request)
+    ? 1: tstr,                         ; preferred_format ("png", "svg", "ico")
+    ? 2: [+ uint],                     ; preferred_sizes (e.g., [48, 64])
+}
+
+; --- Type code 0x0022 ---
+AssetData = {
+    0: tstr,                           ; asset_id
+    1: bstr,                           ; content_hash
+    2: tstr,                           ; mime_type
+    3: bstr,                           ; data (asset content)
+    ? 4: bool,                         ; is_last (true if last asset in batch)
+}
+
+; --- Type code 0x0023 ---
+AssetManifestAck = {
+    0: uint,                           ; manifest_version
+    1: [+ tstr],                       ; cached_assets (cache hits)
+    2: [+ tstr],                       ; requested_assets (cache misses)
+}
+
+; --- Type code 0x0030 ---
+SecureAttention = {
+    0: tstr,                           ; command ("lock_session", "ctrl_alt_delete", "switch_user",
+                                       ;          "terminate_session", "reboot_session", "screenshot",
+                                       ;          "change_password")
+    ? 1: {* tstr => any},              ; params (command-specific)
+    2: uint,                           ; nonce (unique per-request, for ack correlation)
+    3: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x0031 ---
+SecureAttentionAck = {
+    0: uint,                           ; nonce (correlates to SecureAttention.nonce)
+    1: tstr,                           ; result: "ok" | "denied" | "error" | "unsupported"
+    ? 2: tstr,                         ; reason (human-readable, on deny/error)
+    ? 3: {* tstr => any},              ; data (command-specific response)
+}

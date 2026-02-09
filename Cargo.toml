@@ -1,0 +1,158 @@
+[workspace]
+resolver = "2"
+members = [
+    # Core protocol & transport
+    "crates/liquide-common",
+    "crates/liquide-protocol",
+    "crates/liquide-transport",
+    "crates/liquide-crypto",
+
+    # Authentication & policy
+    "crates/liquide-auth",
+    "crates/liquide-policy",
+
+    # Rendering & compositing
+    "crates/liquide-compositor",
+    "crates/liquide-renderer-cpu",
+    "crates/liquide-renderer-gpu",
+    "crates/liquide-encoder",
+    "crates/liquide-encoder-hw",
+    "crates/liquide-css",
+    "crates/liquide-shell",
+
+    # Plugins & extensions
+    "crates/liquide-plugin-host",
+    "crates/liquide-plugin-abi",
+
+    # Session management (binaries)
+    "crates/liquide-session",
+    "crates/liquide-supervisor",
+
+    # Client components
+    "crates/liquide-client",
+    "crates/liquide-client-renderer",
+    "crates/liquide-mobile-core",
+
+    # Media & streaming
+    "crates/liquide-recording",
+    "crates/liquide-assistance",
+    "crates/liquide-audio",
+    "crates/liquide-clipboard",
+    "crates/liquide-usb",
+    "crates/liquide-input",
+
+    # Desktop integration
+    "crates/liquide-interop",
+    "crates/liquide-a11y",
+
+    # UI toolkit & apps
+    "crates/liquide-ui",
+    "crates/liquide-apps-terminal",
+    "crates/liquide-apps-files",
+    "crates/liquide-apps-settings",
+    "crates/liquide-apps-text-editor",
+    "crates/liquide-apps-software-center",
+
+    # Infrastructure (binaries)
+    "crates/liquide-gateway",
+    "crates/liquide-manager",
+    "crates/liquide-manager-frontend",
+    "crates/liquide-ctl",
+
+    # Testing & benchmarking
+    "crates/liquide-bench",
+    "crates/liquide-conformance",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/liquide/liquide"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ciborium = "0.2"
+toml = "0.8"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging & observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Crypto & TLS
+rustls = "0.23"
+
+# Compression
+zstd = "0.13"
+lz4_flex = "0.11"
+
+# Bytes & I/O
+bytes = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Testing
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Internal crates
+liquide-common = { path = "crates/liquide-common" }
+liquide-protocol = { path = "crates/liquide-protocol" }
+liquide-transport = { path = "crates/liquide-transport" }
+liquide-crypto = { path = "crates/liquide-crypto" }
+liquide-auth = { path = "crates/liquide-auth" }
+liquide-policy = { path = "crates/liquide-policy" }
+liquide-compositor = { path = "crates/liquide-compositor" }
+liquide-renderer-cpu = { path = "crates/liquide-renderer-cpu" }
+liquide-renderer-gpu = { path = "crates/liquide-renderer-gpu" }
+liquide-encoder = { path = "crates/liquide-encoder" }
+liquide-encoder-hw = { path = "crates/liquide-encoder-hw" }
+liquide-css = { path = "crates/liquide-css" }
+liquide-shell = { path = "crates/liquide-shell" }
+liquide-plugin-host = { path = "crates/liquide-plugin-host" }
+liquide-plugin-abi = { path = "crates/liquide-plugin-abi" }
+liquide-session = { path = "crates/liquide-session" }
+liquide-supervisor = { path = "crates/liquide-supervisor" }
+liquide-client = { path = "crates/liquide-client" }
+liquide-client-renderer = { path = "crates/liquide-client-renderer" }
+liquide-mobile-core = { path = "crates/liquide-mobile-core" }
+liquide-recording = { path = "crates/liquide-recording" }
+liquide-assistance = { path = "crates/liquide-assistance" }
+liquide-audio = { path = "crates/liquide-audio" }
+liquide-clipboard = { path = "crates/liquide-clipboard" }
+liquide-usb = { path = "crates/liquide-usb" }
+liquide-input = { path = "crates/liquide-input" }
+liquide-interop = { path = "crates/liquide-interop" }
+liquide-a11y = { path = "crates/liquide-a11y" }
+liquide-ui = { path = "crates/liquide-ui" }
+liquide-gateway = { path = "crates/liquide-gateway" }
+liquide-manager = { path = "crates/liquide-manager" }
+liquide-manager-frontend = { path = "crates/liquide-manager-frontend" }
+liquide-ctl = { path = "crates/liquide-ctl" }
+liquide-bench = { path = "crates/liquide-bench" }
+liquide-conformance = { path = "crates/liquide-conformance" }
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = "symbols"
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+inherits = "release"
+debug = true

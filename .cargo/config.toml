@@ -1,0 +1,21 @@
+# LiquiDE build configuration
+
+[build]
+# Use all available cores for compilation
+# jobs defaults to logical CPU count when omitted
+
+[profile.release-debug]
+inherits = "release"
+debug = true
+strip = "none"
+
+[profile.fuzz]
+inherits = "dev"
+opt-level = 1
+
+# Target-specific linker settings
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]

@@ -1,0 +1,112 @@
+; LiquiDE Protocol -- Emergency Channel Messages
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/emergency.cddl
+;
+; Emergency channel (0x01) message schemas.
+; The emergency channel operates independently of the session process
+; and terminates directly at the supervisor daemon (liquid-desktopd).
+; Integer keys are used on the wire for compactness.
+
+; Import: session-id, error-code, timestamp-us from common.cddl
+
+; --- Type code 0x0101 ---
+CrashInfo = {
+    0: tstr,                           ; error_code ("SESSION_PROCESS_CRASH", "SESSION_OOM", etc.)
+    1: tstr,                           ; description (human-readable)
+    2: tstr,                           ; severity ("session", "connection", "server")
+    ? 3: [+ tstr],                     ; stack_trace (stack frames, if available)
+    ? 4: tstr,                         ; session_id
+    ? 5: tstr,                         ; user
+    ? 6: uint,                         ; uptime_seconds
+    ? 7: tstr,                         ; crash_report_id (for downloading full report)
+    ? 8: int,                          ; exit_code
+    ? 9: tstr,                         ; signal_name ("SIGSEGV", "SIGABRT", etc.)
+    10: [+ tstr],                      ; recovery_options ("restart_session", "download_report", "disconnect")
+    11: bool,                          ; restart_available
+    12: tstr,                          ; timestamp (ISO 8601)
+    ? 13: [+ tstr],                    ; log_tail (last N log lines)
+}
+
+; --- Type code 0x0104 ---
+CrashReportRequest = {
+    0: tstr,                           ; crash_report_id
+    1: bool,                           ; include_log_tail
+    2: bool,                           ; include_stack_trace
+    3: bool,                           ; include_system_info
+    4: bool,                           ; include_coredump (large; only on explicit request)
+}
+
+; --- Type code 0x0105 ---
+CrashReportChunk = {
+    0: tstr,                           ; crash_report_id
+    1: uint,                           ; chunk_index
+    2: uint,                           ; total_chunks (0 = unknown, streaming)
+    3: bstr,                           ; data (chunk of report data, JSON or tar.gz)
+}
+
+; --- Type code 0x0106 ---
+CrashReportEnd = {
+    0: tstr,                           ; crash_report_id
+    1: uint,                           ; total_size
+    2: bstr,                           ; sha256 (hash for integrity verification)
+}
+
+; --- Type code 0x0107 ---
+SupervisorStatus = {
+    0: tstr,                           ; session_state ("running", "crashed", "restarting", "stopped", "starting")
+    ? 1: tstr,                         ; session_id
+    ? 2: uint,                         ; uptime_seconds
+    ? 3: uint,                         ; restart_count
+    ? 4: tstr,                         ; last_error
+    ? 5: uint,                         ; timestamp_us
+}
+
+; --- Type code 0x0108 ---
+RestartRequest = {
+    ? 0: tstr,                         ; reason ("user", "crash_recovery", "admin")
+    ? 1: bool,                         ; force (true = SIGKILL if session is still running)
+}
+
+; --- Type code 0x0109 ---
+RestartStatus = {
+    0: tstr,                           ; status ("pending", "starting", "success", "failed")
+    ? 1: tstr,                         ; reason (on failure: human-readable error)
+    ? 2: uint,                         ; progress_percent (0-100, during "starting")
+    ? 3: tstr,                         ; new_session_id (on success)
+}
+
+; --- Type code 0x010A ---
+HeartbeatEmergency = {
+    0: uint,                           ; sequence (monotonic heartbeat counter)
+    1: uint,                           ; timestamp_us
+}
+
+; --- Type code 0x010B ---
+ServerShutdown = {
+    0: tstr,                           ; reason ("maintenance", "upgrade", "admin", "error")
+    ? 1: uint,                         ; shutdown_in_seconds (countdown, 0 = immediate)
+    ? 2: tstr,                         ; message (human-readable message for the user)
+    ? 3: bool,                         ; reconnect_after (true = server will be back, client should retry)
+}
+
+; --- Type code 0x010C ---
+SessionLogStream = {
+    0: tstr,                           ; session_id
+    1: tstr,                           ; timestamp (ISO 8601)
+    2: tstr,                           ; level ("trace", "debug", "info", "warn", "error")
+    3: tstr,                           ; subsystem ("compositor", "plugin", "transport", etc.)
+    4: tstr,                           ; message
+}
+
+; --- Type code 0x010D ---
+DiagnosticRequest = {
+    0: tstr,                           ; type ("system_info", "memory", "cpu", "sessions", "log_stream", "log_stream_stop")
+    ? 1: {* tstr => any},              ; params (request-specific parameters)
+}
+
+; --- Type code 0x010E ---
+DiagnosticResponse = {
+    0: tstr,                           ; type (echoed from DiagnosticRequest)
+    1: {* tstr => any},                ; data (diagnostic data payload)
+    ? 2: uint,                         ; timestamp_us
+}

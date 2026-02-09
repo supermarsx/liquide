@@ -1,0 +1,1 @@
+//! liquide-client stub

@@ -1,0 +1,39 @@
+; LiquiDE Protocol -- Audio Channel Messages
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/audio.cddl
+;
+; Audio channels (0x20 playback, 0x21 capture) message schemas.
+; Audio channels are bidirectional and use unreliable transport.
+; Integer keys are used on the wire for compactness.
+
+; --- Type code 0x2001 ---
+AudioConfig = {
+    0: uint,                           ; sample_rate (e.g., 44100, 48000)
+    1: uint,                           ; channels (1 = mono, 2 = stereo, 6 = 5.1, etc.)
+    2: tstr,                           ; codec ("opus", "aac", "pcm")
+    ? 3: uint,                         ; bitrate_kbps (target bitrate)
+    ? 4: uint,                         ; frame_size_samples (samples per audio frame)
+    ? 5: tstr,                         ; sample_format ("s16le", "f32le", "s24le")
+    ? 6: uint,                         ; jitter_buffer_ms (receiver jitter buffer size)
+}
+
+; --- Type code 0x2002 ---
+AudioData = {
+    0: uint,                           ; sequence (monotonic audio frame counter)
+    1: bstr,                           ; data (encoded audio frame)
+    2: uint,                           ; timestamp_us (capture timestamp)
+    ? 3: uint,                         ; duration_us (frame duration in microseconds)
+    ? 4: bool,                         ; silence (true = this is a comfort noise / silence frame)
+}
+
+; --- Type code 0x2003 ---
+AudioMute = {
+    0: bool,                           ; muted (true = mute, false = unmute)
+    ? 1: tstr,                         ; reason ("user", "policy", "focus_lost")
+}
+
+; --- Type code 0x2004 ---
+AudioVolume = {
+    0: float32,                        ; level (0.0 = silent, 1.0 = 100%, >1.0 = boost)
+    ? 1: tstr,                         ; target ("master", "application", "notification")
+}

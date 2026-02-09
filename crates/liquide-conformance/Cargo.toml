@@ -1,0 +1,20 @@
+[package]
+name = "liquide-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Protocol conformance test runner for validating Liquide server implementations"
+
+[[bin]]
+name = "liquide-conformance"
+path = "src/main.rs"
+
+[dependencies]
+liquide-common.workspace = true
+liquide-protocol.workspace = true
+liquide-transport.workspace = true
+liquide-crypto.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tokio.workspace = true

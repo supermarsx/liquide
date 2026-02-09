@@ -1,0 +1,1 @@
+//! liquide-plugin-host stub

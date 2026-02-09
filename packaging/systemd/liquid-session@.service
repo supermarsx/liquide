@@ -1,0 +1,24 @@
+[Unit]
+Description=Liquid Desktop Session for user %i
+Documentation=https://github.com/nickvidal/liquide
+After=liquid-desktopd.service
+Requires=liquid-desktopd.service
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/bin/liquid-session
+Restart=on-failure
+RestartSec=3
+
+# Per-session environment
+Environment=XDG_SESSION_TYPE=liquid
+Environment=WAYLAND_DISPLAY=liquid-0
+
+# Hardening
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

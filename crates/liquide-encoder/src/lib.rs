@@ -1,0 +1,1 @@
+//! liquide-encoder stub

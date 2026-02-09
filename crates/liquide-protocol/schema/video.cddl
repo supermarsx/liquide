@@ -1,0 +1,95 @@
+; LiquiDE Protocol -- Video Channel Messages
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/video.cddl
+;
+; Video channel (0x10) message schemas.
+; Integer keys are used on the wire for compactness.
+
+; Import: Rect, timestamp-us from common.cddl
+; Import: ColorSpaceInfo, HDRMetadata from color.cddl
+
+; --- Type code 0x1001 ---
+FrameHeader = {
+    0: uint,                           ; frame_id (monotonic frame counter)
+    1: tstr,                           ; codec ("h264", "h265", "av1", "vp9")
+    2: tstr,                           ; frame_type ("key", "delta")
+    3: uint,                           ; width
+    4: uint,                           ; height
+    5: uint,                           ; data_size (total encoded data bytes)
+    ? 6: [+ Rect],                     ; damage_rects (damaged regions, for delta frames)
+    ? 7: uint,                         ; quantizer (quality metric)
+    8: uint,                           ; timestamp_us (capture timestamp)
+    ? 9: {* tstr => any},              ; metadata (extensible)
+    ? 10: ColorSpaceInfo,              ; color_space (present when non-sRGB)
+    ? 11: HDRMetadata,                 ; hdr_metadata (present when HDR active)
+}
+
+; --- Type code 0x1002 ---
+FrameData = {
+    0: uint,                           ; frame_id (matches FrameHeader.frame_id)
+    1: bstr,                           ; data (encoded frame payload, possibly fragmented)
+    ? 2: uint,                         ; fragment_index (0-based, if fragmented)
+    ? 3: uint,                         ; fragment_total (total fragments, if fragmented)
+}
+
+; --- Type code 0x1003 ---
+FrameAck = {
+    0: uint,                           ; frame_id (acknowledged frame)
+    1: uint,                           ; decode_time_us (time to decode this frame)
+    ? 2: uint,                         ; render_time_us (time to render/display)
+    ? 3: uint,                         ; client_timestamp_us
+}
+
+; --- Type code 0x1004 ---
+QualityHint = {
+    0: uint,                           ; target_fps (desired frames per second)
+    ? 1: uint,                         ; target_bitrate_kbps (desired bitrate)
+    ? 2: tstr,                         ; quality_preset ("speed", "balanced", "quality")
+    ? 3: uint,                         ; max_quantizer
+    ? 4: uint,                         ; min_quantizer
+}
+
+; --- Type code 0x1005 ---
+CodecSwitch = {
+    0: tstr,                           ; new_codec ("h264", "h265", "av1", "vp9")
+    ? 1: tstr,                         ; reason ("bandwidth_change", "quality_change", "client_request")
+    ? 2: uint,                         ; effective_frame_id (first frame using the new codec)
+}
+
+; --- Type code 0x1006 ---
+KeyFrameRequest = {
+    ? 0: tstr,                         ; reason ("packet_loss", "decode_error", "reconnect", "user")
+    ? 1: bool,                         ; urgent (true = bypass encoder queue)
+    ? 2: uint,                         ; timestamp_us
+}
+
+; --- Color space and HDR types (also defined in color.cddl) ---
+; These are included here for self-containedness when reading video.cddl alone.
+; The canonical definitions live in color.cddl.
+
+ColorSpaceInfo = {
+    0: uint,                           ; primaries (ITU-T H.273: 1=BT.709, 9=BT.2020, 12=Display-P3)
+    1: uint,                           ; transfer (ITU-T H.273: 1=BT.709, 13=sRGB, 16=PQ, 18=HLG)
+    2: uint,                           ; matrix (ITU-T H.273: 0=Identity/RGB, 1=BT.709, 9=BT.2020-NCL)
+    3: uint,                           ; bit_depth (8, 10, 12, 16)
+}
+
+HDRMetadata = {
+    ? 0: HDR10Static,                  ; hdr10 (SMPTE ST 2086 mastering display + MaxCLL/MaxFALL)
+    ? 1: bstr,                         ; hdr10plus (HDR10+ dynamic metadata blob, raw SEI/OBU per frame)
+}
+
+HDR10Static = {
+    0: float32,                        ; display_primaries_rx (mastering display red primary CIE x)
+    1: float32,                        ; display_primaries_ry (mastering display red primary CIE y)
+    2: float32,                        ; display_primaries_gx
+    3: float32,                        ; display_primaries_gy
+    4: float32,                        ; display_primaries_bx
+    5: float32,                        ; display_primaries_by
+    6: float32,                        ; white_point_x (mastering display white point CIE x)
+    7: float32,                        ; white_point_y (mastering display white point CIE y)
+    8: float32,                        ; max_luminance (max mastering display luminance, cd/m^2)
+    9: float32,                        ; min_luminance (min mastering display luminance, cd/m^2)
+    10: uint,                          ; max_cll (maximum content light level, nits)
+    11: uint,                          ; max_fall (maximum frame-average light level, nits)
+}

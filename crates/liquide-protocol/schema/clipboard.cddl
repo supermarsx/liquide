@@ -1,0 +1,54 @@
+; LiquiDE Protocol -- Clipboard Channel Messages
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/clipboard.cddl
+;
+; Clipboard channel (0x30) message schemas.
+; The clipboard channel is bidirectional and reliable.
+; Only one transfer per direction is active at a time.
+; Integer keys are used on the wire for compactness.
+
+; --- Type code 0x3001 ---
+ClipboardOffer = {
+    0: [+ tstr],                       ; available_formats (MIME types, e.g., "text/plain", "image/png")
+    ? 1: uint,                         ; total_size (estimated total bytes, 0 = unknown)
+    ? 2: uint,                         ; offer_id (unique per-offer, for correlation)
+}
+
+; --- Type code 0x3002 ---
+ClipboardRequest = {
+    0: tstr,                           ; requested_format (MIME type requested from the offer)
+    ? 1: uint,                         ; offer_id (correlates to ClipboardOffer.offer_id)
+}
+
+; --- Type code 0x3003 ---
+ClipboardData = {
+    0: bstr,                           ; data (clipboard content chunk)
+    ? 1: uint,                         ; chunk_index (0-based, for multi-chunk transfers)
+    ? 2: tstr,                         ; format (MIME type of this data)
+    ? 3: uint,                         ; total_size (total transfer size, informational)
+}
+
+; --- Type code 0x3004 ---
+ClipboardDataEnd = {
+    ? 0: uint,                         ; total_size (final total bytes transferred)
+    ? 1: bstr,                         ; checksum (SHA-256 for integrity verification)
+    ? 2: tstr,                         ; format (MIME type of the completed transfer)
+}
+
+; --- Type code 0x3005 ---
+ClipboardClear = {
+    ? 0: tstr,                         ; reason ("user", "policy", "timeout", "session_lock")
+}
+
+; --- Type code 0x3006 ---
+ClipboardProgress = {
+    0: uint,                           ; bytes_transferred
+    1: uint,                           ; total_bytes (0 = unknown)
+    ? 2: uint,                         ; estimated_remaining_ms
+}
+
+; --- Type code 0x3007 ---
+ClipboardCancel = {
+    ? 0: tstr,                         ; reason ("user", "policy", "timeout", "error")
+    ? 1: uint,                         ; offer_id (correlates to the cancelled transfer)
+}

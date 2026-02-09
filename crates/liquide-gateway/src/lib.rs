@@ -1,0 +1,1 @@
+//! liquide-gateway stub

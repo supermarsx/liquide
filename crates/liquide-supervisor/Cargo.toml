@@ -1,0 +1,23 @@
+[package]
+name = "liquide-supervisor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Supervisor daemon that manages session lifecycle and system-wide policy"
+
+[[bin]]
+name = "liquid-desktopd"
+path = "src/main.rs"
+
+[dependencies]
+liquide-common.workspace = true
+liquide-protocol.workspace = true
+liquide-transport.workspace = true
+liquide-crypto.workspace = true
+liquide-auth.workspace = true
+liquide-policy.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+anyhow.workspace = true

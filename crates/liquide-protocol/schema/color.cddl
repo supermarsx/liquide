@@ -1,0 +1,76 @@
+; LiquiDE Protocol -- Color Space Types
+; Canonical CDDL schema (RFC 8610)
+; Repository: crates/liquide-protocol/schema/color.cddl
+;
+; Color space signaling, HDR metadata, and related types used by the
+; video channel (FrameHeader) and tile channel.
+; Integer keys are used on the wire for compactness.
+;
+; These types follow ITU-T H.273 for primaries/transfer/matrix codes
+; and SMPTE ST 2086 for mastering display metadata.
+
+; Color space information carried in FrameHeader and TileConfig.
+; Signals the color encoding of the transported pixel data.
+ColorSpaceInfo = {
+    0: uint,                           ; primaries
+                                       ;   ITU-T H.273 colour_primaries:
+                                       ;     1 = BT.709 (sRGB / Rec. 709)
+                                       ;     9 = BT.2020 (Rec. 2020, wide gamut)
+                                       ;    12 = Display-P3 (SMPTE EG 432-1)
+    1: uint,                           ; transfer
+                                       ;   ITU-T H.273 transfer_characteristics:
+                                       ;     1 = BT.709
+                                       ;    13 = sRGB (IEC 61966-2-1)
+                                       ;    16 = PQ (SMPTE ST 2084, Perceptual Quantizer)
+                                       ;    18 = HLG (ARIB STD-B67, Hybrid Log-Gamma)
+    2: uint,                           ; matrix
+                                       ;   ITU-T H.273 matrix_coefficients:
+                                       ;     0 = Identity (RGB, no matrix transform)
+                                       ;     1 = BT.709
+                                       ;     9 = BT.2020 non-constant luminance
+    3: uint,                           ; bit_depth (bits per channel: 8, 10, 12, 16)
+}
+
+; HDR metadata container. Present in FrameHeader.hdr_metadata when
+; the session is operating in HDR pipeline mode.
+HDRMetadata = {
+    ? 0: HDR10Static,                  ; hdr10 -- SMPTE ST 2086 mastering display metadata + MaxCLL/MaxFALL
+    ? 1: bstr,                         ; hdr10plus -- HDR10+ dynamic metadata blob (raw SEI/OBU, per frame)
+}
+
+; Static HDR10 metadata per SMPTE ST 2086 + CTA-861-G MaxCLL/MaxFALL.
+; Carried once at stream start and on metadata change.
+HDR10Static = {
+    0: float32,                        ; display_primaries_rx -- mastering display red primary CIE x
+    1: float32,                        ; display_primaries_ry -- mastering display red primary CIE y
+    2: float32,                        ; display_primaries_gx -- mastering display green primary CIE x
+    3: float32,                        ; display_primaries_gy -- mastering display green primary CIE y
+    4: float32,                        ; display_primaries_bx -- mastering display blue primary CIE x
+    5: float32,                        ; display_primaries_by -- mastering display blue primary CIE y
+    6: float32,                        ; white_point_x -- mastering display white point CIE x
+    7: float32,                        ; white_point_y -- mastering display white point CIE y
+    8: float32,                        ; max_luminance -- max mastering display luminance (cd/m^2)
+    9: float32,                        ; min_luminance -- min mastering display luminance (cd/m^2)
+    10: uint,                          ; max_cll -- maximum content light level (nits)
+    11: uint,                          ; max_fall -- maximum frame-average light level (nits)
+}
+
+; Reference values for common display standards (informative):
+;
+; BT.709 / sRGB:
+;   primaries: 1, transfer: 13, matrix: 1, bit_depth: 8
+;
+; Display-P3 (wide color gamut, SDR):
+;   primaries: 12, transfer: 13, matrix: 0, bit_depth: 10
+;
+; BT.2020 + PQ (HDR10):
+;   primaries: 9, transfer: 16, matrix: 9, bit_depth: 10
+;   hdr10: { display_primaries_rx: 0.708, display_primaries_ry: 0.292,
+;            display_primaries_gx: 0.170, display_primaries_gy: 0.797,
+;            display_primaries_bx: 0.131, display_primaries_by: 0.046,
+;            white_point_x: 0.3127, white_point_y: 0.3290,
+;            max_luminance: 1000.0, min_luminance: 0.001,
+;            max_cll: 1000, max_fall: 400 }
+;
+; BT.2020 + HLG:
+;   primaries: 9, transfer: 18, matrix: 9, bit_depth: 10

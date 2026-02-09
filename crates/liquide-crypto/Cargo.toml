@@ -1,0 +1,12 @@
+[package]
+name = "liquide-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TLS configuration, certificate management, and token generation for Liquide"
+
+[dependencies]
+liquide-common.workspace = true
+rustls.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

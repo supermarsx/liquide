@@ -1,0 +1,19 @@
+[package]
+name = "fuzz_frame_parser"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+# TODO: add the workspace crate that contains the frame parser
+# liquid-protocol = { path = "../../../crates/liquid-protocol" }
+
+[[bin]]
+name = "fuzz_frame_parser"
+path = "fuzz_target.rs"
+doc = false

@@ -1,0 +1,11 @@
+[package]
+name = "liquide-css"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CSS parser and theming engine for the Liquide desktop shell"
+
+[dependencies]
+liquide-common.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

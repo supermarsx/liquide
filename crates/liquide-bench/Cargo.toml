@@ -1,0 +1,20 @@
+[package]
+name = "liquide-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Benchmark harness for measuring Liquide subsystem performance"
+
+[[bin]]
+name = "liquide-bench"
+path = "src/main.rs"
+
+[dependencies]
+liquide-common.workspace = true
+liquide-protocol.workspace = true
+liquide-encoder.workspace = true
+liquide-renderer-cpu.workspace = true
+liquide-compositor.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

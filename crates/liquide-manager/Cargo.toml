@@ -1,0 +1,23 @@
+[package]
+name = "liquide-manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Management web UI backend for administering Liquide deployments"
+
+[[bin]]
+name = "liquid-manager"
+path = "src/main.rs"
+
+[dependencies]
+liquide-common.workspace = true
+liquide-protocol.workspace = true
+liquide-policy.workspace = true
+liquide-auth.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true

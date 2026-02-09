@@ -1,0 +1,25 @@
+[package]
+name = "liquide-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Desktop client that connects to a Liquide session and renders the remote desktop"
+
+[[bin]]
+name = "liquidclient"
+path = "src/main.rs"
+
+[dependencies]
+liquide-common.workspace = true
+liquide-protocol.workspace = true
+liquide-transport.workspace = true
+liquide-crypto.workspace = true
+liquide-client-renderer.workspace = true
+liquide-input.workspace = true
+liquide-clipboard.workspace = true
+liquide-audio.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "fuzz_video_decoder"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+# TODO: add the workspace crate that contains the video decoder
+# liquid-codec = { path = "../../../crates/liquid-codec" }
+
+[[bin]]
+name = "fuzz_video_decoder"
+path = "fuzz_target.rs"
+doc = false

@@ -1,0 +1,1 @@
+//! liquide-mobile-core stub
