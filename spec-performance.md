@@ -100,6 +100,21 @@ This document defines explicit **Service Level Objectives (SLOs)** for LiquiDE, 
 | Plugin load (per plugin) | < 200ms | WASM compile + init |
 | Benchmark calibration | < 5s | Auto-calibration on session start |
 
+### 2.5 Transport & Rendering Efficiency Design Principles
+
+LiquiDE's transport and rendering architecture is guided by six key efficiency principles. Each principle maps to specific implementation mechanisms documented across the spec suite:
+
+| # | Principle | Mechanism | Cross-Reference |
+|---|-----------|-----------|-----------------|
+| 1 | **Semantic deltas over pixel streams** | Drawing orders (`GlyphRun`, `RectFill`, `Border`, `ScrollCopy`) transmitted before falling back to bitmap tiles. Avoids encoding/decoding pixel data when structured commands suffice. | spec-rendering-software.md §4.6 |
+| 2 | **Dirty-region updates only** | Surface damage → tile CRC → XOR delta → encode only changed tiles. Zero-damage frames produce zero CPU/bandwidth cost. No full-frame repaint, no full-frame retransmit. | spec-rendering-software.md §4.1–4.4 |
+| 3 | **Aggressive reusable caches with tuned eviction** | Tile payload cache (checksum+size+data keyed, hot/warm/cold eviction). Glyph atlas (LRU per font slab). Shadow cache (LRU). Avoids re-encoding/re-transmitting frequent visual assets. | spec-rendering-software.md §8.4, §8.1 |
+| 4 | **Transport-aware pacing and priority** | P0–P6 priority hierarchy with 1ms pacing tick. Per-channel specialized queues with type-specific coalescing and overflow policies. ABR control loop at 100ms interval. | spec.md §7d, §7b |
+| 5 | **Kernel-side flow control and bounded buffering** | `TCP_NODELAY` for interactive channels, `TCP_CORK` for batch assembly, auto-tuned `SO_SNDBUF` to match bandwidth-delay product. Per-channel flow windows (spec-protocol-formal.md §11). cgroup memory limits bound total buffering. | spec.md §8d, spec-protocol-formal.md §11 |
+| 6 | **Async virtual-channel I/O with cancellation safety** | I/O bridge threads (reader/writer per connection) with cancel-safe `tokio::select!`. Per-channel bounded queues with isolation. Plugin virtual channels rate-limited and sandboxed. | spec.md §9a |
+
+**Design insight**: local compression and transform decisions throughout the pipeline are optimized for **end-to-end compression and decode speed**, not local-stage compression ratio alone. For example, row-level XOR pre-filtering may slightly increase intermediate output size but improves post-Zstd dictionary matching, resulting in better wire efficiency. Similarly, reduced color depth (4bpp/8bpp) paths prioritize fast decode and Zstd-friendly byte patterns over raw pixel fidelity — the end-to-end ratio and decode speed are what matter for interactive remote desktop.
+
 ---
 
 ## 3) Reference Workload Profiles

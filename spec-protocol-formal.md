@@ -641,6 +641,37 @@ TileUpdate = {
 ;           `solid_color` is the RGBA value. Client fills tile buffer at (x, y).
 ; Tiles that are unchanged ("skip") are NOT included in the batch.
 
+; --- Compressed Tile Data Header ---
+; When `encoding` is "full" or "delta", the `data` bytes field begins with
+; an 8-byte CompressedTileHeader followed by the compressed payload.
+
+CompressedTileHeader = (
+    uncompressed_size: uint,       ; total uncompressed tile size in bytes (for decoder pre-allocation)
+    row_count: uint,               ; number of scanlines in this tile (typically 64 for 64×64 tiles)
+    scan_width: uint,              ; bytes per scanline = tile_width × bytes_per_pixel
+    body_size: uint,               ; compressed payload size following this header
+    flags: uint,                   ; bit 0: reduced color depth (4bpp or 8bpp — palette in TileBatch)
+                                   ; bit 1: row-delta encoded (scanlines XOR'd against previous tile's rows)
+                                   ; bits 2-7: reserved (must be 0)
+)
+; On-wire layout (little-endian):
+;   bytes 0-1:  uncompressed_size (uint16)
+;   byte  2:    row_count         (uint8)
+;   bytes 3-4:  scan_width        (uint16)
+;   bytes 5-6:  body_size         (uint16)
+;   byte  7:    flags             (uint8)
+;   bytes 8+:   compressed payload (body_size bytes)
+;
+; The header enables:
+;   - Decoder pre-allocation of the output buffer (uncompressed_size)
+;   - Row-aligned progressive decode (row_count × scan_width)
+;   - Row-level delta detection (flags bit 1)
+;
+; Design insight: local transform decisions (color depth reduction, row-level XOR)
+; are optimized for END-TO-END compression and decode speed, not local-stage ratio
+; alone. A row-XOR pre-filter may increase local output size slightly but improves
+; post-dictionary Zstd compression efficiency (sliding window matches XOR residuals better).
+
 TileBatchAck = {
     batch_id: uint,                            ; batch being acknowledged
     decode_time_us: uint,                      ; time to decode + apply this batch
@@ -1316,6 +1347,42 @@ The protocol uses a **tiered compression strategy** that selects the optimal alg
 - Lossy tiles MUST NOT be used as the base for XOR delta computation. The tile state table stores the lossless original, and the lossy encoding is a one-shot transmission optimization.
 - Quality floor: JPEG-XL/WebP quality never drops below 75 even under bandwidth pressure.
 - Detection: tile entropy is estimated from a 16-pixel sample grid (fast path, <0.01ms per tile). Full entropy scan only when sample exceeds threshold.
+
+#### Reduced Color Depth Paths (4bpp / 8bpp)
+
+For bandwidth-constrained scenarios (network degradation level ≥ N3 per spec.md §7c, or explicit `transport.tile_color_depth` override), tile data MAY be transmitted at reduced color depth as an additional compression stage applied before Zstd:
+
+| Depth | Palette Size | Palette Overhead | Use Case |
+|-------|-------------|-----------------|----------|
+| **8bpp (256-color)** | 256 entries × 3 bytes = 768 bytes | Sent once per `TileBatch` in batch header | UI-heavy content: toolbars, dialogs, menus. Buttons and icons retain acceptable quality. |
+| **4bpp (16-color)** | 16 entries × 3 bytes = 48 bytes | Sent once per `TileBatch` in batch header | Text-and-background content: terminals, editors, consoles. Typically only 2–4 distinct colors. |
+
+**Selection criteria** (based on compositor damage classification from spec-rendering-software.md §4.5):
+
+| Damage Class | Eligible Depths | Rationale |
+|-------------|----------------|-----------|
+| `TEXT_GLYPH` | 8bpp, 4bpp | Text is typically 2–4 colors (fg, bg, selection, cursor). 4bpp is visually lossless for text. |
+| `UI_PRIMITIVE` | 8bpp | Buttons, icons, and gradients need more colors. 4bpp produces visible banding on gradients. |
+| `BITMAP_REGION` | NOT eligible | Photographic/video content would show severe posterization. Always 32bpp (or Tier 3 lossy). |
+| `CURSOR_ONLY` | N/A | Cursor has its own channel. |
+
+The `CompressedTileHeader.flags` bit 0 signals reduced color depth to the decoder. The palette is included in the `TileBatch` message (not per-tile) and indexed by pixel values in the compressed tile data. The client inflates to 32bpp RGBA after decompression and palette lookup.
+
+**Compression efficiency:** 4bpp tiles compress approximately 6× smaller than 32bpp equivalents through Zstd. 8bpp tiles compress approximately 3× smaller. Combined with XOR delta encoding, effective compression ratios exceed 20:1 for mostly-static UI content — making this path highly effective on low-bandwidth connections.
+
+**Automatic depth selection** (when `color_depth = "auto"`):
+- Default: 32bpp (full color).
+- At network degradation N3: switch `TEXT_GLYPH` and `UI_PRIMITIVE` tiles to 8bpp.
+- At network degradation N4: switch `TEXT_GLYPH` tiles to 4bpp, keep `UI_PRIMITIVE` at 8bpp.
+- Recovery: return to 32bpp when degradation drops below N2 for 5 seconds.
+
+```toml
+[transport.tile]
+color_depth = "auto"         # "auto" | "32bpp" | "8bpp" | "4bpp"
+# "auto": 32bpp default, drops to 8bpp at N3, 4bpp at N4
+# Explicit setting forces the specified depth regardless of network conditions.
+# BITMAP_REGION tiles are always 32bpp regardless of this setting.
+```
 
 #### Low-Entropy Optimization
 

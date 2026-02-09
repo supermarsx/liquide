@@ -231,6 +231,60 @@ The compositor classifies tiles during the compositing pass (zero additional cos
 
 The "highest priority wins" rule applies: a tile containing both text and a background image is classified as `TEXT_GLYPH`.
 
+### 4.6 Order-First Rendering with Bitmap Fallback
+
+LiquiDE's encoder uses a **semantic-delta-first** strategy: before falling back to pixel bitmaps, the encoder attempts to express screen updates as **drawing orders** — structured commands that the client can replay locally against its framebuffer. This is fundamentally more bandwidth-efficient than pixel streaming for UI-heavy content.
+
+#### Drawing Order Pipeline
+
+1. **Primitive tagging**: during compositing, the compositor tags each damage region with its source primitive type (text run, rect fill, border, icon blit, gradient, rounded rect). This metadata is carried through the damage → encode pipeline alongside the pixel data.
+
+2. **Order eligibility**: if ALL primitives in a damaged tile are expressible as drawing orders AND the client has negotiated Mode C (structured rendering) support, the tile is sent as an **order batch** instead of a pixel bitmap.
+
+3. **Bitmap fallback**: if any primitive in the tile cannot be expressed as an order (e.g., complex shader effect, video frame, arbitrary client surface content), the entire tile falls back to the **bitmap path** (Mode B tile encoding). The fallback produces identical pixels — no visual quality degradation.
+
+#### Order Types
+
+These supplement the Mode C structured rendering commands defined in spec.md §8c (Client-Side Rendering Offload):
+
+| Order | Fields | Description |
+|-------|--------|-------------|
+| `GlyphRun` | font_id, size, positions[], glyph_ids[], color | Client rasterizes text locally using cached font atlas. |
+| `RectFill` | rect, color \| gradient | Solid color or linear/radial gradient fill. |
+| `Border` | rect, widths[4], colors[4], radii[4] | CSS-style box border with per-side width, color, and corner radii. |
+| `IconBlit` | cache_id, position, size | Blits a previously-cached tile payload (references tile payload cache §8.4). |
+| `ScrollCopy` | src_rect, dx, dy | Block copy within the client framebuffer — enables scroll-without-retransmit. |
+
+#### Client-Side Invalid Region Tracking
+
+The client maintains an **invalid region set** — a union of rectangles representing screen areas with pending updates. This replaces full-frame repaints with minimal, targeted
+
+- **On receiving orders**: client marks the target rectangle as invalid, executes the drawing order against its local framebuffer, then clears the invalid flag for that region.
+- **On receiving bitmap tile**: client marks the tile rectangle as invalid, decompresses and blits the pixel data, then clears the invalid flag.
+- **On receiving no update**: the region remains valid — no work is done, no repaint, no retransmit.
+
+This avoids full-frame repaints and full-frame retransmits. Only the regions that actually changed are decoded, drawn, and presented to the display surface.
+
+#### Efficiency Principle
+
+Semantic deltas transmit **intent** rather than **pixels**:
+
+| Content | Order Size | Bitmap Tile Size (compressed) | Bandwidth Saving |
+|---------|-----------|------------------------------|-----------------|
+| "Hello World" text run | ~50 bytes | ~4,000 bytes | **~80×** |
+| Solid-color toolbar background | ~12 bytes | ~200 bytes (solid-fill) | **~17×** |
+| Window scroll (100px down) | ~16 bytes | ~40,000 bytes (full retransmit) | **~2,500×** |
+
+For text-heavy workloads (editors, terminals, email), order-first rendering reduces bandwidth by **10–50×** compared to pure bitmap streaming.
+
+#### Fallback Guarantee
+
+The bitmap path is always available as the universal fallback. If:
+- The client does not support Mode C structured rendering, OR
+- The damaged content cannot be expressed as drawing orders (complex surfaces, video, shader effects)
+
+...then standard tile encoding (Mode B) is used. No visual quality degradation occurs — the fallback produces pixel-identical output. The order-first path is a **pure optimization** that can be disabled without affecting correctness.
+
 ---
 
 ## 5) Liquid Glass Effect Implementation
@@ -467,6 +521,68 @@ Text rendering has special requirements for remote desktop — text must be shar
 - Font size in CSS `px` units maps to physical pixels via: `physical_px = css_px × (dpi / 96.0)`.
 - Fractional scaling is handled by rendering at the scaled resolution (e.g., 150% scale → render at 1.5× and downsample or render natively).
 - **Text is never degraded** by the degradation ladder — text rendering budget is protected even at L13.
+
+---
+
+### 8.4 Tile Payload Cache
+
+The encoder maintains a **tile payload cache** that avoids re-encoding and re-transmitting tiles whose encoded output has been sent before. This is distinct from the CRC-based damage detection (§4.4) — the payload cache operates on **encoded output**, not raw tile pixels. When a tile's encoded form already exists in the cache, the encoder emits a `"copy"` reference instead of re-encoding.
+
+#### Cache Key Design
+
+Each cache entry is keyed by a triple: `(CRC-32C checksum, uncompressed_size, first 64 bytes of tile data)`.
+
+The triple key eliminates false positives from CRC-32C hash collisions. CRC-32C collision probability is ~2⁻³² per pair; with thousands of unique tiles over a session lifetime, collision is statistically expected. By including the size and a data prefix, false matches are reduced to negligible probability without comparing the full tile (which would negate the performance benefit).
+
+#### Lookup Structure
+
+The cache uses a **balanced tree** (B-tree) ordered by the CRC-32C checksum for O(log n) lookup. Each entry additionally carries a **most-recently-used (MRU) link** — a doubly-linked list threaded through all entries in access-recency order. This enables O(1) eviction ordering without scanning the tree.
+
+#### Cache Entry
+
+```rust
+struct TileCacheEntry {
+    key: (u32, u16, [u8; 64]),       // CRC-32C, uncompressed size, data prefix
+    encoded_payload: Arc<[u8]>,       // shared reference to encoded tile data
+    eviction_category: EvictionCategory, // Hot | Warm | Cold
+    last_access: Instant,
+    access_count: u32,
+    caller_data: Option<Box<dyn Any>>, // caller-owned metadata (e.g., GPU texture handle)
+}
+```
+
+#### Eviction Categories
+
+Entries are classified into three eviction categories with threshold-based promotion and demotion:
+
+| Category | Criteria | Eviction Behavior |
+|----------|---------|-------------------|
+| **Hot** | Accessed ≥ 10× in the last 5 seconds | Never evicted unless memory pressure ≥ 90% RSS threshold |
+| **Warm** | Accessed 2–9× in the last 30 seconds | Evicted only under memory pressure ≥ 80% RSS threshold |
+| **Cold** | Accessed ≤ 1× OR last access > 30 seconds ago | First to be evicted (standard LRU within this category) |
+
+**Promotion rules:** Cold → Warm on 2nd access. Warm → Hot on 10th access within a 5-second window. **Demotion:** Hot → Warm after 5 seconds without access. Warm → Cold after 30 seconds without access. Demotion is checked lazily on next access or eviction sweep.
+
+#### Eviction Callback
+
+When an entry is evicted, an optional caller-provided callback is invoked:
+
+```rust
+on_evict: Option<fn(&TileCacheEntry)>
+```
+
+This allows callers to perform cleanup of owned resources — for example, releasing GPU texture handles on the client side, freeing shared memory references, or updating accounting in a parent cache layer.
+
+#### Why This Is Efficient
+
+The tile payload cache avoids repeatedly encoding and transmitting frequent visual assets — toolbar icons, taskbar buttons, dialog box backgrounds, window borders, and glyph runs that appear identically frame after frame. For typical office workloads (text editor, email, browser with stable UI), cache hit rates reach **60–80% of tiles per batch**, dramatically reducing both encoder CPU usage and wire bandwidth.
+
+#### Metrics
+
+- `liquide_tile_cache_hit_ratio` — ratio of cache hits to total tile lookups (gauge, 0.0–1.0).
+- `liquide_tile_cache_entries` — current number of entries in the cache (gauge).
+- `liquide_tile_cache_evictions_total{category="hot|warm|cold"}` — eviction counter by category.
+- `liquide_tile_cache_size_bytes` — total memory consumed by cached encoded payloads.
 
 ---
 

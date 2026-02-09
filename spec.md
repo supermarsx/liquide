@@ -1332,6 +1332,31 @@ Every send_interval (1ms default):
      If bandwidth < 2 Mbps: pause all bulk transfers.
 ```
 
+#### Per-Channel Queue Architecture
+
+Each logical channel has a **dedicated bounded queue** with type-specific parameters rather than sharing a single FIFO. Queue isolation ensures that a stalled bulk transfer cannot block audio or input processing.
+
+| Channel | Queue Type | Capacity | Coalescing | Overflow Policy |
+|---------|-----------|----------|------------|-----------------|
+| Emergency (0x01) | Lock-free SPSC | 16 messages | None | Drop oldest (should never overflow) |
+| Input (0x50) | Lock-free SPSC | 256 events | Mouse-move: latest-wins | Latest-wins for mouse moves; keyboard and IME events are NEVER dropped |
+| Cursor (0x11) | Single-slot | 1 position | Always latest | Overwrite — unreliable, most recent position is the only one that matters |
+| Audio (0x20/0x21) | Ring buffer | 200ms (10 frames @ 20ms Opus) | None | Drop oldest frame; increment `liquide_audio_underrun_total` |
+| Control (0x00) | Bounded MPSC | 64 messages | None | Block sender until space available (reliable, ordered) |
+| Video (0x10) | Double buffer | 2 frames | Skip older frame | Drop older frame; request new keyframe from encoder |
+| Tile (0x12) | Batch queue | 4 batches | Merge overlapping tile updates | Drop oldest batch; force keyframe for tiles covered by dropped batch |
+| Bulk (0x30–0xF0) | Bounded MPSC | 1 MB per sub-channel | None | Block sender; resume when drained below low-water mark |
+
+**Queue implementation notes:**
+- SPSC (single-producer, single-consumer) queues are lock-free ring buffers — no mutex contention on the hot path.
+- The cursor single-slot is an `AtomicU64` (packed x/y) — zero allocation, zero contention.
+- Audio ring buffer is pre-allocated at session start (200ms × sample_rate × channels × 2 bytes = ~38 KB for stereo 48 kHz).
+- Video double buffer allows the encoder to write the next frame while the transport sends the current one.
+
+**Metrics:**
+- `liquide_channel_queue_depth{channel="..."}` — current queue occupancy (gauge).
+- `liquide_channel_queue_drops_total{channel="..."}` — dropped messages due to overflow (counter).
+
 **Starvation guarantees:**
 
 | Stream | Guarantee |
@@ -1559,6 +1584,38 @@ When `force_tcp = true`:
 - Network bandwidth estimation uses TCP-based probing only.
 - Congestion control switches to TCP-appropriate algorithms.
 
+#### TCP Transport Tuning
+
+When using TCP as the transport (either via `force_tcp = true` or as a fallback), LiquiDE applies socket-level tuning to optimize for interactive remote desktop:
+
+**Nagle Algorithm Control:**
+- **`TCP_NODELAY` is enabled by default** on all interactive channels (P0–P5). The Nagle algorithm batches small writes into full MSS-sized segments, adding up to 200ms of latency on partial sends — unacceptable for input, cursor, and audio traffic that requires sub-millisecond send latency.
+- **Optional Nagle for bulk (P6):** file transfers, clipboard sync, and other bulk operations MAY re-enable Nagle (`transport.tcp.nagle_bulk = true`) to improve throughput. When enabled, bulk channel writes are batched into full MSS segments before transmission, improving goodput on high-bandwidth transfers.
+
+**TCP_CORK for Batch Assembly:**
+- During tile batch assembly, the socket is **corked** (`TCP_CORK` / `TCP_NOPUSH`) at batch start and **uncorked** at batch end. This ensures that multiple small tile updates within a single batch are coalesced into fewer TCP segments without the latency penalty of Nagle's timer. On platforms where `TCP_CORK` is unavailable (Windows, macOS), the writer thread manually coalesces tile batch data into a single `writev()` / `WSASend()` call.
+
+**Socket Buffer Sizing:**
+- Send and receive buffers are auto-tuned to match the bandwidth-delay product of the connection. The transport measures RTT (from QUIC ACKs or TCP timestamp options) and estimated bandwidth, then sets `SO_SNDBUF` and `SO_RCVBUF` to `max(sndbuf_min, min(BDP × 2, sndbuf_max))`.
+- Floor: 256 KB (sufficient for 20 Mbps at 100ms RTT).
+- Ceiling: 4 MB (prevents excessive kernel memory usage).
+
+**TCP Keepalive:**
+- Application-level keepalives (§7a Ping/Pong) are the primary liveness mechanism.
+- TCP-level keepalives serve as a backup for detecting half-open connections when the application layer is stalled.
+
+```toml
+[transport.tcp]
+nodelay = true              # TCP_NODELAY on interactive channels P0-P5 (default: true)
+nagle_bulk = false          # Re-enable Nagle for P6 bulk channel only (default: false)
+cork_tile_batches = true    # TCP_CORK during tile batch assembly (default: true)
+keepalive_idle_sec = 30     # Seconds before first TCP keepalive probe
+keepalive_interval_sec = 10 # Seconds between keepalive probes
+keepalive_count = 3         # Failed probes before connection considered dead
+sndbuf_min = 262144         # 256 KB minimum send buffer
+sndbuf_max = 4194304        # 4 MB maximum send buffer
+```
+
 #### Network Profile Auto-Detection
 
 The client remembers network conditions per connected network (identified by SSID, gateway MAC, or static config) and auto-applies transport preferences:
@@ -1595,6 +1652,41 @@ last_used = "2025-06-14T20:00:00Z"
   - Event loop uses `epoll`/`io_uring` — no busy-waiting, no polling.
 - **Fast wake**: on any input event, the pipeline resumes within 1ms (pre-warmed caches, pre-allocated buffers).
 - All worker threads use **work-stealing schedulers** — idle threads are truly idle, not spinning.
+
+### Transport I/O Bridge Architecture
+
+The transport I/O subsystem connects logical channel queues to the underlying wire transport (TCP sockets, QUIC streams, UDP datagrams, WebSocket frames) through a set of **bridge threads** that handle multiplexing, framing, and async cancellation.
+
+#### Thread Model
+
+| Thread | Count | Role |
+|--------|-------|------|
+| **Transport reader** | 1 per connection | Reads raw bytes from the transport, demultiplexes by `channel_id` from the frame header, pushes decoded frames into per-channel receive queues. Uses `tokio::select!` with cancel-safe branches — each read future is cancel-safe (no partial state lost on cancellation). |
+| **Transport writer** | 1 per connection | Polls all per-channel send queues in priority order (P0→P6), serializes frames, writes to transport. Implements the pacing algorithm from §7d. Applies TCP_CORK during tile batch assembly (§8d). |
+| **Channel workers** | 1 per active channel | Per-channel async tasks that consume from receive queues and produce into send queues. Each task holds a `CancellationToken` — on session teardown, all tasks are cancelled cooperatively. |
+
+#### Transport Proxy Layer
+
+The proxy layer bridges transport-specific semantics to a uniform logical channel interface:
+
+| Transport | Proxy Behavior |
+|-----------|---------------|
+| **TCP (TLS)** | All channels share one TLS connection. Proxy handles length-prefixed framing and head-of-line blocking mitigation via priority preemption (buffer splitting — high-priority frames interrupt mid-write of lower-priority bulk data). |
+| **QUIC** | Each priority class maps to a separate QUIC stream. Unreliable channels (cursor, audio on lossy path) use QUIC datagrams (RFC 9221). No head-of-line blocking between channels. |
+| **TCP+UDP** | Reliable channels (control, tile, clipboard, input) over TLS/TCP. Latency-sensitive channels (video, cursor, audio) over DTLS/UDP. Proxy manages both sockets and cross-correlates sequence numbers for reconnect consistency. |
+| **WebSocket** | Binary frames over WSS. Same channel multiplexing as TCP mode. Proxy adds WebSocket framing overhead (~2–10 bytes per message). |
+
+#### Cancel-Safe Async I/O
+
+All transport read/write operations use `tokio::io::AsyncRead` / `AsyncWrite` with structured concurrency:
+
+- Read operations MUST NOT hold partial parse state across `.await` points — either a complete frame is consumed or the read is retried from the same buffer position. This ensures that `tokio::select!` cancellation never loses data.
+- Write operations are atomic at the frame level — a frame is either fully written to the transport buffer or not started.
+- On session teardown, the shutdown sequence is: (1) cancel all channel worker tasks via `CancellationToken`, (2) drain remaining send queues with a 500ms deadline, (3) send `SessionEnd` on the control channel, (4) close transport sockets.
+
+#### Virtual Channel Multiplexing
+
+Plugin-defined virtual channels (channel IDs 0xF0+) route through the same bridge infrastructure. Plugin I/O is rate-limited (`plugin.max_channel_bandwidth = 1 Mbps` default) and sandboxed — a misbehaving plugin cannot monopolize the writer thread or starve interactive channels.
 
 ### Capture / Render
 - Damage tracking at surface + tile level.
