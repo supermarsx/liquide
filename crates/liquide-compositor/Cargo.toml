@@ -7,3 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+liquide-common.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

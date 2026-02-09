@@ -7,3 +7,12 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+liquide-common.workspace = true
+liquide-compositor.workspace = true
+liquide-protocol.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+zstd.workspace = true
+lz4_flex.workspace = true
+bytes.workspace = true
+serde.workspace = true

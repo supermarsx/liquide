@@ -1,1 +1,44 @@
-//! liquide-renderer-cpu stub
+#![doc = "Software rasterizer for the Liquide compositor."]
+#![doc = ""]
+#![doc = "Implements CPU-based rendering of scene graph primitives including"]
+#![doc = "rect fills, rounded rects, alpha blending, image blits, and glyph"]
+#![doc = "rendering.  This is the reference renderer — all other renderers"]
+#![doc = "must produce visually equivalent output."]
+
+pub mod blend;
+pub mod blit;
+pub mod color;
+pub mod effects;
+pub mod glyph;
+pub mod rasterizer;
+pub mod renderer;
+
+pub use renderer::{Renderer, SoftwareRenderer};
+
+use thiserror::Error;
+
+/// Errors produced by the software renderer.
+#[derive(Debug, Error)]
+pub enum RendererError {
+    /// Invalid render target dimensions.
+    #[error("invalid render target dimensions: {width}x{height}")]
+    InvalidDimensions { width: u32, height: u32 },
+
+    /// Unsupported pixel format for this operation.
+    #[error("unsupported pixel format: {0:?}")]
+    UnsupportedFormat(liquide_compositor::PixelFormat),
+
+    /// Glyph atlas is full.
+    #[error("glyph atlas full (current size: {size}x{size})")]
+    AtlasFull { size: u32 },
+
+    /// Generic internal error.
+    #[error("render error: {0}")]
+    Internal(String),
+}
+
+/// Convenience result type for renderer operations.
+pub type Result<T> = std::result::Result<T, RendererError>;
+
+#[cfg(test)]
+mod tests;
