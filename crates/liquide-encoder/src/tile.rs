@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use liquide_compositor::damage::DamageClass;
 
+use crate::strategy::CompressionMethod;
+
 /// How a tile was encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TileEncoding {
@@ -34,6 +36,46 @@ pub struct TileUpdate {
     pub crc: u32,
     /// Damage classification for this tile.
     pub damage_class: DamageClass,
+    /// Compression method used for the payload.
+    pub compression: CompressionMethod,
+}
+
+/// Per-frame encoding statistics.
+#[derive(Debug, Clone)]
+pub struct FrameStats {
+    /// Total encode time for this frame in microseconds.
+    pub encode_time_us: u64,
+    /// Number of tiles that were encoded (non-skip).
+    pub tiles_encoded: u32,
+    /// Total bytes saved by encoding (uncompressed - compressed).
+    pub bytes_saved: u64,
+    /// Overall compression ratio (compressed / uncompressed).
+    pub compression_ratio: f64,
+    /// Number of tiles using LZ4 compression.
+    pub lz4_tiles: u32,
+    /// Number of tiles using Zstd compression.
+    pub zstd_tiles: u32,
+}
+
+impl FrameStats {
+    /// Create empty stats.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            encode_time_us: 0,
+            tiles_encoded: 0,
+            bytes_saved: 0,
+            compression_ratio: 0.0,
+            lz4_tiles: 0,
+            zstd_tiles: 0,
+        }
+    }
+}
+
+impl Default for FrameStats {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// A batch of tile updates for one frame.
@@ -47,6 +89,8 @@ pub struct TileBatch {
     pub uncompressed_bytes: u64,
     /// Total compressed size of all tile payloads.
     pub compressed_bytes: u64,
+    /// Per-frame statistics.
+    pub stats: FrameStats,
 }
 
 impl TileBatch {
@@ -58,6 +102,7 @@ impl TileBatch {
             tiles: Vec::new(),
             uncompressed_bytes: 0,
             compressed_bytes: 0,
+            stats: FrameStats::new(),
         }
     }
 

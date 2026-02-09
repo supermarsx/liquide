@@ -3,6 +3,7 @@
 //! Provides CRC-32C hashing, XOR delta encoding, Zstd/LZ4 compression,
 //! and a tile payload cache with eviction for efficient frame transmission.
 
+pub mod bandwidth;
 pub mod cache;
 pub mod compress;
 pub mod delta;
@@ -46,14 +47,15 @@ pub enum EncoderError {
 pub type Result<T> = std::result::Result<T, EncoderError>;
 
 // Re-exports
+pub use bandwidth::{BandwidthBudget, BandwidthEstimator};
 pub use cache::TilePayloadCache;
 pub use compress::{compress_lz4, compress_zstd, decompress_lz4, decompress_zstd};
 pub use delta::{xor_apply, xor_delta};
 pub use encoder::TileEncoder;
 pub use hash::crc32c;
 pub use header::CompressedTileHeader;
-pub use strategy::{choose_strategy, EncodingStrategy, StrategyConfig};
-pub use tile::{TileBatch, TileCodec, TileConfig, TileEncoding, TileGrid, TileUpdate};
+pub use strategy::{choose_strategy, CompressionMethod, EncodingStrategy, StrategyConfig};
+pub use tile::{FrameStats, TileBatch, TileCodec, TileConfig, TileEncoding, TileGrid, TileUpdate};
 
 #[cfg(test)]
 mod tests;

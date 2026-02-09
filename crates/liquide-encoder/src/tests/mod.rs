@@ -1,3 +1,4 @@
+mod bandwidth_tests;
 mod cache_tests;
 mod compress_tests;
 mod delta_tests;

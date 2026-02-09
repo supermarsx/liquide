@@ -97,3 +97,43 @@ fn build_copy_index_finds_duplicates() {
     assert!(!index.contains_key(&300));
     assert!(!index.contains_key(&400));
 }
+
+// --- Compression method selection tests ---
+
+#[test]
+fn compression_cursor_uses_lz4() {
+    let config = StrategyConfig::default();
+    let method = choose_compression(DamageClass::CursorOnly, &config, false);
+    assert_eq!(method, CompressionMethod::Lz4);
+}
+
+#[test]
+fn compression_text_uses_zstd() {
+    let config = StrategyConfig::default();
+    let method = choose_compression(DamageClass::TextGlyph, &config, false);
+    assert!(matches!(method, CompressionMethod::Zstd { .. }));
+}
+
+#[test]
+fn compression_bitmap_under_pressure_uses_lz4() {
+    let config = StrategyConfig::default();
+    let method = choose_compression(DamageClass::BitmapRegion, &config, true);
+    assert_eq!(method, CompressionMethod::Lz4);
+}
+
+#[test]
+fn compression_bitmap_normal_uses_zstd() {
+    let config = StrategyConfig::default();
+    let method = choose_compression(DamageClass::BitmapRegion, &config, false);
+    assert!(matches!(method, CompressionMethod::Zstd { .. }));
+}
+
+#[test]
+fn compression_cursor_disabled_uses_zstd() {
+    let config = StrategyConfig {
+        use_lz4_for_cursor: false,
+        ..Default::default()
+    };
+    let method = choose_compression(DamageClass::CursorOnly, &config, false);
+    assert!(matches!(method, CompressionMethod::Zstd { .. }));
+}

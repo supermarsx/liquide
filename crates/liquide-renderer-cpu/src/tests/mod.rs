@@ -1,6 +1,9 @@
 mod blend_tests;
 mod blit_tests;
+mod blur_tests;
 mod color_tests;
+mod effects_tests;
 mod glyph_tests;
+mod path_tests;
 mod rasterizer_tests;
 mod renderer_tests;

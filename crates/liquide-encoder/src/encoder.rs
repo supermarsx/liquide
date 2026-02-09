@@ -1,9 +1,11 @@
 //! Main tile encoder: orchestrates the full encoding pipeline.
 //!
 //! Pipeline: extract tile → CRC-32C hash → choose strategy →
+//! choose compression (LZ4/Zstd by damage class) →
 //! XOR delta (if applicable) → compress → cache → produce `TileBatch`.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use liquide_compositor::damage::{DamageClass, DamageTile};
 use liquide_compositor::framebuffer::FrameBuffer;
@@ -12,8 +14,8 @@ use crate::cache::TilePayloadCache;
 use crate::compress;
 use crate::delta;
 use crate::hash;
-use crate::strategy::{self, EncodingStrategy, StrategyConfig};
-use crate::tile::{TileBatch, TileCodec, TileConfig, TileEncoding, TileGrid, TileUpdate};
+use crate::strategy::{self, CompressionMethod, EncodingStrategy, StrategyConfig};
+use crate::tile::{FrameStats, TileBatch, TileCodec, TileConfig, TileEncoding, TileGrid, TileUpdate};
 
 /// The tile encoder — stateful across frames for delta and cache.
 pub struct TileEncoder {
@@ -31,8 +33,6 @@ pub struct TileEncoder {
     strategy_config: StrategyConfig,
     /// Frame sequence counter.
     sequence: u64,
-    /// Zstd compression level.
-    zstd_level: i32,
 }
 
 impl TileEncoder {
@@ -49,7 +49,6 @@ impl TileEncoder {
             cache: TilePayloadCache::new(2048),
             strategy_config: StrategyConfig::default(),
             sequence: 0,
-            zstd_level: 3,
         }
     }
 
@@ -60,6 +59,8 @@ impl TileEncoder {
         fb: &FrameBuffer,
         damage_tiles: &[DamageTile],
     ) -> crate::Result<TileBatch> {
+        let frame_start = Instant::now();
+
         self.sequence += 1;
         self.cache.advance_frame();
 
@@ -93,6 +94,10 @@ impl TileEncoder {
         // Build copy index from all current CRCs
         let copy_index = strategy::build_copy_index(&current_crcs);
 
+        let mut lz4_tiles = 0u32;
+        let mut zstd_tiles = 0u32;
+        let mut tiles_encoded = 0u32;
+
         // Encode each damaged tile
         for dt in damage_tiles {
             let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
@@ -121,12 +126,27 @@ impl TileEncoder {
                 &self.strategy_config,
             );
 
-            let (encoding, payload) = encode_tile(current, previous, &strat, self.zstd_level)?;
+            // Choose compression method based on damage class
+            let compression = strategy::choose_compression(
+                damage_class,
+                &self.strategy_config,
+                false, // budget pressure evaluated externally
+            );
+
+            let (encoding, payload) = encode_tile(current, previous, &strat, &compression)?;
             let uncompressed_size = self.codec.config().tile_bytes() as u64;
             let compressed_size = payload.len() as u64;
 
             batch.uncompressed_bytes += uncompressed_size;
             batch.compressed_bytes += compressed_size;
+
+            if encoding != TileEncoding::Skip {
+                tiles_encoded += 1;
+                match compression {
+                    CompressionMethod::Lz4 => lz4_tiles += 1,
+                    CompressionMethod::Zstd { .. } => zstd_tiles += 1,
+                }
+            }
 
             batch.tiles.push(TileUpdate {
                 tx: dt.x,
@@ -135,6 +155,7 @@ impl TileEncoder {
                 payload,
                 crc,
                 damage_class,
+                compression,
             });
         }
 
@@ -146,6 +167,17 @@ impl TileEncoder {
                 self.prev_tiles[idx] = tile_data;
             }
         }
+
+        // Fill in frame stats
+        let encode_time = frame_start.elapsed();
+        batch.stats = FrameStats {
+            encode_time_us: encode_time.as_micros() as u64,
+            tiles_encoded,
+            bytes_saved: batch.uncompressed_bytes.saturating_sub(batch.compressed_bytes),
+            compression_ratio: batch.compression_ratio(),
+            lz4_tiles,
+            zstd_tiles,
+        };
 
         Ok(batch)
     }
@@ -168,6 +200,17 @@ impl TileEncoder {
         self.sequence
     }
 
+    /// Access the strategy configuration.
+    #[must_use]
+    pub fn strategy_config(&self) -> &StrategyConfig {
+        &self.strategy_config
+    }
+
+    /// Update the strategy configuration.
+    pub fn set_strategy_config(&mut self, config: StrategyConfig) {
+        self.strategy_config = config;
+    }
+
     /// Resize the encoder for new frame buffer dimensions.
     pub fn resize(&mut self, fb_width: u32, fb_height: u32) {
         let config = self.codec.config().clone();
@@ -180,12 +223,12 @@ impl TileEncoder {
     }
 }
 
-/// Encode a single tile using the chosen strategy.
+/// Encode a single tile using the chosen strategy and compression method.
 fn encode_tile(
     current: &[u8],
     previous: Option<&[u8]>,
     strategy: &EncodingStrategy,
-    zstd_level: i32,
+    compression: &CompressionMethod,
 ) -> crate::Result<(TileEncoding, Vec<u8>)> {
     match strategy {
         EncodingStrategy::Skip => Ok((TileEncoding::Skip, Vec::new())),
@@ -199,14 +242,22 @@ fn encode_tile(
         EncodingStrategy::Delta => {
             let prev = previous.expect("delta requires previous tile data");
             let xor = delta::xor_delta(current, prev);
-            let compressed = compress::compress_zstd(&xor, zstd_level)?;
+            let compressed = compress_with_method(&xor, compression)?;
             Ok((TileEncoding::Delta, compressed))
         }
 
         EncodingStrategy::Full => {
-            let compressed = compress::compress_zstd(current, zstd_level)?;
+            let compressed = compress_with_method(current, compression)?;
             Ok((TileEncoding::Full, compressed))
         }
+    }
+}
+
+/// Compress data using the specified compression method.
+fn compress_with_method(data: &[u8], method: &CompressionMethod) -> crate::Result<Vec<u8>> {
+    match method {
+        CompressionMethod::Zstd { level } => compress::compress_zstd(data, *level),
+        CompressionMethod::Lz4 => Ok(compress::compress_lz4(data)),
     }
 }
 

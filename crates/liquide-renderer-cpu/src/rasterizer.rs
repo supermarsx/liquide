@@ -106,9 +106,31 @@ pub fn fill_rect_gradient(
                 }
             }
         }
-        Gradient::Radial { .. } => {
-            // TODO: Implement radial gradient
-            tracing::debug!("radial gradient: not yet implemented");
+        Gradient::Radial { center, radius, stops } => {
+            if stops.len() < 2 || *radius <= 0.0 {
+                return;
+            }
+            let x0 = (rect.x.max(0.0) as u32).min(fb.width);
+            let y0 = (rect.y.max(0.0) as u32).min(fb.height);
+            let x1 = (rect.right().ceil() as u32).min(fb.width);
+            let y1 = (rect.bottom().ceil() as u32).min(fb.height);
+
+            let inv_radius = 1.0 / *radius;
+
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let px = x as f32 + 0.5 - center.x;
+                    let py = y as f32 + 0.5 - center.y;
+                    let dist = (px * px + py * py).sqrt();
+                    let t = (dist * inv_radius).clamp(0.0, 1.0);
+
+                    let color = sample_gradient(stops, t, lut);
+                    let pm = color.premultiply();
+                    let dst = fb.get_pixel(x, y);
+                    let result = blend::blend(dst, pm, mode);
+                    fb.set_pixel(x, y, result);
+                }
+            }
         }
     }
 }
@@ -134,6 +156,38 @@ fn sample_gradient(stops: &[(f32, Color)], t: f32, lut: &SrgbLut) -> Color {
         }
     }
     stops[stops.len() - 1].1
+}
+
+/// Sample a gradient at an absolute pixel position (fx, fy).
+///
+/// Computes the parameter `t` from the gradient definition and returns
+/// the interpolated color. Used by the path rasterizer.
+pub fn sample_gradient_at(gradient: &Gradient, fx: f32, fy: f32, lut: &SrgbLut) -> Color {
+    match gradient {
+        Gradient::Linear { start, end, stops } => {
+            let dx = end.x - start.x;
+            let dy = end.y - start.y;
+            let len_sq = dx * dx + dy * dy;
+            let t = if len_sq > 0.0 {
+                let px = fx - start.x;
+                let py = fy - start.y;
+                ((px * dx + py * dy) / len_sq).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            sample_gradient(stops, t, lut)
+        }
+        Gradient::Radial { center, radius, stops } => {
+            if stops.len() < 2 || *radius <= 0.0 {
+                return Color::WHITE;
+            }
+            let px = fx - center.x;
+            let py = fy - center.y;
+            let dist = (px * px + py * py).sqrt();
+            let t = (dist / *radius).clamp(0.0, 1.0);
+            sample_gradient(stops, t, lut)
+        }
+    }
 }
 
 /// Fill a rounded rectangle with anti-aliased corners.
@@ -187,7 +241,17 @@ pub fn fill_rounded_rect(
                         };
                         sample_gradient(stops, t, lut)
                     }
-                    _ => Color::WHITE,
+                    Gradient::Radial { center, radius, stops } => {
+                        if stops.len() < 2 || *radius <= 0.0 {
+                            Color::WHITE
+                        } else {
+                            let px = fx - center.x;
+                            let py = fy - center.y;
+                            let dist = (px * px + py * py).sqrt();
+                            let t = (dist / *radius).clamp(0.0, 1.0);
+                            sample_gradient(stops, t, lut)
+                        }
+                    }
                 },
             };
 
@@ -404,4 +468,151 @@ pub fn blit_scaled(
             fb.set_pixel(dx, dy, blended);
         }
     }
+}
+
+/// Stroke the outline of a rectangle.
+///
+/// `width` is the stroke width in pixels. The stroke is drawn centered on
+/// the rectangle edges (half inside, half outside).
+pub fn stroke_rect(
+    fb: &mut FrameBuffer,
+    rect: Rect,
+    width: f32,
+    color: Color,
+    mode: BlendMode,
+) {
+    if width <= 0.0 {
+        return;
+    }
+
+    let half = width / 2.0;
+
+    // Top edge
+    fill_rect(
+        fb,
+        Rect::new(rect.x - half, rect.y - half, rect.width + width, width),
+        color,
+        mode,
+    );
+    // Bottom edge
+    fill_rect(
+        fb,
+        Rect::new(rect.x - half, rect.bottom() - half, rect.width + width, width),
+        color,
+        mode,
+    );
+    // Left edge (between top and bottom)
+    fill_rect(
+        fb,
+        Rect::new(rect.x - half, rect.y + half, width, rect.height - width),
+        color,
+        mode,
+    );
+    // Right edge (between top and bottom)
+    fill_rect(
+        fb,
+        Rect::new(rect.right() - half, rect.y + half, width, rect.height - width),
+        color,
+        mode,
+    );
+}
+
+/// Stroke the outline of a rounded rectangle.
+///
+/// Draws the difference between an outer rounded rect and an inner one.
+pub fn stroke_rounded_rect(
+    fb: &mut FrameBuffer,
+    rect: Rect,
+    corner_radius: f32,
+    width: f32,
+    color: Color,
+    mode: BlendMode,
+    _lut: &SrgbLut,
+) {
+    if width <= 0.0 {
+        return;
+    }
+
+    let half = width / 2.0;
+    let outer = Rect::new(
+        rect.x - half,
+        rect.y - half,
+        rect.width + width,
+        rect.height + width,
+    );
+    let inner = Rect::new(
+        rect.x + half,
+        rect.y + half,
+        (rect.width - width).max(0.0),
+        (rect.height - width).max(0.0),
+    );
+    let outer_r = (corner_radius + half).max(0.0);
+    let inner_r = (corner_radius - half).max(0.0);
+
+    let x0 = (outer.x.max(0.0) as u32).min(fb.width);
+    let y0 = (outer.y.max(0.0) as u32).min(fb.height);
+    let x1 = (outer.right().ceil() as u32).min(fb.width);
+    let y1 = (outer.bottom().ceil() as u32).min(fb.height);
+
+    let pm = color.premultiply();
+
+    for y in y0..y1 {
+        let fy = y as f32 + 0.5;
+        for x in x0..x1 {
+            let fx = x as f32 + 0.5;
+
+            // SDF for outer rounded rect
+            let outer_d = sdf_rounded_rect_val(fx, fy, &outer, outer_r);
+            let outer_cov = (-outer_d + 0.5).clamp(0.0, 1.0);
+            if outer_cov <= 0.0 {
+                continue;
+            }
+
+            // SDF for inner rounded rect
+            let inner_cov = if inner.width > 0.0 && inner.height > 0.0 {
+                let inner_d = sdf_rounded_rect_val(fx, fy, &inner, inner_r);
+                (-inner_d + 0.5).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+
+            // Stroke = outer coverage minus inner coverage
+            let stroke_cov = (outer_cov - inner_cov).clamp(0.0, 1.0);
+            if stroke_cov <= 0.0 {
+                continue;
+            }
+
+            let mut src = pm;
+            if stroke_cov < 1.0 {
+                src.a = (src.a as f32 * stroke_cov + 0.5) as u8;
+                src.r = (src.r as f32 * stroke_cov + 0.5) as u8;
+                src.g = (src.g as f32 * stroke_cov + 0.5) as u8;
+                src.b = (src.b as f32 * stroke_cov + 0.5) as u8;
+            }
+
+            let dst = fb.get_pixel(x, y);
+            let result = blend::blend(dst, src, mode);
+            fb.set_pixel(x, y, result);
+        }
+    }
+}
+
+/// Signed distance from a point to a rounded rectangle boundary.
+/// Negative = inside, positive = outside.
+fn sdf_rounded_rect_val(fx: f32, fy: f32, rect: &Rect, radius: f32) -> f32 {
+    let cx = rect.x + rect.width * 0.5;
+    let cy = rect.y + rect.height * 0.5;
+    let hx = rect.width * 0.5;
+    let hy = rect.height * 0.5;
+
+    let px = (fx - cx).abs();
+    let py = (fy - cy).abs();
+
+    let qx = px - (hx - radius);
+    let qy = py - (hy - radius);
+
+    let outside = (qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0)).sqrt();
+    let inside = qx.max(qy).min(0.0);
+
+    outside + inside - radius
 }

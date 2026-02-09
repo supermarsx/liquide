@@ -102,6 +102,27 @@ impl Default for GlassParams {
     }
 }
 
+/// Window decoration button visibility state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecorationButtons {
+    /// Whether the close button is visible.
+    pub close: bool,
+    /// Whether the maximize button is visible.
+    pub maximize: bool,
+    /// Whether the minimize button is visible.
+    pub minimize: bool,
+}
+
+impl Default for DecorationButtons {
+    fn default() -> Self {
+        Self {
+            close: true,
+            maximize: true,
+            minimize: true,
+        }
+    }
+}
+
 /// A reference to pixel data from a Wayland client surface.
 #[derive(Debug, Clone)]
 pub struct SurfaceBuffer {
@@ -137,7 +158,15 @@ pub enum SceneNodeKind {
         color: Color,
     },
     /// Server-side window decoration (title bar, borders).
-    Decoration,
+    Decoration {
+        title: Option<String>,
+        title_color: Color,
+        background: Color,
+        border_color: Color,
+        border_width: f32,
+        corner_radius: f32,
+        button_state: DecorationButtons,
+    },
     /// Child surface (subsurface, popup).
     ChildSurface {
         surface_id: u64,
@@ -222,6 +251,100 @@ impl SceneNode {
         for &i in &sorted_indices {
             self.children[i].walk_inner(&absolute, visitor);
         }
+    }
+
+    /// Find a node by ID using depth-first search.
+    #[must_use]
+    pub fn find(&self, id: NodeId) -> Option<&SceneNode> {
+        if self.id == id {
+            return Some(self);
+        }
+        for child in &self.children {
+            if let Some(found) = child.find(id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Find a node by ID (mutable) using depth-first search.
+    pub fn find_mut(&mut self, id: NodeId) -> Option<&mut SceneNode> {
+        if self.id == id {
+            return Some(self);
+        }
+        for child in &mut self.children {
+            if let Some(found) = child.find_mut(id) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Remove a direct or nested child by ID, returning it if found.
+    pub fn remove_child(&mut self, id: NodeId) -> Option<SceneNode> {
+        // Check direct children first
+        if let Some(pos) = self.children.iter().position(|c| c.id == id) {
+            return Some(self.children.remove(pos));
+        }
+        // Recurse into children
+        for child in &mut self.children {
+            if let Some(removed) = child.remove_child(id) {
+                return Some(removed);
+            }
+        }
+        None
+    }
+
+    /// Replace a node by ID with a new node, returning the old node if found.
+    pub fn replace_child(&mut self, id: NodeId, new: SceneNode) -> Option<SceneNode> {
+        // Check direct children
+        for child in &mut self.children {
+            if child.id == id {
+                let old = std::mem::replace(child, new);
+                return Some(old);
+            }
+        }
+        // Recurse
+        for child in &mut self.children {
+            if let Some(old) = child.replace_child(id, new.clone()) {
+                return Some(old);
+            }
+        }
+        None
+    }
+
+    /// Move a child node to new bounds.
+    pub fn move_child(&mut self, id: NodeId, new_bounds: Rect) {
+        if let Some(node) = self.find_mut(id) {
+            node.properties.bounds = new_bounds;
+        }
+    }
+
+    /// Set the opacity of a node by ID.
+    pub fn set_opacity(&mut self, id: NodeId, opacity: f32) {
+        if let Some(node) = self.find_mut(id) {
+            node.properties.opacity = opacity;
+        }
+    }
+
+    /// List all descendant node IDs (depth-first order, excludes self).
+    #[must_use]
+    pub fn descendants(&self) -> Vec<NodeId> {
+        let mut result = Vec::new();
+        for child in &self.children {
+            result.push(child.id);
+            result.extend(child.descendants());
+        }
+        result
+    }
+
+    /// Compute the depth of the subtree (0 for a leaf, 1+ for internal nodes).
+    #[must_use]
+    pub fn depth(&self) -> u32 {
+        if self.children.is_empty() {
+            return 0;
+        }
+        self.children.iter().map(|c| c.depth() + 1).max().unwrap_or(0)
     }
 
     /// Flatten the tree into a z-sorted list of visible leaf nodes with

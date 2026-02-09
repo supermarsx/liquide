@@ -3,12 +3,31 @@
 //! Given the current and previous tile data, CRC-32C hash, and damage class,
 //! this module determines the best encoding strategy: Skip, Delta, Full,
 //! Copy (content-addressable), or Solid.
+//!
+//! Additionally selects the compression method (Zstd vs LZ4) based on
+//! the damage class of each tile: cursor-only tiles use LZ4 for lower
+//! latency, text tiles use Zstd for better ratio.
 
 use std::collections::HashMap;
 
 use crate::delta;
 
 use liquide_compositor::damage::DamageClass;
+
+/// Compression method for a tile payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompressionMethod {
+    /// Zstd compression at a given level (1–22). Better ratio, higher latency.
+    Zstd { level: i32 },
+    /// LZ4 block compression. Faster encode/decode, lower ratio.
+    Lz4,
+}
+
+impl Default for CompressionMethod {
+    fn default() -> Self {
+        Self::Zstd { level: 3 }
+    }
+}
 
 /// Encoding strategy — identical to `TileEncoding` but used before
 /// payload construction to guide the encoder.
@@ -33,6 +52,10 @@ pub struct StrategyConfig {
     pub delta_threshold: f32,
     /// Minimum number of tiles needed to consider copy deduplication.
     pub copy_min_tiles: usize,
+    /// Default Zstd compression level.
+    pub zstd_level: i32,
+    /// Whether to use LZ4 for latency-sensitive tiles.
+    pub use_lz4_for_cursor: bool,
 }
 
 impl Default for StrategyConfig {
@@ -40,6 +63,8 @@ impl Default for StrategyConfig {
         Self {
             delta_threshold: 0.5,
             copy_min_tiles: 2,
+            zstd_level: 3,
+            use_lz4_for_cursor: true,
         }
     }
 }
@@ -92,6 +117,26 @@ pub fn choose_strategy(
 
     // 5. Default: full tile
     EncodingStrategy::Full
+}
+
+/// Choose the compression method for a tile based on its damage class.
+///
+/// - `CursorOnly`: use LZ4 (latency matters more than ratio)
+/// - `TextGlyph`: use Zstd (text compresses well, ratio matters)
+/// - `BitmapRegion`: use LZ4 if under budget pressure, Zstd otherwise
+/// - `UiPrimitive`: use Zstd (good balance)
+#[must_use]
+pub fn choose_compression(
+    damage_class: DamageClass,
+    config: &StrategyConfig,
+    under_budget_pressure: bool,
+) -> CompressionMethod {
+    match damage_class {
+        DamageClass::CursorOnly if config.use_lz4_for_cursor => CompressionMethod::Lz4,
+        DamageClass::TextGlyph => CompressionMethod::Zstd { level: config.zstd_level },
+        DamageClass::BitmapRegion if under_budget_pressure => CompressionMethod::Lz4,
+        _ => CompressionMethod::Zstd { level: config.zstd_level },
+    }
 }
 
 /// Check if a tile is a solid color. Returns the BGRA bytes if all pixels match.

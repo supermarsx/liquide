@@ -1,4 +1,5 @@
 use crate::tile::*;
+use crate::strategy::CompressionMethod;
 
 use liquide_compositor::damage::DamageClass;
 
@@ -27,7 +28,10 @@ fn tile_grid_coords() {
 #[test]
 fn tile_codec_extract() {
     // 8x8 pixels, 4bpp, tile_size=4
-    let cfg = TileConfig { tile_size: 4, bpp: 4 };
+    let cfg = TileConfig {
+        tile_size: 4,
+        bpp: 4,
+    };
     let codec = TileCodec::new(cfg);
     let mut pixels = vec![0u8; 8 * 8 * 4];
     // Mark first pixel
@@ -49,18 +53,22 @@ fn tile_batch_stats() {
     assert_eq!(batch.compression_ratio(), 0.0);
 
     batch.tiles.push(TileUpdate {
-        tx: 0, ty: 0,
+        tx: 0,
+        ty: 0,
         encoding: TileEncoding::Skip,
         payload: vec![],
         crc: 0,
         damage_class: DamageClass::UiPrimitive,
+        compression: CompressionMethod::Lz4,
     });
     batch.tiles.push(TileUpdate {
-        tx: 1, ty: 0,
+        tx: 1,
+        ty: 0,
         encoding: TileEncoding::Full,
         payload: vec![1, 2, 3],
         crc: 123,
         damage_class: DamageClass::UiPrimitive,
+        compression: CompressionMethod::Zstd { level: 3 },
     });
     assert_eq!(batch.dirty_count(), 1);
 }
