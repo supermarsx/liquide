@@ -53,6 +53,42 @@ This document defines explicit **Service Level Objectives (SLOs)** for LiquiDE, 
 | **Disk I/O** (session runtime) | < 1 MB/s sustained | ~0 | < 2 MB/s | 10 MB/s |
 | **File descriptors** (per session) | < 200 | < 100 | < 300 | 1024 (ulimit) |
 
+### 2.3a Memory Pool Architecture
+
+| Pool | Budget (1080p, 60fps) | Budget (4K, 30fps) | Eviction Policy | Notes |
+|------|----------------------|--------------------|--------------------|-------|
+| Frame buffers (double-buffered) | 16 MB (2 × 1920×1080×4) | 64 MB (2 × 3840×2160×4) | N/A (fixed allocation) | Pre-allocated at session start. Never freed during session. |
+| Glyph atlas | 4 MB initial, 64 MB max | 8 MB initial, 64 MB max | LRU per (font, size, hinting) slab | Auto-grows when cache miss rate > 1% per frame. Shrinks under memory pressure. |
+| Shadow cache | 8 MB (LRU, 64 entries) | 8 MB | LRU by last-use time | Geometry-keyed. Shared across identical shadow params. |
+| Blur scratch buffers | 2 MB | 4 MB | N/A (reused per-frame) | Allocated once, reused. Sized for largest active blur surface. |
+| Tile hash table | 32 KB (1080p: 510 tiles × 8B) | 128 KB (4K: 2040 tiles × 8B) | N/A (fixed per grid) | CRC-32C per tile for damage detection. Resized on resolution change. |
+| Compression scratch (per thread) | 2 MB × encode_threads | 2 MB × encode_threads | N/A (fixed) | Zstd/LZ4 working memory. One buffer per encoder thread. |
+| Channel send/receive queues | 10 MB total | 15 MB total | Oldest-first drop under pressure | Partitioned across channels by priority. |
+| **Total baseline** | **~42 MB** | **~101 MB** | | Excludes application memory. |
+
+**Memory pressure response:**
+
+| RSS Threshold | Action |
+|--------------|--------|
+| > 80% of cgroup limit | Evict LRU shadow cache entries. Shrink glyph atlas to 50% of current size. Emit `liquide_memory_pressure` metric. |
+| > 90% of cgroup limit | Shrink glyph atlas to minimum (4 MB). Disable compression scratch (fall back to single-threaded encode). Reduce channel queue sizes by 50%. |
+| > 95% of cgroup limit | Kill lowest-priority WASM plugins. Disable all blur effects (free scratch buffers). Alert via `liquide_memory_critical` metric. |
+
+### 2.3b CPU Budget Partitioning
+
+| Thread Class | Budget (1080p, 60fps) | Budget (4K, 30fps) | Priority | Overbudget Action |
+|-------------|----------------------|--------------------|----------|--------------------|
+| **Compositor** (scene walk + composite) | 80% of 1 core (~13ms at 60fps) | 80% of 2 cores | Normal | Triggers degradation ladder (see [spec-rendering-software.md](spec-rendering-software.md) §7) |
+| **Encoder** (video/tile encode) | 2 threads, 150% combined | 4 threads, 300% combined | Normal-1 | ABR control loop reduces FPS or quality (see spec.md §9 ABR) |
+| **Transport I/O** (send/recv, TLS, framing) | 30% of 1 core | 30% of 1 core | Normal | Backpressure propagates to encoder (pause frames) |
+| **Audio** (encode/decode, jitter buffer) | 10% of 1 core | 10% of 1 core | RT (SCHED_RR) | Audio never yields to other threads. Underrun metrics emitted. |
+| **Plugin runtime** (WASM execution) | Per-plugin fuel limit | Per-plugin fuel limit | Normal-2 | Plugin faulted (fuel exhausted), disabled for session duration |
+
+**Guardrails:**
+- If the encoder consistently exceeds budget (>3 frames), the ABR control loop reduces target FPS or increases quantization.
+- If the compositor consistently exceeds budget (>3 frames), the degradation ladder descends one level.
+- Audio thread uses real-time scheduling (`SCHED_RR`, priority 50) to avoid starvation. If the system cannot provide RT scheduling (container without `CAP_SYS_NICE`), audio uses `SCHED_FIFO` as fallback, or normal priority with elevated niceness.
+
 ### 2.4 Startup & Shutdown SLOs
 
 | Metric | SLO | Notes |
@@ -114,6 +150,8 @@ The benchmark harness replays these events into the compositor using a synthetic
 | `satellite` | 600ms | 10 Mbps | 1% | 10ms | Satellite link |
 
 Network emulation is applied via `tc` (Linux traffic control) or `netem`.
+
+> **Cross-reference:** The test harness implementation details, scenario configuration, and success criteria are specified in [spec.md](spec.md) §8 Network Condition Test Harness. The `liquide-bench` CLI invokes these profiles via `--network <profile>`.
 
 ---
 
@@ -336,6 +374,44 @@ When SLOs are violated during runtime:
 | Memory > 80% of cgroup limit | `warn` | Emit metric, trigger plugin memory audit |
 | Memory > 95% of cgroup limit | `error` | Emit metric, kill lowest-priority plugins, reduce caches |
 | Bandwidth > 90% of estimated link | `info` | Emit metric, increase compression |
+
+---
+
+## 7a) Capacity Planning Reference
+
+### Per-Session Resource Cost by Workload Profile
+
+| Workload Profile | CPU (p50) | CPU (p95) | Memory (p50) | Memory (p95) | Bandwidth (p50) | Bandwidth (p95) |
+|-----------------|-----------|-----------|-------------|-------------|-----------------|-----------------|
+| **idle** | 0.01 cores | 0.02 cores | 80 MB | 100 MB | 5 Kbps | 10 Kbps |
+| **text-editing** | 0.8 cores | 1.5 cores | 150 MB | 200 MB | 2 Mbps | 5 Mbps |
+| **web-browsing** | 1.2 cores | 2.0 cores | 180 MB | 250 MB | 5 Mbps | 12 Mbps |
+| **document** | 0.6 cores | 1.2 cores | 140 MB | 190 MB | 1.5 Mbps | 4 Mbps |
+| **video-playback** | 1.5 cores | 2.5 cores | 200 MB | 280 MB | 8 Mbps | 15 Mbps |
+| **desktop-workflow** | 1.0 cores | 2.0 cores | 170 MB | 230 MB | 3 Mbps | 8 Mbps |
+| **dashboard** | 0.3 cores | 0.8 cores | 120 MB | 160 MB | 0.5 Mbps | 2 Mbps |
+| **presentation** | 0.5 cores | 1.5 cores | 160 MB | 220 MB | 2 Mbps | 10 Mbps |
+
+### Sizing Formula
+
+```
+Required CPU cores = sum(sessions × cpu_p95_per_profile) × 1.2 (reconnect storm headroom)
+Required RAM       = sum(sessions × mem_p95_per_profile) × 1.3 (reconnect storm headroom + OS/daemon overhead)
+Required bandwidth = sum(sessions × bw_p95_per_profile) × 1.1 (protocol overhead)
+```
+
+The **reconnect storm headroom** accounts for the burst when a network event causes many clients to reconnect simultaneously: all sessions momentarily demand peak CPU (re-encoding keyframes) and peak memory (re-allocating decode buffers). Budget 20% extra CPU and 30% extra memory above steady-state peak.
+
+### Quick-Reference Sizing Table
+
+| Server Spec | Max Sessions (text-editing) | Max Sessions (desktop-workflow) | Max Sessions (video-playback) |
+|------------|---------------------------|-------------------------------|------------------------------|
+| 8 cores / 32 GB | 5 | 4 | 3 |
+| 16 cores / 64 GB | 10 | 8 | 6 |
+| 32 cores / 128 GB | 21 | 16 | 12 |
+| 64 cores / 256 GB | 42 | 32 | 25 |
+
+These estimates assume: balanced rendering profile, 1080p, software encoding, no GPU. Hardware encoder availability roughly doubles session density for video-heavy workloads. See also [spec.md](spec.md) §14 Capacity Planning Formulas for the detailed per-session cost model.
 
 ---
 
