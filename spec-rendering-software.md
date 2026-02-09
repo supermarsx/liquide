@@ -726,7 +726,139 @@ Recovery: when queue depth drops below 50% for 5 consecutive seconds, return to 
 
 ---
 
-## 11) Test Plan
+## 11) Minimum Viable Compositor Contract
+
+The rest of the LiquiDE stack (shell, transport, encoding, session manager) depends on the compositor exclusively through this contract. Compositor internals (rendering algorithm, SIMD paths, caching strategies) can be replaced without affecting consumers as long as this contract is upheld.
+
+### 11.1 Contract Surface
+
+| Interface | Consumer | Contract |
+|-----------|----------|----------|
+| **Scene graph submission** | Shell, Wayland clients | Consumers submit `SceneNode` trees (§2). The compositor accepts any valid tree and renders it. Node types, properties, and z-ordering defined in §2.1–§2.2 are the stable API. |
+| **Damage reporting** | Encoding pipeline | Compositor emits a `DamageSet` per frame: list of `(tile_x, tile_y, tile_w, tile_h)` rectangles that changed. Encoder consumes this to decide Mode A/B/C per tile. |
+| **Frame buffer handoff** | Encoding pipeline | Compositor produces a `FrameBuffer { pixels: &[u8], width: u32, height: u32, stride: u32, format: Bgra8 }` each frame. The encoder reads only damaged regions. |
+| **Effect budget query** | Shell, policy engine | Consumers can query `compositor.effect_budget() -> EffectBudget` to check available headroom before requesting new effects. |
+| **Degradation level** | Transport, metrics, shell | Compositor exposes `compositor.degradation_level() -> u8` (0–13). Consumers react to level changes (e.g., transport adjusts bitrate, shell simplifies animations). |
+| **Cursor channel** | Transport | Cursor position and bitmap are delivered out-of-band via `CursorUpdate { x, y, hotspot_x, hotspot_y, bitmap: Option<CursorBitmap> }`. |
+| **Glass surface registration** | Shell | Shell registers glass surfaces via `compositor.register_glass(surface_id, GlassParams)`. The compositor manages blur, tint, and backdrop internally. |
+
+### 11.2 Stability Guarantees
+
+- The contract surface is **versioned independently** from compositor internals. Breaking changes to the contract require a major version bump.
+- Adding new optional node types or properties is backward-compatible (unknown properties are ignored).
+- The compositor MUST NOT expose internal state (tile cache contents, SIMD dispatch tables, blur kernel weights) to consumers.
+- Performance characteristics (frame budgets, degradation thresholds) are configurable but the contract shape is fixed.
+
+### 11.3 Testing the Contract
+
+- **Contract conformance tests**: a test harness submits known scene graphs and verifies that damage sets, frame buffers, and degradation levels match expected behavior.
+- Any alternative compositor implementation (e.g., GPU-accelerated) MUST pass the same conformance test suite.
+
+---
+
+## 12) Glass Fidelity as Runtime-Tunable Primitives
+
+Blur radius, shadow samples, and backdrop complexity are **runtime-tunable primitives**, not just theme parameters. They can be adjusted per-frame by the compositor's budget enforcement, per-session by policy, and per-profile by configuration.
+
+### 12.1 Tunable Parameters
+
+| Primitive | Config Key | Type | Range | Default (`quality`) | Default (`balanced`) | Default (`minimal`) |
+|-----------|-----------|------|-------|---------------------|---------------------|---------------------|
+| Blur radius (pre-downsample) | `effects.blur_radius` | u32 (px) | 0–120 | 60 | 40 | 0 |
+| Blur downsample factor | `effects.blur_downsample` | u32 | 1–32 | 4 | 8 | N/A |
+| Shadow blur radius | `effects.shadow_blur_radius` | u32 (px) | 0–60 | 30 | 15 | 0 |
+| Shadow spread | `effects.shadow_spread` | u32 (px) | 0–60 | 30 | 15 | 0 |
+| Max concurrent backdrop blurs | `effects.max_backdrop_blurs` | u32 | 0–16 | 8 | 4 | 0 |
+| Blur algorithm | `effects.blur_algorithm` | enum | `gaussian`, `box` | `gaussian` | `gaussian` | N/A |
+| Inner glow width | `effects.inner_glow_width` | f32 (px) | 0.0–4.0 | 2.0 | 1.0 | 0.0 |
+| Parallax enabled | `effects.parallax` | bool | — | true | false | false |
+| Animation duration scale | `effects.animation_scale` | f32 | 0.0–2.0 | 1.0 | 0.8 | 0.0 |
+
+### 12.2 Per-Frame Budget Tie-In
+
+The degradation ladder (§7) modifies these primitives at runtime. Each degradation step maps to specific primitive value changes:
+
+| Degradation Step | Primitive Changes |
+|-----------------|-------------------|
+| L1 | `blur_downsample` × 2 |
+| L3 | `shadow_blur_radius` × 0.5, `shadow_spread` × 0.5 |
+| L5 | `max_backdrop_blurs` = min(current, 4) |
+| L6 | `blur_downsample` × 2 (again) |
+| L8 | `blur_algorithm` = `box` |
+| L9 | `max_backdrop_blurs` = 0, `blur_radius` = 0 |
+| L10 | `shadow_blur_radius` = 0, `shadow_spread` = 0 |
+
+These changes are **testable**: at any given degradation level, the exact primitive values are deterministic and can be asserted in tests.
+
+### 12.3 Policy Override
+
+Administrators can set floor and ceiling values per primitive:
+
+```toml
+[rendering.limits]
+max_blur_radius = 40              # cap blur radius (reduce server load)
+max_shadow_blur_radius = 15       # cap shadow complexity
+max_backdrop_blurs = 4            # limit concurrent blurs
+min_blur_downsample = 8           # force higher downsample (lower quality floor)
+```
+
+These limits are applied **before** the degradation ladder — the ladder operates within the policy-constrained range.
+
+---
+
+## 13) Seamless Mode Rendering Isolation
+
+Seamless mode (individual remote windows presented as native OS windows on the client) is implemented as a **capability layer** on top of the compositor contract, not entangled with core windowing logic.
+
+### 13.1 Architectural Separation
+
+```
+┌─────────────────────────────────────────────────┐
+│                Core Compositor                   │
+│  (scene graph, damage tracking, effects, budget) │
+│                                                   │
+│  Contract surface: §11                            │
+└──────────────────┬──────────────────────────────┘
+                   │ FrameBuffer + DamageSet
+                   ▼
+┌─────────────────────────────────────────────────┐
+│              Encoding Pipeline                    │
+│  (Mode A/B/C, tile management, codec)            │
+└──────────────────┬──────────────────────────────┘
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+┌──────────────┐  ┌──────────────────────┐
+│ Desktop Mode │  │ Seamless Mode Layer  │
+│ (full frame) │  │ (per-window framing) │
+└──────────────┘  └──────────────────────┘
+```
+
+### 13.2 Seamless Layer Responsibilities
+
+The seamless layer sits **above** the compositor and encoding pipeline. It:
+
+- Subscribes to per-surface damage events from the compositor (not full-frame damage).
+- Maintains a mapping of `wl_surface` → client-native-window.
+- Encodes each surface independently (per-window tile sets).
+- Sends per-window frame updates to the client via dedicated subchannel per window.
+- Handles window lifecycle events (map, unmap, resize, move, focus) as protocol messages, not as frame data.
+
+The core compositor is **unaware** of seamless mode. It renders the full scene graph as always. The seamless layer selectively extracts per-surface regions from the frame buffer.
+
+### 13.3 Capability Detection
+
+Seamless mode is gated by a capability flag negotiated during session setup:
+
+| Capability | Client Provides | Server Provides |
+|-----------|----------------|----------------|
+| `seamless_windows` | Client platform supports native window creation | Server supports per-surface encoding |
+
+If the client does not advertise `seamless_windows`, the seamless layer is not loaded and has zero overhead.
+
+---
+
+## 14) Test Plan
 
 ### Rendering Correctness
 - Software renderer output matches reference images (pixel-level comparison with ±1 tolerance per channel for AA).

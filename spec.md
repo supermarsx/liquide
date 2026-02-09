@@ -2982,6 +2982,99 @@ auto_switch = false
 layout_indicator = true                # show in status bar
 ```
 
+#### Local IME Forwarding Mode (P0)
+
+Users often want to use their **local OS IME** because it is better integrated with their language setup, has custom dictionaries, and provides a familiar experience. LiquiDE supports an explicit local IME forwarding mode where the client performs IME composition locally and sends only committed text to the server.
+
+**Behavior:**
+
+| Step | Actor | Action |
+|------|-------|--------|
+| 1 | Client | User types into the client window. Client's local OS IME intercepts keystrokes and opens its composition UI. |
+| 2 | Client | IME composition happens entirely on the client (preedit rendering, candidate window, conversion). |
+| 3 | Client | User commits text (e.g., presses Enter in the IME). |
+| 4 | Client | Client sends `TextCommit { text: "committed string", cursor_position: N }` to the server. |
+| 5 | Server | Server receives committed text and injects it into the focused application via `zwp_text_input_v3` commit. The server does **not** run a competing IME pipeline for this input. |
+
+**Preedit forwarding (optional):** The client MAY forward preedit state to the server for rendering consistency:
+
+| Message | Description |
+|---------|-------------|
+| `TextPreedit { text, cursor, attributes }` | Current preedit string (displayed in-line at cursor in remote app). Sent on every composition update. |
+| `TextCommit { text, cursor_position }` | Final committed text. Server treats this as authoritative. |
+| `TextPreeditClear` | Composition cancelled. Server removes preedit display. |
+
+**Session/policy control:**
+
+```toml
+[input.ime]
+mode = "server"                        # "server" (default), "client", "auto"
+# "server"  — all IME runs server-side (native client forwards raw keys)
+# "client"  — client performs composition locally, sends committed text
+# "auto"    — client decides based on local IME availability and user preference
+```
+
+**When `mode = "client"`:**
+- The server disables its IME pipeline for that session's text input.
+- Raw key events are NOT forwarded during active composition — only committed text and optional preedit updates.
+- Keys not consumed by the IME (shortcuts, navigation) are forwarded normally.
+
+**When `mode = "auto"`:**
+- The client negotiates mode during session setup based on whether a local IME is active.
+- If the client detects an active IME (e.g., IBus, Fcitx5, macOS Input Sources, Windows IME), it uses client mode.
+- If no IME is detected (e.g., US-English-only layout), it falls back to server mode (raw key forwarding).
+
+This mode can be toggled per-session and per-policy. It is opt-in and solves a significant portion of "non-English remote desktop pain" — particularly for CJK languages where the local IME is deeply integrated with the user's OS.
+
+#### Shortcut Conflict Resolution Policy
+
+Remote desktop sessions involve four layers of shortcut handlers that can conflict:
+
+| Layer | Examples | Priority (default) |
+|-------|---------|-------------------|
+| **Local OS** | Ctrl+Alt+Del (Windows/Linux), Cmd+Space (macOS Spotlight), Alt+Tab (local window manager) | Highest — intercepted before the client |
+| **Client application** | Client menu shortcuts, client preferences shortcuts | Second |
+| **Remote shell** | Super (launcher), Super+L (lock), Alt+Tab (remote window switch) | Third |
+| **Remote application** | Ctrl+S (save), Ctrl+Z (undo), app-specific shortcuts | Lowest — receives whatever is not consumed above |
+
+**Resolution rules:**
+
+1. **Default mode ("smart passthrough")**: The client forwards most shortcuts to the remote session when the session has focus, but the local OS retains certain reserved shortcuts that cannot be intercepted (e.g., Ctrl+Alt+Del on Windows, Cmd+Option+Esc on macOS).
+
+2. **Full passthrough mode ("keyboard lock")**: Enabled via client setting or `Ctrl+Alt+G` toggle. ALL keystrokes (including local Alt+Tab, Super key, etc.) are forwarded to the remote session. The client intercepts nothing except the unlock shortcut itself.
+
+3. **Reserved shortcut list**: The following shortcuts are NEVER forwarded to the remote session (unless full passthrough mode is active):
+
+   | Shortcut | Platform | Reason |
+   |----------|----------|--------|
+   | Ctrl+Alt+Del | Windows/Linux | OS security attention sequence |
+   | Cmd+Option+Esc | macOS | Force Quit |
+   | Ctrl+Alt+G | All | Toggle full passthrough mode (client escape hatch) |
+
+4. **Collision handling table:**
+
+   | Local OS Shortcut | Remote Session Wants | Resolution |
+   |-------------------|---------------------|------------|
+   | Alt+Tab (local WM) | Alt+Tab (remote WM) | Default: local wins. Full passthrough: remote wins. |
+   | Super key (local launcher) | Super key (remote launcher) | Default: local wins. Full passthrough: remote wins. |
+   | macOS Cmd+C | Ctrl+C (remote app copy) | Client maps Cmd → Ctrl for remote session (configurable). |
+
+5. **Per-shortcut override**: Users can configure which shortcuts pass through and which are intercepted locally:
+
+```toml
+[input.shortcuts]
+passthrough_mode = "smart"             # "smart", "full", "minimal"
+passthrough_toggle = "Ctrl+Alt+G"
+# Override specific shortcuts:
+overrides = [
+    { key = "Alt+Tab", action = "remote" },      # always send to remote
+    { key = "Super", action = "local" },          # always keep local
+    { key = "Super+L", action = "remote" },       # send lock to remote
+]
+```
+
+This policy is documented so users understand why certain shortcuts "don't work" in a remote session and how to change the behavior.
+
 ### Mouse
 - Relative and absolute mode.
 - High-precision scroll (smooth scrolling).
@@ -3656,6 +3749,61 @@ Each session follows a well-defined state machine. Transitions are logged as aud
 | **Crashed** | Session process exited abnormally. Supervisor handling restart. | Zero | Crash screen |
 | **Failed** | Restart attempts exhausted. Session cannot recover without admin action. | Zero | Persistent crash screen |
 | **Terminated** | Session ended. Process exited. All resources released. | Zero | Disconnected / login screen |
+
+#### Session Lifecycle Invariants
+
+The following invariants define what persists, what resets, and what is allowed in each state transition. These MUST hold across all session operations.
+
+**What persists across reconnect (Disconnected → Running):**
+
+| State | Persists? | Notes |
+|-------|-----------|-------|
+| Running applications | Yes | All processes continue during Disconnected state |
+| Window positions and z-order | Yes | Restored exactly; z-order reconciled with client |
+| Clipboard contents | Yes | Clipboard buffer retained on server |
+| Unsaved application data | Yes | Applications were never interrupted |
+| Audio playback state | Yes | Audio resumes on reconnect (buffered during disconnect) |
+| IME composition state | No | Active preedit is committed or discarded on disconnect |
+| Cursor position | Yes | Server tracks last known position |
+| Session environment variables | Yes | Process environment unchanged |
+| USB device redirections | No | Devices are re-enumerated on reconnect; client re-offers |
+| Camera/microphone streams | No | Re-established by client after reconnect |
+
+**What resets on reconnect:**
+
+| Item | Reset Behavior |
+|------|---------------|
+| Transport negotiation | Re-negotiated (client may connect from different network) |
+| Encoding parameters | Re-negotiated (client may have different capabilities) |
+| Authentication token | New token issued (old token invalidated on disconnect timeout) |
+| Client capabilities | Re-queried (client may be a different platform/version) |
+| Display resolution | Re-negotiated if client reports different resolution |
+| Full frame (IDR) | Sent immediately on reconnect (no delta from pre-disconnect state) |
+
+**What is allowed while locked:**
+
+| Action | Allowed? | Notes |
+|--------|----------|-------|
+| Lock screen rendering | Yes | Lock screen is rendered (optionally client-side) |
+| Auth input on lock screen | Yes | Password/biometric input accepted |
+| Application execution (background) | Yes | Apps continue running but do not receive input |
+| Clipboard access | Configurable | `lock_pause_clipboard` (default: `true`) |
+| USB device forwarding | Configurable | `lock_pause_usb` (default: `false`) |
+| Audio playback | Configurable | `lock_mute_audio` (default: `false`) |
+| Camera forwarding | Configurable | `lock_pause_camera` (default: `true`) |
+| Admin session inspection | Yes | Admin can view session metadata, force disconnect |
+| Policy changes | Yes | Policy changes are applied immediately; may force unlock or terminate |
+
+**Policy changes mid-session:**
+
+| Policy Change | Effect |
+|--------------|--------|
+| `sessions.idle_timeout` decreased | If session has been idle longer than new timeout, lock/disconnect immediately |
+| `clipboard.enabled` changed to `false` | Clipboard sync paused immediately; pending transfers cancelled |
+| `sessions.max_resolution` decreased | Resolution constraint applied on next resize or reconnect |
+| `auth.mfa_required` enabled | Enforced on next authentication (reconnect or unlock) |
+| `encoding.allowed_encoders` changed | Encoder re-negotiated on next keyframe; active encoder continues until next IDR |
+| Session terminated by admin | Session transitions to Terminated immediately; client receives disconnect reason |
 
 ### Roaming & Multi-Client Sessions
 
@@ -8127,6 +8275,29 @@ Automated application tests that verify LiquiDE's Wayland compatibility with rea
 | Wine (winewayland.drv) | Wine/Wayland | 3 | Per-release | Launch Wine app, verify window management and input |
 | Java/Swing (JetBrains) | AWT/Wayland | 3 | Per-release | Launch IntelliJ/JetBrains IDE, open project, type, navigate |
 
+#### Application Compatibility Stance (User-Facing)
+
+For users and administrators evaluating LiquiDE, this is the compatibility commitment:
+
+| Tier | Guarantee | What It Means |
+|------|-----------|---------------|
+| **Tier 1** (Guaranteed) | Release-blocking. Regressions in Tier 1 apps block a release. | GTK4 apps (GNOME Text Editor, Nautilus, Terminal), Firefox, Chromium, VS Code, LibreOffice Writer. These applications are tested on every PR or nightly and MUST work correctly. |
+| **Tier 2** (Supported) | High-priority fixes. Regressions are fixed within the next minor release. | Qt6/Qt5 apps (Dolphin, Kate, VLC), media players (mpv), image editors (GIMP), 3D tools (Blender), Flatpak sandboxed apps. These are tested weekly. |
+| **Tier 3** (Best-effort) | Community-reported bugs accepted. Fixes may be deferred. | Steam, Wine/Winewayland, Java/Swing (JetBrains). These are smoke-tested per release. Breaking changes are acknowledged but may not block releases. |
+
+**XWayland compatibility:**
+
+- XWayland is supported as a **compatibility layer** for legacy X11 applications.
+- XWayland apps run in Tier 2 or Tier 3 depending on the application.
+- Known limitations: XWayland apps may have subtle input handling differences, clipboard format mismatches, and DPI scaling inconsistencies compared to native Wayland apps.
+- XWayland is NOT a long-term strategy — LiquiDE prioritizes native Wayland support and encourages upstreams to migrate.
+
+**What is NOT supported:**
+
+- Direct GPU rendering / OpenGL passthrough for gaming (non-goal; see §2 Non-Goals).
+- Windows-native applications (without Wine).
+- Applications that require X11-specific extensions not implemented in XWayland.
+
 ### Security
 - TLS configuration validation.
 - Policy enforcement tests.
@@ -8740,6 +8911,271 @@ The crash screen is **never** streamed as encoded video frames from the server. 
 - Minimal compression (raw or LZ4 tiles).
 - Full glass effects at maximum quality.
 - AES-128-GCM encryption (lower overhead).
+
+---
+
+## 27a) Authoritative Configuration Schema
+
+All LiquiDE configuration defaults currently live across multiple spec documents (`server.toml` in spec.md §19, policy keys in §20, client config in spec-client.md, etc.). To prevent implementation drift, a single **machine-readable schema** serves as the authoritative source of truth for all configuration keys.
+
+### Schema Format
+
+The schema is defined in TOML Schema format (`config-schema.toml`) — a structured document that describes every configuration key:
+
+```toml
+[[keys]]
+path = "general.hostname"
+type = "string"
+default = ""
+description = "Server hostname for TLS certificate and client display"
+required = false
+env_var = "LIQUIDE_HOSTNAME"
+cli_flag = "--hostname"
+introduced = "1.0.0"
+
+[[keys]]
+path = "performance.active_fps"
+type = "integer"
+default = 60
+min = 1
+max = 240
+description = "Target frames per second during active user interaction"
+required = false
+env_var = "LIQUIDE_ACTIVE_FPS"
+cli_flag = "--active-fps"
+introduced = "1.0.0"
+
+[[keys]]
+path = "encoding.allowed_encoders"
+type = "list[string]"
+default = ["h264", "h265"]
+allowed_values = ["h264", "h265", "av1", "vp9"]
+description = "Encoders available for session negotiation"
+required = false
+policy_key = "encoding.allowed_encoders"
+policy_merge = "intersection"
+introduced = "1.0.0"
+```
+
+### Generated Artifacts
+
+The schema generates (via `tools/gen-config.sh`):
+
+| Artifact | Purpose | Generated File |
+|----------|---------|---------------|
+| **Documentation tables** | spec.md §19 config tables, CLI help text | `docs/config-reference.md` |
+| **Config validation** | Runtime config validation in `liquid-desktopd` | `crates/config/src/schema_generated.rs` |
+| **CLI autocompletion** | Shell completions for `liquidctl config set/get` | `completions/{bash,zsh,fish}/liquidctl` |
+| **Management UI forms** | Auto-generated settings forms in `liquid-manager` | `crates/manager-ui/src/config_forms_generated.ts` |
+| **Default config file** | Commented `server.toml.example` with all defaults | `packaging/server.toml.example` |
+| **JSON Schema** | For external tooling integration | `schema/config.schema.json` |
+
+### Validation Rules
+
+- On startup, `liquid-desktopd` validates the loaded config against the compiled schema.
+- Unknown keys produce a `warn`-level log (not an error — forward compatibility).
+- Out-of-range values produce an `error`-level log and the daemon refuses to start.
+- Type mismatches produce an `error`-level log and the daemon refuses to start.
+
+---
+
+## 27b) Local Desktop Environment Mode
+
+The `--local-session` flag (see [spec-system.md](spec-system.md) §13.3) enables LiquiDE to run as a **local desktop environment** — not just a remote desktop server. Local mode is supported as a **daily-driver desktop option** but is secondary to the primary remote use case.
+
+### Mode Definition
+
+| Aspect | Remote Mode (default) | Local Mode (`--local-session`) |
+|--------|----------------------|-------------------------------|
+| Transport | QUIC/TCP over network | Compositor renders directly to local DRM/KMS output |
+| Encoding | H.264/H.265 video encoding | No encoding — direct scanout or software blit |
+| Latency | Network-dependent (5–100ms) | Native (~1ms input-to-photon) |
+| Multi-user | Multiple concurrent sessions | Single user session |
+| GPU | Optional (encoding acceleration) | Used for direct rendering if available |
+| Authentication | PAM/LDAP/OIDC over network | PAM via display manager (GDM, SDDM, greetd) |
+
+### Local Mode Requirements
+
+For daily-driver use, local mode additionally requires:
+
+| Requirement | Description |
+|-------------|-------------|
+| **Display manager integration** | Session entry (`/usr/share/wayland-sessions/liquide.desktop`) works with GDM, SDDM, greetd, and Ly. Correct `DesktopNames=LiquiDE` for XDG detection. |
+| **Power management** | Integration with UPower for battery status in the status bar. Idle detection triggers DPMS blanking. Lid close/open events handled (suspend/wake). Inhibit idle on video playback via `org.freedesktop.ScreenSaver` D-Bus. |
+| **Network management** | NetworkManager integration via D-Bus for Wi-Fi, VPN, and wired connections. Status bar shows network status. |
+| **Bluetooth** | BlueZ integration for Bluetooth device management (audio, input devices). |
+| **Volume/brightness hardware keys** | XKB keysym mapping for `XF86AudioRaiseVolume`, `XF86AudioLowerVolume`, `XF86MonBrightnessUp`, etc. |
+| **Removable media** | UDisks2 integration for USB drive mount/unmount notifications and file manager integration. |
+| **Print management** | CUPS integration for printer discovery and management. |
+| **Notifications** | D-Bus notification daemon (already part of LiquiDE) serves local apps directly without transport encoding. |
+
+### What Local Mode Does NOT Change
+
+- Shell UI, compositor, and Wayland protocol support are identical between local and remote mode.
+- Configuration files, policies, and themes are shared.
+- Flatpak, application launching, and XDG standards work identically.
+- `liquidctl` works locally via Unix socket instead of network connection.
+
+### Configuration
+
+```toml
+# /etc/liquide/local.toml (optional, local-mode-specific overrides)
+[local]
+power_management = true               # enable UPower integration
+network_management = true             # enable NetworkManager integration
+bluetooth = true                      # enable BlueZ integration
+removable_media = true                # enable UDisks2 integration
+dpms_standby_sec = 300                # DPMS standby after 5 minutes idle
+dpms_suspend_sec = 600                # DPMS suspend after 10 minutes idle
+lid_close_action = "suspend"          # "suspend", "lock", "nothing"
+```
+
+---
+
+## 27c) Enterprise Credential & SSO Integration Summary
+
+LiquiDE provides credential integration points across the full authentication lifecycle. This section consolidates the enterprise identity story.
+
+### Authentication Methods
+
+| Method | Spec Reference | Use Case |
+|--------|---------------|----------|
+| **PAM** | spec-system.md §5 | Local and LDAP authentication. Default for Linux deployments. |
+| **OIDC / OAuth 2.0** | spec.md §16 (auth) | Enterprise SSO via Azure AD, Okta, Keycloak, Google Workspace. Recommended for enterprise. |
+| **LDAP/AD** | spec.md §16 (auth) | Direct LDAP bind authentication. For environments without OIDC. |
+| **Client certificate** | spec.md `[auth.certificate]` | Mutual TLS authentication. For zero-trust / high-security environments. |
+| **FIDO2 / WebAuthn** | spec.md `[auth.fido2]` | Hardware key authentication (YubiKey, etc.). |
+| **Smart card (PKCS#11)** | spec.md `[auth.smartcard]` | CAC/PIV smart card authentication. Government / defense deployments. |
+
+### Kerberos / GSSAPI
+
+- Kerberos ticket acquisition happens during PAM authentication (`pam_setcred` with `PAM_ESTABLISH_CRED`).
+- The session inherits the Kerberos ticket cache (`KRB5CCNAME`).
+- Applications in the remote session can use Kerberos tickets transparently (SSO to internal services, NFS mounts, etc.).
+- HTTP proxy traversal supports GSSAPI/Negotiate authentication (see spec-client.md transport §7).
+
+### Smart Card Forwarding
+
+| Feature | Description |
+|---------|-------------|
+| PKCS#11 module | Configurable path to `.so`/`.dylib` for smart card access. |
+| PIN entry location | `"local"` (client-side PIN pad) or `"remote"` (server-side PIN dialog). Default: `"local"` (most secure). |
+| ATR pattern filtering | Restrict which card types are forwarded via `smartcard.allowed_atr_patterns`. |
+| USB passthrough | Smart card readers forwarded via USB redirection (if card-level forwarding is insufficient). |
+
+### Browser SSO in Remote Sessions
+
+Web applications running in remote browsers (Firefox, Chromium) benefit from:
+
+- **OIDC session cookies**: If OIDC auth was used for the LiquiDE session, the browser can pick up the same IdP session (cookie sharing with IdP depends on IdP SSO session lifetime).
+- **Kerberos**: If the browser is configured with Negotiate auth (`network.negotiate-auth.trusted-uris` in Firefox), it uses the session's Kerberos tickets for SSO to internal web apps.
+- **Certificate auth**: If client certificates are forwarded (via PKCS#11 or smart card), the browser can use them for mutual TLS to internal sites.
+
+---
+
+## 27d) Minimum Shell Feature Checklist
+
+This checklist consolidates all required shell features. Each item MUST be implemented and tested before the shell is considered feature-complete. Features are specified in detail in their respective sections — this serves as an implementation tracking list.
+
+### Window Management
+
+| Feature | Spec Reference | Status |
+|---------|---------------|--------|
+| Alt+Tab window switcher (forward/backward) | §12 Keyboard Shortcuts | Required |
+| Alt+Tab shows live thumbnails when bandwidth allows, else icons | §12 | Required |
+| Super+Tab task overview / expose (all windows with thumbnails) | §12 | Required |
+| Window snapping to half/quarter screen via Super+Arrow | §12 | Required |
+| Edge/corner snap zones with semi-transparent preview | §12 Tiling | Required |
+| Tiling layouts: split-h, split-v, quadrant, 3-col, spiral, stacking | §12 Tiling | Required |
+| Super+Shift+Arrow swap tiled window positions | §12 | Required |
+| Floating/tiling/hybrid mode toggle | §12 `[tiling]` | Required |
+| Window minimize, maximize, close via title bar buttons | Server-side decorations | Required |
+| Window resize from edges and corners | Compositor | Required |
+
+### Workspace Management
+
+| Feature | Spec Reference | Status |
+|---------|---------------|--------|
+| Super+Ctrl+Up workspace overview | §12 | Required |
+| Super+Ctrl+Left/Right switch workspace | §12 | Required |
+| Drag window to workspace edge to move to adjacent workspace | §12 | Required |
+| Workspace indicator in status bar | Shell UI | Required |
+
+### Multi-Monitor
+
+| Feature | Spec Reference | Status |
+|---------|---------------|--------|
+| Super+Shift+Left/Right move window to adjacent monitor | §12 | Required |
+| Per-monitor workspace (each monitor has independent workspace stack) | §12 | Required |
+| Focus follows monitor (active monitor determined by cursor or last input) | Display management | Required |
+| Monitor hotplug: add/remove monitors without session restart | §12 | Required |
+
+### Launcher
+
+| Feature | Spec Reference | Status |
+|---------|---------------|--------|
+| Super key opens launcher | §12 | Required |
+| Fuzzy search across app name, description, keywords, categories | §12 Launcher | Required |
+| Type-to-search (any keypress starts filtering) | §12 Launcher | Required |
+| List view and grid view (Ctrl+G toggle) | §12 Launcher | Required |
+| Plugin result providers (custom search results) | §12 Launcher | Required |
+
+### Notifications
+
+| Feature | Spec Reference | Status |
+|---------|---------------|--------|
+| Notification popups with urgency levels | spec-interop.md §3 | Required |
+| Notification history (SQLite-backed, 7-day retention) | spec-interop.md §3 | Required |
+| Reconnect sync (missed notifications sent on reconnect) | spec-interop.md §3 | Required |
+| Do-not-disturb mode | Shell UI | Required |
+| Critical notification override (DND bypass) | spec-interop.md §3 | Required |
+
+### Screenshot & Recording
+
+| Feature | Spec Reference | Status |
+|---------|---------------|--------|
+| Print → screenshot full desktop (save to file) | §12 Shortcuts | Required |
+| Alt+Print → screenshot active window | §12 Shortcuts | Required |
+| Super+Shift+S → region select screenshot | §12 Shortcuts | Required |
+| Super+Print → screenshot to clipboard | §12 Shortcuts | Required |
+| Super+Shift+R → toggle screen recording | §12 Shortcuts | Required |
+
+### System Tray & Status Bar
+
+| Feature | Spec Reference | Status |
+|---------|---------------|--------|
+| Clock / date display | Shell UI | Required |
+| Network status indicator | Shell UI | Required |
+| Audio volume indicator + quick slider | Shell UI | Required |
+| Keyboard layout indicator (click to switch) | §12 Keyboard | Required |
+| Battery indicator (local mode only) | §27b Local Mode | Required (local mode) |
+| Notification count badge | Shell UI | Required |
+
+### Dock
+
+| Feature | Spec Reference | Status |
+|---------|---------------|--------|
+| Pinned application shortcuts | Shell UI | Required |
+| Running application indicators | Shell UI | Required |
+| Drag to reorder | Shell UI | Required |
+| Right-click context menu (new window, quit, pin/unpin) | Shell UI | Required |
+| Auto-hide option | Shell UI `[dock]` | Required |
+| Position: bottom (default), left, right, top | Shell UI `[dock]` | Required |
+
+### Global Search vs. Launcher Scope
+
+The launcher's search scope is explicitly defined:
+
+| Search Source | Included by Default | Scope |
+|--------------|-------------------|-------|
+| Installed applications (`.desktop` files) | Yes | Name, description, keywords, categories, executable |
+| Recent files (via GTK recent manager / Zeitgeist) | Yes | File name only |
+| Calculator (inline math evaluation) | Yes | Arithmetic expressions |
+| Plugin results | Yes (if plugins installed) | Plugin-defined |
+| File system search | No (opt-in) | Full-text file name search |
+| Web search | No (opt-in) | Redirect to default browser |
+
+Global search (Super then type) is **launcher-scoped by default**. A separate file manager search (Ctrl+F in file manager) provides file content search. These are intentionally separate to keep the launcher fast.
 
 ---
 

@@ -837,7 +837,7 @@ Type=Application
 DesktopNames=LiquiDE
 ```
 
-The `--local-session` flag starts a single-user local session (useful for development or when running LiquiDE as a local DE instead of a remote server).
+The `--local-session` flag starts a single-user local session. This mode is supported as a **daily-driver desktop option** (secondary to the remote server use case) — see spec.md §27b for full local mode requirements including display manager integration, power management, network management, and hardware key support.
 
 ---
 

@@ -633,7 +633,131 @@ reading_guide_height = 20
 
 ---
 
-## 12) Test Plan
+## 12) Client Accessibility Bridge
+
+Server-side accessibility trees (AT-SPI2) are necessary but not sufficient for real-world remote desktop accessibility. Users run assistive technology **on their client machine** — screen readers, braille displays, magnifiers — and these tools need structured access to remote UI content, not just a video stream.
+
+### 12.1 Architecture
+
+```
+┌──────────────────────────────┐    ┌──────────────────────────────┐
+│         SERVER               │    │         CLIENT               │
+│                              │    │                              │
+│  Application                 │    │                              │
+│      │                       │    │                              │
+│      ▼                       │    │                              │
+│  AT-SPI2 tree                │    │                              │
+│      │                       │    │                              │
+│      ▼                       │    │                              │
+│  Accessibility Serializer    │    │  Accessibility Deserializer  │
+│  (export AT-SPI semantics    │───►│  (reconstruct tree in        │
+│   as protocol messages)      │    │   platform-native format)    │
+│                              │    │      │                       │
+└──────────────────────────────┘    │      ├──► UIA (Windows)      │
+                                    │      ├──► NSAccessibility     │
+                                    │      │    (macOS)             │
+                                    │      └──► AT-SPI2 (Linux)    │
+                                    │                              │
+                                    │  Client-side assistive tech: │
+                                    │  • Screen reader (local TTS) │
+                                    │  • Braille display (local)   │
+                                    │  • Magnifier (local overlay) │
+                                    └──────────────────────────────┘
+```
+
+### 12.2 Server: Accessibility Serializer
+
+The server exports the AT-SPI2 accessibility tree as a stream of protocol messages on a dedicated accessibility subchannel:
+
+| Message | Description |
+|---------|-------------|
+| `AccessibilityTreeSnapshot` | Full tree serialization on session start and on reconnect. Contains all nodes with roles, names, states, bounding rects, actions. |
+| `AccessibilityNodeUpdate` | Incremental update: node added, removed, or property changed (name, state, value, bounds). |
+| `AccessibilityFocusChange` | Focus moved to a different node (includes node ID and path). |
+| `AccessibilityCaretUpdate` | Text caret position changed (node ID, offset, selection range). |
+| `AccessibilityTextChange` | Text content inserted, deleted, or replaced in a text node. |
+| `AccessibilityAnnouncement` | Live region update or explicit screen reader announcement (`assertive` or `polite`). |
+
+Serialization format: the AT-SPI2 tree is mapped to a platform-neutral schema:
+
+| AT-SPI2 Concept | Serialized As |
+|-----------------|---------------|
+| Role (`ATK_ROLE_*`) | WAI-ARIA role string (`button`, `textbox`, `menu`, etc.) |
+| State set | Bitmask of common states: `focused`, `checked`, `expanded`, `disabled`, `selected`, `editable`, `multiline`, `required`, `invalid` |
+| Name / Description | UTF-8 strings |
+| Bounding rect | `(x, y, w, h)` in session-space pixels |
+| Relations | `labelled_by`, `described_by`, `controls`, `flows_to` with target node IDs |
+| Actions | List of action names (`click`, `press`, `toggle`, `expand`) |
+| Text content | Full text, attributes (bold, italic, font), caret position, selection |
+| Value | Current value, min, max, step (for sliders, spinners) |
+
+### 12.3 Client: Platform-Native Mapping
+
+The client deserializes the accessibility stream and constructs a platform-native accessibility tree:
+
+| Client Platform | Target API | Implementation |
+|----------------|-----------|----------------|
+| **Windows** | UI Automation (UIA) | Client creates `IRawElementProviderSimple` objects for each remote node. Patterns mapped: `InvokePattern`, `ValuePattern`, `SelectionPattern`, `TextPattern`, `TogglePattern`, `ExpandCollapsePattern`, `ScrollPattern`. |
+| **macOS** | NSAccessibility | Client creates `NSAccessibilityElement` subclasses. Roles mapped from WAI-ARIA to `NSAccessibilityRole`. Actions mapped to `accessibilityPerformAction:`. |
+| **Linux** | AT-SPI2 (via atspi2-registryd) | Client re-publishes the tree on the local AT-SPI bus. Effectively a mirror of the server tree on the local D-Bus session bus. |
+| **Web** | ARIA attributes on DOM | Web client sets `role`, `aria-label`, `aria-expanded`, etc. on shadow DOM elements overlaying the canvas. |
+
+### 12.4 Local TTS (Text-to-Speech)
+
+When the client accessibility bridge is active, TTS happens **locally on the client**:
+
+- The client-side screen reader (NVDA, VoiceOver, Orca) reads the client-constructed accessibility tree.
+- Speech synthesis uses the **client's local TTS engine** (SAPI on Windows, AVSpeechSynthesizer on macOS, Speech Dispatcher on Linux).
+- No audio encoding/decoding latency for speech — TTS is instant and responsive.
+- The server-side audio channel is still used for application audio, but **not** for screen reader speech.
+
+This eliminates the network latency penalty for screen reader output that plagues server-side-only approaches.
+
+### 12.5 Braille Display Support
+
+With the client accessibility bridge, braille displays connected to the client machine work natively:
+
+| Platform | Braille Stack | Integration |
+|----------|--------------|-------------|
+| **Windows** | NVDA + braille driver | NVDA reads the UIA tree; braille output via standard NVDA braille display support. |
+| **macOS** | VoiceOver + braille | VoiceOver reads NSAccessibility tree; braille via macOS built-in braille support. |
+| **Linux** | Orca + BRLTTY/BrlAPI | Orca reads local AT-SPI mirror; BRLTTY outputs to USB/Bluetooth braille display. |
+
+### 12.6 Client-Local Magnifier and Visual Adjustments
+
+Certain accessibility features are more effective when applied locally on the client rather than composited on the server:
+
+| Feature | Client-Local Behavior |
+|---------|----------------------|
+| **Magnifier** | Client can run its OS magnifier (Windows Magnifier, macOS Zoom, GNOME Magnifier) which magnifies the client window pixel-perfectly without additional encoding cost. |
+| **High contrast** | Client applies high-contrast theme/filter to its own rendering surface. Reduces dependence on server-side compositor filter. |
+| **Reduced motion** | Client's `prefers-reduced-motion` media query is forwarded to the server (already specified in §10.3). Client UI animations are suppressed locally. |
+| **Color filters** | Client-side color filters (daltonism overlays) can be applied by the OS accessibility layer without server involvement. |
+
+These client-local features work **in addition to** the server-side equivalents. When both are active, the server-side feature is preferred (to avoid double-application).
+
+### 12.7 Configuration
+
+```toml
+[accessibility.bridge]
+enabled = false                          # enable client accessibility bridge
+mode = "auto"                            # "auto" (detect client AT), "always", "never"
+tree_update_rate_hz = 30                 # max accessibility tree updates per second
+full_snapshot_on_reconnect = true        # send full tree on reconnect
+tts_location = "client"                  # "client" (local TTS), "server" (streamed audio), "both"
+braille_location = "client"              # "client" (local braille), "server"
+```
+
+### 12.8 Priority
+
+| Audience | Priority |
+|----------|----------|
+| Enterprise / government deployments with accessibility mandates | **P0** |
+| General availability | **P1** (ship after core remote session is stable) |
+
+---
+
+## 13) Test Plan
 
 ### Functional
 - Screen reader (Orca) starts and announces all shell elements.

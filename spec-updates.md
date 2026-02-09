@@ -136,10 +136,6 @@ LiquiDE supports multiple update delivery methods:
 | **Nix** | NixOS/any | `nix profile install nixpkgs#liquide` or NixOS module via `services.liquide.enable` |
 | **Flatpak** (client only) | Linux | Client distributed as Flatpak from Flathub |
 | **AppImage** (client only) | Linux | Portable single-file client, no installation required |
-| **WinGet** | Windows | `winget install LiquiDE.Client` from Microsoft Store / manifest repo |
-| **Chocolatey** | Windows | `choco install liquidclient` from community or internal repo |
-| **Scoop** | Windows | `scoop install liquidclient` from extras bucket |
-| **MSI installer** | Windows | Standard Windows installer (`.msi`) with silent install support |
 | **DMG / pkg installer** | macOS | Disk image with drag-to-Applications or `.pkg` installer |
 | **Docker / OCI** | Any | `docker pull ghcr.io/liquide/liquide-server` (server only) |
 | **Self-update** | Any | `liquidctl update check` / `liquidctl update apply` for standalone installs |
@@ -852,283 +848,9 @@ AppImage does not support automatic rollback. Users should keep the previous App
 
 ---
 
-## 14) WinGet Updates
+## 14) DMG / pkg Installer (macOS)
 
-### 14.1 Package ID
-
-| Package ID | Description |
-|-----------|-------------|
-| `LiquiDE.Client` | Windows client application |
-
-### 14.2 Installation
-
-```powershell
-# Install from WinGet
-winget install LiquiDE.Client
-
-# Silent install
-winget install LiquiDE.Client --silent
-
-# Install specific version
-winget install LiquiDE.Client --version 1.3.2
-```
-
-### 14.3 Update Check
-
-```powershell
-# Check via winget
-winget upgrade LiquiDE.Client
-
-# Check via liquidctl
-liquidctl winget update --check
-```
-
-### 14.4 Update Application
-
-```powershell
-# Update via winget
-winget upgrade LiquiDE.Client
-
-# Update via liquidctl
-liquidctl winget update
-
-# Update all packages
-winget upgrade --all
-```
-
-### 14.5 Auto-Update
-
-Auto-update via Windows Task Scheduler:
-
-```powershell
-# Create scheduled task for daily update check
-schtasks /create /tn "LiquiDE Update Check" /tr "winget upgrade LiquiDE.Client --silent" /sc daily /st 03:00
-```
-
-### 14.6 Rollback
-
-```powershell
-# Install a specific older version
-winget install LiquiDE.Client --version 1.3.2 --force
-```
-
-### 14.7 Manifest Source
-
-WinGet manifests are published to:
-- **winget-pkgs** community repository (primary)
-- **Private manifest repo** (for enterprise deployments with `winget source add`)
-
----
-
-## 15) Chocolatey Updates
-
-### 15.1 Package Names
-
-| Package | Description |
-|---------|-------------|
-| `liquidclient` | Windows client application |
-
-### 15.2 Installation
-
-```powershell
-# Install from Chocolatey
-choco install liquidclient
-
-# Silent/unattended
-choco install liquidclient -y
-
-# Specific version
-choco install liquidclient --version 1.3.2
-```
-
-### 15.3 Update Check
-
-```powershell
-# Check via Chocolatey
-choco outdated
-
-# Check via liquidctl
-liquidctl chocolatey update --check
-```
-
-### 15.4 Update Application
-
-```powershell
-# Update via Chocolatey
-choco upgrade liquidclient
-
-# Update via liquidctl
-liquidctl chocolatey update
-
-# Update all packages
-choco upgrade all -y
-```
-
-### 15.5 Source Management
-
-```powershell
-# Add internal Chocolatey repository
-choco source add --name=internal --source="https://choco.example.com/api/v2/"
-
-# Install from internal source
-choco install liquidclient --source=internal
-```
-
-### 15.6 Rollback
-
-```powershell
-# Force-install a specific older version
-choco install liquidclient --version 1.3.2 --force
-
-# Via liquidctl
-liquidctl chocolatey rollback liquidclient
-```
-
-### 15.7 Auto-Update
-
-```powershell
-# Scheduled task for daily upgrades
-schtasks /create /tn "Chocolatey Upgrade All" /tr "choco upgrade all -y" /sc daily /st 03:00
-```
-
-### 15.8 Verification
-
-Chocolatey packages include SHA-256 checksums verified during install. Packages on the Chocolatey Community Repository undergo moderator review.
-
----
-
-## 16) Scoop Updates
-
-### 16.1 Package Names
-
-| Manifest | Bucket | Description |
-|----------|--------|-------------|
-| `liquidclient` | `extras` or `liquide` | Windows client application |
-
-### 16.2 Installation
-
-```powershell
-# Add LiquiDE bucket (optional, for pre-release)
-scoop bucket add liquide https://github.com/liquide/scoop-bucket
-
-# Install from extras or liquide bucket
-scoop install liquidclient
-```
-
-### 16.3 Update Check
-
-```powershell
-# Check via Scoop
-scoop status
-
-# Check via liquidctl
-liquidctl scoop update --check
-```
-
-### 16.4 Update Application
-
-```powershell
-# Update via Scoop
-scoop update liquidclient
-
-# Update via liquidctl
-liquidctl scoop update
-
-# Update all
-scoop update *
-```
-
-### 16.5 Rollback
-
-Scoop keeps previous versions, allowing instant rollback:
-
-```powershell
-# Rollback to a specific version
-scoop reset liquidclient@1.3.2
-
-# Via liquidctl
-liquidctl scoop rollback liquidclient
-```
-
-### 16.6 Portable Installation
-
-Scoop installs are per-user (no admin required). All files reside under `~/scoop/apps/liquidclient/`.
-
-### 16.7 Auto-Update
-
-```powershell
-# Scheduled task for daily updates
-schtasks /create /tn "Scoop Update All" /tr "powershell -Command scoop update *" /sc daily /st 03:00
-```
-
----
-
-## 17) MSI Installer (Windows)
-
-### 17.1 Artifacts
-
-| File | Architecture | Description |
-|------|-------------|-------------|
-| `LiquidClient-x64.msi` | x86_64 | 64-bit Windows installer |
-| `LiquidClient-arm64.msi` | ARM64 | ARM64 Windows installer |
-
-### 17.2 Installation
-
-```powershell
-# Interactive install
-msiexec /i LiquidClient-x64.msi
-
-# Silent install with defaults
-msiexec /i LiquidClient-x64.msi /quiet
-
-# Silent install with custom options
-msiexec /i LiquidClient-x64.msi /quiet INSTALLDIR="C:\Program Files\LiquidClient" AUTO_START=1 UPDATE_CHECK=1 SERVER_URL="liquide://desktop.example.com"
-```
-
-### 17.3 MSI Properties
-
-| Property | Default | Description |
-|----------|---------|-------------|
-| `INSTALLDIR` | `C:\Program Files\LiquidClient` | Installation directory |
-| `AUTO_START` | `0` | Launch on Windows startup |
-| `UPDATE_CHECK` | `1` | Check for updates on launch |
-| `SERVER_URL` | (empty) | Pre-configure server address |
-| `DESKTOP_SHORTCUT` | `1` | Create desktop shortcut |
-| `START_MENU` | `1` | Create Start Menu entry |
-| `FILE_ASSOC` | `1` | Register `.lqc` file association |
-
-### 17.4 Upgrade
-
-MSI detects previous versions and upgrades in-place (WiX `MajorUpgrade` element):
-
-```powershell
-# Upgrade by installing new version (previous version removed automatically)
-msiexec /i LiquidClient-x64-1.4.0.msi /quiet
-```
-
-### 17.5 Uninstall
-
-```powershell
-# Via Add/Remove Programs (GUI)
-# Or via command line:
-msiexec /x {ProductCode} /quiet
-```
-
-### 17.6 GPO Deployment
-
-MSI packages support Active Directory Group Policy deployment:
-- Assign or publish the MSI via Group Policy Software Installation.
-- Use transform files (`.mst`) for per-OU customization.
-
-### 17.7 Signing
-
-All MSI installers are signed with an Authenticode EV code signing certificate. Windows SmartScreen recognizes the publisher.
-
----
-
-## 18) DMG / pkg Installer (macOS)
-
-### 18.1 Artifacts
+### 14.1 Artifacts
 
 | File | Architecture | Description |
 |------|-------------|-------------|
@@ -1137,13 +859,13 @@ All MSI installers are signed with an Authenticode EV code signing certificate. 
 | `LiquidClient-universal.dmg` | Universal | Fat binary (arm64 + x86_64) |
 | `LiquidClient.pkg` | Universal | Installer package for scripted/MDM deployment |
 
-### 18.2 DMG Installation
+### 14.2 DMG Installation
 
 1. Open the `.dmg` file.
 2. Drag `LiquidClient.app` to the Applications folder (symlink provided in DMG).
 3. Eject the DMG.
 
-### 18.3 pkg Installation
+### 14.3 pkg Installation
 
 ```bash
 # Interactive
@@ -1153,20 +875,20 @@ open LiquidClient.pkg
 sudo installer -pkg LiquidClient.pkg -target /
 ```
 
-### 18.4 Code Signing & Notarization
+### 14.4 Code Signing & Notarization
 
 - All binaries are signed with an Apple Developer ID certificate.
 - The app and pkg are notarized via `notarytool` and stapled.
 - Gatekeeper passes verification without user override.
 
-### 18.5 MDM Deployment
+### 14.5 MDM Deployment
 
 The `.pkg` installer supports managed deployment via:
 - Apple Business Manager / MDM push.
 - `installer -pkg` command for scripted installs.
 - Configuration profiles (`.mobileconfig`) for pre-configuring server URL.
 
-### 18.6 In-App Updates (Sparkle)
+### 14.6 In-App Updates (Sparkle)
 
 The macOS client optionally integrates the Sparkle framework for in-app update checks:
 
@@ -1176,7 +898,7 @@ The macOS client optionally integrates the Sparkle framework for in-app update c
 | `SUPublicEDKey` | Ed25519 public key for Sparkle signature verification |
 | `SUEnableAutomaticChecks` | `true` (configurable in preferences) |
 
-### 18.7 Uninstall
+### 14.7 Uninstall
 
 ```bash
 # Drag app to Trash (removes app bundle only)
@@ -1190,9 +912,9 @@ liquidctl uninstall --purge
 
 ---
 
-## 19) Release Lifecycle
+## 15) Release Lifecycle
 
-### 19.1 Release Cadence
+### 15.1 Release Cadence
 
 | Channel | Cadence | Support |
 |---------|---------|---------|
@@ -1200,7 +922,7 @@ liquidctl uninstall --purge
 | LTS | Annually | 2 years of security fixes |
 | Patch | As needed | Backported to current stable + current LTS |
 
-### 19.2 End-of-Life
+### 15.2 End-of-Life
 
 When a version reaches end-of-life:
 - No further patches are released.
@@ -1210,7 +932,7 @@ When a version reaches end-of-life:
 
 ---
 
-## 20) Test Plan
+## 16) Test Plan
 
 ### Functional
 - Version negotiation between all component combinations (see §3.1 matrix).
@@ -1243,8 +965,4 @@ When a version reaches end-of-life:
 - Snap install, refresh across channels, revert, interface connections.
 - Nix imperative install/upgrade/rollback and NixOS module enable/rebuild.
 - AppImage download, delta update, desktop integration, signature verification.
-- WinGet install, upgrade, version-specific install, silent mode.
-- Chocolatey install, upgrade, version pin, source management.
-- Scoop install, update, bucket management, version reset.
-- MSI silent install, upgrade-in-place, GPO deployment, uninstall cleanup.
 - DMG drag-install, pkg scripted install, notarization verification, Sparkle update check.
