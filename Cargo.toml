@@ -100,7 +100,11 @@ lz4_flex = "0.11"
 bytes = "1"
 
 # CLI
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+
+# Directories
+dirs = "6"
 
 # Testing
 criterion = { version = "0.5", features = ["html_reports"] }
