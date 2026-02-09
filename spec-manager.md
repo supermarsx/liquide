@@ -278,6 +278,19 @@ auto_rollback_threshold = 2.0           # error rate multiplier triggering rollb
   - View supervisor logs.
   - Adjust session resource limits (cgroup overrides).
 
+### Package Management
+- **Overview tab**: aggregate view — total packages across all managers, pending updates count, last update timestamp per manager, health indicators per manager (available/unavailable/error).
+- **Per-manager tabs**: Brew | Snap | Flatpak | Nix | AppImage | WinGet | Chocolatey | Scoop
+  - Installed packages table: name, version, installed size, update available (yes/no/version), source/repo.
+  - Available updates list with one-click "Update" or "Update All" actions.
+  - Search: search the remote repository from the UI, install directly.
+  - Package detail view: description, version history, dependencies, install/uninstall/rollback actions.
+  - Update history timeline (last N updates with timestamps, old→new version).
+- **Bulk operations**: select multiple packages, bulk update/remove. Confirmation dialog with change summary.
+- **Policies panel**: view and edit per-server package policies — allowed managers, auto-update toggle, allowed/blocked package lists, update schedule.
+- **Logs sub-tab**: package operation logs streamed from `liquidctl` output per server.
+- **Server selector**: dropdown to pick which managed server to view. "All servers" aggregate view shows fleet-wide package status.
+
 ---
 
 ## 4) Authentication & Security
@@ -452,6 +465,18 @@ The management server exposes its own API (used by the web frontend and optional
 | `POST` | `/api/v1/supervisor/sessions/{id}/reset-restarts` | Reset restart counter |
 | `GET` | `/api/v1/supervisor/sessions/{id}/resources` | Session resource usage (cgroup stats) |
 | `WS` | `/ws/v1/supervisor` | WebSocket stream of supervisor events (crashes, restarts, health) |
+| `GET` | `/api/v1/servers/{name}/packages` | List installed packages (all managers) on a server |
+| `GET` | `/api/v1/servers/{name}/packages/{manager}` | List installed packages for a specific manager |
+| `GET` | `/api/v1/servers/{name}/packages/{manager}/{pkg}` | Package details (version, size, update available) |
+| `POST` | `/api/v1/servers/{name}/packages/{manager}/install` | Install a package (body: `{id, version?, options?}`) |
+| `DELETE` | `/api/v1/servers/{name}/packages/{manager}/{pkg}` | Remove a package |
+| `POST` | `/api/v1/servers/{name}/packages/{manager}/update` | Update packages (body: `{packages?: [...], all?: bool}`) |
+| `POST` | `/api/v1/servers/{name}/packages/{manager}/{pkg}/rollback` | Rollback a package to previous version |
+| `GET` | `/api/v1/servers/{name}/packages/updates` | List available updates across all managers |
+| `GET` | `/api/v1/servers/{name}/packages/{manager}/search` | Search remote repository (`?q=query`) |
+| `GET` | `/api/v1/servers/{name}/packages/history` | Package operation history (install/update/remove log) |
+| `GET` | `/api/v1/packages/policies` | Get fleet-wide package policies |
+| `PUT` | `/api/v1/packages/policies` | Update package policies |
 
 ---
 
@@ -580,6 +605,7 @@ credentials_file = ""                    # provider-specific credentials
 13. **Plugins** — plugin management dashboard (install, enable/disable, resource monitoring, fault history).
 14. **Crash Reports** — crash report viewer, timeline, statistics, export tools.
 15. **Supervisor** — session supervisor status, process health, restart controls.
+16. **Packages** — unified package management dashboard across all supported package managers (Homebrew, Snap, Flatpak, Nix, AppImage, WinGet, Chocolatey, Scoop). Per-server view showing installed packages, available updates, update history, and bulk operations.
 
 ### UX Principles
 - Real-time updates (no manual refresh needed).
@@ -634,6 +660,14 @@ node server.js --config /etc/liquid-manager/manager.toml
 - Policy editing and application.
 - Audit log completeness.
 - WebSocket real-time updates.
+
+### Package Management
+- Packages page loads installed packages from each available manager.
+- Package search returns results from remote repositories.
+- Package install/remove/update operations execute correctly via API.
+- Bulk update applies to selected packages across managers.
+- Package policies restrict allowed managers and packages per server.
+- Package operation history shows accurate timeline.
 
 ### Security
 - HTTPS enforcement.

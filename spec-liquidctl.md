@@ -1377,6 +1377,738 @@ liquidctl flatpak gc --unused-runtimes --dry-run
 
 ---
 
+### 3.16 `liquidctl brew` — Homebrew Package Management
+
+Manage Homebrew formulae and casks. These commands proxy to the system Homebrew installation with LiquiDE policy enforcement and structured output.
+
+#### `liquidctl brew search <query>`
+
+Search Homebrew for formulae and casks.
+
+```bash
+$ liquidctl brew search liquide
+
+Name              Type       Version   Description
+liquide           formula    1.4.0     LiquiDE remote desktop server + CLI tools
+liquidclient      cask       1.4.0     LiquiDE client application
+```
+
+Options:
+- `--formula` — search only formulae.
+- `--cask` — search only casks.
+
+#### `liquidctl brew install <formula|cask> [--cask] [--formula]`
+
+Install a Homebrew formula or cask.
+
+```bash
+$ liquidctl brew install liquide
+Installing liquide (formula) via Homebrew...
+==> Downloading liquide-1.4.0.tar.gz
+==> Installing dependencies: openssl@3
+==> Installing liquide
+Done. Installed liquide 1.4.0.
+
+$ liquidctl brew install liquidclient --cask
+Installing liquidclient (cask) via Homebrew...
+==> Downloading LiquidClient-1.4.0.dmg
+==> Installing Cask liquidclient
+Done. LiquidClient.app installed to /Applications.
+```
+
+#### `liquidctl brew remove <formula|cask> [--cask] [--formula]`
+
+Remove a Homebrew formula or cask.
+
+#### `liquidctl brew list [--formula] [--cask] [--json]`
+
+List installed Homebrew formulae and casks.
+
+```bash
+$ liquidctl brew list
+
+Name              Type       Version   Size      Outdated
+liquide           formula    1.3.2     45 MB     yes (1.4.0)
+liquidclient      cask       1.4.0     128 MB    no
+openssl@3         formula    3.2.1     12 MB     no
+```
+
+#### `liquidctl brew update [<formula|cask>] [--check] [--cask] [--formula]`
+
+Update Homebrew packages.
+
+```bash
+$ liquidctl brew update --check
+
+Available Homebrew updates:
+  liquide          1.3.2 → 1.4.0   (formula)
+  liquidclient     1.3.2 → 1.4.0   (cask)
+
+$ liquidctl brew update
+Updating liquide (1.3.2 → 1.4.0)...
+Updating liquidclient (1.3.2 → 1.4.0)...
+Updated 2 packages.
+```
+
+#### `liquidctl brew info <formula|cask>`
+
+Show detailed information about a Homebrew formula or cask.
+
+#### `liquidctl brew tap <tap-name>`
+
+Add a Homebrew tap.
+
+```bash
+$ liquidctl brew tap liquide/tap
+Tapped liquide/tap (3 formulae, 1 cask).
+```
+
+#### `liquidctl brew untap <tap-name>`
+
+Remove a Homebrew tap.
+
+#### `liquidctl brew pin <formula>`
+
+Pin a formula to prevent automatic upgrades.
+
+```bash
+$ liquidctl brew pin liquide
+Pinned liquide (1.4.0).
+```
+
+#### `liquidctl brew unpin <formula>`
+
+Unpin a formula to resume automatic upgrades.
+
+#### `liquidctl brew rollback <formula|cask>`
+
+Rollback to the previous version.
+
+```bash
+$ liquidctl brew rollback liquide
+
+Rollback liquide:
+  Current: 1.4.0
+  Target:  1.3.2
+
+Proceed? [Y/n] y
+Rolled back to 1.3.2.
+```
+
+---
+
+### 3.17 `liquidctl snap` — Snap Package Management
+
+Manage Snap packages. These commands proxy to `snapd` with LiquiDE policy enforcement and structured output.
+
+#### `liquidctl snap search <query>`
+
+Search the Snap Store for packages.
+
+```bash
+$ liquidctl snap search liquidclient
+
+Name              Publisher     Version   Summary
+liquidclient      liquide✓      1.4.0     LiquiDE remote desktop client
+liquide-server    liquide✓      1.4.0     LiquiDE remote desktop server
+```
+
+#### `liquidctl snap install <snap> [--channel <channel>] [--classic] [--devmode]`
+
+Install a snap package.
+
+```bash
+$ liquidctl snap install liquidclient
+Installing liquidclient from stable channel...
+liquidclient 1.4.0 from LiquiDE (liquide✓) installed.
+
+$ liquidctl snap install liquide-server --channel=beta
+Installing liquide-server from beta channel...
+liquide-server 1.5.0-beta.2 from LiquiDE (liquide✓) installed.
+```
+
+#### `liquidctl snap remove <snap> [--purge]`
+
+Remove a snap package. `--purge` also removes snapshots and data.
+
+#### `liquidctl snap list [--all]`
+
+List installed snaps.
+
+```bash
+$ liquidctl snap list
+
+Name              Version   Rev    Channel   Publisher     Confinement
+liquidclient      1.4.0     142    stable    liquide✓      strict
+liquide-server    1.4.0     98     stable    liquide✓      classic
+```
+
+Options:
+- `--all` — include disabled revisions.
+
+#### `liquidctl snap update [<snap>] [--check] [--channel <channel>]`
+
+Update snap packages.
+
+```bash
+$ liquidctl snap update --check
+
+Available Snap updates:
+  liquidclient     1.3.2 → 1.4.0   (stable channel)
+  liquide-server   1.3.2 → 1.4.0   (stable channel)
+
+$ liquidctl snap update liquidclient
+Refreshing liquidclient (1.3.2 → 1.4.0)...
+liquidclient 1.4.0 refreshed.
+```
+
+#### `liquidctl snap info <snap>`
+
+Show detailed information about a snap.
+
+#### `liquidctl snap connections <snap>`
+
+List interface connections for a snap.
+
+```bash
+$ liquidctl snap connections liquidclient
+
+Interface        Plug                          Slot              Status
+audio-playback   liquidclient:audio-playback   :audio-playback   connected
+desktop          liquidclient:desktop          :desktop          connected
+network          liquidclient:network          :network          connected
+opengl           liquidclient:opengl           :opengl           connected
+wayland          liquidclient:wayland          :wayland          connected
+x11              liquidclient:x11              :x11              connected
+audio-record     liquidclient:audio-record     -                 disconnected
+```
+
+#### `liquidctl snap connect <snap> <interface>`
+
+Connect a snap interface plug.
+
+```bash
+$ liquidctl snap connect liquidclient audio-record
+Connected liquidclient:audio-record to :audio-record.
+```
+
+#### `liquidctl snap disconnect <snap> <interface>`
+
+Disconnect a snap interface plug.
+
+#### `liquidctl snap revert <snap>`
+
+Revert a snap to the previous revision.
+
+```bash
+$ liquidctl snap revert liquidclient
+
+Revert liquidclient:
+  Current: 1.4.0 (rev 142)
+  Target:  1.3.2 (rev 135)
+
+Proceed? [Y/n] y
+Reverted liquidclient to revision 135 (1.3.2).
+```
+
+#### `liquidctl snap refresh-hold <snap> --duration <hours>`
+
+Hold automatic snap refreshes for a specified duration.
+
+```bash
+$ liquidctl snap refresh-hold liquidclient --duration 72
+Holding refresh for liquidclient for 72 hours (until 2025-01-18 16:00 UTC).
+```
+
+#### `liquidctl snap channels <snap>`
+
+Show available channels for a snap.
+
+```bash
+$ liquidctl snap channels liquidclient
+
+Channel        Version       Published
+stable         1.4.0         2025-02-01
+candidate      1.4.0         2025-01-28
+beta           1.5.0-beta.1  2025-02-05
+edge           1.5.0-dev.42  2025-02-08
+```
+
+---
+
+### 3.18 `liquidctl nix` — Nix Package Management
+
+Manage Nix packages and profiles. These commands proxy to the Nix CLI with LiquiDE policy enforcement and structured output.
+
+#### `liquidctl nix search <query>`
+
+Search nixpkgs for packages.
+
+```bash
+$ liquidctl nix search liquide
+
+Package             Version   Description
+nixpkgs#liquide     1.4.0     LiquiDE remote desktop (server + CLI + client)
+nixpkgs#liquidclient 1.4.0    LiquiDE client only
+```
+
+Options:
+- `--flake <ref>` — search a specific flake instead of nixpkgs.
+
+#### `liquidctl nix install <package> [--profile <name>]`
+
+Install a Nix package to the current profile.
+
+```bash
+$ liquidctl nix install nixpkgs#liquide
+Installing liquide 1.4.0...
+Done. Added to profile.
+
+$ liquidctl nix install github:liquide/liquide --profile server
+Installing from flake github:liquide/liquide...
+Done. Added to profile 'server'.
+```
+
+#### `liquidctl nix remove <package>`
+
+Remove a Nix package from the current profile.
+
+#### `liquidctl nix list [--profile <name>] [--json]`
+
+List installed Nix packages.
+
+```bash
+$ liquidctl nix list
+
+Index   Package             Version   Store Path
+0       nixpkgs#liquide     1.4.0     /nix/store/abc123...-liquide-1.4.0
+1       nixpkgs#git         2.43.0    /nix/store/def456...-git-2.43.0
+```
+
+#### `liquidctl nix update [<package>] [--profile <name>] [--check]`
+
+Update Nix packages.
+
+```bash
+$ liquidctl nix update --check
+
+Available Nix updates:
+  liquide     1.3.2 → 1.4.0
+
+$ liquidctl nix update
+Updating profile...
+Upgraded liquide (1.3.2 → 1.4.0).
+```
+
+#### `liquidctl nix rollback [--profile <name>]`
+
+Rollback to the previous profile generation.
+
+```bash
+$ liquidctl nix rollback
+
+Rollback profile:
+  Current: generation 42
+  Target:  generation 41
+
+Proceed? [Y/n] y
+Rolled back to generation 41.
+```
+
+#### `liquidctl nix gc [--older-than <days>] [--dry-run]`
+
+Garbage-collect unused Nix store paths.
+
+```bash
+$ liquidctl nix gc --older-than 30 --dry-run
+
+Would remove 847 store paths (12.4 GB).
+
+$ liquidctl nix gc --older-than 30
+Removing 847 store paths...
+Freed 12.4 GB.
+```
+
+#### `liquidctl nix develop [--flake <ref>]`
+
+Enter a Nix development shell with all LiquiDE build dependencies.
+
+```bash
+$ liquidctl nix develop
+Entering development shell for github:liquide/liquide...
+[nix-develop]$
+```
+
+---
+
+### 3.19 `liquidctl appimage` — AppImage Management
+
+Manage AppImage files for the LiquiDE client. These commands handle desktop integration, updates, and signature verification.
+
+#### `liquidctl appimage list`
+
+List integrated AppImage files.
+
+```bash
+$ liquidctl appimage list
+
+Name              Version   Path                                    Integrated
+LiquidClient      1.4.0     ~/Applications/LiquidClient-x86_64.AppImage   yes
+```
+
+#### `liquidctl appimage update [<app>] [--check]`
+
+Check for and apply AppImage updates using the AppImageUpdate delta mechanism.
+
+```bash
+$ liquidctl appimage update --check
+
+Available AppImage updates:
+  LiquidClient   1.3.2 → 1.4.0   (delta: 18 MB)
+
+$ liquidctl appimage update
+Downloading delta update for LiquidClient...
+  [===================>]  100%  (18 MB)
+Updated LiquidClient to 1.4.0.
+```
+
+#### `liquidctl appimage integrate <file>`
+
+Integrate an AppImage into the desktop (create `.desktop` entry and icon).
+
+```bash
+$ liquidctl appimage integrate ~/Downloads/LiquidClient-x86_64.AppImage
+
+Moving to ~/Applications/...
+Creating desktop entry...
+Extracting icon...
+Integrated LiquidClient (1.4.0). Available in application launcher.
+```
+
+#### `liquidctl appimage remove <app>`
+
+Remove an integrated AppImage and its desktop entry.
+
+#### `liquidctl appimage verify <file>`
+
+Verify the Ed25519 signature embedded in an AppImage.
+
+```bash
+$ liquidctl appimage verify ~/Applications/LiquidClient-x86_64.AppImage
+
+Signature: valid (signed by LiquiDE release key)
+Version:   1.4.0
+SHA-256:   a1b2c3d4e5f6...
+```
+
+---
+
+### 3.20 `liquidctl winget` — WinGet Package Management (Windows)
+
+Manage packages via Windows Package Manager (WinGet). These commands proxy to `winget.exe` with LiquiDE policy enforcement and structured output.
+
+#### `liquidctl winget search <query>`
+
+Search WinGet sources for packages.
+
+```powershell
+$ liquidctl winget search LiquiDE
+
+Name              ID                Version   Source
+LiquiDE Client    LiquiDE.Client    1.4.0     winget
+```
+
+#### `liquidctl winget install <id> [--silent] [--version <ver>] [--source <source>]`
+
+Install a package via WinGet.
+
+```powershell
+$ liquidctl winget install LiquiDE.Client
+Found LiquiDE Client [LiquiDE.Client] Version 1.4.0
+Starting package install...
+Successfully installed.
+
+$ liquidctl winget install LiquiDE.Client --silent --version 1.3.2
+Silently installing LiquiDE Client 1.3.2...
+Successfully installed.
+```
+
+#### `liquidctl winget remove <id>`
+
+Remove a package via WinGet.
+
+#### `liquidctl winget list [--source <source>]`
+
+List installed packages managed by WinGet.
+
+```powershell
+$ liquidctl winget list
+
+Name              ID                Version   Available   Source
+LiquiDE Client    LiquiDE.Client    1.3.2     1.4.0       winget
+```
+
+#### `liquidctl winget update [<id>] [--check] [--silent] [--all]`
+
+Update packages via WinGet.
+
+```powershell
+$ liquidctl winget update --check
+
+Available WinGet updates:
+  LiquiDE.Client   1.3.2 → 1.4.0
+
+$ liquidctl winget update LiquiDE.Client
+Upgrading LiquiDE Client (1.3.2 → 1.4.0)...
+Successfully installed.
+```
+
+Options:
+- `--all` — update all upgradeable packages.
+- `--silent` — suppress installer UI.
+
+#### `liquidctl winget info <id>`
+
+Show detailed package information from the WinGet manifest.
+
+```powershell
+$ liquidctl winget info LiquiDE.Client
+
+LiquiDE Client
+  ID:           LiquiDE.Client
+  Version:      1.4.0
+  Publisher:    LiquiDE Project
+  License:      MIT
+  Homepage:     https://liquide.dev
+  Installer:    MSI (x64, arm64)
+  Description:  High-performance remote desktop client
+```
+
+---
+
+### 3.21 `liquidctl chocolatey` — Chocolatey Package Management (Windows)
+
+Manage packages via Chocolatey. These commands proxy to `choco.exe` with LiquiDE policy enforcement and structured output.
+
+#### `liquidctl chocolatey search <query>`
+
+Search Chocolatey repositories for packages.
+
+```powershell
+$ liquidctl chocolatey search liquidclient
+
+Name              Version   Downloads   Description
+liquidclient      1.4.0     12,345      LiquiDE remote desktop client
+```
+
+#### `liquidctl chocolatey install <package> [-y] [--version <ver>] [--source <name>]`
+
+Install a Chocolatey package.
+
+```powershell
+$ liquidctl chocolatey install liquidclient -y
+Installing liquidclient 1.4.0...
+liquidclient v1.4.0 [Approved]
+liquidclient package files install completed. Performing other installation steps.
+The install of liquidclient was successful.
+
+$ liquidctl chocolatey install liquidclient --version 1.3.2 --source internal
+Installing liquidclient 1.3.2 from internal source...
+The install of liquidclient was successful.
+```
+
+#### `liquidctl chocolatey remove <package> [-y]`
+
+Remove a Chocolatey package.
+
+#### `liquidctl chocolatey list [--local-only]`
+
+List installed Chocolatey packages.
+
+```powershell
+$ liquidctl chocolatey list --local-only
+
+Name              Version
+liquidclient      1.4.0
+```
+
+#### `liquidctl chocolatey update [<package>] [--check] [-y] [--all]`
+
+Update Chocolatey packages.
+
+```powershell
+$ liquidctl chocolatey update --check
+
+Available Chocolatey updates:
+  liquidclient   1.3.2 → 1.4.0
+
+$ liquidctl chocolatey update liquidclient -y
+Upgrading liquidclient (1.3.2 → 1.4.0)...
+liquidclient v1.4.0 [Approved]
+The upgrade of liquidclient was successful.
+```
+
+Options:
+- `--all` — upgrade all outdated packages.
+- `-y` — skip confirmation prompts.
+
+#### `liquidctl chocolatey info <package>`
+
+Show detailed Chocolatey package information.
+
+#### `liquidctl chocolatey source-add <name> <url>`
+
+Add a Chocolatey package source.
+
+```powershell
+$ liquidctl chocolatey source-add internal https://choco.example.com/api/v2/
+Added source 'internal' (https://choco.example.com/api/v2/).
+```
+
+#### `liquidctl chocolatey source-remove <name>`
+
+Remove a Chocolatey package source.
+
+#### `liquidctl chocolatey source-list`
+
+List configured Chocolatey sources.
+
+```powershell
+$ liquidctl chocolatey source-list
+
+Name              URL                                          Enabled
+chocolatey        https://community.chocolatey.org/api/v2/    yes
+internal          https://choco.example.com/api/v2/           yes
+```
+
+---
+
+### 3.22 `liquidctl scoop` — Scoop Package Management (Windows)
+
+Manage packages via Scoop. These commands proxy to `scoop` with LiquiDE policy enforcement and structured output. Scoop installs are per-user (no admin required).
+
+#### `liquidctl scoop search <query>`
+
+Search Scoop buckets for packages.
+
+```powershell
+$ liquidctl scoop search liquidclient
+
+Name              Version   Bucket    Description
+liquidclient      1.4.0     extras    LiquiDE remote desktop client
+```
+
+#### `liquidctl scoop install <app> [--global]`
+
+Install a Scoop package.
+
+```powershell
+$ liquidctl scoop install liquidclient
+Installing liquidclient (1.4.0) [64bit] from extras bucket...
+Creating shim for 'liquidclient.exe'...
+'liquidclient' (1.4.0) was installed successfully!
+
+$ liquidctl scoop install liquidclient --global
+Installing liquidclient (1.4.0) globally...
+'liquidclient' (1.4.0) was installed successfully!
+```
+
+#### `liquidctl scoop remove <app> [--global]`
+
+Remove a Scoop package.
+
+#### `liquidctl scoop list`
+
+List installed Scoop packages.
+
+```powershell
+$ liquidctl scoop list
+
+Name              Version   Bucket    Updated
+liquidclient      1.4.0     extras    2025-02-01
+git               2.43.0    main      2025-01-15
+```
+
+#### `liquidctl scoop update [<app>] [--check] [--all]`
+
+Update Scoop packages.
+
+```powershell
+$ liquidctl scoop update --check
+
+Available Scoop updates:
+  liquidclient   1.3.2 → 1.4.0   (extras)
+
+$ liquidctl scoop update liquidclient
+Updating liquidclient (1.3.2 → 1.4.0)...
+'liquidclient' (1.4.0) was installed successfully!
+
+$ liquidctl scoop update --all
+Updating all packages...
+Updated 3 packages.
+```
+
+#### `liquidctl scoop info <app>`
+
+Show detailed Scoop package information.
+
+```powershell
+$ liquidctl scoop info liquidclient
+
+Name:         liquidclient
+Version:      1.4.0
+Bucket:       extras
+Website:      https://liquide.dev
+License:      MIT
+Installed:    ~/scoop/apps/liquidclient/1.4.0/
+Binaries:     liquidclient.exe
+Shortcuts:    LiquidClient (Desktop)
+```
+
+#### `liquidctl scoop bucket-add <name> [<url>]`
+
+Add a Scoop bucket.
+
+```powershell
+$ liquidctl scoop bucket-add liquide https://github.com/liquide/scoop-bucket
+Checking repo... OK
+The liquide bucket was added successfully.
+```
+
+#### `liquidctl scoop bucket-remove <name>`
+
+Remove a Scoop bucket.
+
+#### `liquidctl scoop bucket-list`
+
+List configured Scoop buckets.
+
+```powershell
+$ liquidctl scoop bucket-list
+
+Name          Source                                          Updated
+main          https://github.com/ScoopInstaller/Main         2025-02-08
+extras        https://github.com/ScoopInstaller/Extras       2025-02-07
+liquide       https://github.com/liquide/scoop-bucket        2025-02-05
+```
+
+#### `liquidctl scoop reset <app>[@<version>]`
+
+Reset a Scoop app to a specific version. Scoop keeps previous versions, enabling instant rollback.
+
+```powershell
+$ liquidctl scoop reset liquidclient@1.3.2
+
+Reset liquidclient:
+  Current: 1.4.0
+  Target:  1.3.2
+
+Proceed? [Y/n] y
+Reset liquidclient to 1.3.2.
+```
+
+---
+
 ## 4) Shell Completion
 
 `liquidctl` generates shell completions:
@@ -1489,3 +2221,41 @@ Use remote profiles: `liquidctl --server @prod sessions list`.
 - `liquidctl flatpak rollback` reverts to previous commit.
 - `liquidctl flatpak history` shows commit history with versions and dates.
 - `liquidctl flatpak gc` removes unused runtimes, `--dry-run` previews without acting.
+- `liquidctl brew search` returns matching formulae and casks from Homebrew.
+- `liquidctl brew install` installs formula/cask with dependency resolution.
+- `liquidctl brew update` upgrades installed packages, `--check` shows available only.
+- `liquidctl brew tap/untap` manages custom taps correctly.
+- `liquidctl brew pin/unpin` prevents and resumes automatic upgrades.
+- `liquidctl brew rollback` restores previous version.
+- `liquidctl snap search` returns matching snaps from the Snap Store.
+- `liquidctl snap install` installs snap with correct confinement, `--channel` selects track.
+- `liquidctl snap update` refreshes installed snaps, `--check` shows available only.
+- `liquidctl snap connections` lists interface connections accurately.
+- `liquidctl snap connect/disconnect` manages interface plugs correctly.
+- `liquidctl snap revert` rolls back to previous snap revision.
+- `liquidctl snap refresh-hold` defers automatic refresh for specified duration.
+- `liquidctl nix search` returns matching packages from nixpkgs.
+- `liquidctl nix install` installs package to profile, resolves dependencies.
+- `liquidctl nix update` upgrades installed packages or full profile.
+- `liquidctl nix rollback` reverts to previous profile generation.
+- `liquidctl nix gc` collects unused store paths.
+- `liquidctl nix develop` enters development shell with all deps.
+- `liquidctl appimage list` shows integrated AppImages with version info.
+- `liquidctl appimage update` downloads delta update, replaces AppImage in-place.
+- `liquidctl appimage integrate` creates desktop entry and icon.
+- `liquidctl appimage verify` checks Ed25519 signature and reports status.
+- `liquidctl winget search` returns matching packages from WinGet sources.
+- `liquidctl winget install` installs package, `--silent` suppresses UI.
+- `liquidctl winget update` upgrades packages, `--check` shows available only.
+- `liquidctl winget info` displays package metadata from manifest.
+- `liquidctl chocolatey search` returns matching packages from Chocolatey sources.
+- `liquidctl chocolatey install` installs package, `-y` skips confirmation.
+- `liquidctl chocolatey update` upgrades packages, `--check` shows available only.
+- `liquidctl chocolatey source-add/source-remove/source-list` manages sources correctly.
+- `liquidctl chocolatey info` displays package metadata and verification status.
+- `liquidctl scoop search` returns matching apps from Scoop buckets.
+- `liquidctl scoop install` installs app to user profile.
+- `liquidctl scoop update` upgrades apps, `--check` shows available only.
+- `liquidctl scoop bucket-add/bucket-remove/bucket-list` manages buckets correctly.
+- `liquidctl scoop reset` switches to a specific version of an app.
+- `liquidctl scoop info` displays app metadata and installed versions.

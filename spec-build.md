@@ -108,11 +108,20 @@ liquide/
 │   └── wallpapers/                 # default wallpapers
 │
 ├── packaging/                      # distribution packaging
-│   ├── deb/                        # Debian/Ubuntu packaging
-│   ├── rpm/                        # Fedora/RHEL packaging
+│   ├── deb/                        # Debian/Ubuntu packaging (.deb)
+│   ├── rpm/                        # Fedora/RHEL packaging (.rpm)
 │   ├── arch/                       # Arch Linux PKGBUILD
-│   ├── flatpak/                    # Flatpak manifest (for client)
-│   ├── docker/                     # Dockerfile / OCI container build
+│   ├── flatpak/                    # Flatpak manifest (client only)
+│   ├── snap/                       # Snapcraft recipe (client + server)
+│   ├── brew/                       # Homebrew formula (macOS + Linux)
+│   ├── nix/                        # Nix derivation + NixOS module
+│   ├── appimage/                   # AppImage recipe (client only, Linux)
+│   ├── winget/                     # WinGet manifest YAML (client, Windows)
+│   ├── chocolatey/                 # Chocolatey .nuspec + install scripts (client, Windows)
+│   ├── scoop/                      # Scoop JSON manifest (client, Windows)
+│   ├── msi/                        # WiX/MSI installer project (client, Windows)
+│   ├── dmg/                        # macOS .dmg + .pkg installer (client, macOS)
+│   ├── docker/                     # Dockerfile / OCI container build (server)
 │   ├── systemd/                    # systemd unit files
 │   └── fail2ban/                   # fail2ban jail configs
 │
@@ -377,7 +386,7 @@ Triggered on git tag `v*`.
 1. Full CI pipeline (all tests, all targets).
 2. Performance benchmark (`ci-release` suite, all workloads, all network profiles).
 3. Build release artifacts for all tier 1 + tier 2 targets.
-4. Build distribution packages (deb, rpm, Arch, Docker, Flatpak).
+4. Build distribution packages (deb, rpm, Arch, Flatpak, Snap, Homebrew, Nix, AppImage, WinGet, Chocolatey, Scoop, MSI, DMG, Docker).
 5. Generate changelog from git commits.
 6. Publish to release page with checksums (SHA-256).
 
