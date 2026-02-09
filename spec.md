@@ -1592,6 +1592,8 @@ When using TCP as the transport (either via `force_tcp = true` or as a fallback)
 - **`TCP_NODELAY` is enabled by default** on all interactive channels (P0–P5). The Nagle algorithm batches small writes into full MSS-sized segments, adding up to 200ms of latency on partial sends — unacceptable for input, cursor, and audio traffic that requires sub-millisecond send latency.
 - **Optional Nagle for bulk (P6):** file transfers, clipboard sync, and other bulk operations MAY re-enable Nagle (`transport.tcp.nagle_bulk = true`) to improve throughput. When enabled, bulk channel writes are batched into full MSS segments before transmission, improving goodput on high-bandwidth transfers.
 
+**Nagle as RTT-adaptive batching:** Nagle's algorithm flushes pending data when an ACK arrives from the peer — effectively batching small writes with a timer equal to one RTT. On a LAN (1ms RTT), Nagle adds ~1ms of batching delay; on a WAN (100ms RTT), it adds ~100ms. This makes Nagle an **RTT-adaptive batching mechanism** that automatically trades latency for throughput proportional to the link's round-trip time. For bulk P6 transfers, this is desirable: the batching delay is dominated by the network transit time anyway, and the throughput gain from full MSS segments is significant (up to 40× fewer packets for small-write workloads). For interactive channels (P0–P5), where the goal is sub-RTT delivery, Nagle is counterproductive and MUST remain disabled.
+
 **TCP_CORK for Batch Assembly:**
 - During tile batch assembly, the socket is **corked** (`TCP_CORK` / `TCP_NOPUSH`) at batch start and **uncorked** at batch end. This ensures that multiple small tile updates within a single batch are coalesced into fewer TCP segments without the latency penalty of Nagle's timer. On platforms where `TCP_CORK` is unavailable (Windows, macOS), the writer thread manually coalesces tile batch data into a single `writev()` / `WSASend()` call.
 
@@ -1665,6 +1667,33 @@ The transport I/O subsystem connects logical channel queues to the underlying wi
 | **Transport writer** | 1 per connection | Polls all per-channel send queues in priority order (P0→P6), serializes frames, writes to transport. Implements the pacing algorithm from §7d. Applies TCP_CORK during tile batch assembly (§8d). |
 | **Channel workers** | 1 per active channel | Per-channel async tasks that consume from receive queues and produce into send queues. Each task holds a `CancellationToken` — on session teardown, all tasks are cancelled cooperatively. |
 
+#### Writer Thread Scheduling Modes
+
+The transport writer thread operates in one of three **scheduling modes**, switching dynamically based on channel queue state:
+
+| Mode | Trigger | OS Scheduling | Behavior |
+|------|---------|---------------|----------|
+| **Idle** | All send queues empty for > 50ms | `SCHED_OTHER` (normal), `epoll_wait` / `io_uring_enter` with infinite timeout | Thread parks completely — zero CPU. Woken by queue push notification (eventfd / futex). |
+| **Normal** | Any send queue non-empty, P0–P2 queues empty | `SCHED_OTHER`, 1ms pacing tick (timer_fd / `tokio::time::interval`) | Standard pacing algorithm (§7d). Drains queues P0→P6 per tick. |
+| **Priority** | P0 (emergency) or P1 (input) queue has pending data | `SCHED_FIFO` or `SCHED_RR` (priority 40), busy-poll with `sched_yield()` between iterations | Sub-100µs drain latency for emergency and input. Writer does not sleep between iterations — it polls P0/P1 queues in a tight loop until drained, then demotes to Normal. |
+
+**Mode transitions:**
+- Idle → Normal: any channel worker pushes a frame into a send queue (eventfd notification).
+- Normal → Priority: reader thread or channel worker pushes into P0 or P1 queue. Writer is interrupted via an atomic flag (checked at top of each pacing tick).
+- Priority → Normal: P0 and P1 queues are empty after drain. Writer releases RT scheduling class.
+- Normal → Idle: all queues remain empty for 50ms (configurable: `transport.idle_park_delay_ms`).
+- **RT scheduling fallback**: if `SCHED_FIFO` is unavailable (container without `CAP_SYS_NICE`), Priority mode uses `SCHED_OTHER` with `nice -10` and busy-poll. Metric: `liquide_transport_writer_rt_unavailable` (counter, emitted once at session start).
+- **CPU isolation**: on systems with ≥ 4 cores, the writer thread is pinned to a dedicated core via `sched_setaffinity` (configurable: `transport.writer_cpu_affinity`). This prevents scheduler jitter from other session threads affecting write latency.
+
+```toml
+[transport.writer]
+idle_park_delay_ms = 50           # ms before parking writer thread
+priority_mode_scheduling = "auto" # "auto" | "fifo" | "rr" | "nice" | "normal"
+cpu_affinity = "auto"             # "auto" | specific CPU id | "none"
+```
+
+**Metrics:** `liquide_transport_writer_mode{mode="idle|normal|priority"}` (gauge, current mode). `liquide_transport_writer_mode_transitions_total{from="...",to="..."}` (counter).
+
 #### Transport Proxy Layer
 
 The proxy layer bridges transport-specific semantics to a uniform logical channel interface:
@@ -1687,6 +1716,40 @@ All transport read/write operations use `tokio::io::AsyncRead` / `AsyncWrite` wi
 #### Virtual Channel Multiplexing
 
 Plugin-defined virtual channels (channel IDs 0xF0+) route through the same bridge infrastructure. Plugin I/O is rate-limited (`plugin.max_channel_bandwidth = 1 Mbps` default) and sandboxed — a misbehaving plugin cannot monopolize the writer thread or starve interactive channels.
+
+#### Send Buffer Pool & Allocation Priority
+
+The writer thread allocates outgoing frame buffers from a **pre-allocated send buffer pool** rather than `malloc`-per-frame. This eliminates allocation jitter and enables strict memory caps on transport-layer buffering.
+
+**Pool configuration:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `transport.sendbuf_pool_size` | 8 MB | Total pool size per connection |
+| `transport.sendbuf_pool_slab_sizes` | `[128, 1024, 8192, 65536]` | Slab size classes (bytes). Frames pick the smallest slab that fits. |
+| `transport.sendbuf_pool_reserved_control` | 256 KB | Reserved exclusively for P0–P4 (emergency, input, cursor, audio, control). Data channels (P5–P6) cannot allocate from this reserved region. |
+
+**Allocation priority (normative):**
+1. P0–P4 frames (emergency, input, cursor, audio, control) allocate from the **reserved region first**, then from the general pool. Allocation NEVER fails for P0–P4 — if the reserved region and general pool are both exhausted, the writer thread blocks P5–P6 senders and waits for pool reclamation (buffers recycled after transport ACK or send completion).
+2. P5 frames (video/tile) allocate from the general pool. If the pool is exhausted, allocation blocks until buffers are recycled. The encoder thread's backpressure signal (§7d step 7) propagates — the encoder pauses frame production when the send buffer pool is >80% utilized.
+3. P6 frames (bulk) allocate from the general pool with lowest priority. Under memory pressure (pool >90% utilized), P6 allocation is suspended entirely — bulk transfers pause.
+4. **Reclamation**: send buffers are returned to the pool immediately after the OS acknowledges the send (TCP ACK for reliable, send-completion for QUIC/UDP). On QUIC, the pool integrates with the QUIC stack's flow control — buffers are held until the QUIC send window advances.
+
+**Normative rule — control-flush-before-data:** when the general pool hits the 80% utilization threshold, the writer thread MUST drain all P0–P4 queues completely before allocating any buffer for P5–P6 frames. This guarantees that a burst of video/tile data cannot prevent control messages from being sent, even under extreme memory pressure.
+
+**Metrics:**
+- `liquide_sendbuf_pool_utilization` (gauge, 0.0–1.0) — current pool utilization.
+- `liquide_sendbuf_pool_reserved_utilization` (gauge) — reserved region utilization.
+- `liquide_sendbuf_pool_stalls_total{priority="p5|p6"}` (counter) — times allocation blocked waiting for reclamation.
+
+```toml
+[transport.sendbuf_pool]
+size = 8388608                     # 8 MB total pool
+slab_sizes = [128, 1024, 8192, 65536]
+reserved_control = 262144          # 256 KB reserved for P0-P4
+backpressure_threshold = 0.8       # signal encoder at 80%
+suspend_bulk_threshold = 0.9       # suspend P6 at 90%
+```
 
 ### Capture / Render
 - Damage tracking at surface + tile level.
@@ -2298,6 +2361,100 @@ USB/IP device forwarding in Tier 3 mode runs through a dedicated broker process 
 | Citrix/VMware | USB device filtering by VID/PID/class | Tier-based filtering + device broker isolation |
 
 Cross-references: [spec-threat-model.md](spec-threat-model.md) T-24 through T-28, [spec-system.md](spec-system.md) §6.5a USB Broker Service.
+
+### Device Redirection Channel
+
+LiquiDE provides a **unified device redirection channel** for forwarding peripheral devices from the client to the session. Rather than assigning a separate channel ID per device class, device traffic is multiplexed over a single logical channel using **typed sub-protocols** — similar in spirit to Microsoft's RDPDR (Remote Desktop Protocol Device Redirection) but with a modern CBOR-based wire format.
+
+#### Channel Assignment
+
+Device redirection shares the USB/IP channel (`0x40`) and uses a sub-protocol discriminator in the message header to route traffic to the correct device class handler.
+
+#### Device Classes & Sub-Protocols
+
+| Class ID | Device Class | Sub-Protocol | Transport | Notes |
+|----------|-------------|-------------|-----------|-------|
+| `0x01` | **Filesystem** | FUSE-over-wire (open/read/write/stat/readdir) | Reliable, ordered | Client directories mounted via FUSE in session namespace |
+| `0x02` | **Printer** | IPP/PDF job submission | Reliable, ordered | Uses CUPS virtual printer on server (see §Remote Printing) |
+| `0x03` | **Serial port** | Byte-stream relay (open/close/read/write/ioctl) | Reliable, ordered | Virtual serial device in session (`/dev/ttyVUSB0`) |
+| `0x04` | **Smart card** | PC/SC APDU relay (see §USB Tier 2) | Reliable, ordered | Virtual PC/SC reader via `pcscd` IPC |
+| `0x05` | **Raw USB** | USB/IP device-level (see §USB Tier 3) | Reliable, ordered | Kernel VHCI import. Policy-gated. |
+| `0x06–0x0F` | Reserved | — | — | Future device classes |
+| `0x10–0xFF` | Vendor | Vendor-defined | Per-vendor | Negotiated via `Capabilities` with `vendor.<id>.device_class` |
+
+#### Message Structure
+
+All device redirection messages share a common envelope:
+
+```cddl
+DeviceRedirectionMsg = {
+    0: uint,                         ; class_id (device class, see table above)
+    1: uint,                         ; device_instance (client-assigned, unique per class)
+    2: uint,                         ; pdu_type (class-specific PDU type code)
+    3: bstr,                         ; payload (class-specific CBOR or raw bytes)
+    ? 4: uint,                       ; request_id (for request/response correlation)
+}
+```
+
+#### Capability Announcement
+
+Device classes are negotiated per-session via the `Capabilities` message:
+
+```cddl
+; Example: client announces filesystem + printer + smartcard
+Capabilities = {
+    action: "advertise",
+    capabilities: {
+        "device_redirect": true,
+        "device_redirect.filesystem": { version: 1, max_open_files: 256 },
+        "device_redirect.printer": { version: 1, ipp_version: "2.0" },
+        "device_redirect.smartcard": { version: 1, max_readers: 4 },
+    }
+}
+```
+
+The server confirms only the classes that policy allows and the session supports. Unconfirmed classes are unavailable.
+
+#### Filesystem Sub-Protocol (Class 0x01)
+
+Client-local directories are exposed to the session via a **FUSE filesystem** that proxies I/O operations over the device channel:
+
+| PDU Type | Name | Direction | Description |
+|----------|------|-----------|-------------|
+| `0x01` | `FsOpen` | S → C | Open file (path, flags, mode) |
+| `0x02` | `FsOpenResult` | C → S | File handle or error |
+| `0x03` | `FsRead` | S → C | Read (handle, offset, length) |
+| `0x04` | `FsReadResult` | C → S | Data or error |
+| `0x05` | `FsWrite` | S → C | Write (handle, offset, data) |
+| `0x06` | `FsWriteResult` | C → S | Bytes written or error |
+| `0x07` | `FsStat` | S → C | Stat (path) |
+| `0x08` | `FsStatResult` | C → S | File attributes |
+| `0x09` | `FsReadDir` | S → C | List directory entries |
+| `0x0A` | `FsReadDirResult` | C → S | Entry list |
+| `0x0B` | `FsClose` | S → C | Close file handle |
+| `0x0C` | `FsNotify` | C → S | File change notification (inotify-style) |
+
+**Security**: the client enforces access control — the server can only access paths that the user has explicitly shared. Path traversal beyond shared roots is rejected by the client. DLP policy on the server side can restrict read/write access, block specific file extensions, or limit transfer sizes.
+
+#### Printer Sub-Protocol (Class 0x02)
+
+Integrates with the Remote Printing architecture (§Remote Printing). The device channel carries:
+- `PrinterAnnounce`: client advertises available local printers (name, capabilities, driver).
+- `PrintJobSubmit`: server sends PDF print job to client.
+- `PrintJobStatus`: client reports job status (spooling, printing, complete, error).
+- `PrinterRemoved`: client printer disconnected.
+
+This replaces the ad-hoc print-over-file-transfer path for native clients that support the device redirection channel. RDP clients continue using standard RDPDR printer sub-channel.
+
+#### Serial Port Sub-Protocol (Class 0x03)
+
+Byte-stream relay for serial devices (RS-232, USB-serial adapters):
+- `SerialOpen`: open port (baud, parity, stop bits, flow control).
+- `SerialData`: bidirectional byte stream chunks.
+- `SerialIoctl`: control signals (DTR, RTS, break).
+- `SerialClose`: close port.
+
+The session sees a virtual serial device (`/dev/ttyVUSB<n>`) created by a userspace serial emulator that proxies to the device channel.
 
 ### Remote Printing
 

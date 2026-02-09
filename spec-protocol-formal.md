@@ -41,6 +41,68 @@ The LiquiDE protocol is a **multiplexed, multi-channel binary protocol** designe
 
 ---
 
+## 2.5) Protocol Stack Layering
+
+The LiquiDE protocol is organized into four **stack layers**, each with well-defined responsibilities and interfaces. This layering enables clean separation between transport concerns, framing, channel semantics, and message encoding.
+
+### Layer Model
+
+```
+┌──────────────────────────────────────────────┐
+│  Layer 4: Message Layer                      │
+│  CBOR-encoded typed payloads                 │
+│  (ClientHello, FrameHeader, TileBatch, ...)  │
+├──────────────────────────────────────────────┤
+│  Layer 3: Channel Layer                      │
+│  Logical channels, state machines,           │
+│  ordering guarantees, flow control           │
+├──────────────────────────────────────────────┤
+│  Layer 2: Framing Layer                      │
+│  Frame header (§4), fragmentation,           │
+│  compression, CRC, sequence numbers          │
+├──────────────────────────────────────────────┤
+│  Layer 1: Transport Layer                    │
+│  TLS 1.3, DTLS 1.3, QUIC, WebSocket         │
+│  Connection setup, encryption, multiplexing  │
+└──────────────────────────────────────────────┘
+```
+
+| Layer | Input | Output | Responsibilities |
+|-------|-------|--------|-----------------|
+| **L1 — Transport** | Raw network bytes | Decrypted byte stream or datagrams | TLS/DTLS handshake, encryption, connection management, transport-level multiplexing (QUIC streams). |
+| **L2 — Framing** | Byte stream / datagrams | Typed frames with headers | Frame delimitation (magic + length), sequence numbering, optional CRC-32C, compression/decompression, fragmentation/reassembly. |
+| **L3 — Channel** | Typed frames | Ordered/filtered messages per channel | Channel lifecycle (open/close/suspend/resume), per-channel ordering, duplicate detection, flow control windows, backpressure signaling. |
+| **L4 — Message** | Channel-dispatched frames | Decoded CBOR structures | CBOR decode/encode, schema validation, semantic dispatch to subsystem handlers (compositor, input injector, audio pipeline, etc.). |
+
+**Layer boundary contracts:**
+- L1→L2: L1 delivers complete TLS records or QUIC frames. L2 never sees partial TLS records.
+- L2→L3: L2 delivers complete, decompressed, reassembled frames with verified CRC (if present). L3 never sees fragments or compressed data.
+- L3→L4: L3 delivers frames in per-channel order with duplicates suppressed. L4 never sees out-of-order or duplicate messages.
+- Downward (L4→L1): each layer adds its own header/framing. L4 produces CBOR bytes → L3 assigns channel_id and sequence → L2 adds frame header, optional compression, optional CRC → L1 encrypts and transmits.
+
+### Channel Classes
+
+Channels are divided into three **classes** based on their lifecycle and allocation rules:
+
+| Class | Channels | Allocation | Characteristics |
+|-------|----------|-----------|----------------|
+| **Fixed** | Control (0x00), Emergency (0x01), Input (0x50), Cursor (0x11) | Always present. Opened implicitly during handshake. Cannot be closed by either peer. | Core protocol channels required for session operation. Fixed channel IDs are frozen per §15.1. |
+| **Standard** | Video (0x10), Tile (0x12), Audio (0x20/0x21), Clipboard (0x30), File Transfer (0x31), USB/Device (0x40), Camera (0x60) | Opened on demand via `ChannelOpen`/`ChannelOpenAck`. Subject to capability negotiation (§12.1). May be closed and reopened during session. | Feature channels that activate based on negotiated capabilities and policy. Standard channel IDs are frozen per §15.1. |
+| **Virtual** | Plugin IPC (0xF0+) | Dynamically allocated from the virtual channel range (0xF0–0xFE). Opened via `ChannelOpen` with a `plugin_id` parameter. | Plugin-defined channels for third-party extensions. Subject to virtual channel slot limits (see below). |
+
+### Virtual Channel Slot Cap
+
+The protocol enforces a **hard limit of 15 virtual channel slots** (channel IDs 0xF0 through 0xFE; 0xFF is reserved for internal use). This cap prevents resource exhaustion from runaway plugin channel allocation:
+
+- Each virtual channel consumes: one per-channel queue (bounded per §7d queue architecture), one channel worker async task, and send buffer pool allocation.
+- `ChannelOpen` for a virtual channel MUST be rejected with `ChannelOpenReject` (reason: `virtual_channel_limit`) if 15 virtual channels are already active.
+- Virtual channels that are `Suspended` still count against the limit. Only `Closed` channels release their slot.
+- Configurable: `transport.max_virtual_channels = 15` (range: 1–15, cannot exceed 15 due to channel ID space).
+
+**Metrics:** `liquide_virtual_channels_active` (gauge), `liquide_virtual_channel_opens_rejected_total` (counter).
+
+---
+
 ## 3) Channel Architecture
 
 ### 3.1 Channel Table
