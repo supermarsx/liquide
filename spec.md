@@ -2670,6 +2670,21 @@ paper_size = "auto"                      # auto (from region), a4, letter
   - Notification slide direction reverses (enters from left instead of right).
 - **Mixed BiDi content** is handled within text fields using the Unicode Bidirectional Algorithm (UBA).
 - CSS logical properties are used throughout the DE shell (e.g., `margin-inline-start` instead of `margin-left`) so layouts adapt automatically.
+- **Compositor-level mirroring**: when the primary locale is RTL, the compositor mirrors all window chrome (close/min/max buttons swap sides), dock layout, and status bar automatically. Application content is never mirrored — only shell-level UI managed by the compositor.
+
+### UI Translation Pipeline
+
+All user-facing strings in the shell UI (dock, status bar, settings, dialogs, notifications) are externalized using **Project Fluent** (`.ftl` files), the same system described above. The translation workflow:
+
+| Step | Description |
+|------|-------------|
+| **Source strings** | Maintained in `i18n/en-US/liquide.ftl` as the canonical source. |
+| **Community translations** | Submitted via standard pull request workflow. Each locale has its own `.ftl` file: `i18n/<locale>/liquide.ftl`. |
+| **Fallback chain** | User locale → language without country code (e.g., `fr-FR` → `fr`) → `fallback_locale` (default: `en-US`). Missing keys fall back silently — no blank strings. |
+| **Pluralization** | Handled natively by Fluent's plural category selectors (`one`, `two`, `few`, `many`, `other`) per CLDR rules. |
+| **RTL-aware formatting** | Fluent messages use Unicode directional isolates (FSI/PDI) for embedded LTR text within RTL strings (e.g., filenames, URLs). |
+| **Build-time validation** | CI validates all `.ftl` files for syntax errors and missing placeholders. A Fluent linter rejects translations that drop required variables. |
+| **Runtime reload** | Translation files can be updated without session restart via `liquidctl i18n reload`. New strings take effect on the next UI render cycle. |
 
 ### Font Support
 
@@ -2945,6 +2960,50 @@ deny_4k_below_cores = 8                 # deny 4K resolution if host has < N cor
 deny_60fps_below_cores = 4              # force 30fps cap if host has < N cores
 ```
 
+#### Capacity Planning Formulas
+
+The admission control rules above enforce runtime limits. These formulas help administrators **size hardware before deployment**:
+
+**Per-session resource cost model:**
+
+```
+CPU_session   = CPU_compose + CPU_encode + CPU_io + CPU_audio
+BW_session    = (fps × avg_tile_bytes × damage_ratio) + audio_bps + control_overhead
+RAM_session   = (framebuf × 2) + glyph_atlas + shadow_cache + compress_scratch + channel_queues
+```
+
+**Reference costs per workload profile (measured on 8-core x86_64 AVX2 reference system):**
+
+| Workload Profile | CPU (p50 / p95 cores) | RAM (p50 / p95 MB) | Bandwidth (p50 / p95 Mbps) |
+|-----------------|----------------------|--------------------|-----------------------------|
+| **idle** | 0.01 / 0.02 | 95 / 100 | 0 / 0.01 |
+| **text-editing** | 0.25 / 0.40 | 170 / 190 | 0.3 / 1.0 |
+| **web-browsing** | 0.90 / 1.40 | 230 / 270 | 3.5 / 8.0 |
+| **document** | 0.30 / 0.50 | 180 / 200 | 0.5 / 2.0 |
+| **desktop-workflow** | 0.80 / 1.20 | 250 / 300 | 3.0 / 6.0 |
+| **video-playback** | 1.50 / 2.00 | 200 / 240 | 8.0 / 15.0 |
+
+**Sizing formula:**
+
+```
+max_sessions = floor((host_cores - reserved_cores) / p95_cpu_per_session)
+             = min(max_sessions_cpu, floor((host_ram_mb - reserved_ram_mb) / p95_ram_per_session))
+             = min(above, floor(host_bandwidth_mbps / p95_bw_per_session))
+```
+
+**Quick-reference sizing (office workload: 70% text-editing/document, 30% web-browsing):**
+
+| Host Configuration | Max Sessions (p95) | Notes |
+|-------------------|--------------------|----|
+| 8 cores / 32 GB | 6 | Budget server. Mixed workloads. |
+| 16 cores / 64 GB | 14 | Typical 1U server. |
+| 32 cores / 128 GB | 28 | Standard rack server. |
+| 64 cores / 256 GB | 55 | Dense deployment. |
+
+All figures include **20% CPU headroom** for reconnect storms (multiple clients reconnecting simultaneously after a network event) and **30% memory headroom** for transient allocation spikes. GPU-accelerated deployments can support approximately 2x the session count for video-heavy workloads by offloading encoding.
+
+See [spec-performance.md §7a](spec-performance.md) for a detailed capacity planning reference with benchmark-derived data.
+
 **Auto-downgrade under host pressure:**
 
 When the host is under sustained CPU pressure (>85% total CPU for >10 seconds), the supervisor applies progressive downgrades to existing sessions:
@@ -3108,6 +3167,34 @@ When a user authenticates and has existing sessions:
 - If `session.auto_resume = true` (default) and only one session exists, the client automatically resumes it (no selection screen).
 - If multiple sessions exist, the selection screen is shown.
 - If policy `session.max_per_user` would be exceeded, the "Start New Session" option is disabled.
+
+#### Session Migration vs. Reconnect-to-Restart
+
+"Roaming" in LiquiDE means: **the same live session state, accessed from a new transport endpoint**. It does NOT mean "same user profile, new session."
+
+| Capability | v1.0 | v2.0+ (Roadmap) |
+|-----------|------|-----------------|
+| **Reconnect-to-same-process** | Yes | Yes |
+| Mechanism | Resume token (see §14a Resume Protocol). Client connects from new IP/transport, presents token, session transitions from Disconnected → Running. | Same |
+| Latency | Sub-second (token validation + first IDR frame) | Same |
+| State preserved | Everything (session process was alive the entire time) | Everything |
+| **Live migration (server-to-server)** | No | Planned |
+| Mechanism | N/A | CRIU checkpoint on source, transfer to destination with shared storage, restore. Requires D2 durability tier (see Session Durability Contract). |
+| Prerequisite | N/A | Shared filesystem (NFS/Ceph) for session state, CRIU Wayland support, gateway-level migration orchestration |
+
+**v1.0 policy**: roaming is always reconnect-to-same-process on the same server. If the server is unreachable, the client cannot resume — it must wait for the server to recover or start a new session elsewhere. The gateway does not migrate sessions between servers; it only routes new connections.
+
+#### Seamless Windows Mode Survivability
+
+When the client is operating in seamless windows mode (remote windows rendered as native OS windows) and a network disconnect occurs:
+
+| Phase | Client Behavior | Server Behavior |
+|-------|----------------|-----------------|
+| **Disconnect detected** | Each native OS window freezes on its last rendered frame. A translucent "Reconnecting..." overlay appears on each window (50% opacity, centered text). | Session enters Disconnected state. Applications continue running. Compositor continues rendering (output is buffered, not sent). |
+| **During reconnect attempts** | Overlay updates with attempt count and countdown timer. Windows remain interactive at the OS level (can be moved, minimized, but content is frozen). User can still interact with local OS UI. | No change. Session is alive but has no connected client. |
+| **Reconnect succeeds** | Overlay fades out (200ms). Each window reconciles with server state: geometry (position, size) is updated to match server (server wins if geometry changed during disconnect — e.g., another client in mirror mode resized a window). Content updates via tile/video stream resume. | Session transitions to Running. First frame is IDR (keyframe). Damage for the entire screen is flagged (full refresh). |
+| **Z-order reconciliation** | Best-effort: server sends the current Z-order, client reorders native windows. If the OS window manager has changed Z-order locally (user brought a local app to front), the local order takes precedence for non-LiquiDE windows. | Window tree is authoritative. Client-side Z-order is advisory. |
+| **Reconnect fails (timeout)** | All seamless windows show "Session disconnected" overlay. User can click "Reconnect" (retry) or "Close" (terminate session). Closing a seamless window does NOT close the remote application — it only closes the local proxy window. | Session remains in Disconnected state until `disconnect_timeout_sec` expires, then terminates. |
 
 #### Session Resume Protocol
 
@@ -3282,6 +3369,52 @@ crash_log_lines = 100
 safe_mode_after_restart = 3          # enter safe mode after 3rd restart
 plugin_quarantine_enabled = true
 ```
+
+### Session Durability Contract
+
+LiquiDE makes an explicit, versioned commitment about what happens when things go wrong. This contract defines what users and administrators can expect regarding session state preservation.
+
+#### Durability Tiers
+
+| Tier | Name | Ship Target | Description |
+|------|------|-------------|-------------|
+| **D1** | Crash-only restart | v1.0 | Session process restarts from scratch. Applications are relaunched but lose in-flight state. User profile, saved files, and configuration are preserved (they live on disk, not in process memory). |
+| **D2** | Stateful migration | v2.0+ | Live session migration between servers. Requires shared storage (NFS/Ceph) for session state and CRIU for process checkpoint. |
+| **D3** | Application checkpoint/restore | v2.0+ | Individual application state is checkpointed to disk and restored after crash or migration. Depends on CRIU integration and application cooperation. |
+
+**v1.0 ships Tier D1 only.** This is an explicit product decision: crash-only restart is well-understood, testable, and avoids the complexity of stateful migration. Tiers D2 and D3 are roadmap items gated on CRIU maturity and shared-storage prerequisites.
+
+#### State Preservation Matrix (Tier D1 — Crash-Only Restart)
+
+| State Category | Preserved Across Restart? | Mechanism | Notes |
+|---------------|--------------------------|-----------|-------|
+| User files (`~/`) | Yes | Filesystem (survives process death) | No data loss for saved work |
+| Configuration (server.toml, policies) | Yes | Filesystem | Reloaded on restart |
+| Compositor window list | Best-effort | `session-state.json` written on clean shutdown, crash-recovery snapshot every 60s | Window positions and Z-order restored approximately; application must re-render content |
+| Application PIDs / process tree | No | Lost on process death | Applications are relaunched by the compositor (if `auto_relaunch = true` in session config); unsaved in-app state is lost |
+| Clipboard content | No | In-memory only | Clipboard is empty after restart |
+| Audio pipeline state | No | Re-initialized on restart | Brief silence during restart; audio resumes automatically |
+| USB device attachments | No | Devices detached on session death | User must re-forward devices; auto-forward rules can restore previously-approved devices |
+| Resume token | Yes | Stored in supervisor (survives session crash) | Client can resume to the restarted session without re-authentication |
+| Plugin state | Best-effort | Plugins with `persist_state = true` write to `~/.local/share/liquide/plugins/<id>/state.json` | Plugin decides what to persist; framework provides the storage API |
+
+#### User-Visible Behavior on Crash
+
+1. Client shows crash screen (see §25) within 500ms of crash detection.
+2. Supervisor restarts session per restart policy (immediate on first crash).
+3. Client auto-resumes via resume token (no re-authentication required).
+4. Desktop shell relaunches. Previously-open applications are relaunched if `session.auto_relaunch = true`.
+5. User sees their desktop restored with windows approximately in their previous positions.
+6. **Unsaved work in applications is lost** — this is stated explicitly so users and administrators have correct expectations.
+
+#### Roadmap Gate for D2/D3
+
+Stateful migration (D2) and application checkpoint/restore (D3) will be considered when:
+- CRIU (Checkpoint/Restore in Userspace) supports Wayland compositors reliably.
+- A shared storage backend (NFS, Ceph, or similar) is validated for session state.
+- The performance overhead of periodic checkpointing is measured and fits within the CPU budget (see [spec-performance.md §2.3b](spec-performance.md)).
+
+Until then, LiquiDE's durability story is: **disconnect does not destroy work (session stays alive for `disconnect_timeout_sec`), but crash-and-restart does lose unsaved in-app state.**
 
 ### State & Storage Contract
 
@@ -6425,6 +6558,16 @@ audit = "info"                         # always at least "info"
 - **Audit log immutability**: audit logs are append-only, with HMAC integrity verification.
 - **Sensitive data redaction**: passwords, tokens, and keys are never logged; clipboard content is hashed, not stored.
 - **Performance**: logging is async and uses lock-free buffers — logging never blocks the render/encode pipeline.
+
+**Enterprise Observability & Operations Cross-References**
+
+For pre-built operational tooling mapped to the SLOs in [spec-performance.md](spec-performance.md):
+
+- **Golden dashboards** (8 Grafana panels: session health, input-to-photon, frame rate, transport health, audio health, degradation, CPU/memory, encode efficiency) — see [spec-observability.md §5a](spec-observability.md).
+- **SLO-mapped alert rules** (7 Prometheus alerting rules with runbook links) — see [spec-observability.md §5a](spec-observability.md).
+- **Certificate lifecycle automation** (ACME integration, renewal, zero-downtime rotation) — see [spec-manager.md §6b](spec-manager.md).
+- **Policy versioning, staged rollout & canary** (version tracking, 3-stage rollout, SLO-based auto-rollback) — see [spec-manager.md §5](spec-manager.md).
+- **Backup & disaster recovery** (RPO/RTO targets, automated backup, restore procedures) — see [spec-manager.md §6a](spec-manager.md).
 
 ### Admin Tools
 - See [spec-liquidctl.md](spec-liquidctl.md) for the full `liquidctl` CLI specification.
