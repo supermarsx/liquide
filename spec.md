@@ -773,11 +773,54 @@ LiquiDE provides server-side color management for accurate rendering. The design
   - The **client** is responsible for applying its own display ICC profile (monitor calibration). This is outside LiquiDE's control — it depends on the client OS and display hardware.
   - The client config includes `color.profile_hint` to inform the server of the client's display characteristics (gamut, white point). The server can use this to optimize rendering, but it is informational only.
 
-- **HDR (High Dynamic Range)**:
-  - HDR is **not** supported in the initial release.
-  - The compositor renders in SDR (8-bit per channel, sRGB/rec.709 gamut).
-  - Future HDR support would require: HDR-capable codec profiles (H.265 Main 10, AV1 with HDR10 metadata), PQ/HLG transfer functions, and HDR-aware compositing.
-  - Config placeholder: `display.hdr = false` (reserved for future use).
+- **Color Pipeline Modes**:
+
+  LiquiDE supports three color pipeline modes, negotiated during session startup between client capabilities and server configuration. The default is SDR-sRGB for backward compatibility; wide color gamut (WCG) and HDR are opt-in.
+
+  | Pipeline Mode | Internal Precision | Compositing Gamut | Output Bit Depth | Transfer Function | Codec Requirements |
+  |--------------|-------------------|-------------------|------------------|-------------------|--------------------|
+  | **SDR-sRGB** (default) | 8-bit per channel | sRGB / BT.709 | 8 bpc | sRGB gamma | All codecs (baseline profiles) |
+  | **WCG-SDR** | 16-bit or float32 | Display-P3 or Rec.2020 | 10 bpc | sRGB gamma | H.265 Main 10, AV1 10-bit, VP9 Profile 2 |
+  | **HDR** | float32 | Rec.2020 | 10 or 16 bpc | PQ (ST 2084) or HLG | H.265 Main 10, AV1 10-bit, VP9 Profile 2 |
+
+  SDR-sRGB is the lowest-cost path and the only mode guaranteed on all hardware. WCG-SDR and HDR require 10-bit codec profiles, which may require hardware encoder support for real-time performance. H.264 does not support 10-bit encoding in its standard profiles and is unavailable in WCG/HDR modes. See [spec-rendering-software.md](spec-rendering-software.md) §3.3 for the full compositing pipeline specification.
+
+  The active pipeline mode is determined by intersecting the client's `color.supported_modes` (sent in `ClientHello`) with the server's `display.color.pipeline_mode` configuration. If no match exists, the server falls back to SDR-sRGB.
+
+- **Deep Color Pixel Formats**:
+
+  | Format | Bits Per Pixel | Bit Layout | Use Case |
+  |--------|---------------|------------|----------|
+  | `rgb888` | 24 | 8R + 8G + 8B | SDR tile mode (default) |
+  | `rgba8888` | 32 | 8R + 8G + 8B + 8A | SDR tile mode with alpha |
+  | `rgb565` | 16 | 5R + 6G + 5B | Low-bandwidth SDR tile mode |
+  | `rgb101010` | 32 | 10R + 10G + 10B + 2 pad | WCG/HDR tile mode (10-bit) |
+  | `rgba1010102` | 32 | 10R + 10G + 10B + 2A | WCG/HDR tile mode with 2-bit alpha |
+  | `rgba16161616` | 64 | 16R + 16G + 16B + 16A | HDR mastering/production (16-bit) |
+
+  The pixel format for tile-mode encoding is negotiated during the tile channel setup (`TileConfig.pixel_format`). The server selects the format based on the active pipeline mode and the client's `color.supported_pixel_formats` capability. SDR sessions always use `rgb888`/`rgba8888`. WCG and HDR sessions use `rgb101010` or `rgba1010102` by default.
+
+- **HDR Metadata Passthrough**:
+
+  When the HDR pipeline mode is active, the compositor attaches HDR metadata to the encoded video stream:
+
+  | Metadata Standard | Transport | Description |
+  |------------------|-----------|-------------|
+  | **HDR10** (SMPTE ST 2086) | `FrameHeader.hdr_metadata.hdr10` (CBOR) | Static mastering display metadata: display primaries, white point, min/max luminance, MaxCLL, MaxFALL. Sent once at stream start and on change. |
+  | **HDR10+** (SMPTE ST 2094-40) | `FrameHeader.hdr_metadata.hdr10plus` (raw bytes) | Dynamic tone mapping metadata, per-frame. Passed through as opaque SEI/OBU data from the encoder. |
+  | **HLG** (ARIB STD-B67) | Transfer function signaling only | No per-frame metadata — HLG is scene-referred. Transfer function is signaled in `FrameHeader.color_space.transfer`. |
+
+  See [spec-protocol-formal.md](spec-protocol-formal.md) §8.4 for the full `ColorSpaceInfo`, `HDRMetadata`, and `HDR10Static` CBOR schemas.
+
+- **Codec Color Metadata (10-bit and HDR)**:
+
+  | Codec | 10-bit Profile | HDR Support | Color Signaling |
+  |-------|---------------|-------------|-----------------|
+  | H.264 | Not available (8-bit only in Baseline/Main/High) | No | N/A — H.264 is excluded from WCG/HDR modes |
+  | H.265 | **Main 10** profile | HDR10, HDR10+, HLG | VUI: `colour_primaries`, `transfer_characteristics`, `matrix_coefficients` + SEI for HDR10 static/dynamic metadata |
+  | VP9 | **Profile 2** (10/12-bit) | HDR10 (via container metadata) | Color space signaling in frame header: `CS_BT_2020` + `bit_depth=10` |
+  | AV1 | Native 10/12-bit | HDR10, HDR10+, HLG | `color_config` OBU: primaries=9 (BT.2020), transfer=16 (PQ) or 18 (HLG), matrix=9 (BT.2020-NCL) |
+  | Tile (bitmap) | `rgb101010`, `rgba1010102`, `rgba16161616` | Supported via pixel format | Color space metadata attached to `TileConfig`; no embedded ICC |
 
 - **Gamma / Brightness Controls**:
   - Virtual gamma adjustment: `display.gamma = 1.0` (range: 0.5–2.0). Applied as a post-compositing transfer function.
@@ -787,56 +830,78 @@ LiquiDE provides server-side color management for accurate rendering. The design
 
 - **Color Pipeline End-to-End**:
 
-  The complete color pipeline from application rendering to client display:
+  The complete color pipeline from application rendering to client display (showing all three modes):
 
   ```
-  Application (renders in app color space, typically sRGB)
+  Application (renders in app color space — sRGB, P3, or HDR)
       │
       ▼
-  Compositor (converts app → compositing space via ICC profile)
-      │ Compositing space: linear sRGB (internal)
+  Compositor
+      │ SDR-sRGB: linear sRGB compositing, 256-entry LUT
+      │ WCG-SDR:  linear P3/Rec.2020, 1024-entry LUT or analytical
+      │ HDR:      linear Rec.2020, float32, analytical PQ/HLG
       ▼
   Post-compositing gamma/brightness adjustment
+      │ (in HDR mode: tone mapping applied here for SDR fallback clients)
+      ▼
+  Encoder
+      │ SDR:     sRGB gamma, 8-bit, BT.709 primaries
+      │ WCG-SDR: sRGB gamma, 10-bit, P3/BT.2020 primaries
+      │ HDR:     PQ/HLG, 10/16-bit, BT.2020 primaries + HDR metadata
+      ▼
+  Transport (encoded video/tile stream with color_space + hdr_metadata)
       │
       ▼
-  Encoder (output is gamma-corrected sRGB, 8-bit)
-      │ Color metadata: transfer function (sRGB gamma), primaries (BT.709)
-      ▼
-  Transport (encoded video stream)
-      │
-      ▼
-  Client decoder → Client GPU → Display
-      │ Client applies its own display ICC profile (OS-managed)
+  Client decoder → Client color management → Display
+      │ SDR:     direct display (client applies own ICC)
+      │ WCG-SDR: gamut compress if display < P3 (client-side)
+      │ HDR:     HDR passthrough (PQ/HLG), or client tone-maps to SDR
       ▼
   User's eyes
   ```
 
-  **What LiquiDE guarantees**: the encoded stream is always in a well-defined color space (sRGB by default) with correct transfer function metadata in the video bitstream. Applications that are color-managed (e.g., GIMP with ICC support) will render correctly because the Wayland compositor provides `wp_color_management_v1` protocol support (when available).
+  **What LiquiDE guarantees**: the encoded stream is always in a well-defined color space with correct transfer function and color primaries metadata in the video bitstream (or tile channel). The pipeline mode and color space are explicitly negotiated during handshake — both sides agree on the output format. Applications that are color-managed (e.g., GIMP with ICC support) will render correctly because the Wayland compositor provides `wp_color_management_v1` protocol support.
 
   **What LiquiDE does NOT guarantee**: the final appearance on the user's physical display. This depends on the client display's calibration, ICC profile, and the client OS's color management. A poorly calibrated monitor will show inaccurate colors — this is the same limitation as any display system.
 
-- **Codec Color Metadata**:
+- **Codec Color Metadata (SDR Baseline)**:
 
-  | Codec | Color Metadata | Notes |
-  |-------|---------------|-------|
-  | H.264 | VUI parameters: `colour_primaries=1` (BT.709), `transfer_characteristics=13` (sRGB), `matrix_coefficients=1` (BT.709) | Standard for SDR sRGB content |
-  | H.265 | Same VUI parameters as H.264 | Same color space |
-  | VP9 | Color space signaling in frame header | `CS_UNKNOWN` maps to sRGB |
-  | AV1 | `color_config`: primaries=1, transfer=13, matrix=1 | Explicit sRGB signaling |
-  | Tile (raw bitmap) | Assumed sRGB, no embedded ICC | Lossless — no color transform |
+  | Codec | Color Metadata (SDR-sRGB) | Notes |
+  |-------|--------------------------|-------|
+  | H.264 | VUI: `colour_primaries=1` (BT.709), `transfer_characteristics=13` (sRGB), `matrix_coefficients=1` (BT.709) | Standard for SDR sRGB content |
+  | H.265 | Same VUI parameters as H.264 | SDR same as H.264; for 10-bit/HDR see Codec Color Metadata table above |
+  | VP9 | Color space signaling in frame header | `CS_UNKNOWN` maps to sRGB; Profile 2 for 10-bit (see above) |
+  | AV1 | `color_config`: primaries=1, transfer=13, matrix=1 | SDR sRGB; for 10-bit/HDR see above |
+  | Tile (raw bitmap) | Color space per `TileConfig`; `rgb888` assumed sRGB | For deep color formats (`rgb101010`, `rgba1010102`, `rgba16161616`) color space negotiated via pipeline mode |
 
 - **Configuration**:
 
   ```toml
   [display.color]
-  # Server-side compositing color space
-  compositing_space = "srgb"          # srgb (only option in v1.0)
+  # Color pipeline mode: "sdr-srgb" (default), "wcg-sdr", "hdr"
+  pipeline_mode = "sdr-srgb"
+  # Server-side compositing color space (for WCG/HDR modes)
+  compositing_space = "srgb"          # srgb, display-p3, rec2020
+  # Compositing gamut for WCG-SDR mode (ignored in SDR-sRGB)
+  compositing_gamut = "display-p3"    # display-p3, rec2020
+  # Output bit depth (8 for SDR, 10 for WCG/HDR, 16 for HDR mastering)
+  compositing_bit_depth = 8           # 8, 10, 16
   # Per-monitor ICC profile
   icc_profile = ""                    # path to ICC profile file (empty = sRGB)
   # Rendering intent for ICC profile application
   rendering_intent = "perceptual"     # perceptual, relative, absolute, saturation
   # Embed ICC metadata in encoded video VUI
   embed_color_metadata = true
+  # HDR transfer function (only used when pipeline_mode = "hdr")
+  hdr_transfer_function = "pq"       # pq (ST 2084), hlg (ARIB STD-B67)
+  # HDR static metadata: Maximum Content Light Level (nits, 0 = auto)
+  hdr_max_cll = 0
+  # HDR static metadata: Maximum Frame-Average Light Level (nits, 0 = auto)
+  hdr_max_fall = 0
+  # Pass through HDR10+ dynamic metadata from applications
+  hdr10plus_passthrough = true
+  # Tone mapping operator for HDR → SDR fallback
+  tone_map_operator = "reinhard"      # reinhard, bt2390, hable, aces
   ```
 
 ---
@@ -1019,7 +1084,7 @@ delta_threshold = 0.50              # pixel change ratio below which XOR delta i
 solid_detect = true                 # detect and optimize solid-color tiles
 copy_detect = true                  # detect duplicate tiles within the same frame
 scroll_detect = true                # detect scroll operations and send scroll vectors
-color_depth = "rgb888"              # rgb888 (24-bit), rgba8888 (32-bit), rgb565 (16-bit, lossy)
+color_depth = "rgb888"              # rgb888 (24-bit), rgba8888 (32-bit), rgb565 (16-bit, lossy), rgb101010 (30-bit), rgba1010102 (32-bit deep), rgba16161616 (64-bit HDR)
 ```
 
 #### Hybrid Mode
@@ -7089,20 +7154,52 @@ library = ""                         # path to shared library (e.g., "/usr/lib/x
 ## 23) Compatibility & Interop
 
 ### Wayland Protocol Support
-- `wl_compositor`, `wl_shm`, `wl_seat`, `wl_output`, `wl_data_device`.
-- `xdg_shell` (toplevel, popup).
-- `zwlr_layer_shell_v1` (panels, overlays).
-- `wp_fractional_scale_v1`.
-- `wp_viewporter`.
-- `xdg_decoration_unstable_v1`.
-- `zwp_text_input_v3` (text input for IME — see §12).
-- `zwp_input_method_v2` (input method engine interface — see §12).
-- `zwp_input_method_keyboard_grab_v2` (IME keyboard grab).
-- `zwp_input_popup_surface_v2` (IME candidate window positioning).
-- `zwp_virtual_keyboard_v1` (on-screen keyboard).
-- `wl_data_device_manager` (drag-and-drop, clipboard).
-- `wp_primary_selection_unstable_v1` (middle-click paste selection).
-- XWayland for legacy X11 applications.
+
+LiquiDE's compositor implements the following Wayland protocols. Each protocol is assigned a **support tier** that determines testing cadence, regression priority, and compatibility commitments.
+
+#### Tier Definitions
+
+| Tier | Testing | Regression Priority | Commitment |
+|------|---------|--------------------|-----------|
+| **Tier 1** | CI (every PR) + manual QA each release | P0 — release-blocking | Protocol fully implemented per spec, tested with reference clients, regressions are release blockers |
+| **Tier 2** | Nightly smoke tests + weekly integration | P2 — fix within the next minor release | Protocol implemented, tested with representative apps, regressions are high-priority but not release-blocking |
+| **Tier 3** | Per-release smoke test only | P3 — best-effort, may defer | Protocol implemented but not regularly tested, may break between releases, community bug reports accepted |
+
+#### Protocol Support Matrix
+
+| Protocol | Version | Tier | Direction | Description | Notes |
+|----------|---------|------|-----------|-------------|-------|
+| `wl_compositor` | 6 | 1 | Core | Surface creation and subcomposition | Mandatory. Subsurface support included. |
+| `wl_shm` | 1 | 1 | Core | Shared memory buffer allocation | Mandatory. All SHM formats supported. |
+| `wl_seat` | 9 | 1 | Core | Input device management (keyboard, pointer, touch) | Mandatory. Pointer constraints see below. |
+| `wl_output` | 4 | 1 | Core | Monitor geometry, scale, modes | Virtual monitor integration. |
+| `wl_data_device_manager` | 3 | 1 | Core | Clipboard and drag-and-drop | Clipboard integration with remote clipboard channel. |
+| `xdg_wm_base` (xdg_shell) | 6 | 1 | Shell | Toplevel windows, popups, positioning | xdg_toplevel, xdg_popup with position constraints. |
+| `zwlr_layer_shell_v1` | 4 | 1 | Shell | Panels, overlays, lock screens, docks | Used by LiquiDE's own shell, third-party panels. |
+| `xdg_decoration_unstable_v1` | 1 | 1 | Shell | Server-side window decoration negotiation | CSD/SSD negotiation; default is SSD. |
+| `wp_fractional_scale_v1` | 1 | 1 | Scaling | Sub-integer DPI scaling | Applied per-surface. Maps to client DPI. |
+| `wp_viewporter` | 1 | 1 | Scaling | Surface viewport/crop/scale | Used for video surfaces, fractional scaling. |
+| `zwp_text_input_v3` | 1 | 1 | Input | IME text input protocol | Full CJK/IME support. See §12. |
+| `zwp_input_method_v2` | 1 | 1 | Input | Input method engine interface | Server-side IME engine. See §12. |
+| `zwp_input_method_keyboard_grab_v2` | 1 | 1 | Input | IME keyboard grab | IME composition key interception. |
+| `zwp_input_popup_surface_v2` | 1 | 1 | Input | IME candidate window positioning | Positioned relative to cursor in text field. |
+| `zwp_virtual_keyboard_v1` | 1 | 2 | Input | On-screen keyboard | For touch/tablet clients. |
+| `wp_primary_selection_unstable_v1` | 1 | 1 | Clipboard | Middle-click paste selection buffer | X11 primary selection compatibility. |
+| `wp_content_type_v1` | 1 | 2 | Media | Surface content type hint | `none`, `photo`, `video`, `game` — informs encoder mode selection. |
+| `wp_presentation_time` | 1 | 2 | Media | Frame presentation timestamps | Used for video sync, latency measurement. |
+| `linux_dmabuf_v1` | 4 | 2 | Media | DMA-BUF buffer sharing | GPU mode only. Zero-copy import from GPU-rendered surfaces. |
+| `ext_session_lock_v1` | 1 | 1 | Security | Session lock protocol | Secure lock screen. Prevents bypass. |
+| `wp_security_context_v1` | 1 | 2 | Security | Sandboxed client restrictions | Flatpak/sandbox security boundary. |
+| `xdg_activation_v1` | 1 | 2 | Shell | Cross-surface focus/activation tokens | Prevents focus stealing; token-gated activation. |
+| `zwlr_foreign_toplevel_management_v1` | 3 | 2 | Shell | Task manager / window list | Used by dock and Alt-Tab for window metadata. |
+| `wp_pointer_constraints_unstable_v1` | 1 | 2 | Input | Pointer lock and confinement | Used by games/3D apps. Latency constrained by network RTT. |
+| `zwp_relative_pointer_v1` | 1 | 2 | Input | Relative pointer motion | Raw deltas for games/CAD. Discretized to 1px minimum. |
+| `zwp_pointer_gestures_v1` | 3 | 3 | Input | Swipe, pinch, hold gestures | Touchpad gestures. Client forwarding required. |
+| `wp_drm_lease_v1` | 1 | 3 | Media | DRM output lease | GPU mode only. VR headset passthrough use case. |
+| `wp_color_management_v1` | 1 | 2 | Color | Surface color space and ICC profiles | Used by color-managed applications (GIMP, Firefox). Depends on WCG/HDR pipeline mode for full functionality. |
+| `kde_server_decoration` | 1 | 3 | Compat | KDE server decoration protocol | Legacy compatibility for older KDE applications. |
+| `org_kde_kwin_server_decoration_manager` | 1 | 3 | Compat | KDE decoration manager | Alternative decoration negotiation for KDE apps. |
+| XWayland | Xwayland 24.1+ | 2 | Compat | X11 application compatibility | XWayland version tracks latest stable. Clipboard bridge with 2s timeout. HiDPI via Xft.dpi and randr. |
 
 ### RDP Compatibility
 - See §18.
@@ -7279,6 +7376,70 @@ A release may proceed if:
 - Long-run session soak tests (24h+).
 - Worker task cancellation and replacement tests.
 - Transport failover tests.
+
+### Wayland Protocol Conformance
+
+Tests verifying that the LiquiDE compositor correctly implements all supported Wayland protocols. Test tiers align with the protocol support matrix (§23).
+
+**Every PR (Tier 1 protocols):**
+- xdg_shell lifecycle: create toplevel → map → configure → ack → commit → close → destroy. Verify no leaks.
+- xdg_shell popups: create popup with position constraints → reposition → dismiss (click outside) → destroy.
+- xdg_shell window states: maximize, fullscreen, minimize, tiled → verify configure events with correct states.
+- layer_shell: create surfaces on all four anchors (top, bottom, left, right) and `overlay` layer → verify stacking order.
+- layer_shell exclusion zones: dock claims 48px bottom → verify toplevel window workarea excludes dock height.
+- wl_seat keyboard focus: map two toplevels → click second → verify keyboard enter/leave events fire correctly.
+- wp_fractional_scale: set scale to 1.25 → verify `preferred_scale` event → surface commits at correct buffer size.
+- wp_viewporter: set viewport crop → verify compositor renders cropped region.
+- Text input (zwp_text_input_v3): enable → enter → commit text → disable. Verify preedit and commit events.
+- ext_session_lock_v1: lock → verify all outputs show lock surface → verify input rejected on non-lock surfaces → unlock.
+- Clipboard (wl_data_device): set selection → request data → verify MIME types and content match.
+- Primary selection: set selection → middle-click paste → verify content.
+- weston-test-suite core subset: run `weston-test-suite` against LiquiDE compositor, core protocol tests only.
+- Fuzz corpus replay: replay stored corpus of valid Wayland wire messages, verify no crashes.
+
+**Nightly (Tier 2 protocols + extended Tier 1):**
+- Full weston-test-suite: all protocol tests, including edge cases.
+- xdg_activation_v1: app A generates token → sends to app B → app B requests activation → verify focus change.
+- wp_content_type_v1: set content type `video` → verify compositor switches to video-mode encoding for that surface.
+- wp_presentation_time: commit surface → verify presentation feedback timestamp is within 1 frame period of actual display.
+- linux_dmabuf_v1 (GPU mode only): create dma-buf → import as surface → verify rendering. Skip if no GPU.
+- wp_security_context_v1: create context → spawn sandboxed client → verify restricted protocol access.
+- zwlr_foreign_toplevel_management_v1: list toplevels → verify metadata matches mapped windows → activate toplevel → verify focus.
+- wp_pointer_constraints_unstable_v1: lock pointer → generate motion → verify confined to region → unlock.
+- zwp_relative_pointer_v1: enable relative motion → move mouse → verify raw deltas reported.
+- wp_color_management_v1: attach sRGB profile to surface → verify composited output matches (pixelwise, with tolerance).
+- Protocol parser fuzz: 10,000 randomized Wayland wire messages → verify no crashes, no undefined behavior, appropriate protocol errors.
+- xdg_decoration: negotiate SSD → verify server draws decorations. Negotiate CSD → verify server omits decorations.
+
+**Per-release (Tier 3 + full integration):**
+- zwp_pointer_gestures_v1: simulate pinch/swipe → verify gesture events forwarded.
+- wp_drm_lease_v1: request lease → verify negotiation (GPU mode only).
+- KDE server decoration: verify older KDE apps negotiate decorations correctly.
+- Full manual QA: interact with 10+ real applications for 30 minutes, verify no visual/behavioral anomalies.
+
+### Application Smoke Matrix
+
+Automated application tests that verify LiquiDE's Wayland compatibility with real-world applications. Each application is launched, scripted interactions are performed, and results are checked for crashes, rendering artifacts, and correct behavior.
+
+| Application | Toolkit | Tier | CI Cadence | Test Coverage |
+|-------------|---------|------|------------|---------------|
+| GNOME Text Editor | GTK4 | 1 | Every PR | Launch, type text, undo/redo, save dialog, close |
+| Nautilus (Files) | GTK4 | 1 | Every PR | Launch, navigate directories, right-click menu, rename file |
+| GNOME Terminal | VTE/GTK4 | 1 | Every PR | Launch, run command, scroll, copy/paste, tab create/close |
+| Firefox | Gecko | 1 | Nightly | Launch, load page, scroll, text input, video playback, clipboard, print dialog |
+| Chromium | Blink/Ozone | 1 | Nightly | Launch, load page, scroll, text input, WebGL, clipboard |
+| VS Code | Electron | 1 | Nightly | Launch, open file, type, search, terminal panel, extensions sidebar |
+| LibreOffice Writer | VCL/GTK3 | 1 | Nightly | Launch, type, format text, insert image, print preview |
+| Dolphin (KDE Files) | Qt6 | 2 | Weekly | Launch, navigate, context menu, drag-and-drop |
+| Kate (KDE Editor) | Qt6 | 2 | Weekly | Launch, open file, syntax highlight, search |
+| mpv | WL_SHM/DMA-BUF | 2 | Weekly | Launch, play video (SHM + dmabuf paths), fullscreen toggle, seek |
+| VLC | Qt5 | 2 | Weekly | Launch, play video, playlist, audio output |
+| GIMP | GTK3 | 2 | Weekly | Launch, open image, draw, filters, color picker |
+| Blender | Custom/GHOST | 2 | Weekly | Launch, viewport navigation, render preview |
+| Flatpak app (sandboxed) | GTK4 | 2 | Weekly | Launch Flatpak app through security_context portal, verify sandboxed protocol access |
+| Steam | SDL2 | 3 | Per-release | Launch, navigate store, launch a game (windowed) |
+| Wine (winewayland.drv) | Wine/Wayland | 3 | Per-release | Launch Wine app, verify window management and input |
+| Java/Swing (JetBrains) | AWT/Wayland | 3 | Per-release | Launch IntelliJ/JetBrains IDE, open project, type, navigate |
 
 ### Security
 - TLS configuration validation.
@@ -7906,3 +8067,4 @@ The crash screen is **never** streamed as encoded video frames from the server. 
 - Default dock position: **bottom**.
 - Default transport: **QUIC with auto-negotiation**.
 - Management UI: **disabled by default** (see [spec-manager.md](spec-manager.md)).
+- Default color pipeline: **SDR-sRGB, 8-bit per channel**. Wide color gamut (WCG-SDR) and HDR modes are opt-in via `display.color.pipeline_mode` configuration. This ensures zero performance and compatibility impact for deployments that do not require deep color.

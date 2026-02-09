@@ -823,29 +823,48 @@ LiquiDE itself does not sandbox non-Flatpak/Snap applications beyond the session
 
 ## 7) Wayland Protocol Extensions
 
-LiquiDE's compositor supports the following Wayland protocol extensions beyond core `wl_compositor` / `xdg_shell`:
+LiquiDE's compositor supports the following Wayland protocol extensions beyond core `wl_compositor` / `xdg_shell`. Tier classifications match the protocol support matrix in [spec.md §23](spec.md).
 
-| Protocol | Version | Description |
-|----------|---------|-------------|
-| `xdg_shell` | stable | Window management |
-| `xdg_decoration` | v1 | Server-side/client-side decoration negotiation |
-| `wlr_layer_shell` | v4 | Layer surfaces (panels, overlays, wallpapers) |
-| `ext_idle_notify` | v1 | Idle timeout notification |
-| `wp_fractional_scale` | v1 | Fractional scaling |
-| `wp_viewporter` | v1 | Surface viewport/cropping |
-| `wp_presentation_time` | v1 | Frame timing feedback |
-| `wp_linux_dmabuf` | v4 | DMA-BUF buffer sharing |
-| `wp_content_type` | v1 | Content type hint (video, game, etc.) |
-| `wp_cursor_shape` | v1 | Server-side cursor shapes |
-| `ext_session_lock` | v1 | Session lock protocol |
-| `xdg_activation` | v1 | Window activation tokens |
-| `wp_security_context` | v1 | Sandbox security contexts |
-| `ext_foreign_toplevel_list` | v1 | Toplevel window enumeration |
-| `zwp_text_input` | v3 | Input method support |
-| `zwp_input_method` | v2 | Input method protocol |
-| `org_kde_plasma_window_management` | — | KDE compat: window list for taskbar |
+| Protocol | Version | Tier | Description |
+|----------|---------|------|-------------|
+| `xdg_shell` | stable | 1 | Window management |
+| `xdg_decoration` | v1 | 1 | Server-side/client-side decoration negotiation |
+| `wlr_layer_shell` | v4 | 1 | Layer surfaces (panels, overlays, wallpapers) |
+| `ext_idle_notify` | v1 | 2 | Idle timeout notification |
+| `wp_fractional_scale` | v1 | 1 | Fractional scaling |
+| `wp_viewporter` | v1 | 1 | Surface viewport/cropping |
+| `wp_presentation_time` | v1 | 2 | Frame timing feedback |
+| `wp_linux_dmabuf` | v4 | 2 | DMA-BUF buffer sharing (GPU mode only) |
+| `wp_content_type` | v1 | 2 | Content type hint (video, game, etc.) |
+| `wp_cursor_shape` | v1 | 2 | Server-side cursor shapes |
+| `ext_session_lock` | v1 | 1 | Session lock protocol |
+| `xdg_activation` | v1 | 2 | Window activation tokens |
+| `wp_security_context` | v1 | 2 | Sandbox security contexts |
+| `ext_foreign_toplevel_list` | v1 | 2 | Toplevel window enumeration |
+| `zwp_text_input` | v3 | 1 | Input method support |
+| `zwp_input_method` | v2 | 1 | Input method protocol |
+| `wp_pointer_constraints` | v1 | 2 | Pointer lock and confinement |
+| `zwp_relative_pointer` | v1 | 2 | Relative pointer motion |
+| `zwp_pointer_gestures` | v3 | 3 | Swipe, pinch, hold gestures |
+| `wp_drm_lease` | v1 | 3 | DRM output lease (GPU mode only) |
+| `wp_color_management` | v1 | 2 | Surface color space and ICC profiles (requires WCG/HDR pipeline mode for full functionality) |
+| `org_kde_plasma_window_management` | — | 3 | KDE compat: window list for taskbar |
+| `kde_server_decoration` | v1 | 3 | KDE legacy server decoration |
 
-### 7.1 LiquiDE-Specific Protocol Extensions
+### 7.1 Known Limitations
+
+| Protocol / Feature | Limitation | Impact | Workaround |
+|-------------------|-----------|--------|------------|
+| `wp_linux_dmabuf` | Requires GPU mode (`rendering.gpu_mode` ≠ `"cpu"`). Unavailable in software-only sessions. | GPU-rendered apps (Mesa clients, mpv VA-API) fall back to SHM path in CPU mode. | Enable GPU mode if hardware available. SHM fallback is functional but slower. |
+| `wp_pointer_constraints` | Pointer lock/confine response latency is bounded by client-server RTT. At 100ms RTT, pointer escapes the confined region for up to 100ms before the server processes the constraint. | Games and 3D applications that rely on tight pointer lock may feel sluggish over WAN connections. | Use client-side prediction for pointer position. Accept RTT-bound latency as inherent to remote desktop. |
+| `zwp_relative_pointer` | Relative motion deltas are discretized to integer pixels on the server side before injection into the compositor. Sub-pixel precision is lost. | CAD and drawing applications expecting sub-pixel relative motion may see reduced precision. | Use absolute mode where possible. Sub-pixel relative motion is a known gap. |
+| `wp_drm_lease` | Requires GPU mode with DRM device access. VR headset passthrough only works when the server has a physical GPU with DRM lease support. | VR use case is limited to GPU-equipped servers. | No workaround — this is a hardware-dependent feature by design. |
+| XWayland clipboard | Clipboard sync between XWayland and native Wayland apps has a 2-second timeout. Large clipboard transfers (>1MB) from X11 apps may timeout. | Slow clipboard transfers from legacy X11 apps. | Use native Wayland apps for large clipboard operations. |
+| XWayland HiDPI | XWayland apps receive DPI hints via `Xft.dpi` Xresource and RandR extension, but many X11 apps ignore DPI entirely. Xwayland applies bilinear scaling as a fallback. | X11 apps may appear blurry at non-1x DPI scales. | Set `Xft.dpi` explicitly. Some apps support `GDK_SCALE` or `QT_SCALE_FACTOR` environment variables. |
+| `wp_color_management` | Full functionality (wide gamut composition, ICC profile application) requires the server to be configured for WCG-SDR or HDR pipeline mode. In default SDR-sRGB mode, the protocol is exposed but gamut is restricted to sRGB. | Color-managed apps (GIMP, Firefox in P3 mode) composited accurately only in WCG/HDR mode. | Configure `display.color.pipeline_mode = "wcg-sdr"` for accurate wide-gamut rendering. |
+| `org_kde_plasma_window_management` | Only basic window list/activate/close operations are supported. Plasma-specific features (virtual desktops, activities) are not implemented. | KDE apps that rely on Plasma-specific features (kwin scripting, activity management) may have reduced functionality. | Use `zwlr_foreign_toplevel_management_v1` for non-KDE-specific window management. |
+
+### 7.2 LiquiDE-Specific Protocol Extensions
 
 LiquiDE may provide additional custom Wayland protocols for tight shell integration:
 
@@ -895,3 +914,25 @@ These custom protocols are versioned and documented separately. Applications are
 - Flatpak runtime update: app launches correctly after runtime update.
 - Electron app: notifications, tray, file dialogs.
 - Legacy X11 app via XWayland: XEmbed tray, clipboard, window management.
+
+### Wayland Protocol Conformance
+
+**Every PR:**
+- weston-test-suite core: run core Wayland protocol conformance tests against the LiquiDE compositor.
+- GTK4 smoke: launch GNOME Text Editor, Nautilus, GNOME Terminal — verify no crashes or protocol errors.
+- Fuzz corpus replay: replay stored corpus of valid/semi-valid Wayland wire messages, verify no crashes.
+- xdg_shell lifecycle: map/unmap/close cycles with 10 concurrent toplevels.
+
+**Nightly:**
+- Full weston-test-suite: all protocol tests, including extension protocol tests.
+- Application launch matrix: start each Tier 1/2 application from the smoke matrix, perform scripted interactions, check for crashes and visual artifacts.
+- Protocol parser fuzz: 10,000 randomized Wayland wire format messages to the compositor. Verify no crashes, no undefined behavior.
+- Layer shell / fractional scale edge cases: mixed anchoring, dynamic scale changes, exclusive zone overlaps.
+- wp_color_management: attach P3/sRGB profiles, verify composited output pixel accuracy (within tolerance).
+
+**Per-release:**
+- Full application smoke matrix: all Tier 1/2/3 applications from spec.md §24 Application Smoke Matrix.
+- Manual QA: 30-minute interactive session exercising window management, clipboard, input, and multi-monitor.
+- XWayland full suite: legacy X11 apps including window management, clipboard bridge, DPI scaling.
+- Wine/winewayland.drv check: launch Wine application, verify basic window management and input.
+- Performance regression: Wayland protocol processing overhead must not exceed baseline by >10%.

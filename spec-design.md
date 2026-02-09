@@ -2688,11 +2688,35 @@ Example — "Flat Minimal" theme (no glass):
 | `--liquid-crash-trace-bg` | `rgba(0,0,0,0.6)` | Crash screen stack trace container background |
 | `--liquid-crash-text` | `#FFFFFF` | Crash screen primary text color |
 | `--liquid-crash-text-muted` | `rgba(255,255,255,0.5)` | Crash screen secondary/metadata text |
-| `--liquid-color-profile` | `srgb` | Active color profile (srgb, display-p3, custom) |
+| `--liquid-color-profile` | `srgb` | Active color profile (srgb, display-p3, rec2020) |
+| `--liquid-color-bit-depth` | `8` | Active output bit depth (8, 10, 16) |
+| `--liquid-hdr-active` | `false` | Whether HDR pipeline mode is active |
+| `--liquid-color-pipeline` | `sdr-srgb` | Active color pipeline mode (sdr-srgb, wcg-sdr, hdr) |
 | `--liquid-night-mode-temperature` | `6500` | Night mode color temperature in Kelvin |
 | `--liquid-night-mode-opacity` | `0` | Night mode tint overlay opacity (0 = off, 1 = full) |
 | `--liquid-brightness` | `1.0` | Virtual brightness multiplier (0.1–1.0) |
 | `--liquid-gamma` | `1.0` | Virtual gamma value (0.5–2.0) |
+
+#### Wide Color Gamut Overrides
+
+When the session runs in WCG-SDR or HDR mode and the client display supports Display-P3 or wider gamut, accent and semantic colors can use the full P3 gamut for more vivid, saturated colors. These overrides are applied via a `@media (color-gamut: p3)` query:
+
+```css
+@media (color-gamut: p3) {
+  .liquid-theme-default[data-color-pipeline="wcg-sdr"],
+  .liquid-theme-default[data-color-pipeline="hdr"] {
+    --liquid-accent:           color(display-p3 0.22 0.49 1.00);
+    --liquid-accent-hover:     color(display-p3 0.30 0.56 1.00);
+    --liquid-accent-active:    color(display-p3 0.15 0.39 0.85);
+    --liquid-success:          color(display-p3 0.15 0.82 0.35);
+    --liquid-warning:          color(display-p3 1.00 0.84 0.04);
+    --liquid-error:            color(display-p3 1.00 0.27 0.23);
+    --liquid-info:             color(display-p3 0.39 0.82 1.00);
+  }
+}
+```
+
+The `data-color-pipeline` attribute is set on the root theme element by the shell based on the negotiated pipeline mode. In SDR-sRGB mode, no P3 overrides are applied — all colors remain in sRGB.
 
 ---
 

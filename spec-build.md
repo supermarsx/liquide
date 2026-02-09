@@ -32,8 +32,8 @@ liquide/
 │   ├── liquide-compositor/         # Wayland compositor, scene graph, damage tracking
 │   ├── liquide-renderer-cpu/       # CPU software rasterizer (SIMD paths)
 │   ├── liquide-renderer-gpu/       # GPU compute path (Vulkan)
-│   ├── liquide-encoder/            # video/tile encoding (H.264, H.265, AV1, tile codecs)
-│   ├── liquide-encoder-hw/         # hardware encoder backends (VAAPI, NVENC, AMF, V4L2)
+│   ├── liquide-encoder/            # video/tile encoding (H.264, H.265, AV1, tile codecs; 10-bit profiles for H.265 Main 10 / AV1 / VP9 Profile 2)
+│   ├── liquide-encoder-hw/         # hardware encoder backends (VAAPI, NVENC, AMF, V4L2; 10-bit encode support where hardware permits)
 │   ├── liquide-shell/              # desktop shell (dock, status bar, launcher, notifications, overview)
 │   ├── liquide-css/                # CSS parser and theming engine
 │   ├── liquide-plugin-host/        # WASM plugin runtime (wasmtime integration)

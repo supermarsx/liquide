@@ -388,6 +388,38 @@ Tile channel data is decoded in the Protocol Worker (WASM):
 
 Renderer is selected automatically based on browser capability. User can override in settings.
 
+### 5.6 Color Space & HDR
+
+The web client supports the three color pipeline modes defined in the protocol. Browser API availability determines which modes the client can offer.
+
+**Browser API Availability:**
+
+| Capability | API | Chrome | Firefox | Safari | Notes |
+|-----------|-----|--------|---------|--------|-------|
+| Wide gamut canvas (P3) | `canvas.getContext('2d', {colorSpace: 'display-p3'})` | 104+ | 127+ | 16.4+ | Used for WCG-SDR tile rendering |
+| WebGPU P3 texture | `GPUTexture` with `bgra8unorm` + P3 color space | 113+ | Nightly | 17.0+ | Used for WCG-SDR GPU-accelerated path |
+| WebGL P3 | `drawingBufferColorSpace: 'display-p3'` | 104+ | 127+ | 16.4+ | Used for WCG-SDR WebGL path |
+| 10-bit WebCodecs decode | `VideoDecoder` with 10-bit H.265/AV1 profile | 107+ | Partial | 17.0+ | Required for WCG/HDR video decode. H.265 requires platform decoder support. |
+| HDR canvas | `canvas.configureHighDynamicRange({mode: 'extended'})` | Experimental | No | No | PQ/HLG output. Extremely limited browser support. |
+| WebGPU HDR texture | `GPUCanvasConfiguration` with `rgba16float` | Experimental | No | No | Float16 output for HDR. |
+
+**Fallback Behavior:**
+
+| Server Mode | Client Has API | Behavior |
+|-------------|---------------|----------|
+| SDR-sRGB | Always | Direct 8-bit sRGB rendering (no special handling) |
+| WCG-SDR | P3 canvas available | Render tiles/frames in P3 color space using `colorSpace: 'display-p3'` on canvas |
+| WCG-SDR | No P3 canvas | Request SDR-sRGB fallback from server (re-negotiate via `Capabilities` message) |
+| HDR | HDR canvas + 10-bit decode | PQ/HLG frames rendered to HDR canvas. Extremely rare in practice. |
+| HDR | No HDR canvas, has P3 | Client applies software tone mapping (Reinhard in WASM) to map PQ→SDR, render in P3 |
+| HDR | No P3 canvas | Request SDR-sRGB fallback from server |
+
+**ClientHello color capabilities for the web client:**
+- `color.supported_modes`: auto-detected from browser API probing. Typically `["sdr-srgb"]` on most browsers, `["sdr-srgb", "wcg-sdr"]` on modern browsers with P3 displays.
+- `color.display_gamut`: probed via `matchMedia('(color-gamut: p3)')`. `"display-p3"` if true, `"srgb"` otherwise.
+- `color.display_hdr`: `false` (no reliable browser API to detect HDR display yet).
+- `color.preferred_bit_depth`: `8` (default), `10` if WebCodecs 10-bit decode is available.
+
 ---
 
 ## 6) Audio

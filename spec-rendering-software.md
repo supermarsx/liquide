@@ -99,12 +99,77 @@ Supported blend modes:
 - `screen` — used for specular highlights
 - `src-atop` — used for clip-to-shape effects
 
-### 3.3 Color Space
+### 3.3 Color Space & Deep Color Pipeline
 
-- Internal compositing pipeline operates in **linear RGB** for correct alpha blending.
-- Input surfaces are assumed sRGB (gamma 2.2). Conversion: sRGB → linear on surface upload, linear → sRGB on output.
-- The sRGB linearization uses a 256-entry lookup table (LUT) for performance.
-- Output framebuffer is sRGB. The encode pipeline receives sRGB pixel data.
+The compositor supports three color pipeline modes. The active mode is determined during session startup by negotiating the client's display capabilities (`color.supported_modes` in `ClientHello`) against the server's configuration (`[display.color]`). The default mode is **SDR-sRGB** for backward compatibility; wide gamut and HDR are opt-in.
+
+#### Pipeline Mode Summary
+
+| Pipeline Mode | Internal Precision | Linearization | Compositing Gamut | Output Bit Depth | Output Transfer | Tile Pixel Format |
+|--------------|-------------------|---------------|-------------------|------------------|-----------------|-------------------|
+| **SDR-sRGB** (default) | 8-bit per channel | 256-entry LUT | sRGB / BT.709 | 8 bpc | sRGB gamma | `rgb888`, `rgba8888` |
+| **WCG-SDR** | 16-bit or float32 | 1024-entry LUT or analytical | Display-P3 or Rec.2020 | 10 bpc | sRGB gamma | `rgb101010`, `rgba1010102` |
+| **HDR** | float32 | Analytical (exact) | Rec.2020 | 10 or 16 bpc | PQ (ST 2084) or HLG | `rgb101010`, `rgba1010102`, `rgba16161616` |
+
+#### SDR-sRGB Mode (Default)
+
+- Internal compositing operates in **linear sRGB** for correct alpha blending.
+- Input surfaces are assumed sRGB (gamma ≈ 2.2). Conversion: sRGB → linear on surface upload, linear → sRGB on output.
+- The sRGB linearization uses a **256-entry lookup table** (LUT) for performance — the standard sRGB piecewise transfer function is precomputed at startup.
+- Output framebuffer is sRGB, 8 bits per channel. The encode pipeline receives sRGB pixel data.
+- This is the lowest-cost path and the only mode guaranteed on all hardware.
+
+#### WCG-SDR Mode (Wide Color Gamut, SDR Output)
+
+- Activated when the client advertises `color.supported_modes` containing `"wcg-sdr"` and the server has `display.color.pipeline_mode = "wcg-sdr"`.
+- Internal compositing operates in **linear Display-P3 or Rec.2020** (configurable via `display.color.compositing_gamut`). Default is Display-P3.
+- sRGB input surfaces are converted to the wider gamut via a **3×3 matrix transform** (sRGB → linear → gamut matrix → compositing space). sRGB is a strict subset of Display-P3 and Rec.2020, so this mapping is lossless.
+- Surfaces tagged with `wp_color_management_v1` ICC profiles or color space descriptors are converted to the compositing gamut using the appropriate 3×3 chromatic adaptation matrix.
+- Linearization uses a **1024-entry LUT** for the sRGB transfer function (higher precision to preserve 10-bit output fidelity) or an **analytical piecewise function** (configurable — analytical is slower but exact).
+- Output framebuffer is 10 bits per channel (`rgb101010` or `rgba1010102`). The encode pipeline receives 10-bit pixel data; codecs must use 10-bit profiles (H.265 Main 10, AV1 10-bit, VP9 Profile 2).
+- Output transfer function is sRGB gamma — the wider gamut is used for color accuracy, not luminance extension.
+
+#### HDR Mode (High Dynamic Range)
+
+- Activated when the client advertises `color.supported_modes` containing `"hdr"`, the server has `display.color.pipeline_mode = "hdr"`, and the client display supports HDR output (`color.display_hdr = true`).
+- Internal compositing operates in **linear Rec.2020** at **float32 precision** to avoid banding in the extended luminance range.
+- Linearization is always **analytical** (exact inverse PQ or HLG) — LUT approximation is insufficient for the non-linear PQ curve.
+- HDR content surfaces provide scene-referred linear light values. SDR content surfaces are inverse-tone-mapped to the HDR luminance range using a configurable lift (default: SDR white = 203 nits, per ITU-R BT.2408).
+- Output transfer function is **PQ (Perceptual Quantizer, SMPTE ST 2084)** or **HLG (Hybrid Log-Gamma, ARIB STD-B67)**, configurable via `display.color.hdr_transfer_function`.
+- Output bit depth is 10 or 16 bits per channel (configurable via `display.color.compositing_bit_depth`; default 10 for PQ, 16 available for mastering workflows).
+- **HDR metadata passthrough**: the compositor attaches per-frame `HDRMetadata` to `FrameHeader` messages (see [spec-protocol-formal.md](spec-protocol-formal.md) §8.4). HDR10 static metadata (SMPTE ST 2086 mastering display primaries + MaxCLL/MaxFALL) is sent once at stream start and on change. HDR10+ dynamic metadata is passed through per-frame when available.
+
+#### Gamut Mapping
+
+- **Narrower → wider** (sRGB surface in P3/Rec.2020 compositing space): lossless — sRGB is an exact colorimetric subset.
+- **Wider → narrower** (P3 surface in sRGB compositing space, or HDR → SDR fallback): requires gamut compression. The compositor uses **relative colorimetric intent** with **soft-knee gamut compression** on the chroma axis (preserves hue, compresses saturation for out-of-gamut colors). No clipping — out-of-gamut colors are smoothly compressed.
+
+#### Tone Mapping (HDR → SDR Fallback)
+
+When a session runs in HDR mode but must produce SDR output (e.g., for a client that doesn't support HDR, or for recording/screenshots), the compositor applies a tone mapping operator (TMO):
+
+| Operator | ID | Description | Use Case |
+|----------|-----|-------------|----------|
+| **Reinhard** (default) | `reinhard` | Simple global TMO: `L_out = L_in / (1 + L_in)`. Fast, preserves overall luminance relationships. | General fallback, low CPU cost |
+| **BT.2390 EETF** | `bt2390` | ITU-R BT.2390 Electrical-Electrical Transfer Function. Broadcast-standard knee function. | Broadcast content, standards compliance |
+| **Hable (Filmic)** | `hable` | John Hable's filmic curve (Uncharted 2). S-shaped, good highlight rolloff. | Cinematic content, photo editing |
+| **ACES** | `aces` | Academy Color Encoding System RRT+ODT. Industry-standard, full gamut mapping included. | Professional color grading, mastering |
+
+The TMO is configurable via `display.color.tone_map_operator`. Default is `reinhard` for its low CPU cost. TMO selection does NOT affect the encoding pipeline when HDR output is active — it only applies when HDR content must be displayed on an SDR output path.
+
+#### Color Pipeline Diagram
+
+```
+Surface Upload                     Compositing                           Output
+─────────────                     ───────────                           ──────
+                                                                    ┌─ SDR-sRGB ──── 8-bit sRGB ──── rgb888
+                    linearize        blend/effects      output TF   │
+[sRGB surface] ──── (LUT/analytical) ──► linear RGB ──► composite ──┤─ WCG-SDR ──── 10-bit sRGB ──── rgb101010
+                                         (gamut)                    │  (P3/2020)      gamma
+[WCG surface] ──── gamut matrix ────────►                           │
+                                                                    └─ HDR ────────── 10/16-bit PQ ── rgb101010
+[HDR surface] ──── inverse PQ ──────────►                              (Rec.2020)     or HLG           rgba16161616
+```
 
 ---
 

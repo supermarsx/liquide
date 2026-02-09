@@ -447,6 +447,17 @@ ClientHello = {
 }
 ```
 
+**Color Capability Keys** (within the `capabilities` map):
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `"color.supported_modes"` | `[+ text]` | Pipeline modes the client supports: `"sdr-srgb"`, `"wcg-sdr"`, `"hdr"` |
+| `"color.display_gamut"` | `text` | Client display gamut: `"srgb"`, `"display-p3"`, `"rec2020"` |
+| `"color.display_hdr"` | `bool` | Client display supports HDR output |
+| `"color.display_max_luminance"` | `uint` | Client display peak luminance in nits (0 = unknown) |
+| `"color.preferred_bit_depth"` | `uint` | Preferred decode bit depth: 8, 10, or 16 |
+| `"color.supported_pixel_formats"` | `[+ text]` | Pixel formats the client can decode for tile path (e.g., `["rgb888", "rgba8888", "rgb101010"]`) |
+
 ### 8.2 CBOR Schema: ServerHello
 
 ```cddl
@@ -470,6 +481,16 @@ ChannelConfig = {
     compression: text,                         ; "none", "lz4", "zstd"
 }
 ```
+
+**Color Capability Keys** (within `features` or as additional `ServerHello` fields):
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `"color.pipeline_mode"` | `text` | Negotiated mode: `"sdr-srgb"`, `"wcg-sdr"`, `"hdr"` |
+| `"color.compositing_space"` | `text` | Server compositing gamut: `"srgb"`, `"display-p3"`, `"rec2020"` |
+| `"color.bit_depth"` | `uint` | Negotiated bit depth: 8, 10, 16 |
+| `"color.transfer_function"` | `text` | Active transfer function: `"srgb"`, `"pq"`, `"hlg"` |
+| `"color.hdr10_static"` | `HDR10Static` | Mastering display metadata (present when HDR active) |
 
 ### 8.3 CBOR Schema: CrashInfo (Emergency Channel)
 
@@ -506,6 +527,35 @@ FrameHeader = {
     ? quantizer: uint,                         ; quantizer value for quality metrics
     timestamp_us: uint,                        ; capture timestamp
     ? metadata: {* text => any},               ; extensible metadata
+    ? color_space: ColorSpaceInfo,             ; color space signaling (present when non-sRGB)
+    ? hdr_metadata: HDRMetadata,               ; HDR static/dynamic metadata (present when HDR active)
+}
+
+ColorSpaceInfo = {
+    primaries: uint,                           ; ITU-T H.273 colour_primaries: 1=BT.709, 9=BT.2020, 12=Display-P3
+    transfer: uint,                            ; ITU-T H.273 transfer_characteristics: 1=BT.709, 13=sRGB, 16=PQ, 18=HLG
+    matrix: uint,                              ; ITU-T H.273 matrix_coefficients: 0=Identity(RGB), 1=BT.709, 9=BT.2020-NCL
+    bit_depth: uint,                           ; bits per channel: 8, 10, 12, 16
+}
+
+HDRMetadata = {
+    ? hdr10: HDR10Static,                      ; SMPTE ST 2086 mastering display + MaxCLL/MaxFALL
+    ? hdr10plus: bytes,                        ; HDR10+ dynamic metadata blob (raw SEI/OBU per frame)
+}
+
+HDR10Static = {
+    display_primaries_rx: float32,             ; mastering display red primary CIE x
+    display_primaries_ry: float32,             ; mastering display red primary CIE y
+    display_primaries_gx: float32,
+    display_primaries_gy: float32,
+    display_primaries_bx: float32,
+    display_primaries_by: float32,
+    white_point_x: float32,                    ; mastering display white point CIE x
+    white_point_y: float32,                    ; mastering display white point CIE y
+    max_luminance: float32,                    ; max mastering display luminance (cd/m²)
+    min_luminance: float32,                    ; min mastering display luminance (cd/m²)
+    max_cll: uint,                             ; maximum content light level (nits)
+    max_fall: uint,                            ; maximum frame-average light level (nits)
 }
 
 Rect = {
@@ -523,7 +573,7 @@ TileConfig = {
     tile_size: uint,                           ; tile dimension in pixels (32, 64, 128, 256)
     grid_width: uint,                          ; number of tiles horizontally
     grid_height: uint,                         ; number of tiles vertically
-    pixel_format: text,                        ; "rgb888", "rgba8888", "rgb565"
+    pixel_format: text,                        ; "rgb888", "rgba8888", "rgb565", "rgb101010", "rgba1010102", "rgba16161616"
     codec: text,                               ; "zstd", "lz4", "png", "qoi", "webp", "raw"
     delta_enabled: bool,                       ; whether XOR deltas are used
     screen_width: uint,                        ; actual screen width in pixels
@@ -1313,6 +1363,7 @@ The canonical schemas live in the repository at `crates/liquide-protocol/schema/
 | `input.cddl` | Input channel messages (KeyEvent, MouseEvent, TouchEvent, etc.) |
 | `emergency.cddl` | Emergency channel messages (EmergencyHello, CrashInfo, CrashLog) |
 | `common.cddl` | Shared type definitions (session_id, error codes, enums) |
+| `color.cddl` | Color space types (ColorSpaceInfo, HDRMetadata, HDR10Static) |
 
 ### 13.2 Schema Conventions
 
@@ -1702,6 +1753,12 @@ The following components are fuzzing targets for security and robustness:
 | Unknown CBOR field | Add extra field to known message | Receiver ignores field, processes message |
 | Unknown channel | ChannelOpen for unrecognized channel ID | ChannelOpenReject with unsupported_channel |
 | Vendor extension | Negotiate vendor cap, send vendor messages | Messages processed only after capability confirmed |
+| Color negotiation | ClientHello with color caps, ServerHello selects mode | Both sides agree on pipeline mode; fallback to SDR-sRGB if mismatch |
+| Color fallback | Client with SDR-only, server configured HDR | Server falls back to SDR-sRGB; no HDR metadata sent |
+| HDR metadata | FrameHeader includes HDR10 static/dynamic metadata | Client receives and validates `color_space` and `hdr_metadata` fields |
+| Deep color tile | TileConfig with `rgb101010` pixel format, 10-bit tile data | Client decodes 10-bit tiles correctly, pixel-perfect match |
+| Deep color round-trip | 10-bit encode → transport → 10-bit decode | No precision loss beyond codec quantization |
+| Wayland wire fuzz | Randomized Wayland protocol messages to compositor | Compositor does not crash, returns appropriate protocol errors |
 
 ### 18.2 Conformance Test Runner
 
@@ -1712,6 +1769,8 @@ liquide-conformance --server <address> --username <user> --password <pass> --sui
 ```
 
 Outputs a pass/fail report per test case.
+
+The conformance runner also includes a `--wayland-fuzz` mode that sends randomized Wayland wire format messages to the compositor's internal protocol parser. This is separate from the client-server protocol fuzzing and targets the Wayland compositor's `wl_display` message dispatch. It validates that malformed Wayland messages do not cause crashes, undefined behavior, or state corruption in the compositor.
 
 ---
 

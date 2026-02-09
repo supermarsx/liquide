@@ -35,6 +35,11 @@ This document defines explicit **Service Level Objectives (SLOs)** for LiquiDE, 
 | Tile delta bandwidth savings | ≥ 60% vs full tiles | Typical UI workload |
 | Encode throughput (H.264, 1080p) | ≥ 60 fps | Single-core software, balanced quality |
 | Encode throughput (AV1, 1080p) | ≥ 30 fps | Multi-core software, balanced quality |
+| Frame rate (1080p, 10-bit WCG) | ≥ 30 fps sustained | LAN, H.265 Main 10 or AV1 10-bit, software encode |
+| Frame rate (1080p, 10-bit WCG, HW) | ≥ 60 fps sustained | LAN, hardware encoder (VAAPI/NVENC), 10-bit profile |
+| Frame rate (4K, 10-bit WCG) | ≥ 24 fps sustained | LAN, hardware encoder recommended |
+| Encode throughput (H.265 Main 10, 1080p) | ≥ 30 fps | Hardware encoder (VAAPI/NVENC). Software ≥ 15 fps. |
+| Encode throughput (AV1 10-bit, 1080p) | ≥ 30 fps | Multi-core software (SVT-AV1). Hardware ≥ 60 fps. |
 
 ### 2.3 Resource Consumption SLOs
 
@@ -42,6 +47,7 @@ This document defines explicit **Service Level Objectives (SLOs)** for LiquiDE, 
 |----------|--------|------|--------|-----|
 | **CPU** (server, per session) | < 2 cores | < 1% of 1 core | < 4 cores | 6 cores (cgroup) |
 | **Memory** (server, per session, no apps) | < 200 MB | < 100 MB | < 350 MB | 512 MB (cgroup) |
+| **Memory** (10-bit WCG/HDR session, no apps) | < 300 MB | < 150 MB | < 500 MB | 768 MB (cgroup) |
 | **Memory** (per WASM plugin) | < 16 MB typical | < 2 MB | < 16 MB | 256 MB (configurable) |
 | **Network bandwidth** (1080p, balanced) | 2–8 Mbps | < 10 Kbps | 8–20 Mbps | 50 Mbps |
 | **Disk I/O** (session runtime) | < 1 MB/s sustained | ~0 | < 2 MB/s | 10 MB/s |

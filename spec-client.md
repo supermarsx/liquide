@@ -1678,16 +1678,54 @@ See [spec-protocol-formal.md](spec-protocol-formal.md) §9 for full emergency ch
 
 #### Color Management (Client-Side)
 
-- The client receives video frames in sRGB color space (or the server-configured ICC profile).
-- The client does **not** apply additional color transforms by default — the server's rendering is authoritative.
-- Optional: `color.profile_hint` in client config sends the client's display characteristics to the server:
-  ```toml
-  [color]
-  profile_hint = ""              # path to client display ICC profile (informational, sent to server)
-  force_srgb = true              # assume sRGB output (default; disable for wide-gamut displays)
-  ```
-- On wide-gamut displays (P3, Adobe RGB), `force_srgb = false` and a `profile_hint` allows the server to render in a wider gamut (if supported).
-- HDR passthrough: not supported in the initial release. The client always presents SDR content.
+The client's color management responsibilities depend on the negotiated pipeline mode. The server performs all compositing and encoding; the client handles display-side color processing.
+
+**Pipeline Mode Responsibilities:**
+
+| Pipeline Mode | Client Decode | Client Display | Client Action |
+|--------------|--------------|----------------|---------------|
+| **SDR-sRGB** | 8-bit sRGB | Direct passthrough | None — display framework handles sRGB. Server's rendering is authoritative. |
+| **WCG-SDR** | 10-bit, sRGB gamma, P3/BT.2020 primaries | Wide gamut output if display supports it; gamut compress to sRGB if not | Client checks display gamut. If display < P3, applies 3×3 matrix gamut compression. If display ≥ P3, passes through. |
+| **HDR** | 10/16-bit, PQ/HLG transfer, BT.2020 primaries | HDR passthrough to display | Client enables HDR output on display. If display doesn't support HDR, client applies tone mapping (configurable TMO: Reinhard default). |
+
+**Platform-Specific HDR Passthrough:**
+
+| Platform | HDR Output API | Surface Format | Notes |
+|----------|---------------|----------------|-------|
+| **Windows** | DXGI swap chain with `DXGI_FORMAT_R10G10B10A2_UNORM` + `DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020` | R10G10B10A2 | Requires Windows 10 1803+ with HDR enabled in Display Settings. Client calls `SetColorSpace1()` on swap chain. |
+| **macOS** | `CAMetalLayer` with `pixelFormat = .bgr10a2Unorm` and `wantsExtendedDynamicRangeContent = true` | BGR10A2 | macOS EDR (Extended Dynamic Range) maps PQ values to EDR headroom automatically. |
+| **Linux** | Wayland `wp_color_management_v1` on client compositor, or DRM/KMS with `DRM_FORMAT_XRGB2101010` | XRGB2101010 | Requires compositor support (GNOME 47+/KDE 6.1+ with HDR). X11: not supported (no HDR path). |
+| **Web** | `<canvas>` with `colorSpace: "display-p3"` (WCG) or HDR canvas API (experimental) | RGBA | See [spec-web-client.md](spec-web-client.md) for browser API availability. HDR limited to WebGPU path. |
+
+**Color Negotiation (ClientHello):**
+
+The client advertises its color capabilities in `ClientHello.capabilities`:
+- `color.supported_modes`: list of supported pipeline modes (`["sdr-srgb", "wcg-sdr", "hdr"]`).
+- `color.display_gamut`: client display's color gamut (`"srgb"`, `"display-p3"`, `"rec2020"`).
+- `color.display_hdr`: whether the client display supports HDR output (`true`/`false`).
+- `color.display_max_luminance`: peak luminance of the client display in nits (0 if unknown).
+- `color.preferred_bit_depth`: preferred decode bit depth (8, 10, or 16).
+- `color.supported_pixel_formats`: pixel formats the client can decode for tile mode (e.g., `["rgb888", "rgba8888", "rgb101010"]`).
+
+The server selects the pipeline mode by intersecting client capabilities with server config. If the client supports `"hdr"` and the server is configured for HDR, HDR mode is activated. Otherwise, fallback proceeds: `"wcg-sdr"` → `"sdr-srgb"`.
+
+**Configuration:**
+
+```toml
+[color]
+# Client display ICC profile path (sent to server as hint; informational only)
+profile_hint = ""
+# Enable HDR output on the client display (requires display + OS support)
+hdr_enabled = false
+# Client display peak luminance in nits (0 = auto-detect from OS)
+hdr_peak_luminance = 0
+# Preferred decode bit depth (8, 10, 16). Server may override based on its capabilities.
+preferred_bit_depth = 8
+# Client-side tone mapping operator for HDR → SDR fallback (when display doesn't support HDR)
+tone_map_local = "reinhard"       # reinhard, bt2390, hable, aces
+# Force sRGB output regardless of display capabilities (disables WCG/HDR client-side)
+force_srgb = true
+```
 
 ---
 
