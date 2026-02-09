@@ -9,7 +9,7 @@ use clap::Parser;
 use cli::{Cli, Command};
 use client::Client;
 use error::ExitCode;
-use output::{should_colorize, Output};
+use output::{Output, should_colorize};
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -69,11 +69,7 @@ async fn main() -> std::process::ExitCode {
     }
 }
 
-async fn dispatch(
-    command: &Command,
-    client: &Client,
-    output: &Output,
-) -> error::Result<()> {
+async fn dispatch(command: &Command, client: &Client, output: &Output) -> error::Result<()> {
     match command {
         Command::Status(args) => commands::status::execute(client, output, args).await,
         Command::Sessions(cmd) => commands::sessions::execute(client, output, cmd).await,

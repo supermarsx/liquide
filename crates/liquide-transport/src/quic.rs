@@ -30,10 +30,6 @@ impl super::Transport for QuicTransport {
         todo!("QUIC connect")
     }
 
-    async fn accept(&self) -> super::Result<Box<dyn super::Transport>> {
-        todo!("QUIC accept")
-    }
-
     async fn send(&self, _data: Bytes) -> super::Result<()> {
         todo!("QUIC send")
     }

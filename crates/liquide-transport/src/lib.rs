@@ -51,9 +51,6 @@ pub trait Transport: Send + Sync + 'static {
     /// Establish a connection to the given remote address.
     async fn connect(&mut self, addr: SocketAddr) -> Result<()>;
 
-    /// Accept an inbound connection (server side).
-    async fn accept(&self) -> Result<Box<dyn Transport>>;
-
     /// Send a frame payload to the connected peer.
     async fn send(&self, data: Bytes) -> Result<()>;
 

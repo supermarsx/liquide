@@ -30,10 +30,6 @@ impl super::Transport for WebSocketTransport {
         todo!("WebSocket connect")
     }
 
-    async fn accept(&self) -> super::Result<Box<dyn super::Transport>> {
-        todo!("WebSocket accept")
-    }
-
     async fn send(&self, _data: Bytes) -> super::Result<()> {
         todo!("WebSocket send")
     }

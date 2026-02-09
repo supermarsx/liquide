@@ -30,10 +30,6 @@ impl super::Transport for UdpTransport {
         todo!("UDP connect")
     }
 
-    async fn accept(&self) -> super::Result<Box<dyn super::Transport>> {
-        todo!("UDP accept")
-    }
-
     async fn send(&self, _data: Bytes) -> super::Result<()> {
         todo!("UDP send")
     }
