@@ -380,7 +380,13 @@ If SANE backends are available:
 
 ### 8.3 Remote Session Considerations
 
-Printers are the **server's** printers (network printers accessible from the server). Client-local printers are not automatically available — this would require printer redirection (a potential future feature).
+Printers are sourced from two origins depending on the printing mode configured on the server (see spec.md §Remote Printing):
+
+- **Client-redirect printers** (default mode): The client advertises its local printers during session setup. The server creates virtual CUPS printers for each, and applications see them in the standard print dialog. Print jobs are converted to PDF on the server and delivered to the client for local printing.
+- **Network-direct printers**: Network printers accessible from the server via CUPS/IPP are available in the session.
+- **PDF download**: Always available as a fallback — print jobs are offered as PDF file downloads.
+
+The Settings app's Printers module shows all printers visible to the session's per-session CUPS instance, regardless of origin. Client-redirect printers are labeled with "(via client)" to distinguish them from network printers.
 
 ### 8.4 Config Keys
 

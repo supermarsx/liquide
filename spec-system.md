@@ -937,6 +937,47 @@ polkit.addRule(function(action, subject) {
 
 Users in the `liquide` group are prompted for admin password once (cached for the session) for system-wide Flatpak operations. Per-user installs (`--user`) do not require polkit.
 
+### 14.6 Polkit Authentication Agent
+
+Multiple LiquiDE operations are gated by polkit (Flatpak system-wide installs, NetworkManager VPN imports, UDisks2 mount, systemd unit management, etc.). A polkit authentication agent MUST be running in the session for these operations to prompt the user rather than silently fail.
+
+**LiquiDE ships its own polkit authentication agent**: `liquid-polkit-agent`.
+
+| Property | Value |
+|----------|-------|
+| Binary | `liquid-polkit-agent` |
+| Toolkit | `liquid-ui` (same toolkit as shell, Liquid Glass themed) |
+| Autostart | Started by `liquid-session` as part of session initialization (before shell UI) |
+| D-Bus interface | Registers as `org.freedesktop.PolicyKit1.AuthenticationAgent` on the session bus |
+| Desktop file | `/etc/xdg/autostart/liquid-polkit-agent.desktop` with `DesktopNames=LiquiDE` |
+
+**Authentication dialog:**
+
+- Modal dialog rendered by the compositor (above all windows, cannot be obscured).
+- Shows: action description (from polkit action metadata), requesting application identity, password field.
+- Styled with Liquid Glass design language (glass panel, blur backdrop).
+- Keyboard-navigable, screen-reader-accessible.
+- Timeout: 60 seconds idle → dialog dismissed, operation fails with `auth_cancelled`.
+
+**Remote session behavior:**
+
+- In remote sessions, the polkit agent dialog is rendered server-side and streamed to the client like any other UI.
+- Password entry happens over the existing encrypted session channel (no additional transport needed).
+- The agent checks `session.lock` state — if the session is locked, polkit challenges are queued until unlock.
+
+**Local mode:**
+
+- In local mode (`--local-session`), the same agent runs. No behavioral difference.
+- If users prefer an external agent (e.g., `gnome-polkit-agent`, `lxpolkit`), they can disable the built-in agent via `[session] polkit_agent = "external"` and ensure their preferred agent is in XDG autostart.
+
+**Configuration:**
+
+```toml
+[session]
+polkit_agent = "builtin"              # "builtin" (liquid-polkit-agent) or "external"
+polkit_timeout_sec = 60               # dialog timeout
+```
+
 ---
 
 ## 15) Test Plan
@@ -970,3 +1011,7 @@ Users in the `liquide` group are prompted for admin password once (cached for th
 - Flatpak: `liquide-flatpak-update.timer` fires and updates apps successfully.
 - Flatpak: polkit rule grants install permission to `liquide` group members.
 - Flatpak: `flatpak.enabled = false` disables all Flatpak operations.
+- Polkit: `liquid-polkit-agent` starts during session initialization and registers on session bus.
+- Polkit: authentication dialog appears for system-wide Flatpak install and accepts correct password.
+- Polkit: dialog timeout (60s) dismisses dialog and fails operation gracefully.
+- Polkit: `polkit_agent = "external"` disables built-in agent; session relies on external agent.

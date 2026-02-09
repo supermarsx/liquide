@@ -2488,6 +2488,41 @@ CUPS server (per-session, in-session namespace)
 
 Each session runs a lightweight CUPS instance (socket-activated, in the session's mount namespace) that intercepts print requests from applications. The CUPS instance is configured with virtual printers that correspond to the active printing mode.
 
+#### Per-Session CUPS Socket Isolation
+
+Applications find the CUPS server via the `CUPS_SERVER` environment variable or the default socket path `/run/cups/cups.sock`. LiquiDE ensures each session's applications talk to their own CUPS instance through the following mechanism:
+
+**Namespace strategy:**
+
+1. `liquid-session` creates a private mount namespace for the session process tree (`unshare(CLONE_NEWNS)`).
+2. Within that namespace, a bind mount overlays the standard CUPS socket path:
+   ```
+   bind-mount: /run/liquide/sessions/<session-id>/cups.sock → /run/cups/cups.sock
+   ```
+3. The per-session CUPS scheduler (`cupsd`) listens on `/run/liquide/sessions/<session-id>/cups.sock`.
+4. All child processes (applications, shell) inherit the mount namespace. When they open `/run/cups/cups.sock` (the default CUPS path), they transparently connect to the session-local CUPS instance.
+
+**Environment injection (belt-and-suspenders):**
+
+In addition to the bind mount, `liquid-session` sets:
+```bash
+CUPS_SERVER=/run/liquide/sessions/<session-id>/cups.sock
+```
+in the session environment. This covers applications that use `CUPS_SERVER` directly (e.g., some toolkits) and handles edge cases where mount namespace propagation interacts with Flatpak sandboxes.
+
+**Flatpak applications:**
+
+Flatpak apps with the `cups` socket permission (`--socket=cups`) get access to the session's CUPS socket via the portal or a bind mount into their sandbox at the standard path.
+
+**CUPS instance lifecycle:**
+
+| Event | Action |
+|-------|--------|
+| Session start | Socket path created. CUPS instance is socket-activated (not started until first print operation). |
+| First print job | systemd socket activation starts `cupsd` for this session. |
+| Session idle (no jobs for 5 min) | CUPS instance exits (socket activation will restart it on next job). |
+| Session end | Socket removed. CUPS instance terminated. Spool directory cleaned (see §Print Spool Hardening). |
+
 #### Client Printer Discovery
 
 When a client connects, it advertises its available local printers:
@@ -2504,7 +2539,7 @@ The server creates a virtual CUPS printer for each client-advertised printer. Ap
 **Native client**: enumerates printers via platform API:
 - **Windows**: Win32 `EnumPrinters` API.
 - **macOS**: CUPS API (macOS uses CUPS natively).
-- **Linux**: CUPS API or D-Bus `org.freedesktop.UDisks2`.
+- **Linux**: CUPS API (`cupsEnumDests` / `cupsGetDests2`).
 
 **Web client**: printing is PDF-download-only. The web client cannot access local printers directly from the browser. The user saves the PDF and prints from their local system.
 
