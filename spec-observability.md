@@ -438,6 +438,39 @@ All components MUST log these events at the specified level:
 
 ---
 
+## 5a) Golden Dashboards & SLO-Mapped Alert Rules
+
+### Golden Dashboard Panels
+
+The following Grafana dashboard panels provide the recommended "single pane of glass" for LiquiDE operations. Each panel maps directly to SLOs from [spec-performance.md](spec-performance.md).
+
+| Panel | Metric Query | Visualization | SLO Reference |
+|-------|-------------|---------------|---------------|
+| **Input-to-Photon Latency** | `histogram_quantile(0.99, rate(liquide_input_to_photon_seconds_bucket[5m]))` | Heatmap + p50/p99 lines | §2.1: p99 < 25ms (LAN) |
+| **Frame Rate** | `rate(liquide_compositor_frames_total[1m]) * 60` | Time series, per session | §2.2: ≥ 60 fps (1080p) |
+| **Active Sessions** | `count(liquide_session_info)` | Stat panel + time series | Capacity planning baseline |
+| **CPU per Session** | `rate(liquide_session_cpu_seconds_total[5m])` | Time series, p50/p95 bands | §2.3: < 2 cores (1080p) |
+| **Memory per Session** | `liquide_session_memory_rss_bytes` | Time series, p50/p95 bands | §2.3: < 200 MB (1080p) |
+| **Degradation Level** | `liquide_compositor_degradation_level` | Heatmap by session | §7: should stay L0–L3 |
+| **Send Queue Depth** | `liquide_transport_send_queue_bytes / liquide_transport_send_buffer_size_bytes` | Gauge (0–100%) | §11.3: < 80% normal |
+| **Audio Underruns** | `rate(liquide_audio_underrun_total[5m])` | Time series | §2.1: audio e2e < 30ms |
+
+### SLO-Mapped Alert Rules
+
+| Alert Name | Expression | For (duration) | Severity | Runbook |
+|-----------|-----------|----------------|----------|---------|
+| **InputLatencyHigh** | `histogram_quantile(0.99, rate(liquide_input_to_photon_seconds_bucket[5m])) > 0.025` | 5m | warning | Check server CPU, degradation level, network RTT. If CPU > 80%, consider reducing max sessions. |
+| **FrameRateLow** | `rate(liquide_compositor_frames_total[1m]) * 60 < 30` AND `liquide_compositor_damage_active == 1` | 3m | warning | Check degradation level. If L9+, server is overloaded — reduce sessions or upgrade hardware. |
+| **AudioUnderrun** | `rate(liquide_audio_underrun_total[5m]) > 0.1` | 5m | warning | Check jitter buffer target (`liquide_audio_jitter_target_ms`). If consistently high, network quality is poor. |
+| **SessionCrashLoop** | `increase(liquide_session_crash_total[10m]) > 3` | 1m | critical | Session crashing repeatedly. Check crash reports, memory pressure, OOM kills. Likely a bug — collect coredump. |
+| **CPUOvercommit** | `sum(rate(liquide_session_cpu_seconds_total[5m])) / count(liquide_session_info) > 2.5` | 10m | warning | Average CPU per session exceeds budget. Admission control should reject new sessions. |
+| **MemoryPressure** | `liquide_session_memory_rss_bytes / liquide_session_memory_limit_bytes > 0.9` | 5m | critical | Session approaching cgroup memory limit. Plugin audit, cache eviction expected. Risk of OOM kill. |
+| **SendQueueBackpressure** | `liquide_transport_send_queue_bytes / liquide_transport_send_buffer_size_bytes > 0.8` | 30s | warning | Transport backpressure active. Check network bandwidth, client decode speed. Video/tile quality will auto-degrade. |
+
+**Alert routing**: alerts at `warning` severity are sent to the ops channel/dashboard. Alerts at `critical` severity are sent to the on-call pager. Alert grouping: by `session_id` for per-session alerts, by `server_id` for server-wide alerts.
+
+---
+
 ## 6) Observability Configuration Summary
 
 ```toml

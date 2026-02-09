@@ -114,6 +114,51 @@ The management server is a **simple Node.js application** that is **disabled by 
 - **Policy preview**: show what a policy change would affect before applying.
 - **Policy history**: track changes with who/when/what.
 
+#### Policy Versioning
+
+Every policy change is assigned a **monotonic version number**. The manager tracks the full history:
+
+| Field | Description |
+|-------|-------------|
+| `version` | Monotonic integer, incremented on every policy mutation |
+| `timestamp` | ISO 8601 timestamp of the change |
+| `changed_by` | Admin identity who made the change |
+| `diff` | JSON Patch (RFC 6902) describing the change |
+| `rollback_ref` | Version number to revert to (for rollback operations) |
+
+```bash
+# View policy history
+liquidctl policy history --limit 10
+
+# Diff between versions
+liquidctl policy diff --from 42 --to 45
+
+# Rollback to a specific version
+liquidctl policy rollback --to 42 --reason "regression in clipboard policy"
+```
+
+#### Staged Policy Rollout
+
+For large deployments, policy changes can be rolled out in stages to minimize blast radius:
+
+| Stage | Target | Soak Period | Auto-Rollback Trigger |
+|-------|--------|-------------|----------------------|
+| **Canary** | 1% of sessions (random selection) | 15 minutes minimum | Error rate > 2× baseline for canary group |
+| **Early adopters** | 10% of sessions | 1 hour minimum | Error rate > 1.5× baseline |
+| **General availability** | 100% of sessions | — | Manual rollback only |
+
+**Canary monitoring**: during staged rollout, the manager compares SLO metrics (from [spec-observability.md](spec-observability.md) §5a) between the canary group and the control group. If any SLO metric degrades by more than 10% in the canary group, the rollout is automatically paused and an alert is emitted.
+
+```toml
+[policy.rollout]
+staged_rollout_enabled = false           # set true for large deployments
+canary_percentage = 1                    # percentage of sessions in canary stage
+canary_soak_minutes = 15
+early_adopter_percentage = 10
+early_adopter_soak_minutes = 60
+auto_rollback_threshold = 2.0           # error rate multiplier triggering rollback
+```
+
 ### Gateway Management (if gateway is configured)
 - **Gateway status**: health, connected servers, active sessions.
 - **Registered servers**: list with health status.
@@ -407,6 +452,107 @@ The management server exposes its own API (used by the web frontend and optional
 | `POST` | `/api/v1/supervisor/sessions/{id}/reset-restarts` | Reset restart counter |
 | `GET` | `/api/v1/supervisor/sessions/{id}/resources` | Session resource usage (cgroup stats) |
 | `WS` | `/ws/v1/supervisor` | WebSocket stream of supervisor events (crashes, restarts, health) |
+
+---
+
+## 6a) Backup & Disaster Recovery
+
+### State Inventory
+
+| State Component | Location | Backup Method | RPO | RTO |
+|----------------|----------|---------------|-----|-----|
+| Server configuration | `/etc/liquide/` | File copy (tar + encrypt) | 1 hour (scheduled) | < 5 min (restore from backup) |
+| Manager database (sessions, policies, users) | `/var/lib/liquide/manager.db` (SQLite) | SQLite `.backup` API (online, consistent) | 1 hour (scheduled) | < 5 min |
+| TLS certificates | `/etc/liquide/certs/` | File copy | 0 (always backed up immediately on change) | < 1 min (file restore) |
+| Policy definitions | `/etc/liquide/policies/` | File copy + version tracking | 1 hour | < 5 min |
+| Plugin binaries + manifests | `/etc/liquide/plugins/` | File copy | 24 hours | < 10 min |
+| Audit log archive | `/var/log/liquide/audit.log` | Shipped externally (see spec-threat-model.md §6). Not backed up locally — the external SIEM/syslog is the authoritative copy. | 0 (real-time shipping) | N/A |
+| Session state (in-memory) | Process memory | **Not backed up** — sessions are ephemeral. Users reconnect after restore. | N/A | Session restart < 2s |
+
+### Backup Procedure
+
+```bash
+# Automated backup (runs as systemd timer, default: hourly)
+liquidctl backup create --output /var/backups/liquide/
+
+# Backup contents: tar.gz.enc (AES-256-GCM encrypted with server TLS key)
+# Includes: config, database, certs, policies, plugin manifests
+# Excludes: session state, coredumps, audit logs (shipped externally)
+
+# Verify backup integrity
+liquidctl backup verify /var/backups/liquide/backup-2025-06-15T14.tar.gz.enc
+```
+
+### Restore Procedure
+
+```bash
+# Stop the daemon
+systemctl stop liquid-desktopd
+
+# Restore from backup
+liquidctl backup restore /var/backups/liquide/backup-2025-06-15T14.tar.gz.enc
+
+# Start the daemon
+systemctl start liquid-desktopd
+# Active sessions are lost — users reconnect automatically (client auto-reconnect)
+```
+
+### Configuration
+
+```toml
+[backup]
+enabled = true
+schedule = "0 * * * *"                   # cron expression (default: every hour)
+output_dir = "/var/backups/liquide/"
+max_backups = 168                        # 7 days × 24 hourly backups
+encrypt = true                           # encrypt with server TLS key
+include_plugins = false                  # plugin binaries are large; back up separately if needed
+```
+
+---
+
+## 6b) Certificate Lifecycle Automation
+
+### ACME Integration
+
+LiquiDE supports automated TLS certificate provisioning and renewal via the **ACME protocol (RFC 8555)**. This is the recommended approach for production deployments.
+
+| Property | Specification |
+|----------|--------------|
+| **Protocol** | ACME v2 (RFC 8555) |
+| **Supported CAs** | Let's Encrypt, ZeroSSL, any ACME-compliant CA |
+| **Challenge types** | `http-01` (default), `dns-01` (for wildcard certs) |
+| **Key type** | ECDSA P-256 (default), RSA-2048 (configurable) |
+| **Renewal threshold** | 30 days before expiry (configurable) |
+| **Renewal check interval** | Every 12 hours |
+
+### Zero-Downtime Certificate Rotation
+
+Certificate rotation MUST NOT disrupt active sessions:
+
+1. New certificate is written to a temporary file.
+2. Atomic rename replaces the old certificate file.
+3. `SIGHUP` sent to `liquid-desktopd` — daemon reloads certificate without restarting.
+4. New connections use the new certificate. Existing TLS connections continue with the old certificate until they naturally close or reconnect.
+5. Audit event `admin.action` emitted with `action = "cert_rotated"`.
+
+### Configuration
+
+```toml
+[tls.acme]
+enabled = false                          # set true to enable ACME
+directory_url = "https://acme-v2.api.letsencrypt.org/directory"
+email = "admin@example.com"              # ACME account contact
+domain = "desktop.example.com"           # certificate domain
+challenge_type = "http-01"               # http-01, dns-01
+key_type = "ecdsa-p256"                  # ecdsa-p256, rsa-2048
+renewal_days_before_expiry = 30
+check_interval_hours = 12
+
+[tls.acme.dns01]
+provider = ""                            # "cloudflare", "route53", "manual"
+credentials_file = ""                    # provider-specific credentials
+```
 
 ---
 

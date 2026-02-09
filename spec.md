@@ -1179,12 +1179,125 @@ For deployments where TLS handshake latency is unacceptable (e.g., session resum
 - Configurable MTU override for known network topologies.
 
 #### Congestion Control
-- QUIC: uses built-in congestion control (BBR or Cubic, configurable).
-- UDP: custom congestion control with:
-  - RTT estimation.
-  - Packet loss detection.
-  - Bandwidth probing.
-  - Interactive-traffic-optimized pacing.
+
+**Target Controller Selection:**
+
+| Transport | Default Controller | Fallback | Rationale |
+|-----------|-------------------|----------|-----------|
+| QUIC | BBR v2 | Cubic | BBR v2 avoids bufferbloat, optimizes for interactive traffic. Cubic as fallback for fairness with legacy TCP flows. |
+| TCP (TLS) | Cubic (OS default) | New Reno | TCP uses kernel congestion control. Cubic is standard on modern Linux. |
+| UDP (raw DTLS) | Custom pacer (BBR-inspired) | Fixed-rate with backoff | Custom implementation: RTT-based pacing, loss-driven reduction, no slow-start (assumes interactive). |
+
+**BBR v2 Tuning for Remote Desktop:**
+
+| Parameter | Value | Standard BBR v2 | Rationale |
+|-----------|-------|-----------------|-----------|
+| `min_cwnd` | 2 × MSS | 4 × MSS | Smaller minimum window — remote desktop sends small control packets during idle. Standard BBR holds too much in-flight. |
+| `pacing_gain` (idle) | 1.0 | 1.25 | No probing during idle — remote desktop has zero traffic when screen is static. Probing would waste bandwidth. |
+| `pacing_gain` (active) | 1.25 | 1.25 | Standard probing during active use. |
+| `max_bw_filter_window` | 2 seconds | 10 RTTs | Shorter bandwidth memory — remote desktop traffic is bursty (type → idle → type). Long memory holds stale high estimates. |
+| `drain_to_target` | True | True | Standard BBR v2 drain. |
+| `loss_threshold` | 1% | 2% | More aggressive loss response — a single lost video keyframe causes visible corruption. Err on the side of caution. |
+
+**Per-Channel Loss Recovery:**
+
+| Channel | Loss Detection | Recovery Action | Max Recovery Time |
+|---------|---------------|----------------|-------------------|
+| Video (0x10) | Sequence gap in `FrameHeader.seq` | `KeyFrameRequest` → server IDR within 1 frame period | 16–33ms |
+| Tiles (0x12) | TCP/QUIC reliable retransmit | Automatic retransmit (transport-level) | 1 RTT |
+| Audio (0x20/21) | Sequence gap in audio frames | Opus PLC / FEC decode / repeat-with-fade | 0ms (concealment is instant) |
+| Input (0x50) | TCP/QUIC reliable retransmit | Automatic retransmit | 1 RTT |
+| Cursor (0x11) | No recovery (latest-wins) | Next update replaces lost one | 1 frame period |
+| Control (0x00) | TCP/QUIC reliable retransmit | Automatic retransmit | 1 RTT |
+
+**Queuing Delay Cap:**
+
+The sender enforces a maximum queuing delay of **≤10ms** at the send buffer. If a frame has been queued for >10ms without being paced out, the transport layer signals the encoder to reduce output (backpressure). This prevents the "bufferbloat within the application" anti-pattern where the transport send queue absorbs latency that should be visible to the encoder.
+
+```toml
+[transport.congestion]
+controller = "bbr2"                    # "bbr2", "cubic", "fixed" (for testing)
+max_queuing_delay_ms = 10              # max time a frame sits in send buffer
+loss_threshold_percent = 1.0           # trigger quality reduction above this loss rate
+min_cwnd_mss = 2                       # minimum congestion window in MSS units
+bandwidth_probe_interval_sec = 2       # BBR bandwidth filter window
+```
+
+#### Adaptive Bitrate Control Loop
+
+The transport layer runs an **Adaptive Bitrate (ABR) control loop** at 100ms intervals that adjusts encoding and transmission parameters based on real-time network and system conditions.
+
+**Control Loop Inputs:**
+
+| Input | Source | Update Frequency |
+|-------|--------|-----------------|
+| Smoothed RTT (sRTT) | Ping/Pong + ACK timing | Per-ACK |
+| Packet loss rate | QUIC loss detection / TCP retransmit counters | Per-ACK |
+| Congestion window occupancy | `bytes_in_flight / cwnd` | Per-ACK |
+| Server CPU utilization | Compositor + encoder thread CPU time | Per-frame |
+| Client decode latency | `FrameAck.decode_time_us` / `TileBatchAck.decode_time_us` | Per-frame |
+| Send queue depth | Bytes pending in transport send buffer | Per-tick (100ms) |
+| Jitter (audio) | EWMA inter-packet jitter from audio channel | Per-audio-frame |
+
+**Control Loop Outputs:**
+
+| Output | Effect | Range |
+|--------|--------|-------|
+| Per-channel byte budget | Bytes each channel may send per tick | Computed from estimated bandwidth × priority weights |
+| Video FPS cap | Maximum frames per second for video encoder | 1–60 fps |
+| Quality index | Encoder quantizer / quality preset | 0 (best) – 51 (worst, H.264 CRF scale) |
+| Keyframe interval | Seconds between periodic IDR frames | 2–10s (shorter under loss) |
+| Tile compression level | Zstd level for tile data | 1 (fast) – 6 (high ratio) |
+| Tile size | Adaptive tile grid size | 32×32, 64×64, 128×128, 256×256 |
+
+**100ms Tick Pseudocode:**
+
+```
+every 100ms:
+  bw_estimate = bandwidth_estimator.current()
+  loss = loss_detector.rate()
+  rtt = rtt_estimator.smoothed()
+  cpu = cpu_monitor.session_utilization()
+  queue = send_buffer.bytes_pending()
+  client_decode = last_frame_ack.decode_time_us
+
+  # Step 1: Compute available budget
+  budget = bw_estimate * 0.1s  # bytes per tick
+
+  # Step 2: Allocate to priority levels (P0-P6)
+  allocate_priority_budgets(budget)
+
+  # Step 3: Adjust encoder parameters
+  if loss > 3% OR queue > 0.8 * send_buffer_size:
+    reduce_quality(step=1)
+    if fps > 30: reduce_fps(target=30)
+  elif loss > 1%:
+    reduce_quality(step=1)
+  elif cpu > 0.9 * cpu_limit:
+    reduce_fps(target=max(15, current_fps - 15))
+  elif client_decode > frame_budget_ms * 0.8:
+    reduce_quality(step=1)  # client struggling to decode
+  elif loss < 0.1% AND queue < 0.3 * send_buffer_size AND cpu < 0.5:
+    increase_quality(step=1)
+    if fps < target_fps: increase_fps(step=15)
+
+  # Step 4: Adjust keyframe interval
+  if loss > 2%: keyframe_interval = max(2s, keyframe_interval - 1s)
+  else: keyframe_interval = min(10s, keyframe_interval + 0.5s)
+```
+
+**Network-Level Degradation Order:**
+
+Distinct from the compositor's visual degradation ladder (spec-rendering-software.md §7), these are transport-level responses to network degradation:
+
+| Step | Trigger | Action | User Impact |
+|------|---------|--------|------------|
+| N0 | Nominal | Full quality, full FPS | None |
+| N1 | Loss > 1% OR queue > 50% | Reduce background refresh rate, increase tile delta threshold | Slower background updates |
+| N2 | Loss > 2% OR queue > 70% | Increase video quantizer by 5, reduce keyframe interval to 3s | Slightly softer image |
+| N3 | Loss > 3% OR queue > 80% | Disable shell animations, force tile-only for non-active windows | Static non-focused windows |
+| N4 | Loss > 5% OR queue > 90% | Clamp FPS to 15, maximum quantizer, audio bitrate to minimum | Choppy, low quality but functional |
+| N5 | Loss > 10% OR queue = 100% | Video paused, tile key-updates only for cursor region + active input area, audio continues | Minimal — maintaining input responsiveness |
 
 #### Channel Priority & Pacing
 
@@ -1228,6 +1341,36 @@ Every send_interval (1ms default):
 | Cursor | Datagram delivery — bypasses TCP/QUIC stream head-of-line blocking. Worst case: cursor update lost (re-sent on next mouse move). |
 | Video | Adapts to available bandwidth. Under severe congestion: FPS reduced, resolution reduced, quality reduced. Video is the "shock absorber" of the system. |
 
+#### Buffering Targets & Interactive Latency Budget
+
+The end-to-end latency from user input to visible pixel change is the sum of each pipeline stage. This budget breakdown defines the maximum allowable contribution of each stage:
+
+| Stage | Budget (LAN) | Budget (WAN, 50ms RTT) | Notes |
+|-------|-------------|----------------------|-------|
+| Client input capture | ≤1ms | ≤1ms | OS event loop to transport send |
+| Transport (client → server) | ≤1ms | RTT/2 | Network transit |
+| Server input injection | ≤1ms | ≤1ms | Transport receive to Wayland event queue |
+| Application processing | ≤2ms | ≤2ms | App reacts and commits surface |
+| Compositor render | ≤5ms | ≤5ms | Scene graph update + tile/frame composite |
+| Encode | ≤5ms | ≤5ms | Video or tile encode |
+| Transport (server → client) | ≤1ms | RTT/2 | Network transit |
+| Client decode | ≤3ms | ≤3ms | Video/tile decode |
+| Client present | ≤1ms | ≤1ms | Buffer swap / display |
+| **Total (excluding RTT)** | **≤20ms** | **≤24ms** | |
+| **Total (including RTT)** | **≤21ms** | **≤74ms** | Must fit SLO from spec-performance.md §2.1 |
+
+**Per-Channel Jitter Buffer Targets:**
+
+| Channel | Jitter Buffer | Rationale |
+|---------|--------------|-----------|
+| Video (0x10) | 0ms (no buffer) | Interactive — present immediately on decode. Dropped frames preferred over buffering. |
+| Audio (0x20) | 20–200ms (adaptive) | Adaptive jitter buffer absorbs network jitter. See §7e adaptive jitter algorithm. |
+| Cursor (0x11) | 0ms (no buffer) | Latest-wins — present immediately. Stale positions are worse than jitter. |
+| Tiles (0x12) | 0ms (no buffer) | Reliable transport handles ordering. Present on decode. |
+| Input (0x50) | 0ms (fire-and-forget) | Reliable transport, no client-side buffering needed. |
+
+**Constraint:** the sum of buffering delays + network RTT must remain within the input-to-photon SLO defined in [spec-performance.md](spec-performance.md) §2.1. For LAN (1ms RTT): p50 < 16ms, p99 < 25ms. For WAN (50ms RTT): p50 < 70ms, p99 < 120ms.
+
 **Observability counters:**
 
 | Metric | Type | Description |
@@ -1238,6 +1381,27 @@ Every send_interval (1ms default):
 | `liquide_transport_audio_schedule_delay_seconds` | histogram | Audio frame scheduling delay beyond target |
 | `liquide_transport_input_queue_delay_seconds` | histogram | Time input events spend in send queue |
 | `liquide_transport_video_backpressure_active` | gauge | 1 when video backpressure is active, 0 otherwise |
+
+#### Network Condition Test Harness
+
+The benchmark and CI pipeline includes a network condition test harness that injects realistic network impairments to validate protocol resilience and SLO compliance.
+
+**Implementation:** `tc` (Linux traffic control) + `netem` wrapper invoked by `liquide-bench --network <profile>`. The harness configures ingress and egress shaping on the loopback interface or between test namespaces.
+
+**Test Scenarios:**
+
+| Scenario | Configuration | Success Criteria |
+|----------|--------------|-----------------|
+| Steady-state 1% loss | `netem loss 1%` | Input-to-photon p99 < WAN SLO. No visible corruption >500ms. |
+| Steady-state 3% loss | `netem loss 3%` | Session remains usable. Degradation ≤ N3. Audio PLC masks most losses. |
+| Steady-state 5% loss | `netem loss 5%` | Session functional at reduced quality. Degradation ≤ N4. |
+| Burst loss (10% for 2s) | `netem loss 10% duration 2s` | Recovery to normal within 3s of burst end. Keyframe generated within 1 frame period. |
+| Jitter sweep (0→100ms) | `netem delay 50ms 50ms distribution normal` | Audio jitter buffer adapts. No underruns after first 2s. |
+| Bandwidth ramp down (100→2 Mbps) | `tc rate 100mbit; ramp to 2mbit over 10s` | ABR reduces quality smoothly. No send queue overflow. |
+| 500ms network blackout | `netem loss 100% duration 500ms` | Reconnect overlay shown within 2s. Session recovers on first attempt. |
+| 5% packet reorder | `netem reorder 5% gap 3` | No protocol errors. Reliable channels unaffected. Unreliable channels handle gracefully. |
+
+Each scenario is run against the workload profiles defined in [spec-performance.md](spec-performance.md) §3.1. Results are compared against the corresponding SLO targets from [spec-performance.md](spec-performance.md) §2.1 and the network emulation profiles in §3.3.
 
 ### Multiple Listening Modes
 - Server can listen on **multiple addresses and ports simultaneously**.
@@ -1668,6 +1832,43 @@ desync_threshold_ms = 500            # above this, full clock reset
 suspend_sync_below_fps = 10          # disable sync correction when video FPS is below this
 ```
 
+#### Adaptive Jitter Buffer Algorithm
+
+The client audio jitter buffer dynamically adjusts its depth based on observed network conditions:
+
+- **Algorithm**: Exponentially Weighted Moving Average (EWMA) of inter-packet arrival jitter.
+- **Formula**: `jitter_target = max(20ms, 2 × EWMA(jitter))`, where EWMA uses α = 0.125 (same as TCP RTT estimation).
+- **Minimum buffer**: 20ms (1 Opus frame at 50fps). This floor prevents underruns during stable conditions.
+- **Maximum buffer**: 200ms. Beyond this, audio latency is perceptible; the buffer caps and packets are dropped instead.
+- **Adjustment rate**: buffer depth changes by at most 5ms per second (smooth transitions to avoid audible artifacts).
+- **Metric**: `liquide_audio_jitter_target_ms` (gauge) — current jitter buffer target depth.
+- **Metric**: `liquide_audio_jitter_buffer_underrun_total` (counter) — jitter buffer underrun events (audible glitch).
+
+#### Forward Error Correction for Audio
+
+When network packet loss exceeds a threshold, Forward Error Correction (FEC) is activated to mask single-frame losses:
+
+| Loss Rate | FEC Strategy | Overhead | Audible Impact |
+|-----------|-------------|----------|---------------|
+| < 0.5% | None (PLC handles rare losses) | 0% | Imperceptible |
+| 0.5–2% | Opus in-band FEC enabled | ~20% bitrate increase | Masked — FEC repairs single lost frames |
+| 2–5% | Opus FEC + previous-frame repeat with 10ms fade | ~20% + minimal CPU | Occasional brief artifact on burst loss |
+| > 5% | Opus FEC + aggressive PLC + bitrate reduction | ~30% + reduced quality | Noticeable degradation but continuous audio |
+
+**Packet Loss Concealment (PLC) hierarchy:**
+1. **Opus FEC decode**: if the next packet contains FEC data for the lost packet, decode from FEC (best quality).
+2. **Opus PLC**: if no FEC available, Opus decoder generates a concealment frame from its internal state (good quality for single-frame loss).
+3. **Repeat-last-frame with fade**: for multi-frame loss (>2 consecutive), repeat last decoded frame with exponential volume fade (−6dB per frame). After 5 consecutive losses (100ms), output silence.
+
+#### Clock Drift Correction
+
+Audio capture and playback clocks on different machines drift independently. Without correction, drift accumulates and causes buffer overflow/underflow over long sessions:
+
+- **Detection**: the client measures the offset between its local audio clock and the server's presentation clock using `Ping/Pong` round-trip timestamps. Drift is computed as the rate of change of this offset over a 60-second sliding window.
+- **Correction**: micro-resampling — the client's audio output resampler adjusts the sample rate by the drift amount. Maximum adjustment: ±50 ppm (±2.4 samples/sec at 48kHz). This is imperceptible.
+- **Threshold**: correction activates only when measured drift exceeds ±10 ppm (below this, natural jitter buffer elasticity absorbs the drift).
+- **Metric**: `liquide_audio_clock_drift_ppm` (gauge) — current measured clock drift in parts-per-million.
+
 ### Camera / Webcam Passthrough
 - Client webcam forwarded to a virtual V4L2 device on the server.
 - Server applications see a standard camera.
@@ -1698,6 +1899,66 @@ suspend_sync_below_fps = 10          # disable sync correction when video FPS is
     auto_enable_on_connect = false        # never auto-enable, always ask
     preview_before_share = true           # show preview before sharing
     ```
+
+### Media Redirection (Collaboration-Grade RTC)
+
+Remote desktop sessions frequently run collaboration apps (Teams, Zoom, Slack, Google Meet). Routing real-time audio/video through the compositor pipeline (capture → encode → transport → decode → re-encode by RTC app) adds unacceptable latency and double-compression artifacts. **Media redirection** provides a local breakout path.
+
+#### Architecture
+
+```
+Without redirection (default):
+  [RTC App] → [PipeWire sink] → [Opus encode] → [transport] → [client decode] → [speaker]
+               ↑ [PipeWire source] ← [transport] ← [client mic encode]
+
+With local breakout:
+  [RTC App] → [PipeWire detects RTC sink] → signals client
+  [Client] → creates local loopback: RTC media ↔ client hardware directly
+  [Compositor] → RTC app window still rendered normally (screen share path unaffected)
+```
+
+#### Local Breakout Detection
+
+PipeWire monitors connected clients. When a client matches the RTC allowlist, the server signals the client to establish a local media breakout:
+
+| Detection Method | Trigger | Action |
+|-----------------|---------|--------|
+| Application name match | PipeWire `application.name` matches allowlist | Signal client for breakout |
+| PulseAudio prop match | `media.role = "phone"` or `media.role = "communication"` | Signal client for breakout |
+| Manual trigger | User activates "Optimize for calls" toggle | Force breakout mode |
+
+#### RTC Application Allowlist
+
+| Application | PipeWire Match | Breakout Support |
+|-------------|---------------|-----------------|
+| Microsoft Teams | `application.name = "msedge"` + `media.role = "communication"` | Audio + camera |
+| Zoom | `application.name = "zoom"` | Audio + camera |
+| Slack (Huddle) | `application.name = "slack"` + `media.role = "phone"` | Audio only |
+| Google Meet | `application.name = "chrome"` + `media.role = "communication"` | Audio + camera |
+| WebRTC (generic) | `media.role = "communication"` | Audio (camera optional) |
+| Discord | `application.name = "discord"` | Audio + camera |
+
+#### AEC / AGC / NS Responsibility
+
+| Processing | Without Breakout | With Local Breakout |
+|-----------|-----------------|-------------------|
+| Acoustic Echo Cancellation (AEC) | Server-side (PipeWire plugin) — high latency, degraded quality | **Client-side** — low latency, direct hardware access. Best quality. |
+| Automatic Gain Control (AGC) | Server-side | **Client-side** — direct mic access |
+| Noise Suppression (NS) | Server-side (RNNoise plugin) | **Client-side** — RNNoise or native OS NS |
+| Audio routing | Full round-trip through transport | Direct client hardware ↔ RTC app |
+
+#### Configuration
+
+```toml
+[media.rtc]
+enabled = true                              # enable RTC local breakout detection
+allowlist = ["teams", "zoom", "slack", "meet", "webrtc", "discord"]  # app identifiers
+auto_detect = true                          # auto-detect via PipeWire media.role
+camera_breakout = true                      # include camera in breakout (not just audio)
+fallback_to_remote = true                   # if breakout fails, fall back to standard audio path
+```
+
+**Policy notes:** when `media.rtc.enabled = false`, all audio/video flows through the standard compositor pipeline. This is appropriate for high-security environments where all media must be inspected. When enabled, the breakout only affects the media streams — the RTC app's *screen content* is still rendered by the compositor and transmitted via the normal video/tile pipeline.
 
 ### USB Device Redirection (USB/IP)
 - USB devices on the client can be forwarded to the server via a **USB/IP-based protocol**.
@@ -1912,6 +2173,39 @@ pin_entry = "client-side"              # client-side, server-side
 apdu_timeout_ms = 5000                 # timeout for individual APDU exchanges
 max_readers = 4                        # max concurrent smart card readers
 ```
+
+#### USB Device Broker Isolation
+
+USB/IP device forwarding in Tier 3 mode runs through a dedicated broker process (`liquid-usb-broker`) that is isolated from the session:
+
+| Property | Value |
+|----------|-------|
+| Process | `liquid-usb-broker` (dedicated systemd service) |
+| User | `DynamicUser=yes` (ephemeral UID, no home) |
+| Namespace | PID + mount + IPC namespaces isolated from session |
+| Network | `PrivateNetwork=yes` — broker communicates only via Unix socket |
+| Filesystem | `ProtectHome=yes`, `ProtectSystem=strict`, `ReadOnlyPaths=/` |
+| Syscall filter | seccomp-BPF allowlist: `read`, `write`, `ioctl`, `poll`, `mmap`, `close`, `futex`, USB-related ioctls |
+| VHCI ownership | Broker owns `/dev/vhci_hcd` exclusively; session has no direct access |
+| AppArmor | Profile `liquide-usb-broker` restricts file access to socket + VHCI device |
+
+**Broker ↔ Session Protocol:**
+
+1. Session sends `UsbAttachRequest` via Unix socket (includes VID/PID/class from client).
+2. Broker validates against policy (device allowlists from server config).
+3. If approved: broker attaches device via VHCI, creates udev-compatible device node, bind-mounts into session's mount namespace.
+4. If denied: broker returns `UsbAttachDenied` with reason. Audit event emitted.
+5. On session disconnect: broker detaches all devices, removes bind mounts.
+
+**Platform DLP Parity:**
+
+| Platform | DLP Mechanism | LiquiDE Equivalent |
+|----------|--------------|-------------------|
+| Windows (RDP) | Group Policy: "Removable Storage Access" | `usb.allowed_classes` + `usb.blocked_devices` |
+| macOS (ARD) | MDM profiles: "Restrict USB" | `usb.enabled = false` or per-class/per-device policies |
+| Citrix/VMware | USB device filtering by VID/PID/class | Tier-based filtering + device broker isolation |
+
+Cross-references: [spec-threat-model.md](spec-threat-model.md) T-24 through T-28, [spec-system.md](spec-system.md) §6.5a USB Broker Service.
 
 ### Remote Printing
 

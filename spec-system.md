@@ -448,6 +448,95 @@ LiquiDE provides optional AppArmor profiles:
 }
 ```
 
+### 6.5a USB Device Broker Service
+
+When USB device redirection is enabled (Tier 3 policy), the `liquid-usb-broker` runs as a dedicated systemd service with maximum isolation. This service is the only process that interacts with the kernel VHCI (Virtual Host Controller Interface) — the session process never touches USB device I/O directly.
+
+#### Systemd Unit
+
+```ini
+# /etc/systemd/system/liquid-usb-broker@.service
+[Unit]
+Description=LiquiDE USB Device Broker for session %i
+After=liquid-session@%i.service
+BindsTo=liquid-session@%i.service
+Documentation=man:liquid-usb-broker(8)
+
+[Service]
+Type=notify
+ExecStart=/usr/lib/liquide/liquid-usb-broker --session-socket /run/liquide/session-%i/usb.sock
+User=liquide-usb
+DynamicUser=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service @io-event read write ioctl close poll
+SystemCallArchitectures=native
+DeviceAllow=/dev/vhci rw
+ReadWritePaths=/run/liquide/session-%i/usb.sock
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Resource limits
+MemoryMax=64M
+CPUQuota=20%
+IOReadBandwidthMax=/dev/vhci 10M
+IOWriteBandwidthMax=/dev/vhci 10M
+
+[Install]
+WantedBy=liquid-session@%i.service
+```
+
+#### AppArmor Profile
+
+```
+# /etc/apparmor.d/usr.lib.liquide.liquid-usb-broker
+profile liquid-usb-broker /usr/lib/liquide/liquid-usb-broker {
+  include <abstractions/base>
+
+  # Only access VHCI device and session Unix socket
+  /dev/vhci rw,
+  /run/liquide/session-*/usb.sock rw,
+
+  # Logging
+  /var/log/liquide/usb-broker.log w,
+
+  # Deny everything else
+  deny network,
+  deny /home/** rwx,
+  deny /etc/liquide/** w,
+  deny /proc/** w,
+  deny /sys/** w,
+}
+```
+
+#### Seccomp BPF Allowlist
+
+The broker's syscall filter restricts to USB-related operations only:
+
+| Allowed Syscalls | Purpose |
+|-----------------|---------|
+| `read`, `write`, `close`, `poll`, `ppoll` | Socket and device I/O |
+| `ioctl` (VHCI-specific only) | USB/IP device attach/detach |
+| `socket` (AF_UNIX only) | Session communication socket |
+| `recvmsg`, `sendmsg` | Unix socket message passing |
+| `mmap`, `munmap`, `mprotect` | Memory allocation |
+| `futex`, `nanosleep` | Threading and sleep |
+| `exit_group` | Process termination |
+
+All other syscalls return `EPERM`. Violation logged and reported as audit event.
+
+**Activation:** the broker service is only started when a session's USB policy is Tier 3 (raw USB). For Tier 1 and Tier 2, USB device operations are handled within the session process without a separate broker (reduced attack surface).
+
 ### 6.6 Network Hardening
 
 - `liquid-desktopd` binds only to configured listen addresses/ports.

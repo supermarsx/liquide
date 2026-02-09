@@ -742,6 +742,23 @@ show_monitor_selector = true
 - **Double-click**: maximize/restore toggle.
 - **Right-click**: standard window menu (minimize, maximize, close, always on top).
 
+#### Connection Quality Indicator
+
+The connection dot in the status bar conveys network quality at a glance using a 6-level scale:
+
+| Level | Color | Animation | Condition |
+|-------|-------|-----------|-----------|
+| **Excellent** | Green (solid) | None | RTT < 20ms, loss < 0.1%, degradation L0 |
+| **Good** | Green (solid) | None | RTT < 50ms, loss < 0.5%, degradation L0–L2 |
+| **Fair** | Yellow (solid) | None | RTT < 100ms, loss < 2%, degradation L3–L5 |
+| **Poor** | Orange (solid) | None | RTT < 200ms, loss < 5%, degradation L6–L8 |
+| **Bad** | Red (solid) | None | RTT > 200ms OR loss > 5% OR degradation L9+ |
+| **Disconnected** | Red | Pulsing | Transport down, reconnecting |
+
+**Tooltip** (on hover): displays RTT (ms), packet loss (%), estimated bandwidth (Mbps), current degradation level, active transport type (QUIC/TCP/WebSocket).
+
+**Click action**: opens the full stream analysis overlay (see Performance Monitoring).
+
 ### Window Controls
 - Custom-drawn buttons matching Liquid Glass design.
 - **Close** (×): red tint on hover.
@@ -1559,6 +1576,54 @@ initial_delay_ms = 1000
 max_delay_ms = 30000
 show_last_frame = true             # keep last frame visible during reconnect
 ```
+
+### Low Bandwidth & Degraded Network UX
+
+When the network degrades significantly, the client employs several strategies to maintain usability and provide appropriate user feedback.
+
+#### Skeleton Desktop
+
+On reconnect or initial connect over slow links, the client renders a **skeleton desktop** from locally cached assets within 200ms:
+
+- Cached wallpaper (or solid color fallback) displayed as background.
+- Cached dock/taskbar layout rendered from last-known state.
+- Cached window thumbnails shown as static placeholders at their last-known positions.
+- "Connecting..." overlay with progress indicator.
+
+This provides immediate visual context while the full session stream initializes.
+
+#### Progressive Refinement
+
+When bandwidth is severely constrained (< 2 Mbps estimated), the client requests progressive frame delivery:
+
+1. **First frame**: server sends a low-quality JPEG snapshot (quality ~30) of the entire screen — arrives within 100–500ms even on slow links.
+2. **Tile-by-tile replacement**: tiles are delivered in priority order (text regions first, then active window, then background) replacing the JPEG preview incrementally.
+3. **Full quality**: once all tiles are delivered, the session transitions to normal streaming.
+
+The client displays a subtle progress bar during the refinement phase.
+
+#### Input Echo & Prediction
+
+When RTT exceeds 100ms, the client provides local feedback for user input to mask latency:
+
+| Input Type | Local Echo | Server Reconciliation |
+|-----------|-----------|----------------------|
+| **Keyboard (text fields)** | Ghost text rendered at cursor in 50% opacity | Replaced by server-rendered tiles when they arrive. On mismatch, ghost text fades and server state takes over. |
+| **Mouse click** | Local click ripple animation at click point | Visual confirmation from server arrives naturally. |
+| **Scroll** | Local scroll animation (immediate, smooth) | Server tiles replace predicted positions. Minor rubber-banding on correction. |
+| **Window drag** | Local window outline follows cursor immediately | Server sends actual position; snap to server state on each frame. |
+
+Input echo is **disabled by default** and enabled automatically when `RTT > input_echo_threshold_ms` (default: 100ms). Configurable via `[connection] input_echo_enabled = true`.
+
+#### Reconnect UX
+
+When the connection drops:
+
+1. **0–2s**: "Reconnecting..." overlay with spinner. Session content frozen at last frame.
+2. **2–5s**: Attempt counter shown ("Attempt 2 of 5..."). Progress bar.
+3. **5–15s**: "Connection unstable" message. "Switch to lower quality" button appears (reduces to `bandwidth_saver` profile).
+4. **15s+**: "Connection lost" screen with options: Retry, Switch Server (if gateway available), Disconnect.
+5. **After 3 consecutive failures**: automatically offers to switch to `bandwidth_saver` or `tcp-only` transport.
 
 ### Crash Screen
 

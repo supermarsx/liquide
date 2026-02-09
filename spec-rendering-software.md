@@ -209,6 +209,28 @@ Damage tracking is the single most important optimization for remote desktop ren
 | **Animation batching** | Shell animations (fade, slide) generate damage every frame for their duration. The compositor batches these into a single damage rect per animation. |
 | **Overdraw prevention** | When multiple overlapping surfaces are damaged, the compositor composites from back to front but only within the damaged region. Undamaged pixels are never touched. |
 
+### 4.5 Damage Classification
+
+Each damaged tile is tagged with a **damage class** indicating the type of content that changed. The damage class drives compression selection (see [spec-protocol-formal.md](spec-protocol-formal.md) §11.6 Compression Strategy) and intra-batch transmission priority (see [spec-protocol-formal.md](spec-protocol-formal.md) §5.4 Tile Update Policy).
+
+| Class | Priority | Description | Compression | Send Priority |
+|-------|----------|-------------|-------------|--------------|
+| `TEXT_GLYPH` | Highest | Tile contains text rendering (FreeType glyph blit detected during compositing) | Always Tier 2 lossless. Lossy compression MUST NOT be applied to text. | First in batch. Under bandwidth pressure, text tiles are always sent. |
+| `UI_PRIMITIVE` | High | Tile contains UI elements: buttons, borders, scrollbars, icons, rounded-rect fills | Tier 2 lossless. Hard edges artifact with lossy. | After text tiles. Sent before bitmap regions. |
+| `BITMAP_REGION` | Normal | Tile contains photographic, video, or complex image content | Tier 2 lossless (default) or Tier 3 lossy (if `transport.tile_lossy_enabled = true` and tile entropy > threshold) | After UI tiles. May be deferred under bandwidth pressure. |
+| `CURSOR_ONLY` | Separate channel | Tile was only damaged by cursor overlay movement | Not sent via tile channel — cursor has its own channel (0x11). Tile is NOT marked as damaged for tile pipeline. | N/A |
+
+**Classification Heuristic:**
+
+The compositor classifies tiles during the compositing pass (zero additional cost):
+
+1. If any `Text glyph blit` primitive was rendered into the tile → `TEXT_GLYPH`.
+2. Else if any `Rounded rect`, `Rect fill`, `Path fill`, or `Image blit (icon-sized, < 256×256)` → `UI_PRIMITIVE`.
+3. Else if `Image blit` from a client surface buffer → `BITMAP_REGION`.
+4. If ONLY the cursor overlay changed → `CURSOR_ONLY` (tile excluded from tile pipeline).
+
+The "highest priority wins" rule applies: a tile containing both text and a background image is classified as `TEXT_GLYPH`.
+
 ---
 
 ## 5) Liquid Glass Effect Implementation
@@ -386,6 +408,34 @@ To prevent rapid oscillation between levels:
 | Descend (degrade) | Frame time > threshold for 3 consecutive frames | Immediate after 3-frame confirmation |
 | Ascend (restore) | Frame time < budget × 0.7 for 10 consecutive frames | 1 step per 10-frame window |
 
+### 7.5 Transport Backpressure Feedback
+
+The degradation ladder (§7.1) responds to **frame-time** overruns (compositor too slow). A separate **bandwidth degradation** mechanism responds to **transport backpressure** (network too slow). These two mechanisms stack independently.
+
+**Bandwidth Degradation Steps:**
+
+| Step | Trigger | Action | Visual Impact |
+|------|---------|--------|--------------|
+| **BW0** | Send queue < 50% | Normal — all tiles at full quality | None |
+| **BW1** | Send queue 50–70% for 3s | Skip cosmetic tiles: non-text, non-active-window tiles deferred | Background areas may be 1–2 frames stale |
+| **BW2** | Send queue 70–80% for 3s | Increase tile delta threshold (require >5% pixel change to send tile) | Subtle changes ignored until they accumulate |
+| **BW3** | Send queue 80–90% for 3s | Reduce glass/blur regions to focused window only. Unfocused windows use solid tint. | Less visual polish on background windows |
+| **BW4** | Send queue > 90% for 3s | Grayscale encoding for non-focused windows (chroma channel dropped, ~33% bandwidth saving) | Background windows in grayscale; focused window retains color |
+
+**Interaction with Frame-Time Ladder:**
+
+| Frame-Time Level | Bandwidth Level | Combined Behavior |
+|-----------------|----------------|-------------------|
+| L0–L3 | BW0 | Normal — full effects, full bandwidth |
+| L0–L3 | BW1–BW4 | Full effects but reduced tile output. User sees smooth animations but slower screen updates. |
+| L4–L8 | BW0 | Reduced effects but full tile output. User sees simplified visuals at full refresh rate. |
+| L4–L8 | BW1–BW4 | Both effects and tiles degraded. UI is simplified and refreshes are slower. |
+| L9+ | BW3+ | Emergency — minimal effects AND minimal tile output. Maintaining input responsiveness is the priority. |
+
+**Recovery:** bandwidth degradation relaxes when the send queue drops below 50% for 5 consecutive seconds. Each step recovers independently (BW4 → BW3 requires queue < 70% for 5s, etc.).
+
+**Metric:** `liquide_compositor_bandwidth_degradation_level` (gauge) — current bandwidth degradation step (0–4).
+
 ---
 
 ## 8) Text Rasterization Contract
@@ -503,6 +553,60 @@ min_quality = "L13"                # lowest degradation allowed (e.g., "L7" to p
 descend_threshold_frames = 3       # consecutive over-budget frames before descending
 ascend_threshold_frames = 10       # consecutive under-budget frames before ascending
 ```
+
+---
+
+## 10a) No-GPU Performance Strategy
+
+LiquiDE's primary deployment target is CPU-only servers. The software renderer is not a fallback — it is the reference implementation. This section summarizes the key strategies that make CPU-only rendering viable for production remote desktop.
+
+### Damage-Based Update Pipeline
+
+The compositor never re-renders unchanged content. The pipeline is:
+
+1. **Wayland commits** → surface-level damage reported by clients.
+2. **Scene graph diff** → only nodes touching damaged surfaces are re-walked.
+3. **Tile-level CRC** → per-tile hash comparison confirms actual pixel changes (eliminates false damage from surface-level over-reporting).
+4. **Encode only damaged tiles** → only changed tiles enter the encode/transmit pipeline.
+5. **Zero-damage fast path** → when no surface committed, CPU usage drops to <1% of one core (idle poll on Wayland socket + heartbeat).
+
+### Glyph Cache & Text Priority
+
+Text rendering dominates CPU cost in typical desktop workloads (terminals, editors, browsers):
+
+| Property | Value |
+|----------|-------|
+| Atlas initial size | 1024×1024 (1 MB at 8bpp grayscale) |
+| Atlas max size | 4096×4096 (16 MB) — auto-grows when cache misses exceed 1% per frame |
+| Eviction policy | LRU per (font_face, size, hinting_mode) slab |
+| Cache hit target | >99% for steady-state typing workloads |
+| Priority | Text tiles are always sent first in the tile batch (see spec-protocol-formal.md §5.4 Tile Update Policy) |
+| Encoding | Always lossless (Tier 2). Lossy compression is never applied to text tiles. |
+
+### Frame Budget Scheduler
+
+Each frame's CPU time is partitioned into fixed-proportion budgets:
+
+| Phase | Budget Share | At 60 FPS (16.6ms) | At 30 FPS (33.3ms) |
+|-------|------------|--------------------|--------------------|
+| Compositor (scene walk + composite) | 40% | 6.6ms | 13.3ms |
+| Encode (tile/video encode) | 45% | 7.5ms | 15.0ms |
+| I/O (transport, send queue, protocol) | 15% | 2.5ms | 5.0ms |
+
+If any phase exceeds its budget, the scheduler signals the degradation ladder (§7) for frame-time degradation. If the encode phase consistently exceeds budget, the ABR control loop (spec.md §7d) reduces quality or FPS.
+
+### Backpressure-Driven Bandwidth Degradation
+
+When the transport send queue fills, the compositor reduces output proactively:
+
+| Queue Depth | Compositor Action |
+|-------------|------------------|
+| < 50% | Normal operation — all tiles at full quality |
+| 50–80% | Skip cosmetic tiles (non-text, non-active-window tiles deferred to next frame) |
+| 80–90% | Force tile-only mode for all regions (no video encode). Increase Zstd level for better compression. |
+| > 90% | Emergency: send only active-input-area tiles + cursor. All other regions frozen. |
+
+Recovery: when queue depth drops below 50% for 5 consecutive seconds, return to normal operation.
 
 ---
 

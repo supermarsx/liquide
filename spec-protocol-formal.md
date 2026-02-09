@@ -137,7 +137,7 @@ Every message on the wire is wrapped in a frame:
 |-------|------|-------------|
 | Magic | 2 bytes | `0x4C44` ("LD" for LiquiDE) |
 | Version | 4 bits | Protocol frame version (`1`) |
-| Flags | 4 bits | See flag table below |
+| Flags | 8 bits | See flag table below |
 | Channel ID | 2 bytes | Logical channel (see §3.1) |
 | Sequence Number | 4 bytes | Per-channel monotonic sequence number |
 | Timestamp | 8 bytes | Microseconds since session start (64-bit unsigned) |
@@ -156,6 +156,10 @@ Every message on the wire is wrapped in a frame:
 | 1 | `FRAGMENTED` | This frame is part of a multi-frame message |
 | 2 | `CRC` | CRC-32C checksum is appended |
 | 3 | `PRIORITY` | High-priority frame (skip normal queue) |
+| 4 | `RELIABLE` | Promote this frame to reliable delivery (e.g., video keyframe on unreliable transport) |
+| 5 | `ORDERED` | Enforce strict sequence ordering for this frame (receiver must not deliver out of order) |
+| 6 | `KEYFRAME` | This frame contains a keyframe / full refresh (IDR for video, full tile for tile channel) |
+| 7 | `CONGESTION_MARK` | Sender's send queue was >80% full when this frame was enqueued (Early Congestion Notification) |
 
 ### 4.4 Fragmentation
 
@@ -315,6 +319,33 @@ The tile channel uses a **reliable** transport (ordered, retransmitted) because 
 **Tile CRC verification (optional, configurable):**
 
 Each `TileBatch` optionally includes a per-tile CRC-32 of the expected client-side tile state after applying the update. The client can verify the CRC after applying deltas. If a mismatch is detected, the client sends `TileKeyFrameRequest` for the affected region. This catches silent corruption from bugs or memory errors, not just transport loss. Enabled by default in debug/test builds, disabled in production for performance (adds ~2% CPU overhead).
+
+#### Tile Update Policy
+
+The tile encoding pipeline follows specific ordering and refresh policies to maximize visual quality and protocol efficiency:
+
+**Intra-Batch Ordering:**
+
+Tiles within a `TileBatch` are ordered by their **damage classification** (highest priority first):
+
+| Priority | Damage Class | Description | Compression |
+|----------|-------------|-------------|-------------|
+| 1 (highest) | `TEXT_GLYPH` | Tiles containing text / glyph rendering | Always Tier 2 lossless |
+| 2 | `UI_PRIMITIVE` | Tiles containing UI elements (buttons, borders, icons) | Always Tier 2 lossless |
+| 3 | `BITMAP_REGION` | Tiles containing photographic or video content | Tier 2 or Tier 3 (configurable) |
+| 4 (lowest) | `CURSOR_ONLY` | Tiles only damaged by cursor overlay | Separate cursor channel — not in tile batch |
+
+This ordering ensures that under bandwidth pressure, the most visually important content (text) is transmitted first. If the send budget for a batch is exhausted before all tiles are sent, lower-priority tiles are deferred to the next batch.
+
+**Delta-to-Keyframe Threshold:**
+
+After **60 consecutive delta frames** for the same tile grid position, the server forces a full tile (keyframe) for that position. This bounds the maximum error accumulation from floating-point rounding in XOR delta chains and ensures long-lived sessions don't develop subtle visual artifacts.
+
+Configurable: `transport.tile_keyframe_threshold = 60` (frames).
+
+**Region Keyframe on Mode Switch:**
+
+When `TileModeSwitch` changes a screen region from video mode to tile mode, ALL tiles in the affected region MUST be sent as `full` encoding in the first `TileBatch` (no deltas). The client has no prior tile state for a region that was previously video-encoded.
 
 ### 5.5 Cursor Channel Messages (0x11)
 
@@ -1118,7 +1149,21 @@ The emergency channel has its own heartbeat independent of the control channel:
 **Key behaviors:**
 - On channel open or reconnect, the client sends `InputSyncRequest`. The server responds with `InputSyncResponse` containing current modifier and button state. This prevents phantom keystrokes (e.g., a stuck Ctrl key after reconnect).
 - During **Active** state, the client streams input events (key, mouse, touch) to the server. The server does not acknowledge individual input events (low-latency, fire-and-forget over reliable transport).
-- **Input coalescing**: when the server is backpressured, mouse move events MAY be coalesced (latest position wins). Key events are NEVER coalesced.
+- **Input coalescing**: the server MAY coalesce input events during backpressure according to the following rules:
+
+  | Event Type | Coalescing Behavior | Max Interval | Rationale |
+  |-----------|-------------------|--------------|-----------|
+  | `MouseMove` | Latest position wins. >2 events per frame interval → coalesce to last. | 1 / target_fps | Mouse position is stateless; only latest matters. |
+  | `MouseButton` | **Never coalesced.** Each press/release is delivered. | — | Button state is stateful; missing a release causes stuck button. |
+  | `KeyDown` / `KeyUp` | **Never coalesced.** Each event is delivered in order. | — | Key state is stateful; missing events causes stuck/phantom keys. |
+  | `KeyDown` (repeat) | Auto-repeat events MAY be thinned (skip alternating repeats). | 2 × key repeat interval | Repeat thinning reduces compositor load without losing intent. |
+  | `MouseScroll` | Same-direction scrolls within one frame interval → accumulate delta. | 1 / target_fps | Accumulated delta preserves total scroll distance. |
+  | `TouchMove` | Latest position per touch ID wins (same as MouseMove). | 1 / target_fps | Touch position is stateless per finger. |
+  | `CompositionUpdate` (`phase = "update"`) | Latest preedit string wins if multiple updates arrive within one frame interval. | 1 / target_fps | Only the final preedit state matters for display. |
+  | `CompositionUpdate` (`phase = "begin"` / `"commit"` / `"cancel"`) | **Never coalesced.** These are composition barriers. | — | Begin/commit/cancel define IME transaction boundaries. |
+  | `TextInput` (committed text) | **Never coalesced.** Each committed string is delivered. | — | Committed text is a user action; dropping causes data loss. |
+
+  **Metric:** `liquide_input_coalesced_events_total` (counter, label: `event_type`) — number of input events coalesced (not delivered).
 - **Channel suspension** occurs when the session is locked or the client window is minimized. The server discards input events received during suspension.
 - The input channel is **client-to-server only** for event data. The only server-to-client message is `InputSyncResponse`.
 
@@ -1154,6 +1199,18 @@ The emergency channel has its own heartbeat independent of the control channel:
 - **Cursor shape caching**: the server sends `CursorShape` with a shape hash. If the client has the shape cached, it uses the cache. New shapes include the full image data. The asset cache (§8.7) can pre-load common cursor shapes.
 - **Rate limiting**: cursor position updates are capped at the frame rate (no more than one update per frame interval). During idle periods, no updates are sent.
 - **Client-side prediction**: the client MAY render the local cursor position immediately (client-side cursor) and reconcile with server position updates. This is configurable via `cursor.client_side = true`.
+
+### 10.8 Channel Scheduling & Ordering Rules
+
+The following normative rules govern how channels interact when multiplexed over shared transport:
+
+| Rule | Requirement | Enforcement |
+|------|------------|-------------|
+| **R1: Channel-local ordering** | Message ordering is guaranteed ONLY within a single channel. No cross-channel ordering guarantees exist. Timestamps enable correlation when needed. | Per-channel sequence numbers; receiver reorders within channel only. |
+| **R2: Control never waits behind pixels** | Control channel (0x00) messages MUST complete delivery within 1ms of entering the send queue, regardless of video/tile/audio backlog. | Control uses a separate QUIC stream (or TCP priority in tcp+udp mode). Send queue partitioned so control bypasses data channels. |
+| **R3: Input coalescing parameters** | During backpressure, the server MAY coalesce input events according to the rules in §10.6. Mouse moves coalesce (latest wins); keyboard, button, and IME barrier events MUST NOT coalesce. | Server-side coalescing before compositor injection. See coalescing table in §10.6 for per-event-type rules. |
+| **R4: Priority inversion prevention** | A lower-priority channel (P5/P6) that has occupied the send path MUST yield within 1ms when a higher-priority channel (P0–P3) has data to send. | Pacing algorithm (§7d) preempts bulk data for input/audio/cursor on each 1ms tick. |
+| **R5: IME transactional integrity** | When an IME composition sequence is active (`CompositionUpdate` with `phase = "begin"` received), all events in the composition MUST be delivered atomically to the compositor. Partial delivery (begin without commit) leaves the compositor in an undefined input state. | Composition events are queued server-side until `phase = "commit"` or `phase = "cancel"` is received. The entire sequence is then injected as a batch. If the connection drops mid-composition, the pending composition is cancelled on reconnect. |
 
 ---
 
@@ -1229,6 +1286,50 @@ Bandwidth estimate feeds into:
 | Max pending clipboard transfers | 1 per direction | Fixed |
 | Input event rate limit | 1000 events/sec | `input.max_rate` |
 | Control message rate limit | 100 messages/sec | Fixed |
+
+### 11.6 Compression Strategy
+
+The protocol uses a **tiered compression strategy** that selects the optimal algorithm based on content type and channel characteristics.
+
+#### Compression Tiers
+
+| Tier | Name | Algorithm | Applies To | Selection Rule |
+|------|------|-----------|-----------|---------------|
+| **Tier 1** | Command compression | Zstd (level 3) | Control channel messages, clipboard text, crash reports | Applied when payload > 128 bytes |
+| **Tier 2** | Lossless bitmap | Zstd (per-tile), XOR delta + Zstd, solid-fill, copy | Tile channel — UI elements, text, icons | Default for all tile data |
+| **Tier 3** | Optional lossy | JPEG-XL or WebP (quality 85) | Tile channel — photographic/video regions only | When tile entropy > threshold AND `transport.tile_lossy_enabled = true` |
+
+#### Selection Rules
+
+| Content Detected | Compression | Rationale |
+|-----------------|-------------|-----------|
+| Text / glyphs (damage class `TEXT_GLYPH`) | Tier 2 — Zstd lossless | Lossy compression destroys subpixel text. Always lossless. |
+| UI primitives (damage class `UI_PRIMITIVE`) | Tier 2 — Zstd lossless | Hard edges artifact with lossy. Lossless preserves crispness. |
+| Photographic content (damage class `BITMAP_REGION`, entropy > 6.0 bits/byte) | Tier 3 — JPEG-XL/WebP (if enabled) | Photographic regions compress 5–10× better with lossy. Visual difference imperceptible at quality 85. |
+| Solid color tile | Tier 2 — solid-fill (3–4 bytes) | No compression needed — tile is represented as a single color value. |
+| Identical to another tile in batch | Tier 2 — copy reference (2 bytes) | Copy encoding: reference index only. |
+| XOR delta with < 10% changed pixels | Tier 2 — XOR delta + Zstd | Delta is mostly zeros → exceptional Zstd ratio (often 95%+ compression). |
+
+#### Tier 3 Safeguards
+
+- Tier 3 (lossy) is **disabled by default**. Enable with `transport.tile_lossy_enabled = true`.
+- Lossy tiles MUST NOT be used as the base for XOR delta computation. The tile state table stores the lossless original, and the lossy encoding is a one-shot transmission optimization.
+- Quality floor: JPEG-XL/WebP quality never drops below 75 even under bandwidth pressure.
+- Detection: tile entropy is estimated from a 16-pixel sample grid (fast path, <0.01ms per tile). Full entropy scan only when sample exceeds threshold.
+
+#### Low-Entropy Optimization
+
+For tiles with very low entropy (< 1.0 bits/byte — gradients, solid fills with AA edges), Zstd at level 1 is used instead of level 3 for faster compression at equivalent ratio.
+
+```toml
+[transport.compression]
+tile_lossy_enabled = false               # enable Tier 3 lossy for photographic tiles
+tile_lossy_quality = 85                  # JPEG-XL/WebP quality (75-100)
+tile_lossy_entropy_threshold = 6.0       # bits/byte threshold for lossy detection
+tile_zstd_level = 3                      # Zstd compression level for lossless tiles
+tile_zstd_level_low_entropy = 1          # Zstd level for very low entropy tiles
+control_zstd_level = 3                   # Zstd level for control channel
+```
 
 ---
 
@@ -1805,3 +1906,15 @@ The conformance runner also includes a `--wayland-fuzz` mode that sends randomiz
 - Unknown messages: verify unknown message types are silently discarded (§12).
 - Test vectors: verify all golden captures (§14) decode correctly on all client platforms.
 - Compatibility: verify version negotiation rules (§15) are enforced.
+
+### New Feature Conformance
+- Verify `KEYFRAME` flag is set on all IDR video frames and `TileKeyFrame` messages.
+- Verify `CONGESTION_MARK` flag is set when send queue exceeds 80% capacity at frame enqueue time.
+- Verify tile delta-to-keyframe threshold: after 60 consecutive delta frames for the same tile position, server sends a full tile (configurable via `transport.tile_keyframe_threshold`).
+- Verify mouse move coalescing: when server receives >2 mouse move events within one frame interval, only the latest position is injected into compositor.
+- Verify keyboard events are NEVER coalesced regardless of backpressure or event rate.
+- Verify IME `CompositionUpdate` with `phase = "begin"` and `phase = "commit"` are never coalesced; only `phase = "update"` may coalesce.
+- Verify Tier 3 lossy tile compression: when tile contains photographic content (entropy > threshold), JPEG-XL/WebP encoding is used and result is smaller than lossless.
+- Verify control channel messages complete delivery within 1ms of entering send queue under all congestion levels (priority guarantee).
+- Verify `RELIABLE` flag on video keyframes promotes them to reliable QUIC stream delivery.
+- Verify intra-batch tile ordering: TEXT_GLYPH tiles precede UI_PRIMITIVE tiles, which precede BITMAP_REGION tiles in `TileBatch.tiles` array.

@@ -1066,6 +1066,45 @@ liquidctl gateway cluster migrate-sessions srv-d srv-e
 
 ---
 
+## 15a) Gateway State Backup & Recovery
+
+### State Inventory
+
+| State Component | Persistence | Backup Strategy |
+|----------------|-------------|-----------------|
+| Routing table (server list, health status) | In-memory, rebuilt from discovery | No backup needed — rebuilt on restart from server heartbeats within 30s |
+| Session affinity table (client → server mapping) | In-memory | Reconstructed from server session lists on restart. Clients auto-reconnect to correct server. |
+| Rate limiter state (IP counters, ban list) | In-memory (shared via Raft in cluster mode) | Lost on restart. Bans re-established from fail2ban persistent state. Acceptable — brief window of unthrottled access. |
+| TLS certificates | Filesystem (`/etc/liquide/certs/`) | Standard file backup. Same as server cert backup (see [spec-manager.md](spec-manager.md) §6a). |
+| Configuration | Filesystem (`/etc/liquide/gateway.toml`) | Standard file backup. |
+| Raft cluster state (cluster mode) | Raft log on disk | Raft provides built-in replication. No external backup needed for cluster state. |
+
+### RPO / RTO
+
+| Deployment Mode | RPO | RTO | Recovery Mechanism |
+|----------------|-----|-----|-------------------|
+| **Single gateway** | Configuration: 0 (backed up with server). Runtime state: lost on restart (acceptable). | < 5 seconds (systemd restart + config reload + server discovery) | `systemctl restart liquid-gateway`. Routing table rebuilds from server heartbeats. Clients reconnect with brief interruption. |
+| **Raft cluster (3+ nodes)** | 0 (Raft replication) | < 30 seconds (Raft leader election + state sync) | Failed node restarts and rejoins cluster. During failover, remaining nodes handle traffic. |
+| **Active-passive** | Configuration: 0 (shared storage). Routing: rebuilt. | < 10 seconds (health check failure + VIP failover) | Standby gateway promotes, loads config, rebuilds routing from server discovery. |
+
+### Backup / Restore CLI
+
+```bash
+# Export gateway configuration and certificate state
+liquidctl gateway backup --output /var/backups/liquide/gateway/
+
+# Restore from backup (single node)
+systemctl stop liquid-gateway
+liquidctl gateway restore /var/backups/liquide/gateway/backup-2025-06-15.tar.gz.enc
+systemctl start liquid-gateway
+
+# In cluster mode: restore is typically unnecessary — Raft handles replication
+# Force-restore a cluster node from backup (loses Raft state, node rejoins as follower):
+liquidctl gateway restore --force-rejoin /var/backups/liquide/gateway/backup.tar.gz.enc
+```
+
+---
+
 ## 16) Test Plan
 
 ### Functional

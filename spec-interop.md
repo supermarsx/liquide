@@ -102,6 +102,38 @@ LiquiDE reports the following capabilities via `GetCapabilities`:
 - The notification history is stored in memory (configurable max: `notification_history_max`, default: 500).
 - Clients can retrieve history via the LiquiDE-specific extension interface (see §2.1.1).
 
+#### Notification Persistence & Reconnect Sync
+
+Notifications are persisted to a local SQLite database to survive session restarts and provide reconnect synchronization:
+
+**Storage**: `$XDG_DATA_HOME/liquide/notifications.db`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER PRIMARY KEY | Auto-increment notification ID |
+| `app_name` | TEXT | Application that sent the notification |
+| `summary` | TEXT | Notification title |
+| `body` | TEXT | Notification body (may contain markup) |
+| `icon` | TEXT | Icon name or path |
+| `urgency` | INTEGER | 0=low, 1=normal, 2=critical |
+| `timestamp` | TEXT | ISO 8601 creation time |
+| `read` | BOOLEAN | Whether the user has seen/dismissed this notification |
+| `expired` | BOOLEAN | Whether the notification's timeout has elapsed |
+| `actions` | TEXT | JSON array of action identifiers |
+
+**Reconnect sync**: when a client reconnects after a disconnection, the notification daemon sends a `NotificationManifest` containing all unread notifications created since the client's last known timestamp. The client displays missed notifications in a "catch-up" toast stack.
+
+**Retention**: notifications older than 7 days (configurable) are automatically pruned. Critical-urgency notifications are retained for 30 days.
+
+```toml
+[notification]
+persist_to_disk = true                   # enable SQLite persistence
+retention_days = 7                       # prune normal notifications after N days
+critical_retention_days = 30             # critical notifications retained longer
+max_stored = 1000                        # maximum notifications in database
+sync_on_reconnect = true                 # send missed notifications on client reconnect
+```
+
 #### Rate Limiting
 
 | Rule | Default | Policy Key |
@@ -152,6 +184,39 @@ LiquiDE provides an additional interface on the same object path:
 | `DoNotDisturbChanged` | `(b)` | DND state changed |
 
 ---
+
+### 2.1a Secret Service — `org.freedesktop.secrets`
+
+LiquiDE provides a native implementation of the [Secret Service API](https://specifications.freedesktop.org/secret-service/latest/) (`org.freedesktop.secrets` D-Bus interface) for secure credential storage within the session.
+
+#### Architecture
+
+| Component | Description |
+|-----------|-------------|
+| **D-Bus service** | `org.freedesktop.secrets` registered on the session bus. Implemented natively in Rust (no dependency on GNOME Keyring or KWallet). |
+| **Storage backend** | Encrypted SQLite database at `$XDG_DATA_HOME/liquide/keyring.db`. |
+| **Encryption** | ChaCha20-Poly1305 (AEAD). Each secret item encrypted individually. |
+| **Key derivation** | Master key derived from PAM authentication token via HKDF-SHA256. The raw password is never stored — the derived key is held in process memory only while the keyring is unlocked. |
+| **Unlock behavior** | Automatically unlocked on session login (PAM module passes derived key). Automatically locked on session lock or session suspend. |
+| **Collections** | Supports multiple collections (namespaces). Default collection auto-created on first use. |
+
+#### Security Properties
+
+- The keyring database is encrypted at rest — even if the session's home directory is compromised, secrets require the PAM-derived key to decrypt.
+- The decryption key is held in process memory only while the session is unlocked. On session lock, the key is zeroized.
+- Each secret item is independently encrypted — compromising one item's ciphertext does not reveal others.
+- D-Bus access control: only processes within the session's cgroup can access the secret service (enforced via D-Bus policy).
+
+#### Policy Controls
+
+```toml
+[secrets]
+enabled = true                           # enable the Secret Service implementation
+auto_unlock_on_login = true              # unlock keyring automatically via PAM
+lock_on_session_lock = true              # lock keyring when session is locked
+max_items = 10000                        # maximum secret items per collection
+max_item_size_bytes = 1048576            # maximum size of a single secret value (1 MB)
+```
 
 ### 2.2 System Tray — StatusNotifierItem / AppIndicator
 
@@ -811,6 +876,20 @@ liquidctl flatpak remote-remove myrepo
 
 These commands proxy to the Flatpak host command but add LiquiDE policy enforcement and logging.
 
+### 6.3a Package Distribution Strategy
+
+| Component | Primary Format | Secondary Format | Notes |
+|-----------|---------------|-----------------|-------|
+| **Server** (`liquid-desktopd`, `liquid-session`) | `.deb` (Debian/Ubuntu) | `.rpm` (Fedora/RHEL) | Native packages for tight systemd integration, cgroup setup, AppArmor profiles. |
+| **CLI tools** (`liquidctl`) | `.deb` / `.rpm` (bundled with server) | Standalone static binary | CLI may be installed independently on admin workstations. |
+| **Manager** (`liquid-manager`) | `.deb` / `.rpm` | Container image (OCI) | Web UI served by the manager binary. Container image for Kubernetes deployments. |
+| **Gateway** (`liquid-gateway`) | `.deb` / `.rpm` | Container image (OCI) | Gateway is stateless (or Raft-backed) — container deployment is straightforward. |
+| **Linux Client** (`liquidclient`) | Flatpak (primary) | AppImage, Snap | Flatpak provides sandboxing + portal integration. AppImage for legacy distros. |
+| **Windows Client** | MSI installer | MSIX (Microsoft Store) | MSI for enterprise deployment (GPO). MSIX for consumer. |
+| **macOS Client** | `.dmg` with signed `.app` | Homebrew cask | Notarized for Gatekeeper. Universal binary (x86_64 + aarch64). |
+| **Web Client** | Hosted (no install) | npm package (embeddable) | Served by gateway or standalone web server. |
+| **Docker/OCI** | Dev/CI only | Not for production sessions | Containers lack cgroup delegation and namespace nesting required for session isolation. Suitable for CI testing and gateway/manager deployment. |
+
 ### 6.4 Snap Integration
 
 LiquiDE does **not** provide a Snap-specific portal backend. Snap applications use the standard `xdg-desktop-portal` interface, which routes to `xdg-desktop-portal-liquide`.
@@ -875,6 +954,35 @@ LiquiDE may provide additional custom Wayland protocols for tight shell integrat
 | `liquide_remote_clipboard` | Extended clipboard with progress/cancel for large transfers |
 
 These custom protocols are versioned and documented separately. Applications are never **required** to use them.
+
+---
+
+## 7a) Desktop Daily-Driver Polish Checklist
+
+> **Living document**: this checklist tracks desktop integration features required for LiquiDE to be a viable daily-driver desktop environment. Items are marked with their implementation status.
+
+| # | Feature | Status | Implementation Notes |
+|---|---------|--------|---------------------|
+| 1 | MIME type handler registration (`xdg-mime`) | Planned | Applications register handlers via `.desktop` files. Compositor's app launcher reads `mimeinfo.cache`. |
+| 2 | Drag-and-drop across applications | Planned | Wayland `wl_data_device` protocol. Cross-surface DnD with visual feedback. |
+| 3 | Drag-and-drop from client OS to session | Planned | Client converts OS DnD to clipboard transfer, then injects as Wayland DnD offer. |
+| 4 | Window snapping / tiling (quarter, half) | Planned | Shell handles `xdg_toplevel.set_maximized`, custom snap zones at screen edges/corners. |
+| 5 | Timezone forwarding (client → session) | Planned | Client sends TZ offset in `ClientHello.capabilities["timezone"]`. Session sets `TZ` env var. |
+| 6 | Locale forwarding (client → session) | Planned | Client capability `locale`. Session configures `LANG`/`LC_*` if admin policy allows. |
+| 7 | Sound event themes (`freedesktop.org` sound spec) | Planned | PipeWire + `libcanberra` or equivalent. Sounds rendered server-side, streamed to client audio channel. |
+| 8 | Trash / Undo delete (`org.freedesktop.Trash`) | Planned | File manager implements trash spec. Trash directory at `$XDG_DATA_HOME/Trash/`. |
+| 9 | Recent files (`org.gtk.recentmanager`) | Planned | GTK apps use standard recent manager. No compositor-level integration needed. |
+| 10 | Autostart (`$XDG_CONFIG_HOME/autostart/`) | Planned | Session manager reads `.desktop` files from autostart dirs. |
+| 11 | Screen lock integration (idle timeout) | Planned | Compositor idle detector + session lock. Configurable timeout. PAM-gated unlock. |
+| 12 | Power management (lid close, suspend) | N/A | Remote desktop — physical power events on client only. Server sessions are always-on. |
+| 13 | Multi-monitor virtual layout | Planned | Configurable via shell settings or `liquidctl`. Virtual monitors for multi-display clients. |
+| 14 | Fractional scaling (125%, 150%, 175%) | Planned | Wayland `wp_fractional_scale_v1`. Compositor renders at scaled resolution. |
+| 15 | Color emoji rendering | Planned | FreeType + HarfBuzz with COLR/CBDT/SVG emoji tables. System emoji font (Noto Color Emoji). |
+| 16 | Input method switching indicator | Planned | Shell UI shows current IM in status bar. Click to switch. Synced with `fcitx5`/`ibus` state. |
+| 17 | Accessibility (screen reader relay) | Planned | AT-SPI2 bus active in session. Screen reader output relayed via audio channel. |
+| 18 | Print dialog integration | Planned | CUPS backend. "Print to PDF" always available. Client printer forwarding via IPP. |
+| 19 | Dark/light theme switching | Planned | `org.freedesktop.appearance.color-scheme` portal. Shell UI toggle. Propagated to GTK/Qt apps. |
+| 20 | Custom desktop wallpaper | Planned | User-selectable via settings. Stored in `$XDG_DATA_HOME/liquide/wallpaper`. |
 
 ---
 
