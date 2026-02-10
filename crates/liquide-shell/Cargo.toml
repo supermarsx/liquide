@@ -7,3 +7,14 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+liquide-compositor.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "shell_bench"
+harness = false

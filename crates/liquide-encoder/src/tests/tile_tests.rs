@@ -158,3 +158,41 @@ fn tile_batch_compression_ratio() {
     });
     assert_eq!(batch.dirty_count(), 2); // Full + Delta, not Skip
 }
+
+#[test]
+fn tile_batch_total_payload_bytes() {
+    let mut batch = TileBatch::new(1);
+
+    // Empty batch has 0 payload bytes
+    assert_eq!(batch.total_payload_bytes(), 0);
+
+    batch.tiles.push(TileUpdate {
+        tx: 0,
+        ty: 0,
+        encoding: TileEncoding::Full,
+        payload: vec![0; 1000],
+        crc: 1,
+        damage_class: DamageClass::UiPrimitive,
+        compression: CompressionMethod::Zstd { level: 3 },
+    });
+    batch.tiles.push(TileUpdate {
+        tx: 1,
+        ty: 0,
+        encoding: TileEncoding::Delta,
+        payload: vec![0; 500],
+        crc: 2,
+        damage_class: DamageClass::TextGlyph,
+        compression: CompressionMethod::Lz4,
+    });
+    batch.tiles.push(TileUpdate {
+        tx: 2,
+        ty: 0,
+        encoding: TileEncoding::Skip,
+        payload: vec![],
+        crc: 3,
+        damage_class: DamageClass::UiPrimitive,
+        compression: CompressionMethod::Lz4,
+    });
+
+    assert_eq!(batch.total_payload_bytes(), 1500); // 1000 + 500 + 0
+}

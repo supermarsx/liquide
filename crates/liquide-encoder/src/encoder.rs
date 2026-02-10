@@ -233,6 +233,7 @@ impl TileEncoder {
         self.prev_tiles = vec![Vec::new(); total];
         self.codec = TileCodec::new(config);
         self.cache.clear();
+        self.last_stats = None;
     }
 }
 

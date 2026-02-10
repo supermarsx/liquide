@@ -608,6 +608,13 @@ version = "0.1.0"
 [[package]]
 name = "liquide-clipboard"
 version = "0.1.0"
+dependencies = [
+ "criterion",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-common"
@@ -724,6 +731,14 @@ dependencies = [
 [[package]]
 name = "liquide-input"
 version = "0.1.0"
+dependencies = [
+ "criterion",
+ "liquide-compositor",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-interop"
@@ -836,6 +851,13 @@ dependencies = [
 [[package]]
 name = "liquide-shell"
 version = "0.1.0"
+dependencies = [
+ "criterion",
+ "liquide-compositor",
+ "serde",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-supervisor"
