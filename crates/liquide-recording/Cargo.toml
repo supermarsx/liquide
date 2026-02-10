@@ -7,3 +7,18 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+liquide-common.workspace = true
+liquide-compositor.workspace = true
+liquide-encoder.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "recording_bench"
+harness = false
