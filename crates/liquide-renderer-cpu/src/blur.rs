@@ -99,13 +99,7 @@ pub fn blur_horizontal(
 /// Apply a vertical Gaussian blur pass.
 ///
 /// `src` and `dst` are BGRA pixel buffers of `width * height * 4` bytes.
-pub fn blur_vertical(
-    src: &[u8],
-    dst: &mut [u8],
-    width: u32,
-    height: u32,
-    kernel: &GaussianKernel,
-) {
+pub fn blur_vertical(src: &[u8], dst: &mut [u8], width: u32, height: u32, kernel: &GaussianKernel) {
     let w = width as usize;
     let h = height as usize;
     let half = kernel.half_width as i32;
@@ -164,8 +158,7 @@ pub fn blur_region(fb: &mut FrameBuffer, region: Rect, radius: u32) {
         let src_off = fb.pixel_offset(x0, y0 + row);
         let dst_off = (row * w * 4) as usize;
         let bytes = (w * 4) as usize;
-        buf[dst_off..dst_off + bytes]
-            .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+        buf[dst_off..dst_off + bytes].copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
     }
 
     // Pass 1: horizontal
@@ -180,8 +173,7 @@ pub fn blur_region(fb: &mut FrameBuffer, region: Rect, radius: u32) {
         let src_off = (row * w * 4) as usize;
         let dst_off = fb.pixel_offset(x0, y0 + row);
         let bytes = (w * 4) as usize;
-        fb.pixels[dst_off..dst_off + bytes]
-            .copy_from_slice(&buf[src_off..src_off + bytes]);
+        fb.pixels[dst_off..dst_off + bytes].copy_from_slice(&buf[src_off..src_off + bytes]);
     }
 }
 
@@ -320,8 +312,7 @@ pub fn blur_fast(fb: &mut FrameBuffer, region: Rect, radius: u32) {
         let src_off = fb.pixel_offset(x0, y0 + row);
         let dst_off = (row * w * 4) as usize;
         let bytes = (w * 4) as usize;
-        buf[dst_off..dst_off + bytes]
-            .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+        buf[dst_off..dst_off + bytes].copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
     }
 
     // Downsample 2x
@@ -349,8 +340,7 @@ pub fn blur_fast(fb: &mut FrameBuffer, region: Rect, radius: u32) {
         let src_off = (row * w * 4) as usize;
         let dst_off = fb.pixel_offset(x0, y0 + row);
         let bytes = (w * 4) as usize;
-        fb.pixels[dst_off..dst_off + bytes]
-            .copy_from_slice(&upsampled[src_off..src_off + bytes]);
+        fb.pixels[dst_off..dst_off + bytes].copy_from_slice(&upsampled[src_off..src_off + bytes]);
     }
 }
 

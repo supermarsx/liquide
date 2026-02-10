@@ -7,6 +7,10 @@ pub mod workspace;
 pub mod focus;
 pub mod layout;
 pub mod decoration;
+pub mod history;
+pub mod app_history;
+pub mod stats;
+pub mod screen_time;
 pub mod shell;
 
 use thiserror::Error;
@@ -44,6 +48,13 @@ pub use workspace::{Workspace, WorkspaceId, WorkspaceManager};
 pub use focus::{FocusManager, FocusPolicy};
 pub use layout::{FloatingLayout, LayoutPolicy, StackedLayout, TilingLayout};
 pub use decoration::{DecorationStyle, HitZone};
+pub use history::{WindowEvent, WindowEventKind, WindowHistory};
+pub use app_history::{AppHistory, AppInfo, AppSession};
+pub use stats::{AppStats, StatsCollector, SystemStats, WindowStats};
+pub use screen_time::{
+    AppScreenTime, CategoryScreenTime, DailyComparison, DailyReport, HourlySlot,
+    LimitTarget, ScreenTimeAlert, ScreenTimeTracker, UsageLimit, WeeklySummary,
+};
 pub use shell::Shell;
 
 #[cfg(test)]

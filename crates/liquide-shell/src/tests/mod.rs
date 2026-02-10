@@ -5,3 +5,7 @@ mod layout_tests;
 mod decoration_tests;
 mod shell_tests;
 mod edge_case_tests;
+mod history_tests;
+mod app_history_tests;
+mod stats_tests;
+mod screen_time_tests;

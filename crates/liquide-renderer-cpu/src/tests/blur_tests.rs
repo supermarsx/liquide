@@ -17,10 +17,7 @@ fn kernel_weights_sum_to_one() {
     for radius in [1, 3, 5, 10, 20] {
         let k = GaussianKernel::new(radius);
         let sum: f32 = k.weights.iter().sum();
-        assert!(
-            (sum - 1.0).abs() < 0.001,
-            "radius {radius}: sum = {sum}"
-        );
+        assert!((sum - 1.0).abs() < 0.001, "radius {radius}: sum = {sum}");
     }
 }
 
@@ -88,8 +85,12 @@ fn blur_uniform_region_stays_uniform() {
     let diff_r = (mid.r as i32 - fill.r as i32).unsigned_abs();
     let diff_g = (mid.g as i32 - fill.g as i32).unsigned_abs();
     let diff_b = (mid.b as i32 - fill.b as i32).unsigned_abs();
-    assert!(diff_r <= 1 && diff_g <= 1 && diff_b <= 1,
-        "uniform blur deviated: got {:?}, expected ~{:?}", mid, fill);
+    assert!(
+        diff_r <= 1 && diff_g <= 1 && diff_b <= 1,
+        "uniform blur deviated: got {:?}, expected ~{:?}",
+        mid,
+        fill
+    );
 }
 
 #[test]
@@ -177,7 +178,10 @@ fn blur_horizontal_direct() {
     assert_ne!(src, dst, "horizontal blur should change the data");
     // Neighbour of the stripe should now have some value
     let off = (0 * w + 3) as usize * 4; // column 3, row 0
-    assert!(dst[off + 2] > 0, "neighbour pixel should have brightness after horizontal blur");
+    assert!(
+        dst[off + 2] > 0,
+        "neighbour pixel should have brightness after horizontal blur"
+    );
 }
 
 #[test]
@@ -200,7 +204,10 @@ fn blur_vertical_direct() {
     assert_ne!(src, dst, "vertical blur should change the data");
     // Neighbour of the stripe should now have some value
     let off = (3 * w + 0) as usize * 4; // row 3, column 0
-    assert!(dst[off + 2] > 0, "neighbour pixel should have brightness after vertical blur");
+    assert!(
+        dst[off + 2] > 0,
+        "neighbour pixel should have brightness after vertical blur"
+    );
 }
 
 #[test]
@@ -211,7 +218,10 @@ fn blur_fast_small_radius_fallback() {
     fb.set_pixel(8, 8, Color::WHITE);
     let before = fb.pixels.clone();
     blur_fast(&mut fb, Rect::new(0.0, 0.0, 16.0, 16.0), 2);
-    assert_ne!(fb.pixels, before, "blur_fast with small radius should still modify pixels");
+    assert_ne!(
+        fb.pixels, before,
+        "blur_fast with small radius should still modify pixels"
+    );
 }
 
 #[test]
@@ -223,5 +233,9 @@ fn blur_downsample_odd_dimensions() {
     let (result, dw, dh) = blur_downsample_2x(&buf, w, h);
     assert_eq!(dw, 3, "downsampled width of 7 should be 3 (floor(7/2))");
     assert_eq!(dh, 2, "downsampled height of 5 should be 2 (floor(5/2))");
-    assert_eq!(result.len(), (dw * dh * 4) as usize, "result buffer size should match dimensions");
+    assert_eq!(
+        result.len(),
+        (dw * dh * 4) as usize,
+        "result buffer size should match dimensions"
+    );
 }
