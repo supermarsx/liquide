@@ -554,6 +554,15 @@ version = "0.1.0"
 [[package]]
 name = "liquide-audio"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+ "criterion",
+ "liquide-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-auth"
@@ -604,6 +613,17 @@ dependencies = [
 [[package]]
 name = "liquide-client-renderer"
 version = "0.1.0"
+dependencies = [
+ "bytes",
+ "criterion",
+ "liquide-common",
+ "liquide-compositor",
+ "liquide-encoder",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-clipboard"
@@ -781,6 +801,15 @@ dependencies = [
 [[package]]
 name = "liquide-plugin-host"
 version = "0.1.0"
+dependencies = [
+ "criterion",
+ "liquide-common",
+ "liquide-plugin-abi",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-policy"
@@ -855,6 +884,7 @@ dependencies = [
  "criterion",
  "liquide-compositor",
  "serde",
+ "serde_json",
  "thiserror",
  "tracing",
 ]
