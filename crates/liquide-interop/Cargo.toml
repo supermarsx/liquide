@@ -7,3 +7,15 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+liquide-common.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "interop_bench"
+harness = false
