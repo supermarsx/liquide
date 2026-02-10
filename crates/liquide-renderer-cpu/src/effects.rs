@@ -97,18 +97,40 @@ impl Effect for BackdropBlur {
 /// colour, and composites behind the surface with SrcOver.
 pub struct BoxShadow;
 
+/// Parameters for rendering a box shadow.
+pub struct ShadowParams {
+    /// The surface rectangle that casts the shadow.
+    pub surface_rect: Rect,
+    /// Corner radius of the shadow shape.
+    pub corner_radius: f32,
+    /// Spread distance in pixels.
+    pub spread: f32,
+    /// Blur radius in pixels.
+    pub blur_radius: u32,
+    /// Horizontal offset.
+    pub offset_x: f32,
+    /// Vertical offset.
+    pub offset_y: f32,
+    /// Shadow colour.
+    pub shadow_color: Color,
+}
+
 impl BoxShadow {
     /// Render a box shadow with specific parameters.
     pub fn render_shadow(
         fb: &mut FrameBuffer,
-        surface_rect: Rect,
-        corner_radius: f32,
-        spread: f32,
-        blur_radius: u32,
-        offset_x: f32,
-        offset_y: f32,
-        shadow_color: Color,
+        params: &ShadowParams,
     ) {
+        let ShadowParams {
+            surface_rect,
+            corner_radius,
+            spread,
+            blur_radius,
+            offset_x,
+            offset_y,
+            shadow_color,
+        } = *params;
+
         if blur_radius == 0 && spread <= 0.0 {
             return;
         }
@@ -198,13 +220,15 @@ impl Effect for BoxShadow {
         let shadow_color = Color::new(0, 0, 0, 80);
         BoxShadow::render_shadow(
             fb,
-            region,
-            8.0,
-            params.shadow_spread as f32,
-            params.shadow_blur_radius,
-            0.0,
-            4.0,
-            shadow_color,
+            &ShadowParams {
+                surface_rect: region,
+                corner_radius: 8.0,
+                spread: params.shadow_spread as f32,
+                blur_radius: params.shadow_blur_radius,
+                offset_x: 0.0,
+                offset_y: 4.0,
+                shadow_color,
+            },
         );
     }
 

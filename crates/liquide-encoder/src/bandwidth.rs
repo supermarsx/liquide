@@ -122,6 +122,14 @@ impl BandwidthEstimator {
     pub fn set_alpha(&mut self, alpha: f64) {
         self.alpha = alpha.clamp(0.01, 1.0);
     }
+
+    /// Reset the estimator, clearing all recorded history and estimates.
+    pub fn reset(&mut self) {
+        self.frame_sizes.clear();
+        self.rtt_samples.clear();
+        self.estimated_bps = 0.0;
+        self.estimated_rtt_us = 0.0;
+    }
 }
 
 /// Per-frame byte budget derived from bandwidth estimates.

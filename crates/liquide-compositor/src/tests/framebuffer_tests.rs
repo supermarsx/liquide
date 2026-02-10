@@ -55,3 +55,44 @@ fn double_buffer_swap() {
     db.swap();
     assert_eq!(db.front().get_pixel(0, 0), Color::WHITE);
 }
+
+#[test]
+fn framebuffer_with_stride() {
+    // stride > width * bpp means padding exists
+    let fb = FrameBuffer::with_stride(100, 100, 128 * 4, PixelFormat::Bgra8);
+    assert_eq!(fb.stride, 128 * 4);
+    assert_eq!(fb.width, 100);
+    assert_eq!(fb.pixels.len(), (128 * 4 * 100) as usize);
+}
+
+#[test]
+fn framebuffer_pixel_offset() {
+    let fb = FrameBuffer::new(100, 100, PixelFormat::Bgra8);
+    assert_eq!(fb.pixel_offset(0, 0), 0);
+    assert_eq!(fb.pixel_offset(1, 0), 4);
+    assert_eq!(fb.pixel_offset(0, 1), 100 * 4);
+}
+
+#[test]
+fn framebuffer_row_and_row_mut() {
+    let mut fb = FrameBuffer::new(10, 10, PixelFormat::Bgra8);
+    // Write to row 3 via row_mut
+    let row = fb.row_mut(3);
+    row[0] = 0xFF;
+    // Read back via row
+    assert_eq!(fb.row(3)[0], 0xFF);
+    assert_eq!(fb.row(3).len(), 40); // 10 pixels * 4 bytes
+}
+
+#[test]
+fn double_buffer_back() {
+    let db = DoubleBuffer::new(100, 100, PixelFormat::Bgra8);
+    assert_eq!(db.back().width, 100);
+    assert_eq!(db.front().width, 100);
+}
+
+#[test]
+fn framebuffer_byte_len() {
+    let fb = FrameBuffer::new(200, 150, PixelFormat::Bgra8);
+    assert_eq!(fb.byte_len(), (200 * 150 * 4) as usize);
+}

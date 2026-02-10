@@ -15,9 +15,9 @@ impl SrgbLut {
     #[must_use]
     pub fn new() -> Self {
         let mut to_linear = [0.0f32; 256];
-        for i in 0..256 {
+        for (i, val) in to_linear.iter_mut().enumerate() {
             let s = i as f32 / 255.0;
-            to_linear[i] = if s <= 0.04045 {
+            *val = if s <= 0.04045 {
                 s / 12.92
             } else {
                 ((s + 0.055) / 1.055).powf(2.4)
@@ -25,14 +25,14 @@ impl SrgbLut {
         }
 
         let mut from_linear = [0u8; 4096];
-        for i in 0..4096 {
+        for (i, val) in from_linear.iter_mut().enumerate() {
             let l = i as f32 / 4095.0;
             let s = if l <= 0.0031308 {
                 l * 12.92
             } else {
                 1.055 * l.powf(1.0 / 2.4) - 0.055
             };
-            from_linear[i] = (s * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+            *val = (s * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
         }
 
         Self {

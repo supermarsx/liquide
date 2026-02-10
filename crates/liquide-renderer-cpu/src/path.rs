@@ -81,6 +81,18 @@ impl Path {
         Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
     }
 
+    /// Number of segments in the path.
+    #[must_use]
+    pub fn segment_count(&self) -> usize {
+        self.segments.len()
+    }
+
+    /// Whether the path ends with a `Close` segment.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        matches!(self.segments.last(), Some(PathSegment::Close))
+    }
+
     /// Flatten the path into a list of line segment edges.
     ///
     /// Curves are subdivided using adaptive flattening with the given tolerance.
@@ -179,6 +191,70 @@ impl PathBuilder {
             PathPoint::new(c2x, c2y),
             PathPoint::new(x, y),
         ));
+        self
+    }
+
+    /// Draw a circular arc approximated by cubic Bezier curves.
+    ///
+    /// `cx` and `cy` define the center of the circle, `radius` the radius,
+    /// `start_angle` the starting angle in radians, and `sweep_angle` the
+    /// angular extent (positive = counter-clockwise). The arc is connected
+    /// to the current point with a straight line if necessary.
+    pub fn arc_to(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        start_angle: f32,
+        sweep_angle: f32,
+    ) -> &mut Self {
+        if radius <= 0.0 || sweep_angle.abs() < f32::EPSILON {
+            return self;
+        }
+
+        // Start point of the arc
+        let sx = cx + radius * start_angle.cos();
+        let sy = cy + radius * start_angle.sin();
+
+        // Connect to arc start: move if no current point, otherwise line
+        if self.segments.is_empty() {
+            self.segments
+                .push(PathSegment::MoveTo(PathPoint::new(sx, sy)));
+        } else {
+            self.segments
+                .push(PathSegment::LineTo(PathPoint::new(sx, sy)));
+        }
+
+        // Split the arc into segments of at most 90 degrees each
+        let n =
+            ((sweep_angle.abs() / std::f32::consts::FRAC_PI_2).ceil() as usize).max(1);
+        let step = sweep_angle / n as f32;
+
+        for i in 0..n {
+            let a1 = start_angle + step * i as f32;
+            let a2 = a1 + step;
+            let half = (a2 - a1) / 2.0;
+            let sin_half = half.sin();
+            if sin_half.abs() < f32::EPSILON {
+                continue;
+            }
+            let k = (4.0 / 3.0) * (1.0 - half.cos()) / sin_half;
+
+            let cos1 = a1.cos();
+            let sin1 = a1.sin();
+            let cos2 = a2.cos();
+            let sin2 = a2.sin();
+
+            self.cubic_to(
+                cx + radius * (cos1 - k * sin1),
+                cy + radius * (sin1 + k * cos1),
+                cx + radius * (cos2 + k * sin2),
+                cy + radius * (sin2 - k * cos2),
+                cx + radius * cos2,
+                cy + radius * sin2,
+            );
+        }
+
         self
     }
 
@@ -395,12 +471,10 @@ pub fn fill_path(
                 for x in ix0..ix1 {
                     let fx = x as f32 + 0.5;
                     // Compute fractional coverage at edges
-                    let c = if fx < left {
-                        0
-                    } else if fx > right {
-                        0
-                    } else {
+                    let c = if fx >= left && fx <= right {
                         1
+                    } else {
+                        0
                     };
                     coverage[(x - x0) as usize] += c;
                 }

@@ -57,3 +57,42 @@ fn color_rgba_u32_roundtrip() {
     assert_eq!(packed, 0xAABBCCDD);
     assert_eq!(Color::from_rgba_u32(packed), c);
 }
+
+#[test]
+fn color_is_opaque() {
+    assert!(Color::WHITE.is_opaque());
+    assert!(Color::BLACK.is_opaque());
+    assert!(!Color::TRANSPARENT.is_opaque());
+    assert!(!Color::new(100, 100, 100, 128).is_opaque());
+}
+
+#[test]
+fn color_is_transparent() {
+    assert!(Color::TRANSPARENT.is_transparent());
+    assert!(!Color::WHITE.is_transparent());
+    assert!(!Color::new(0, 0, 0, 1).is_transparent());
+}
+
+#[test]
+fn pixel_format_from_wire_invalid() {
+    assert_eq!(PixelFormat::from_wire_name("invalid_format"), None);
+    assert_eq!(PixelFormat::from_wire_name(""), None);
+}
+
+#[test]
+fn blend_mode_default() {
+    assert_eq!(BlendMode::default(), BlendMode::SrcOver);
+}
+
+#[test]
+fn pixel_format_default() {
+    assert_eq!(PixelFormat::default(), PixelFormat::Bgra8);
+}
+
+#[test]
+fn pixel_format_has_alpha() {
+    assert!(PixelFormat::Bgra8.has_alpha());
+    assert!(PixelFormat::Rgba8.has_alpha());
+    assert!(!PixelFormat::Rgb8.has_alpha());
+    assert!(!PixelFormat::Rgb565.has_alpha());
+}

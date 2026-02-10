@@ -3,7 +3,7 @@
 use serde::de::DeserializeOwned;
 use std::path::Path;
 
-use crate::error::{LiquideError, Result};
+use crate::error::Result;
 
 /// Load a TOML configuration file from disk and deserialize it into `T`.
 ///

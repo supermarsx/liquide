@@ -11,3 +11,10 @@ liquide-common.workspace = true
 liquide-compositor.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "renderer_bench"
+harness = false

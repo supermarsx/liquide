@@ -347,6 +347,31 @@ impl SceneNode {
         self.children.iter().map(|c| c.depth() + 1).max().unwrap_or(0)
     }
 
+    /// Total number of descendants (recursive child count, excludes self).
+    #[must_use]
+    pub fn child_count(&self) -> usize {
+        let mut count = self.children.len();
+        for child in &self.children {
+            count += child.child_count();
+        }
+        count
+    }
+
+    /// Walk the tree depth-first in z-order with mutable access,
+    /// calling the visitor on each visible node.
+    pub fn walk_mut<F: FnMut(&mut SceneNode)>(&mut self, visitor: &mut F) {
+        if !self.properties.visible {
+            return;
+        }
+        visitor(self);
+        // Sort children indices by z-order before walking
+        let mut sorted_indices: Vec<usize> = (0..self.children.len()).collect();
+        sorted_indices.sort_by_key(|&i| self.children[i].properties.z_order);
+        for &i in &sorted_indices {
+            self.children[i].walk_mut(visitor);
+        }
+    }
+
     /// Flatten the tree into a z-sorted list of visible leaf nodes with
     /// computed absolute bounds and transforms.
     #[must_use]

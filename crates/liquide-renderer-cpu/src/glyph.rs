@@ -17,9 +17,10 @@ use liquide_compositor::pixel::Color;
 use crate::blend;
 
 /// Subpixel rendering mode for LCD text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SubpixelMode {
     /// No subpixel rendering (greyscale alpha).
+    #[default]
     None,
     /// Horizontal RGB subpixel layout (most common LCD panels).
     Rgb,
@@ -29,12 +30,6 @@ pub enum SubpixelMode {
     Vrgb,
     /// Vertical BGR subpixel layout.
     Vbgr,
-}
-
-impl Default for SubpixelMode {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Key for a glyph in the atlas.
@@ -67,6 +62,20 @@ pub struct CachedGlyph {
     pub advance: f32,
     /// Whether this glyph uses subpixel rendering.
     pub subpixel: bool,
+}
+
+/// Metrics for a glyph being inserted into the atlas.
+pub struct GlyphMetrics {
+    /// Glyph bitmap width (logical display pixels).
+    pub width: u32,
+    /// Glyph bitmap height.
+    pub height: u32,
+    /// Horizontal bearing offset.
+    pub bearing_x: i32,
+    /// Vertical bearing offset.
+    pub bearing_y: i32,
+    /// Horizontal advance.
+    pub advance: f32,
 }
 
 /// A glyph atlas: alpha-only bitmap cache for text rendering.
@@ -113,12 +122,10 @@ impl GlyphAtlas {
         &mut self,
         key: GlyphKey,
         bitmap: &[u8],
-        width: u32,
-        height: u32,
-        bearing_x: i32,
-        bearing_y: i32,
-        advance: f32,
+        metrics: &GlyphMetrics,
     ) -> crate::Result<&CachedGlyph> {
+        let GlyphMetrics { width, height, bearing_x, bearing_y, advance } = *metrics;
+
         // Check if it already exists
         if self.entries.contains_key(&key) {
             return Ok(&self.entries[&key]);
@@ -215,12 +222,10 @@ impl GlyphAtlas {
         &mut self,
         key: GlyphKey,
         bitmap: &[u8],
-        width: u32,
-        height: u32,
-        bearing_x: i32,
-        bearing_y: i32,
-        advance: f32,
+        metrics: &GlyphMetrics,
     ) -> crate::Result<&CachedGlyph> {
+        let GlyphMetrics { width, height, bearing_x, bearing_y, advance } = *metrics;
+
         if self.entries.contains_key(&key) {
             return Ok(&self.entries[&key]);
         }
@@ -360,6 +365,15 @@ impl GlyphAtlas {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Clear all cached glyphs and reset the packing cursor.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.pixels.fill(0);
+        self.cursor_x = 0;
+        self.cursor_y = 0;
+        self.row_height = 0;
     }
 }
 

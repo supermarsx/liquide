@@ -206,3 +206,169 @@ fn path_bounds_correct() {
     assert!((b.width - 40.0).abs() < 0.01);
     assert!((b.height - 40.0).abs() < 0.01);
 }
+
+#[test]
+fn path_flatten_produces_lines() {
+    // Build a path with a cubic bezier and verify bounds cover the curve
+    let path = PathBuilder::new()
+        .move_to(0.0, 0.0)
+        .cubic_to(10.0, 40.0, 50.0, 40.0, 60.0, 0.0)
+        .build();
+
+    let bounds = path.bounds();
+    // Bounds should cover the x range roughly 0..60
+    assert!(bounds.width > 50.0,
+        "path bounds should cover cubic extent: got {:?}", bounds);
+    // The cubic control points go up to y=40, so bounds should reflect that
+    assert!(bounds.height > 20.0,
+        "path bounds should cover control point height: got {:?}", bounds);
+}
+
+#[test]
+fn empty_path_noop() {
+    let lut = SrgbLut::new();
+    let mut fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
+    let before = fb.pixels.clone();
+
+    let path = PathBuilder::new().build();
+
+    // fill_path with empty path should do nothing
+    fill_path(
+        &mut fb,
+        &path,
+        &Fill::Solid(Color::new(255, 0, 0, 255)),
+        BlendMode::SrcOver,
+        &lut,
+    );
+    assert_eq!(fb.pixels, before, "fill_path on empty path should be a no-op");
+
+    // stroke_path with empty path should do nothing
+    stroke_path(
+        &mut fb,
+        &path,
+        2.0,
+        Color::new(255, 0, 0, 255),
+        BlendMode::SrcOver,
+    );
+    assert_eq!(fb.pixels, before, "stroke_path on empty path should be a no-op");
+}
+
+#[test]
+fn fill_path_gradient() {
+    let lut = SrgbLut::new();
+    let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+
+    let path = PathBuilder::new()
+        .move_to(10.0, 10.0)
+        .line_to(50.0, 10.0)
+        .line_to(50.0, 50.0)
+        .line_to(10.0, 50.0)
+        .close()
+        .build();
+
+    let gradient = crate::rasterizer::Gradient::Linear {
+        start: liquide_compositor::geometry::Point::new(10.0, 0.0),
+        end: liquide_compositor::geometry::Point::new(50.0, 0.0),
+        stops: vec![
+            (0.0, Color::new(255, 0, 0, 255)),
+            (1.0, Color::new(0, 0, 255, 255)),
+        ],
+    };
+
+    fill_path(
+        &mut fb,
+        &path,
+        &Fill::Gradient(gradient),
+        BlendMode::SrcOver,
+        &lut,
+    );
+
+    // Left side should be red-ish
+    let left = fb.get_pixel(12, 30);
+    assert!(left.r > left.b, "left side should be more red: got {:?}", left);
+    // Right side should be blue-ish
+    let right = fb.get_pixel(48, 30);
+    assert!(right.b > right.r, "right side should be more blue: got {:?}", right);
+}
+
+#[test]
+fn stroke_open_path() {
+    let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+
+    // An open path (no close) with just a horizontal line
+    let path = PathBuilder::new()
+        .move_to(10.0, 32.0)
+        .line_to(54.0, 32.0)
+        .build();
+
+    stroke_path(
+        &mut fb,
+        &path,
+        2.0,
+        Color::new(255, 255, 255, 255),
+        BlendMode::SrcOver,
+    );
+
+    // The horizontal line should produce pixels
+    let on_line = fb.get_pixel(32, 32);
+    assert_eq!(on_line.r, 255,
+        "stroke should produce white pixels on the line: got {:?}", on_line);
+    // Off the line should be untouched
+    let off_line = fb.get_pixel(32, 5);
+    assert_eq!(off_line.r, 0,
+        "off-line pixel should be untouched: got {:?}", off_line);
+}
+
+#[test]
+fn path_segment_count() {
+    let path = PathBuilder::new()
+        .move_to(0.0, 0.0)
+        .line_to(10.0, 0.0)
+        .line_to(10.0, 10.0)
+        .close()
+        .build();
+    assert_eq!(path.segment_count(), 4);
+}
+
+#[test]
+fn path_is_closed() {
+    let closed = PathBuilder::new()
+        .move_to(0.0, 0.0)
+        .line_to(10.0, 0.0)
+        .line_to(10.0, 10.0)
+        .close()
+        .build();
+    assert!(closed.is_closed());
+
+    let open = PathBuilder::new()
+        .move_to(0.0, 0.0)
+        .line_to(10.0, 0.0)
+        .build();
+    assert!(!open.is_closed());
+}
+
+#[test]
+fn arc_to_produces_curve() {
+    let lut = SrgbLut::new();
+    let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+
+    let path = PathBuilder::new()
+        .move_to(52.0, 32.0)
+        .arc_to(32.0, 32.0, 20.0, 0.0, std::f32::consts::TAU)
+        .close()
+        .build();
+
+    fill_path(
+        &mut fb,
+        &path,
+        &Fill::Solid(Color::new(255, 0, 0, 255)),
+        BlendMode::SrcOver,
+        &lut,
+    );
+
+    let center = fb.get_pixel(32, 32);
+    assert!(center.r > 200, "arc circle center should be filled: got {:?}", center);
+
+    let outside = fb.get_pixel(5, 5);
+    assert_eq!(outside.r, 0, "outside arc circle should be black: got {:?}", outside);
+}

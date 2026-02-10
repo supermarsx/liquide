@@ -220,7 +220,7 @@ pub fn fill_rounded_rect(
             let fy = y as f32 + 0.5;
 
             // Calculate signed distance to the rounded rect
-            let coverage = rounded_rect_coverage(fx, fy, &rect, r, &tl, &tr, &bl, &br);
+            let coverage = rounded_rect_coverage(fx, fy, &rect, r, &[tl, tr, bl, br]);
             if coverage <= 0.0 {
                 continue;
             }
@@ -277,11 +277,9 @@ fn rounded_rect_coverage(
     fy: f32,
     rect: &Rect,
     r: f32,
-    tl: &Point,
-    tr: &Point,
-    bl: &Point,
-    br: &Point,
+    corners: &[Point; 4],
 ) -> f32 {
+    let [ref tl, ref tr, ref bl, ref br] = *corners;
     // If in the non-corner region, full coverage
     let in_x_band = fx >= rect.x + r && fx <= rect.right() - r;
     let in_y_band = fy >= rect.y + r && fy <= rect.bottom() - r;

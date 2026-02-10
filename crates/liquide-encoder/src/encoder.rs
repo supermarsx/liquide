@@ -33,6 +33,8 @@ pub struct TileEncoder {
     strategy_config: StrategyConfig,
     /// Frame sequence counter.
     sequence: u64,
+    /// Statistics from the most recently encoded frame.
+    last_stats: Option<FrameStats>,
 }
 
 impl TileEncoder {
@@ -49,6 +51,7 @@ impl TileEncoder {
             cache: TilePayloadCache::new(2048),
             strategy_config: StrategyConfig::default(),
             sequence: 0,
+            last_stats: None,
         }
     }
 
@@ -179,7 +182,17 @@ impl TileEncoder {
             zstd_tiles,
         };
 
+        self.last_stats = Some(batch.stats.clone());
+
         Ok(batch)
+    }
+
+    /// Access the statistics from the most recently encoded frame.
+    ///
+    /// Returns `None` if no frame has been encoded yet.
+    #[must_use]
+    pub fn frame_stats(&self) -> Option<&FrameStats> {
+        self.last_stats.as_ref()
     }
 
     /// Access the tile grid.

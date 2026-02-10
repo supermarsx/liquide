@@ -15,7 +15,7 @@ fn atlas_insert_and_lookup() {
         subpixel: false,
     };
     let bitmap = vec![128u8; 8 * 12]; // 8x12 glyph
-    atlas.insert(key, &bitmap, 8, 12, 0, 10, 8.0).unwrap();
+    atlas.insert(key, &bitmap, &GlyphMetrics { width: 8, height: 12, bearing_x: 0, bearing_y: 10, advance: 8.0 }).unwrap();
 
     assert_eq!(atlas.len(), 1);
     let g = atlas.get(&key).unwrap();
@@ -30,13 +30,13 @@ fn atlas_row_wrap() {
     let bitmap = vec![255u8; 8 * 10];
     // First glyph at (0, 0)
     let k1 = GlyphKey { font_id: 0, glyph_id: 1, size_px: 10, subpixel: false };
-    atlas.insert(k1, &bitmap, 8, 10, 0, 8, 8.0).unwrap();
+    atlas.insert(k1, &bitmap, &GlyphMetrics { width: 8, height: 10, bearing_x: 0, bearing_y: 8, advance: 8.0 }).unwrap();
     // Second glyph at (9, 0)
     let k2 = GlyphKey { font_id: 0, glyph_id: 2, size_px: 10, subpixel: false };
-    atlas.insert(k2, &bitmap, 8, 10, 0, 8, 8.0).unwrap();
+    atlas.insert(k2, &bitmap, &GlyphMetrics { width: 8, height: 10, bearing_x: 0, bearing_y: 8, advance: 8.0 }).unwrap();
     // Third glyph wraps to next row
     let k3 = GlyphKey { font_id: 0, glyph_id: 3, size_px: 10, subpixel: false };
-    atlas.insert(k3, &bitmap, 8, 10, 0, 8, 8.0).unwrap();
+    atlas.insert(k3, &bitmap, &GlyphMetrics { width: 8, height: 10, bearing_x: 0, bearing_y: 8, advance: 8.0 }).unwrap();
     let g3 = atlas.get(&k3).unwrap();
     assert_eq!(g3.atlas_y, 11); // wrapped to row below (10 + 1 padding)
 }
@@ -51,7 +51,7 @@ fn atlas_blit() {
         subpixel: false,
     };
     let bitmap = vec![255u8; 4 * 4]; // 4x4 fully opaque
-    let glyph = atlas.insert(key, &bitmap, 4, 4, 0, 4, 4.0).unwrap().clone();
+    let glyph = atlas.insert(key, &bitmap, &GlyphMetrics { width: 4, height: 4, bearing_x: 0, bearing_y: 4, advance: 4.0 }).unwrap().clone();
 
     let mut fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
     atlas.blit_glyph(&mut fb, &glyph, Point::new(10.0, 10.0), Color::new(255, 0, 0, 255));
@@ -73,7 +73,7 @@ fn subpixel_insert_and_lookup() {
     };
     // 4 display pixels wide, 4 tall → 12 bytes per row (3 per pixel), 4 rows
     let bitmap = vec![200u8; 4 * 3 * 4];
-    let glyph = atlas.insert_subpixel(key, &bitmap, 4, 4, 0, 4, 4.0).unwrap();
+    let glyph = atlas.insert_subpixel(key, &bitmap, &GlyphMetrics { width: 4, height: 4, bearing_x: 0, bearing_y: 4, advance: 4.0 }).unwrap();
 
     assert_eq!(glyph.width, 4);
     assert_eq!(glyph.height, 4);
@@ -97,7 +97,7 @@ fn subpixel_blit_rgb_per_channel() {
         0, 255, 0, // pixel 1: no R, full G alpha, no B
     ];
     let glyph = atlas
-        .insert_subpixel(key, &bitmap, 2, 1, 0, 1, 2.0)
+        .insert_subpixel(key, &bitmap, &GlyphMetrics { width: 2, height: 1, bearing_x: 0, bearing_y: 1, advance: 2.0 })
         .unwrap()
         .clone();
 
@@ -159,7 +159,7 @@ fn subpixel_blit_bgr_swaps_channels() {
     // 1x1 subpixel bitmap: (a0=255, a1=0, a2=128)
     let bitmap = [255, 0, 128];
     let glyph = atlas
-        .insert_subpixel(key, &bitmap, 1, 1, 0, 1, 1.0)
+        .insert_subpixel(key, &bitmap, &GlyphMetrics { width: 1, height: 1, bearing_x: 0, bearing_y: 1, advance: 1.0 })
         .unwrap()
         .clone();
 
@@ -195,7 +195,7 @@ fn subpixel_mode_none_averages_channels() {
     // 1x1 subpixel bitmap: (100, 200, 255) → average = (100+200+255+1)/3 = 185
     let bitmap = [100, 200, 255];
     let glyph = atlas
-        .insert_subpixel(key, &bitmap, 1, 1, 0, 1, 1.0)
+        .insert_subpixel(key, &bitmap, &GlyphMetrics { width: 1, height: 1, bearing_x: 0, bearing_y: 1, advance: 1.0 })
         .unwrap()
         .clone();
 
@@ -216,4 +216,183 @@ fn subpixel_mode_none_averages_channels() {
     assert_eq!(p.r, expected_avg, "None mode R: got {:?}", p);
     assert_eq!(p.g, expected_avg, "None mode G: got {:?}", p);
     assert_eq!(p.b, expected_avg, "None mode B: got {:?}", p);
+}
+
+#[test]
+fn atlas_full_returns_error() {
+    let mut atlas = GlyphAtlas::new(4, 4);
+    let key = GlyphKey {
+        font_id: 0,
+        glyph_id: 1,
+        size_px: 16,
+        subpixel: false,
+    };
+    // Try to insert a glyph larger than the atlas (8x8 into 4x4)
+    let bitmap = vec![255u8; 8 * 8];
+    let result = atlas.insert(key, &bitmap, &GlyphMetrics {
+        width: 8,
+        height: 8,
+        bearing_x: 0,
+        bearing_y: 8,
+        advance: 8.0,
+    });
+    assert!(result.is_err(), "inserting a glyph larger than the atlas should fail");
+}
+
+#[test]
+fn subpixel_vrgb_mode() {
+    let mut atlas = GlyphAtlas::new(256, 256);
+    let key = GlyphKey {
+        font_id: 0,
+        glyph_id: 100,
+        size_px: 16,
+        subpixel: true,
+    };
+    // 2x2 subpixel bitmap (6 bytes per row, 2 rows)
+    let bitmap = vec![200u8; 2 * 3 * 2];
+    let glyph = atlas
+        .insert_subpixel(key, &bitmap, &GlyphMetrics {
+            width: 2,
+            height: 2,
+            bearing_x: 0,
+            bearing_y: 2,
+            advance: 2.0,
+        })
+        .unwrap()
+        .clone();
+
+    let mut fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
+    fb.clear(Color::BLACK);
+
+    atlas.blit_glyph_subpixel(
+        &mut fb,
+        &glyph,
+        Point::new(10.0, 10.0),
+        Color::WHITE,
+        SubpixelMode::Vrgb,
+    );
+
+    // Check that some pixels were modified
+    let p = fb.get_pixel(10, 8);
+    assert!(
+        p.r > 0 || p.g > 0 || p.b > 0,
+        "VRGB subpixel blit should produce non-zero pixels: got {:?}",
+        p
+    );
+}
+
+#[test]
+fn subpixel_vbgr_mode() {
+    let mut atlas = GlyphAtlas::new(256, 256);
+    let key = GlyphKey {
+        font_id: 0,
+        glyph_id: 101,
+        size_px: 16,
+        subpixel: true,
+    };
+    // 2x2 subpixel bitmap (6 bytes per row, 2 rows)
+    let bitmap = vec![180u8; 2 * 3 * 2];
+    let glyph = atlas
+        .insert_subpixel(key, &bitmap, &GlyphMetrics {
+            width: 2,
+            height: 2,
+            bearing_x: 0,
+            bearing_y: 2,
+            advance: 2.0,
+        })
+        .unwrap()
+        .clone();
+
+    let mut fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
+    fb.clear(Color::BLACK);
+
+    atlas.blit_glyph_subpixel(
+        &mut fb,
+        &glyph,
+        Point::new(10.0, 10.0),
+        Color::WHITE,
+        SubpixelMode::Vbgr,
+    );
+
+    // Check that some pixels were modified
+    let p = fb.get_pixel(10, 8);
+    assert!(
+        p.r > 0 || p.g > 0 || p.b > 0,
+        "VBGR subpixel blit should produce non-zero pixels: got {:?}",
+        p
+    );
+}
+
+#[test]
+fn blit_glyph_clipping() {
+    let mut atlas = GlyphAtlas::new(256, 256);
+    let key = GlyphKey {
+        font_id: 0,
+        glyph_id: 102,
+        size_px: 16,
+        subpixel: false,
+    };
+    // 8x8 glyph
+    let bitmap = vec![255u8; 8 * 8];
+    let glyph = atlas
+        .insert(key, &bitmap, &GlyphMetrics {
+            width: 8,
+            height: 8,
+            bearing_x: 0,
+            bearing_y: 4,
+            advance: 8.0,
+        })
+        .unwrap()
+        .clone();
+
+    let mut fb = FrameBuffer::new(16, 16, PixelFormat::Bgra8);
+    // Blit at the edge: glyph at (14, 14-4)=(14, 10), spans x=14..22, y=10..18
+    // Extends beyond 16x16 FB — should clip without panic
+    atlas.blit_glyph(
+        &mut fb,
+        &glyph,
+        Point::new(14.0, 14.0),
+        Color::new(255, 0, 0, 255),
+    );
+
+    // Also test negative position — should clip without panic
+    atlas.blit_glyph(
+        &mut fb,
+        &glyph,
+        Point::new(-5.0, -5.0),
+        Color::new(0, 255, 0, 255),
+    );
+    // If we reach here without panicking, the test passes
+}
+
+#[test]
+fn atlas_clear_resets() {
+    let mut atlas = GlyphAtlas::new(256, 256);
+    let key = GlyphKey {
+        font_id: 0,
+        glyph_id: 65,
+        size_px: 16,
+        subpixel: false,
+    };
+    let bitmap = vec![128u8; 8 * 12];
+    atlas
+        .insert(
+            key,
+            &bitmap,
+            &GlyphMetrics {
+                width: 8,
+                height: 12,
+                bearing_x: 0,
+                bearing_y: 10,
+                advance: 8.0,
+            },
+        )
+        .unwrap();
+    assert_eq!(atlas.len(), 1);
+
+    atlas.clear();
+    assert_eq!(atlas.len(), 0);
+    assert!(atlas.is_empty());
+    // After clearing, pixels should be zeroed
+    assert!(atlas.pixels().iter().all(|&b| b == 0));
 }

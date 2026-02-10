@@ -7,9 +7,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Degradation level (L0 = full quality, L13 = emergency minimal rendering).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum DegradationLevel {
+    #[default]
     L0 = 0,
     L1 = 1,
     L2 = 2,
@@ -69,25 +70,14 @@ impl DegradationLevel {
     }
 }
 
-impl Default for DegradationLevel {
-    fn default() -> Self {
-        Self::L0
-    }
-}
-
 /// Effect quality profile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum QualityProfile {
     Quality,
+    #[default]
     Balanced,
     Performance,
     Minimal,
-}
-
-impl Default for QualityProfile {
-    fn default() -> Self {
-        Self::Balanced
-    }
 }
 
 /// Current effect budget state.
@@ -160,18 +150,13 @@ impl EffectBudget {
 }
 
 /// Blur algorithm selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BlurAlgorithm {
     /// Separable Gaussian blur (higher quality).
+    #[default]
     Gaussian,
     /// Box blur (faster, lower quality).
     Box,
-}
-
-impl Default for BlurAlgorithm {
-    fn default() -> Self {
-        Self::Gaussian
-    }
 }
 
 /// Runtime-tunable effect parameters, derived from profile + degradation level.

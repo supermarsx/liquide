@@ -11,7 +11,7 @@ use liquide_compositor::scene::{FlatNode, NodeId, SceneNodeKind};
 
 use crate::blur;
 use crate::color::SrgbLut;
-use crate::effects::{BackdropBlur, BoxShadow};
+use crate::effects::{BackdropBlur, BoxShadow, ShadowParams};
 use crate::glyph::GlyphAtlas;
 use crate::rasterizer::{self, Fill};
 
@@ -187,13 +187,15 @@ impl SoftwareRenderer {
             SceneNodeKind::Shadow { spread, blur_radius, color } => {
                 BoxShadow::render_shadow(
                     fb,
-                    bounds,
-                    0.0,
-                    *spread,
-                    *blur_radius as u32,
-                    0.0,
-                    0.0,
-                    Color::new(color.r, color.g, color.b, (color.a as f32 * opacity + 0.5) as u8),
+                    &ShadowParams {
+                        surface_rect: bounds,
+                        corner_radius: 0.0,
+                        spread: *spread,
+                        blur_radius: *blur_radius as u32,
+                        offset_x: 0.0,
+                        offset_y: 0.0,
+                        shadow_color: Color::new(color.r, color.g, color.b, (color.a as f32 * opacity + 0.5) as u8),
+                    },
                 );
             }
 
@@ -251,7 +253,7 @@ impl SoftwareRenderer {
                 // Extract region, blur it, cache by node ID
                 let radius = self.effect_params.blur_radius;
                 if radius > 0 {
-                    if !self.blur_cache.contains_key(&node.id) {
+                    if let std::collections::hash_map::Entry::Vacant(e) = self.blur_cache.entry(node.id) {
                         // Extract and blur
                         let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
                         let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
@@ -269,7 +271,7 @@ impl SoftwareRenderer {
                                     .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
                             }
                             blur::blur_buffer(&mut buf, w, h, radius);
-                            self.blur_cache.insert(node.id, buf);
+                            e.insert(buf);
                         }
                     }
                     // Blit cached blur back

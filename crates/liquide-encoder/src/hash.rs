@@ -39,30 +39,32 @@ pub fn crc32c(data: &[u8]) -> u32 {
     crc ^ 0xFFFF_FFFF
 }
 
+/// Parameters describing a tile region within a pixel buffer.
+pub struct TileRegion {
+    pub tile_x: u32,
+    pub tile_y: u32,
+    pub tile_size: u32,
+    pub fb_width: u32,
+    pub fb_height: u32,
+    pub bpp: u32,
+}
+
 /// Compute CRC-32C for a tile region within a larger pixel buffer.
 ///
 /// Extracts `tile_size × tile_size × bpp` bytes from the buffer at
 /// tile coordinates `(tx, ty)` and hashes them.
 #[must_use]
-pub fn crc32c_tile(
-    pixels: &[u8],
-    stride: u32,
-    tile_x: u32,
-    tile_y: u32,
-    tile_size: u32,
-    fb_width: u32,
-    fb_height: u32,
-    bpp: u32,
-) -> u32 {
+pub fn crc32c_tile(pixels: &[u8], stride: u32, region: &TileRegion) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
-    let px_x = tile_x * tile_size;
-    let px_y = tile_y * tile_size;
+    let px_x = region.tile_x * region.tile_size;
+    let px_y = region.tile_y * region.tile_size;
 
-    let row_end = (px_y + tile_size).min(fb_height);
-    let col_bytes = ((px_x + tile_size).min(fb_width) - px_x) as usize * bpp as usize;
+    let row_end = (px_y + region.tile_size).min(region.fb_height);
+    let col_bytes =
+        ((px_x + region.tile_size).min(region.fb_width) - px_x) as usize * region.bpp as usize;
 
     for row in px_y..row_end {
-        let row_off = (row * stride) as usize + px_x as usize * bpp as usize;
+        let row_off = (row * stride) as usize + px_x as usize * region.bpp as usize;
         for &byte in &pixels[row_off..row_off + col_bytes] {
             let index = ((crc ^ byte as u32) & 0xFF) as usize;
             crc = (crc >> 8) ^ CRC32C_TABLE[index];

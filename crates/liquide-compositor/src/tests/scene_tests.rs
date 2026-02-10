@@ -297,3 +297,88 @@ fn depth_single_child() {
     ));
     assert_eq!(root.depth(), 1);
 }
+
+#[test]
+fn walk_visits_all_visible() {
+    let tree = build_test_tree();
+    let mut count = 0;
+    tree.walk(&mut |_node, _transform| {
+        count += 1;
+    });
+    // Root + bg + workspace + surf_a + surf_b = 5 visible nodes
+    assert_eq!(count, 5);
+}
+
+#[test]
+fn flatten_z_order_sorting() {
+    let mut root = SceneNode::new(
+        100,
+        SceneNodeKind::Root,
+        NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)),
+    );
+    // Add children with different z-orders
+    root.add_child(SceneNode::new(
+        101,
+        SceneNodeKind::Background { color: Color::BLACK },
+        NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)).with_z_order(2),
+    ));
+    root.add_child(SceneNode::new(
+        102,
+        SceneNodeKind::Background { color: Color::WHITE },
+        NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)).with_z_order(1),
+    ));
+    let flat = root.flatten();
+    // Lower z-order should come first due to walk order
+    assert!(flat.len() >= 2);
+    // z_order=1 should appear before z_order=2
+    let pos_z1 = flat.iter().position(|n| n.id == 102).unwrap();
+    let pos_z2 = flat.iter().position(|n| n.id == 101).unwrap();
+    assert!(pos_z1 < pos_z2);
+}
+
+#[test]
+fn find_mut_not_present_returns_none() {
+    let mut tree = build_test_tree();
+    assert!(tree.find_mut(9999).is_none());
+}
+
+#[test]
+fn move_child_not_found_noop() {
+    let mut tree = build_test_tree();
+    // Should not panic - just no-op
+    tree.move_child(9999, Rect::new(0.0, 0.0, 10.0, 10.0));
+}
+
+#[test]
+fn scene_node_depth_with_hidden_children() {
+    let mut root = SceneNode::new(
+        1,
+        SceneNodeKind::Root,
+        NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)),
+    );
+    root.add_child(SceneNode::new(
+        2,
+        SceneNodeKind::Background { color: Color::BLACK },
+        NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)).with_visible(false),
+    ));
+    // Depth still counts invisible children (depth is structural)
+    assert_eq!(root.depth(), 1);
+}
+
+#[test]
+fn child_count_recursive() {
+    let tree = build_test_tree();
+    // build_test_tree creates: root -> [bg, workspace -> [surf_a, surf_b]]
+    // That's 4 descendants total
+    assert!(tree.child_count() >= 4);
+}
+
+#[test]
+fn walk_mut_modifies_nodes() {
+    let mut tree = build_test_tree();
+    tree.walk_mut(&mut |node| {
+        node.properties.opacity = 0.5;
+    });
+    // Verify root opacity changed
+    assert_eq!(tree.properties.opacity, 0.5);
+}

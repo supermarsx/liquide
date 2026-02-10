@@ -61,3 +61,32 @@ fn compositor_resize() {
     assert_eq!(comp.width(), 1920);
     assert_eq!(comp.height(), 1080);
 }
+
+#[test]
+fn compositor_begin_frame() {
+    let mut comp = Compositor::new(800, 600, 64, QualityProfile::Balanced);
+    comp.begin_frame();
+    let budget = comp.effect_budget();
+    assert_eq!(budget.profile, QualityProfile::Balanced);
+    assert!(budget.total_frame_budget_ms > 0.0);
+}
+
+#[test]
+fn compositor_report_frame_time() {
+    let mut comp = Compositor::new(800, 600, 64, QualityProfile::Balanced);
+    // Report under-budget frames — should not change level
+    for _ in 0..5 {
+        comp.report_frame_time(5.0);
+    }
+    // Should still be at L0 or close
+    let params = comp.effect_params();
+    assert!(params.blur_radius > 0); // not degraded
+}
+
+#[test]
+fn compositor_width_height_tile_size() {
+    let comp = Compositor::new(1920, 1080, 64, QualityProfile::Quality);
+    assert_eq!(comp.width(), 1920);
+    assert_eq!(comp.height(), 1080);
+    assert_eq!(comp.tile_size(), 64);
+}

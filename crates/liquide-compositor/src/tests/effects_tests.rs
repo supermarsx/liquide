@@ -64,3 +64,59 @@ fn effect_budget_quality() {
     assert_eq!(budget.target_fps, 60);
     assert!(budget.total_effects_budget_ms > 0.0);
 }
+
+#[test]
+fn degradation_from_u8_invalid() {
+    assert_eq!(DegradationLevel::from_u8(14), None);
+    assert_eq!(DegradationLevel::from_u8(255), None);
+}
+
+#[test]
+fn degradation_as_u8_roundtrip() {
+    for i in 0..=13 {
+        let level = DegradationLevel::from_u8(i).unwrap();
+        assert_eq!(level.as_u8(), i);
+    }
+}
+
+#[test]
+fn controller_set_level_directly() {
+    let mut ctrl = DegradationController::new();
+    ctrl.set_level(DegradationLevel::L5);
+    assert_eq!(ctrl.current_level(), DegradationLevel::L5);
+    ctrl.set_level(DegradationLevel::L0);
+    assert_eq!(ctrl.current_level(), DegradationLevel::L0);
+}
+
+#[test]
+fn controller_with_custom_thresholds() {
+    let mut ctrl = DegradationController::with_thresholds(1, 1);
+    // With threshold=1, one over-budget frame should trigger descent
+    let changed = ctrl.report_frame_time(20.0, 10.0);
+    assert!(changed);
+    assert_eq!(ctrl.current_level(), DegradationLevel::L1);
+}
+
+#[test]
+fn effect_params_high_degradation() {
+    let params = EffectParams::for_profile(QualityProfile::Quality)
+        .apply_degradation(DegradationLevel::L7);
+    assert_eq!(params.blur_radius, 0);
+    assert_eq!(params.max_backdrop_blurs, 0);
+    assert_eq!(params.shadow_blur_radius, 0);
+    assert!(!params.parallax_enabled);
+    assert_eq!(params.animation_scale, 0.0);
+}
+
+#[test]
+fn effect_budget_remaining() {
+    let budget = EffectBudget::for_profile(QualityProfile::Balanced);
+    assert!(budget.remaining_ms(0.0) > 0.0);
+    assert_eq!(budget.remaining_ms(100.0), 0.0); // exceeded
+    assert!(budget.remaining_ms(6.0) > 0.0);
+}
+
+#[test]
+fn quality_profile_default() {
+    assert_eq!(QualityProfile::default(), QualityProfile::Balanced);
+}

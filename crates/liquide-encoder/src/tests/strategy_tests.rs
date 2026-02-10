@@ -137,3 +137,47 @@ fn compression_cursor_disabled_uses_zstd() {
     let method = choose_compression(DamageClass::CursorOnly, &config, false);
     assert!(matches!(method, CompressionMethod::Zstd { .. }));
 }
+
+#[test]
+fn strategy_copy_when_duplicate_crc() {
+    // Build data that is not solid (so solid detection won't trigger)
+    let data: Vec<u8> = (0..64).map(|i| (i * 7 + 3) as u8).collect();
+    let crc_val = crc32c(&data);
+
+    // Build a copy_index that maps crc_val to tile index 5
+    let mut copy_index = HashMap::new();
+    copy_index.insert(crc_val, 5u32);
+
+    let strategy = choose_strategy(
+        &data,
+        None,
+        crc_val,
+        None,    // no prev_crc → won't skip
+        &copy_index,
+        DamageClass::UiPrimitive,
+        &StrategyConfig::default(),
+    );
+    assert_eq!(strategy, EncodingStrategy::Copy { source_index: 5 });
+}
+
+#[test]
+fn strategy_config_custom() {
+    let config = StrategyConfig {
+        delta_threshold: 0.1,
+        copy_min_tiles: 10,
+        zstd_level: 15,
+        use_lz4_for_cursor: false,
+    };
+    assert!((config.delta_threshold - 0.1).abs() < f32::EPSILON);
+    assert_eq!(config.copy_min_tiles, 10);
+    assert_eq!(config.zstd_level, 15);
+    assert!(!config.use_lz4_for_cursor);
+
+    // Verify the custom zstd_level is reflected in compression selection
+    let method = choose_compression(DamageClass::TextGlyph, &config, false);
+    assert_eq!(method, CompressionMethod::Zstd { level: 15 });
+
+    // Verify cursor uses Zstd when use_lz4_for_cursor is false
+    let method2 = choose_compression(DamageClass::CursorOnly, &config, false);
+    assert!(matches!(method2, CompressionMethod::Zstd { .. }));
+}

@@ -162,6 +162,35 @@ impl Rect {
         self.width * self.height
     }
 
+    /// Return the center point of the rectangle.
+    #[must_use]
+    pub fn center(&self) -> Point {
+        Point::new(self.x + self.width / 2.0, self.y + self.height / 2.0)
+    }
+
+    /// Expand the rectangle by a uniform margin on all sides.
+    #[must_use]
+    pub fn expand(&self, margin: f32) -> Self {
+        Self {
+            x: self.x - margin,
+            y: self.y - margin,
+            width: self.width + margin * 2.0,
+            height: self.height + margin * 2.0,
+        }
+    }
+
+    /// Shrink the rectangle by a uniform margin on all sides.
+    /// Width and height are clamped to zero.
+    #[must_use]
+    pub fn shrink(&self, margin: f32) -> Self {
+        Self {
+            x: self.x + margin,
+            y: self.y + margin,
+            width: (self.width - margin * 2.0).max(0.0),
+            height: (self.height - margin * 2.0).max(0.0),
+        }
+    }
+
     /// A zero-size rectangle at the origin.
     pub const ZERO: Self = Self {
         x: 0.0,

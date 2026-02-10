@@ -57,3 +57,47 @@ fn scanline_blend() {
     assert_eq!(&dst[0..4], &[255, 0, 0, 255]); // blue
     assert_eq!(&dst[4..8], &[0, 255, 0, 255]); // green
 }
+
+#[test]
+fn blend_all_modes_dispatch() {
+    let dst = Color::new(100, 100, 100, 255);
+    let src = Color::new(200, 50, 50, 128);
+    // Call blend for every BlendMode variant — just verify no panic
+    let _ = blend(dst, src, BlendMode::SrcOver);
+    let _ = blend(dst, src, BlendMode::Src);
+    let _ = blend(dst, src, BlendMode::Multiply);
+    let _ = blend(dst, src, BlendMode::Screen);
+    let _ = blend(dst, src, BlendMode::SrcAtop);
+}
+
+#[test]
+fn blend_scanline_empty() {
+    let mut dst: [u8; 0] = [];
+    let src: [u8; 0] = [];
+    blend_scanline(&mut dst, &src, BlendMode::SrcOver);
+    // Should not panic
+}
+
+#[test]
+fn blend_multiply_color() {
+    // white * red = red
+    let white = Color::WHITE;
+    let red = Color::new(255, 0, 0, 255);
+    let result = blend_multiply(white, red);
+    assert_eq!(result.r, 255, "multiply white*red R: got {}", result.r);
+    assert_eq!(result.g, 0, "multiply white*red G: got {}", result.g);
+    assert_eq!(result.b, 0, "multiply white*red B: got {}", result.b);
+    assert_eq!(result.a, 255, "multiply white*red A: got {}", result.a);
+}
+
+#[test]
+fn blend_screen_color() {
+    // black screen red = red
+    let black = Color::BLACK;
+    let red = Color::new(255, 0, 0, 255);
+    let result = blend_screen(black, red);
+    assert_eq!(result.r, 255, "screen black+red R: got {}", result.r);
+    assert_eq!(result.g, 0, "screen black+red G: got {}", result.g);
+    assert_eq!(result.b, 0, "screen black+red B: got {}", result.b);
+    assert_eq!(result.a, 255, "screen black+red A: got {}", result.a);
+}

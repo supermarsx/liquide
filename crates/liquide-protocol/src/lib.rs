@@ -16,8 +16,6 @@ pub use frame::{FrameFlags, FrameHeader};
 pub use message::MessageType;
 pub use version::{MAGIC, PROTOCOL_VERSION};
 
-use serde::{Deserialize, Serialize};
-
 /// Protocol magic bytes identifying a Liquide stream (`"LD"` as little-endian u16).
 pub const PROTOCOL_MAGIC: u16 = MAGIC;
 

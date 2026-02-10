@@ -357,7 +357,7 @@ pub fn blur_fast(fb: &mut FrameBuffer, region: Rect, radius: u32) {
 /// Blur a standalone BGRA buffer (not in a framebuffer) in-place.
 ///
 /// Used for blurring alpha masks and intermediate buffers.
-pub fn blur_buffer(buf: &mut Vec<u8>, width: u32, height: u32, radius: u32) {
+pub fn blur_buffer(buf: &mut [u8], width: u32, height: u32, radius: u32) {
     if radius == 0 || width == 0 || height == 0 {
         return;
     }

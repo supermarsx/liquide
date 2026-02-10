@@ -16,3 +16,11 @@ zstd.workspace = true
 lz4_flex.workspace = true
 bytes.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+liquide-compositor.workspace = true
+
+[[bench]]
+name = "encoder_bench"
+harness = false

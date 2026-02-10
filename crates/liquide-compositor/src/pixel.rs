@@ -3,9 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Pixel format for frame buffers and tiles.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum PixelFormat {
     /// 32-bit BGRA, 8 bits per channel (default for SDR compositing).
+    #[default]
     Bgra8,
     /// 32-bit RGBA, 8 bits per channel.
     Rgba8,
@@ -61,12 +62,6 @@ impl PixelFormat {
             "rgba1010102" => Some(Self::Rgba1010102),
             _ => None,
         }
-    }
-}
-
-impl Default for PixelFormat {
-    fn default() -> Self {
-        Self::Bgra8
     }
 }
 
@@ -174,9 +169,10 @@ impl Color {
 }
 
 /// Porter-Duff compositing blend modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum BlendMode {
     /// Standard alpha compositing (default everywhere).
+    #[default]
     SrcOver,
     /// Replace destination (used for opaque surface blit).
     Src,
@@ -186,10 +182,4 @@ pub enum BlendMode {
     Screen,
     /// Source-atop (used for clip-to-shape effects).
     SrcAtop,
-}
-
-impl Default for BlendMode {
-    fn default() -> Self {
-        Self::SrcOver
-    }
 }

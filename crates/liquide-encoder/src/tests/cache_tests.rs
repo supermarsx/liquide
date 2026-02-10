@@ -73,3 +73,81 @@ fn cache_clear() {
     assert!(cache.is_empty());
     assert_eq!(cache.len(), 0);
 }
+
+#[test]
+fn cache_contains_after_insert() {
+    let mut cache = TilePayloadCache::new(10);
+    assert!(!cache.contains(42));
+    cache.insert(42, vec![0xAA, 0xBB]);
+    assert!(cache.contains(42));
+    assert_eq!(cache.get(42), Some(vec![0xAA, 0xBB].as_slice()));
+}
+
+#[test]
+fn cache_single_entry_eviction() {
+    let mut cache = TilePayloadCache::new(1);
+    cache.insert(1, vec![10]);
+    assert!(cache.contains(1));
+    assert_eq!(cache.len(), 1);
+
+    // Insert second entry — first should be evicted
+    cache.insert(2, vec![20]);
+    assert_eq!(cache.len(), 1);
+    assert!(!cache.contains(1));
+    assert!(cache.contains(2));
+}
+
+#[test]
+fn cache_temperature_hot_cold_warm() {
+    let mut cache = TilePayloadCache::new(10);
+    cache.insert(1, vec![1]);
+
+    // Immediately after insert the entry is hot; accessing it keeps it hot
+    assert!(cache.get(1).is_some());
+
+    // Advance 31 frames — entry becomes Warm (threshold is 30)
+    for _ in 0..31 {
+        cache.advance_frame();
+    }
+    // Still present even though warm
+    assert!(cache.contains(1));
+
+    // Access it to promote back to Hot
+    assert!(cache.get(1).is_some());
+
+    // Advance 31 more frames — again Warm
+    for _ in 0..31 {
+        cache.advance_frame();
+    }
+    assert!(cache.contains(1));
+
+    // Advance more to Cold territory (total age > 120 from last access)
+    for _ in 0..90 {
+        cache.advance_frame();
+    }
+    assert!(cache.contains(1));
+}
+
+#[test]
+fn cache_advance_many_frames() {
+    let mut cache = TilePayloadCache::new(3);
+    cache.insert(1, vec![1]);
+    cache.insert(2, vec![2]);
+    cache.insert(3, vec![3]);
+
+    // Advance 200 frames — all entries become Cold
+    for _ in 0..200 {
+        cache.advance_frame();
+    }
+
+    // All entries still exist (eviction only happens on insert)
+    assert_eq!(cache.len(), 3);
+
+    // Now insert a new entry — the cold ones should be evicted first
+    cache.insert(4, vec![4]);
+    assert_eq!(cache.len(), 3);
+    assert!(cache.contains(4));
+    // At least one of the old entries was evicted
+    let remaining_old = [1u32, 2, 3].iter().filter(|&&k| cache.contains(k)).count();
+    assert_eq!(remaining_old, 2);
+}

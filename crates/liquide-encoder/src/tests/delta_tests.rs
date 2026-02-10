@@ -32,3 +32,31 @@ fn xor_delta_completely_different() {
     assert_eq!(xor_popcount(&delta), 8);
     assert!((change_ratio(&delta) - 1.0).abs() < f32::EPSILON);
 }
+
+#[test]
+fn change_ratio_zero() {
+    let data = vec![42u8; 128];
+    let delta = xor_delta(&data, &data);
+    assert_eq!(xor_popcount(&delta), 0);
+    assert_eq!(change_ratio(&delta), 0.0);
+}
+
+#[test]
+fn change_ratio_full() {
+    // Every byte differs (0x00 vs 0xFF)
+    let prev = vec![0x00u8; 256];
+    let curr = vec![0xFFu8; 256];
+    let delta = xor_delta(&curr, &prev);
+    assert_eq!(xor_popcount(&delta), 256);
+    assert!((change_ratio(&delta) - 1.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn delta_roundtrip_large() {
+    // 1 KB buffers with realistic pixel-like data
+    let prev: Vec<u8> = (0..1024).map(|i| (i * 3 % 256) as u8).collect();
+    let curr: Vec<u8> = (0..1024).map(|i| (i * 3 % 256 + 1) as u8).collect();
+    let delta = xor_delta(&curr, &prev);
+    let reconstructed = xor_apply(&prev, &delta);
+    assert_eq!(reconstructed, curr);
+}

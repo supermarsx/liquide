@@ -120,6 +120,12 @@ impl TileBatch {
         }
         self.compressed_bytes as f64 / self.uncompressed_bytes as f64
     }
+
+    /// Total payload bytes across all tile updates in this batch.
+    #[must_use]
+    pub fn total_payload_bytes(&self) -> usize {
+        self.tiles.iter().map(|t| t.payload.len()).sum()
+    }
 }
 
 /// Configuration for the tile grid.
