@@ -7,3 +7,16 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+liquide-plugin-abi.workspace = true
+liquide-common.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "plugin_host_bench"
+harness = false
