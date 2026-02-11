@@ -13,21 +13,69 @@ pub enum AuditLevel {
 /// Management audit events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ManagerAuditEvent {
-    AdminLogin { username: String, ip: String },
-    AdminLogout { username: String },
-    LoginFailed { username: String, ip: String, reason: String },
-    SessionDisconnected { session_id: String, admin: String },
-    SessionLocked { session_id: String, admin: String },
-    SessionUnlocked { session_id: String, admin: String },
-    PolicyUpdated { admin: String, version: u64 },
-    PolicyRolledBack { admin: String, from_version: u64, to_version: u64 },
-    ServerConfigPushed { server: String, admin: String },
-    ServerRestarted { server: String, admin: String },
-    ServerDrained { server: String, admin: String },
-    PluginInstalled { plugin_id: String, admin: String },
-    PluginRemoved { plugin_id: String, admin: String },
-    UserRoleChanged { username: String, old_role: String, new_role: String, admin: String },
-    CrashReportViewed { crash_id: String, admin: String },
+    AdminLogin {
+        username: String,
+        ip: String,
+    },
+    AdminLogout {
+        username: String,
+    },
+    LoginFailed {
+        username: String,
+        ip: String,
+        reason: String,
+    },
+    SessionDisconnected {
+        session_id: String,
+        admin: String,
+    },
+    SessionLocked {
+        session_id: String,
+        admin: String,
+    },
+    SessionUnlocked {
+        session_id: String,
+        admin: String,
+    },
+    PolicyUpdated {
+        admin: String,
+        version: u64,
+    },
+    PolicyRolledBack {
+        admin: String,
+        from_version: u64,
+        to_version: u64,
+    },
+    ServerConfigPushed {
+        server: String,
+        admin: String,
+    },
+    ServerRestarted {
+        server: String,
+        admin: String,
+    },
+    ServerDrained {
+        server: String,
+        admin: String,
+    },
+    PluginInstalled {
+        plugin_id: String,
+        admin: String,
+    },
+    PluginRemoved {
+        plugin_id: String,
+        admin: String,
+    },
+    UserRoleChanged {
+        username: String,
+        old_role: String,
+        new_role: String,
+        admin: String,
+    },
+    CrashReportViewed {
+        crash_id: String,
+        admin: String,
+    },
 }
 
 impl ManagerAuditEvent {
