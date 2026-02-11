@@ -7,3 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+liquide-compositor = { path = "../liquide-compositor" }
+thiserror.workspace = true
+serde.workspace = true
+tracing.workspace = true
