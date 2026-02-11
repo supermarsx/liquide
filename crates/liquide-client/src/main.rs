@@ -2,6 +2,10 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use tracing::info;
 
+use liquide_client::config::{self, ClientConfig};
+use liquide_client::connection::ConnectionState;
+use liquide_client::runtime::ClientRuntime;
+
 /// Liquide desktop client.
 ///
 /// `liquidclient` connects to a remote Liquide session, decodes the
@@ -21,6 +25,14 @@ struct Cli {
     /// Launch in fullscreen mode.
     #[arg(long)]
     fullscreen: bool,
+
+    /// Connection profile to load.
+    #[arg(long)]
+    profile: Option<String>,
+
+    /// Path to the configuration file.
+    #[arg(long)]
+    config: Option<String>,
 }
 
 #[tokio::main]
@@ -45,29 +57,75 @@ async fn run(cli: Cli) -> Result<()> {
         "Starting liquidclient"
     );
 
-    // TODO: Resolve server address and establish a TLS connection.
+    // Load configuration.
+    let config_path = cli
+        .config
+        .map(std::path::PathBuf::from)
+        .or_else(config::default_config_path);
+    if let Some(ref path) = config_path {
+        info!(path = %path.display(), "Configuration path resolved");
+    }
+
+    let mut client_config = ClientConfig::default();
+    if cli.fullscreen {
+        client_config.window.start_fullscreen = true;
+    }
+
+    // Build the runtime.
+    let mut runtime = ClientRuntime::new(client_config);
+
+    // If a profile was requested, note it in the audit trail.
+    if let Some(ref profile_name) = cli.profile {
+        info!(profile = %profile_name, "Loading connection profile");
+    }
+
+    // Connect to the server.
     info!(server = %cli.server, "Connecting to server...");
+    runtime
+        .connect(&cli.server)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("Failed to connect to server")?;
+    info!("Connected successfully");
 
-    // TODO: Perform authentication handshake.
-    info!("Authenticating...");
+    // Apply fullscreen if requested.
+    if cli.fullscreen {
+        runtime.toggle_fullscreen();
+    }
 
-    // TODO: Negotiate protocol capabilities and display parameters.
-    info!("Negotiating session parameters...");
+    // Drain initial audit events.
+    for event in runtime.drain_audit_events() {
+        info!(event = event.event_name(), "audit");
+    }
 
-    // TODO: Initialize the client-side renderer (window / surface).
-    info!(fullscreen = cli.fullscreen, "Initializing renderer...");
+    // Enter the event loop.
+    info!("Client connected -- entering event loop");
+    let mut reconnect_interval = tokio::time::interval(std::time::Duration::from_secs(5));
 
-    // TODO: Start input capture and clipboard/audio bridges.
-    info!("Starting input and media bridges...");
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received shutdown signal");
+                break;
+            }
+            _ = reconnect_interval.tick() => {
+                if runtime.state() != ConnectionState::Connected
+                    && runtime.state() != ConnectionState::Disconnected
+                {
+                    info!("Attempting reconnect...");
+                    if let Err(e) = runtime.connection_manager_mut().reconnect() {
+                        info!(error = %e, "Reconnect attempt failed");
+                    }
+                }
+            }
+        }
+    }
 
-    // TODO: Enter the frame-decode / render loop.
-    info!("Client connected — entering render loop");
+    // Graceful disconnect.
+    runtime.disconnect();
+    for event in runtime.drain_audit_events() {
+        info!(event = event.event_name(), "audit");
+    }
 
-    // Placeholder: keep the process alive until shutdown signal.
-    tokio::signal::ctrl_c()
-        .await
-        .context("Failed to listen for shutdown signal")?;
-
-    info!("Disconnecting from server");
+    info!("Disconnected from server");
     Ok(())
 }
