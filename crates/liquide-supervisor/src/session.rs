@@ -109,7 +109,12 @@ pub struct SessionRecord {
 impl SessionRecord {
     /// Create a new session record.
     #[must_use]
-    pub fn new(session_id: String, user: String, pid: u32, resource_budget: ResourceBudget) -> Self {
+    pub fn new(
+        session_id: String,
+        user: String,
+        pid: u32,
+        resource_budget: ResourceBudget,
+    ) -> Self {
         let now = Instant::now();
         Self {
             session_id,
