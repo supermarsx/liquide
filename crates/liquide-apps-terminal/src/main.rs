@@ -1,4 +1,5 @@
 use anyhow::Result;
+use liquide_apps_terminal::{TerminalConfig, TerminalRuntime};
 use tracing::info;
 
 /// Built-in terminal emulator for the Liquide desktop environment.
@@ -19,23 +20,36 @@ fn main() -> Result<()> {
 fn run() -> Result<()> {
     info!("Starting liquid-terminal");
 
-    // TODO: Initialize the Liquide UI application context.
-    info!("Initializing UI application...");
+    // Load terminal configuration.
+    info!("Loading configuration...");
+    let config = TerminalConfig::default();
 
-    // TODO: Load the terminal CSS theme.
-    info!("Loading terminal theme...");
+    // Initialize the terminal runtime.
+    info!("Initializing terminal runtime...");
+    let mut runtime = TerminalRuntime::new(config);
 
-    // TODO: Create the terminal widget with a PTY backend.
-    info!("Creating terminal widget...");
+    info!(
+        tabs = runtime.tab_count(),
+        shell = %runtime.config().shell,
+        "Terminal runtime initialized"
+    );
 
-    // TODO: Spawn the default shell process.
-    info!("Spawning shell process...");
+    // Create default tab.
+    let tab_id = runtime.new_tab(None);
+    info!(tab_id, "Created initial tab");
 
-    // TODO: Enter the UI event loop (input dispatch, PTY read, render).
+    // Build initial grid state.
+    let grid = runtime.active_grid();
+    info!(
+        rows = grid.rows(),
+        cols = grid.cols(),
+        "Grid ready"
+    );
+
     info!("Terminal ready — entering event loop");
 
     // Placeholder: simulate the event loop.
-    println!("liquid-terminal: stub — event loop not yet implemented");
+    println!("liquid-terminal: event loop not yet wired to actual UI toolkit");
 
     Ok(())
 }
