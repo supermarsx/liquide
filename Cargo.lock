@@ -901,6 +901,12 @@ dependencies = [
 [[package]]
 name = "liquide-renderer-gpu"
 version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "serde",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-session"
@@ -953,6 +959,8 @@ dependencies = [
  "liquide-policy",
  "liquide-protocol",
  "liquide-transport",
+ "serde",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -974,6 +982,10 @@ dependencies = [
 [[package]]
 name = "liquide-ui"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+]
 
 [[package]]
 name = "liquide-usb"

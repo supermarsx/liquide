@@ -7965,7 +7965,7 @@ Full CSS documentation in [spec-design.md](spec-design.md).
 | Client rendering offload (full) | `liquide-client-renderer` | **Implemented** |
 | WASM plugin system (runtime, ABI v1, 9 extension points) | `liquide-plugin-host`, `liquide-plugin-abi` | **Implemented** |
 | Plugin SDK and documentation | — | Planned |
-| Session supervisor process model | `liquide-supervisor` | Stub |
+| Session supervisor process model | `liquide-supervisor` | **Implemented** |
 | BSOD crash screen (client-rendered) | `liquide-client` | **Implemented** |
 | Session recording & replay (compliance) | `liquide-recording` | **Implemented** |
 | Remote assistance / shadow sessions | `liquide-assistance` | **Implemented** |
@@ -9246,11 +9246,11 @@ Global search (Super then type) is **launcher-scoped by default**. A separate fi
 | Metric | Value |
 |--------|-------|
 | Total crates | 40 |
-| Fully implemented | 27 (67.5%) |
-| Stub / scaffolded | 13 (32.5%) |
-| Total `.rs` source files | 455 |
-| Total lines of Rust | ~56,700 |
-| Crates with test suites | 18 |
+| Fully implemented | 30 (75%) |
+| Stub / scaffolded | 10 (25%) |
+| Total `.rs` source files | 511 |
+| Total lines of Rust | ~67,700 |
+| Crates with test suites | 21 |
 
 ### Crate Implementation Matrix
 
@@ -9276,6 +9276,7 @@ Each crate is categorized by implementation status:
 |-------|---------|-------------|-------|--------|-------------|
 | `liquide-session` | 10 | 13 | Yes | `liquid-session` | Per-user session lifecycle, state machine, crash recovery, resume, sandboxing |
 | `liquide-gateway` | 14 | 22 | Yes | `liquid-gateway` | Connection gateway: routing, relay, rate limiting, health, cluster |
+| `liquide-supervisor` | 14 | 15 | Yes | `liquid-desktopd` | Session supervisor: admission control, heartbeat, crash handling, restart policy, resource monitoring, auto-downgrade |
 | `liquide-compositor` | 8 | 17 | Yes | — | Wayland-style compositor: damage tracking, scene graph, effects |
 | `liquide-shell` | 10 | 23 | Yes | — | Desktop shell: windows, workspaces, focus, layout, dock |
 | `liquide-ctl` | 29 cmds | 35 | — | `liquidctl` | Admin CLI tool |
@@ -9285,6 +9286,7 @@ Each crate is categorized by implementation status:
 | Crate | Modules | Source Files | Tests | Binary | Description |
 |-------|---------|-------------|-------|--------|-------------|
 | `liquide-renderer-cpu` | 8 | 20 | Yes | — | CPU software renderer: rasterizer, blending, blur, glyphs |
+| `liquide-renderer-gpu` | 13 | 21 | Yes | — | GPU-accelerated renderer: Vulkan device probing, profile selection, VRAM budget, compute pipeline, blur, compositing, DMA-BUF, fallback |
 | `liquide-encoder` | 9 | 20 | Yes | — | Tile encoder: delta, hashing, bandwidth, compression strategies |
 | `liquide-encoder-hw` | 22 | 32 | Yes | — | HW encoding abstraction: VAAPI, NVENC, AMF, V4L2 |
 | `liquide-css` | 4 | 5 | — | — | CSS theming: parser, properties, values, theme engine |
@@ -9315,17 +9317,15 @@ Each crate is categorized by implementation status:
 | `liquide-interop` | 6 | 15 | Yes | — | Desktop interop: XDG, MIME, icons, notifications, tray |
 | `liquide-a11y` | 6 | 15 | Yes | — | Accessibility: tree, focus, screen reader, navigation |
 | `liquide-assistance` | 17 | 30 | Yes | — | Remote assistance: shadowing, consent, chat, invite, stealth, policy |
+| `liquide-ui` | 11 | 20 | Yes | — | UI toolkit: geometry, widget tree, layout engines (box/stack/grid), focus chain, animation, paint context, panels, theming |
 
 #### Stub Crates (Not Yet Implemented)
 
 | Crate | Category | Description |
 |-------|----------|-------------|
-| `liquide-supervisor` | Server | Session supervisor process |
 | `liquide-manager` | Management | Web-based management backend |
 | `liquide-manager-frontend` | Management | Management UI frontend |
-| `liquide-renderer-gpu` | Rendering | GPU-accelerated renderer |
 | `liquide-mobile-core` | Client | Shared mobile client library (iOS/Android) |
-| `liquide-ui` | Shell | UI toolkit |
 | `liquide-apps-terminal` | Apps | Built-in terminal application |
 | `liquide-apps-files` | Apps | Built-in file manager |
 | `liquide-apps-settings` | Apps | Built-in settings application |
@@ -9340,8 +9340,8 @@ Each crate is categorized by implementation status:
 |-----------|---------------|-------------|------------|
 | **MVP** | 9 | 9 | **100%** |
 | **v1** | 11 | 10 | **91%** |
-| **vNext** | 16 | 11 | **69%** |
-| **Overall** | 36 | 30 | **83%** |
+| **vNext** | 16 | 12 | **75%** |
+| **Overall** | 36 | 31 | **86%** |
 
 ### Features Implemented Beyond Original Spec
 
@@ -9358,4 +9358,13 @@ The following capabilities were implemented but not originally listed in section
 | Stealth monitoring mode for assistance | `liquide-assistance` | §15 Security |
 | USB smart card reader redirection | `liquide-usb` | vNext scope |
 | HDR/WCG color pipeline in client | `liquide-client` | §7 Remote Display Model |
+| Admission control with resource reservation | `liquide-supervisor` | §13 Session Management |
+| Auto-downgrade levels (ReduceFps → TileOnly → ReduceQuality → Suspend) | `liquide-supervisor` | §25 Failure Modes |
+| GPU profile auto-selection (CpuOnly through GpuDedicated) | `liquide-renderer-gpu` | §6 Rendering Stack |
+| VRAM budget management with allocation tracking | `liquide-renderer-gpu` | §6 Rendering Stack |
+| Render target pooling and DMA-BUF import | `liquide-renderer-gpu` | §6 Rendering Stack |
+| Widget tree with z-order hit testing | `liquide-ui` | §14 Desktop Environment |
+| Box/stack/grid layout engines | `liquide-ui` | §14 Desktop Environment |
+| Animation manager with easing curves | `liquide-ui` | §14 Desktop Environment |
+| Focus chain with directional navigation | `liquide-ui` | §14 Desktop Environment |
 
