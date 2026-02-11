@@ -619,6 +619,9 @@ dependencies = [
  "liquide-encoder",
  "liquide-protocol",
  "liquide-renderer-cpu",
+ "serde",
+ "serde_json",
+ "thiserror",
  "tracing",
  "tracing-subscriber",
 ]
@@ -839,10 +842,20 @@ dependencies = [
 [[package]]
 name = "liquide-manager-frontend"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "liquide-mobile-core"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "liquide-plugin-abi"
