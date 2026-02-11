@@ -9246,11 +9246,11 @@ Global search (Super then type) is **launcher-scoped by default**. A separate fi
 | Metric | Value |
 |--------|-------|
 | Total crates | 40 |
-| Fully implemented | 33 (82.5%) |
-| Stub / scaffolded | 7 (17.5%) |
-| Total `.rs` source files | 571 |
-| Total lines of Rust | ~76,200 |
-| Crates with test suites | 24 |
+| Fully implemented | 36 (90%) |
+| Stub / scaffolded | 4 (10%) |
+| Total `.rs` source files | 620 |
+| Total lines of Rust | ~82,000 |
+| Crates with test suites | 27 |
 
 ### Crate Implementation Matrix
 
@@ -9326,6 +9326,9 @@ Each crate is categorized by implementation status:
 |-------|---------|-------------|-------|--------|-------------|
 | `liquide-apps-terminal` | 10 | 17 | Yes | `liquid-terminal` | Terminal emulator: VT parser, character grid, PTY, scrollback, search, shell integration, URL detection, tabs |
 | `liquide-apps-files` | 10 | 17 | Yes | `liquid-files` | File manager: directory listing, natural sort, sidebar bookmarks, preview, clipboard, search, file operations queue, navigation history |
+| `liquide-apps-settings` | 9 | 16 | Yes | `liquid-settings` | Settings app: 8 categories, typed entries with validation, change tracking with undo/redo, policy constraints, notifications |
+| `liquide-apps-text-editor` | 10 | 17 | Yes | `liquid-text-editor` | Text editor: line buffer, cursor/selection/multi-cursor, syntax highlighting (5 languages), auto-indent, search/replace, undo/redo, diagnostics, multi-document |
+| `liquide-apps-software-center` | 9 | 16 | Yes | `liquid-software-center` | Software center: package catalog with search, repository management, install queue with progress, update manager, reviews/ratings, screenshot gallery |
 
 #### Stub Crates (Not Yet Implemented)
 
@@ -9333,9 +9336,6 @@ Each crate is categorized by implementation status:
 |-------|----------|-------------|
 | `liquide-manager-frontend` | Management | Management UI frontend |
 | `liquide-mobile-core` | Client | Shared mobile client library (iOS/Android) |
-| `liquide-apps-settings` | Apps | Built-in settings application |
-| `liquide-apps-text-editor` | Apps | Built-in text editor |
-| `liquide-apps-software-center` | Apps | Built-in software center |
 | `liquide-bench` | Testing | Benchmark suite |
 | `liquide-conformance` | Testing | Conformance test suite |
 
@@ -9345,8 +9345,8 @@ Each crate is categorized by implementation status:
 |-----------|---------------|-------------|------------|
 | **MVP** | 9 | 9 | **100%** |
 | **v1** | 11 | 11 | **100%** |
-| **vNext** | 16 | 13 | **81%** |
-| **Overall** | 36 | 33 | **92%** |
+| **vNext** | 16 | 16 | **100%** |
+| **Overall** | 36 | 36 | **100%** |
 
 ### Features Implemented Beyond Original Spec
 
@@ -9382,4 +9382,13 @@ The following capabilities were implemented but not originally listed in section
 | Natural sort for file listings (file1 < file2 < file10) | `liquide-apps-files` | §14 Desktop Environment |
 | File operation queue with progress tracking | `liquide-apps-files` | §14 Desktop Environment |
 | Navigation history with back/forward | `liquide-apps-files` | §14 Desktop Environment |
+| Typed setting entries with validation and slider/choice/toggle kinds | `liquide-apps-settings` | §14 Desktop Environment |
+| Policy engine for locked/hidden/read-only setting constraints | `liquide-apps-settings` | §14 Desktop Environment |
+| Undo/redo change tracker with pending/applied stacks | `liquide-apps-settings` | §14 Desktop Environment |
+| Line-oriented text buffer with insert/delete/range operations | `liquide-apps-text-editor` | §14 Desktop Environment |
+| Syntax highlighting tokenizer for Rust, Python, JS, C, TOML | `liquide-apps-text-editor` | §14 Desktop Environment |
+| Multi-cursor editing with selection support | `liquide-apps-text-editor` | §14 Desktop Environment |
+| Package catalog with scored search ranking | `liquide-apps-software-center` | §14 Desktop Environment |
+| Install queue with download/install progress tracking | `liquide-apps-software-center` | §14 Desktop Environment |
+| Repository manager with official/community/flatpak defaults | `liquide-apps-software-center` | §14 Desktop Environment |
 
