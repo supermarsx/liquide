@@ -5,8 +5,20 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Built-in software center for the LiquiDE desktop environment"
+
+[lib]
+name = "liquide_apps_software_center"
+path = "src/lib.rs"
+
+[[bin]]
+name = "liquid-software-center"
+path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true

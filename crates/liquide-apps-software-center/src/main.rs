@@ -1,10 +1,8 @@
 use anyhow::Result;
 use tracing::info;
+use liquide_apps_software_center::{SoftwareCenterConfig, SoftwareCenterRuntime};
 
-/// Built-in software center for the Liquide desktop environment.
-///
-/// `liquid-software-center` provides a graphical storefront for
-/// discovering, installing, updating, and removing applications.
+/// Built-in software center for the LiquiDE desktop environment.
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -13,32 +11,17 @@ fn main() -> Result<()> {
         )
         .init();
 
-    run()
-}
+    let config = SoftwareCenterConfig::default();
+    info!(auto_updates = config.auto_check_updates, "Starting liquid-software-center");
 
-fn run() -> Result<()> {
-    info!("Starting liquid-software-center");
+    let rt = SoftwareCenterRuntime::new(config);
+    info!(repos = rt.repos().count(), "Repositories loaded");
 
-    // TODO: Initialize the Liquide UI application context.
-    info!("Initializing UI application...");
-
-    // TODO: Load the software center CSS theme.
-    info!("Loading software center theme...");
-
-    // TODO: Create the app listing with categories, featured, and search.
-    info!("Creating app listing...");
-
-    // TODO: Initialize the interop layer for package management backends.
-    info!("Initializing package manager interop...");
-
-    // TODO: Fetch the app catalog from configured repositories.
-    info!("Loading app catalog...");
-
-    // TODO: Enter the UI event loop (browse, install, update, remove).
-    info!("Software center ready — entering event loop");
-
-    // Placeholder: simulate the event loop.
-    println!("liquid-software-center: stub — event loop not yet implemented");
+    println!(
+        "liquid-software-center: {} repositories, {} packages",
+        rt.repos().count(),
+        rt.catalog().total_count(),
+    );
 
     Ok(())
 }
