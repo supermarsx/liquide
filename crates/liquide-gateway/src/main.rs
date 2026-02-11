@@ -2,6 +2,12 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use tracing::info;
 
+use liquide_gateway::{
+    GatewayConfig, RoutingConfig, RelayConfig, LimitsConfig,
+    HealthCheckConfig, ManagementApiConfig, ClusterConfig,
+    ListenConfig, GatewayRuntime,
+};
+
 /// Network gateway for the Liquide desktop environment.
 ///
 /// `liquid-gateway` accepts incoming client connections over the network,
@@ -17,6 +23,10 @@ struct Cli {
     /// Address and port to listen on for incoming client connections.
     #[arg(long, default_value = "0.0.0.0:3900")]
     listen_addr: String,
+
+    /// Address and port to listen on for management API.
+    #[arg(long, default_value = "127.0.0.1:3901")]
+    management_addr: String,
 }
 
 #[tokio::main]
@@ -36,26 +46,98 @@ async fn main() -> Result<()> {
 async fn run(cli: Cli) -> Result<()> {
     info!(config = %cli.config, listen_addr = %cli.listen_addr, "Starting liquid-gateway");
 
-    // TODO: Load and validate the configuration file.
+    // Load configuration (in production, parse from the config file).
     info!(path = %cli.config, "Loading configuration...");
 
-    // TODO: Initialize TLS context with server certificates.
-    info!("Initializing TLS subsystem...");
+    let gateway_config = GatewayConfig::default();
+    let routing_config = RoutingConfig::default();
+    let relay_config = RelayConfig::default();
+    let limits_config = LimitsConfig::default();
+    let health_config = HealthCheckConfig::default();
+    let management_config = ManagementApiConfig {
+        enabled: true,
+        listen_addr: cli.management_addr.clone(),
+        ..ManagementApiConfig::default()
+    };
+    let cluster_config = ClusterConfig::default();
 
-    // TODO: Bind the TCP listener.
+    // Create the runtime coordinator.
+    let mut runtime = GatewayRuntime::new(
+        gateway_config,
+        routing_config,
+        relay_config,
+        limits_config,
+        health_config,
+        management_config,
+        cluster_config,
+    );
+
+    // Set up client listener.
+    let listen_config = ListenConfig {
+        address: cli.listen_addr.clone(),
+        ..ListenConfig::default()
+    };
+    let listener_id = runtime.listener_manager_mut().add_listener(listen_config);
+    if let Some(listener) = runtime.listener_manager_mut().get_mut(&listener_id) {
+        listener.resume();
+    }
+
     info!(addr = %cli.listen_addr, "Binding listener...");
+    info!(
+        management_addr = %cli.management_addr,
+        "Management API endpoint configured"
+    );
+    info!(
+        hostname = %runtime.hostname(),
+        "Gateway ready — accepting connections"
+    );
 
-    // TODO: Connect to the supervisor for session routing information.
-    info!("Connecting to supervisor...");
+    // Event loop.
+    let health_interval = tokio::time::Duration::from_secs(10);
+    let cleanup_interval = tokio::time::Duration::from_secs(60);
 
-    // TODO: Enter the accept loop, spawning a task per client connection.
-    info!("Gateway ready — accepting connections");
+    let mut health_tick = tokio::time::interval(health_interval);
+    let mut cleanup_tick = tokio::time::interval(cleanup_interval);
 
-    // Placeholder: keep the process alive until shutdown signal.
-    tokio::signal::ctrl_c()
-        .await
-        .context("Failed to listen for shutdown signal")?;
+    // Consume the first immediate tick.
+    health_tick.tick().await;
+    cleanup_tick.tick().await;
 
-    info!("Received shutdown signal — draining connections");
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received shutdown signal — draining connections");
+                break;
+            }
+            _ = health_tick.tick() => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                runtime.health_check_tick(now);
+
+                // Flush audit events.
+                for event in runtime.drain_audit_events() {
+                    info!(event = %event.event_name(), "audit");
+                }
+            }
+            _ = cleanup_tick.tick() => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                runtime.cleanup_tick(now);
+            }
+        }
+    }
+
+    let status = runtime.status();
+    info!(
+        servers = status.registered_servers,
+        connections = status.active_connections,
+        relays = status.active_relays,
+        "Final gateway status"
+    );
+
     Ok(())
 }

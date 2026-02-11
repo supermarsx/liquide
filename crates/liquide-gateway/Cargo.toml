@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Network gateway that terminates remote client connections and routes them to sessions"
 
+[lib]
+name = "liquide_gateway"
+path = "src/lib.rs"
+
 [[bin]]
 name = "liquid-gateway"
 path = "src/main.rs"
@@ -19,3 +23,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
