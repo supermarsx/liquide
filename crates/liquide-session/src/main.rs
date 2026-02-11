@@ -1,6 +1,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
+
+use liquide_session::config::{
+    JailConfig, ResumeConfig, ResourceLimits, SessionConfig, SupervisorConfig,
+};
+use liquide_session::runtime::SessionRuntime;
+use liquide_session::state::SessionState;
 
 /// Per-user session process for the Liquide desktop environment.
 ///
@@ -17,6 +23,14 @@ struct Cli {
     /// Unique identifier for this session, assigned by the supervisor.
     #[arg(long)]
     session_id: Option<String>,
+
+    /// Start the session in safe mode with non-essential features disabled.
+    #[arg(long)]
+    safe_mode: bool,
+
+    /// Path to a TOML configuration file.
+    #[arg(long)]
+    config: Option<String>,
 }
 
 #[tokio::main]
@@ -34,13 +48,12 @@ async fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let session_id = cli
-        .session_id
-        .unwrap_or_else(|| uuid_stub());
+    let session_id = cli.session_id.unwrap_or_else(uuid_stub);
 
     info!(
         session_id = %session_id,
         dev_mode = cli.dev_mode,
+        safe_mode = cli.safe_mode,
         "Starting liquid-session"
     );
 
@@ -48,30 +61,76 @@ async fn run(cli: Cli) -> Result<()> {
         warn!("Developer mode is enabled — security checks are relaxed");
     }
 
-    // TODO: Initialize the compositor subsystem.
-    info!("Initializing compositor...");
+    // Load configuration (a real implementation would read from the TOML file).
+    let session_config = SessionConfig::default();
+    let supervisor_config = SupervisorConfig::default();
+    let resource_limits = ResourceLimits::default();
+    let resume_config = ResumeConfig::default();
+    let jail_config = JailConfig::default();
 
-    // TODO: Initialize the shell (panels, launcher, workspace management).
-    info!("Initializing shell...");
+    // Create the session runtime.
+    let mut runtime = SessionRuntime::new(
+        session_id.clone(),
+        session_config,
+        supervisor_config,
+        resource_limits,
+        resume_config,
+        jail_config,
+        cli.safe_mode,
+    );
 
-    // TODO: Start the input-routing pipeline.
-    info!("Initializing input routing...");
+    // Initialize: authenticate, set up sandbox, start workers.
+    info!("Initializing session runtime...");
+    runtime
+        .initialize()
+        .context("Failed to initialize session runtime")?;
 
-    // TODO: Start clipboard, audio, and accessibility bridges.
-    info!("Initializing auxiliary services (clipboard, audio, a11y)...");
+    info!(
+        state = %runtime.state(),
+        safe_mode = runtime.is_safe_mode(),
+        "Session initialized — entering event loop"
+    );
 
-    // TODO: Load plugins via the plugin host.
-    info!("Loading plugins...");
+    // Drain and log any initialization audit events.
+    for event in runtime.drain_audit_events() {
+        info!(event = event.event_name(), "audit: {:?}", event);
+    }
 
-    // TODO: Enter the main event loop.
-    info!("Session ready — entering event loop");
+    // Enter the main event loop.
+    let heartbeat_interval =
+        tokio::time::Duration::from_secs(5);
+    let mut heartbeat_tick = tokio::time::interval(heartbeat_interval);
 
-    // Placeholder: keep the process alive until shutdown signal.
-    tokio::signal::ctrl_c()
-        .await
-        .context("Failed to listen for shutdown signal")?;
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received shutdown signal — tearing down session");
+                break;
+            }
+            _ = heartbeat_tick.tick() => {
+                if runtime.state() == SessionState::Running {
+                    runtime.tick();
 
-    info!("Received shutdown signal — tearing down session");
+                    // Drain tick audit events.
+                    for event in runtime.drain_audit_events() {
+                        match event.level() {
+                            liquide_session::audit::AuditLevel::Error => {
+                                error!(event = event.event_name(), "{:?}", event);
+                            }
+                            liquide_session::audit::AuditLevel::Warn => {
+                                warn!(event = event.event_name(), "{:?}", event);
+                            }
+                            _ => {
+                                info!(event = event.event_name(), "{:?}", event);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    info!("Session terminated");
     Ok(())
 }
 

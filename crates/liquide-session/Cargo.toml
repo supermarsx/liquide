@@ -5,11 +5,17 @@ edition.workspace = true
 license.workspace = true
 description = "Per-user session process for the Liquide desktop environment"
 
+[lib]
+name = "liquide_session"
+path = "src/lib.rs"
+
 [[bin]]
 name = "liquid-session"
 path = "src/main.rs"
 
 [dependencies]
+thiserror.workspace = true
+serde.workspace = true
 liquide-common.workspace = true
 liquide-protocol.workspace = true
 liquide-transport.workspace = true
