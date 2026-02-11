@@ -5,5 +5,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Management web UI frontend for administering LiquiDE deployments"
+
+[lib]
+name = "liquide_manager_frontend"
+path = "src/lib.rs"
+
+[[bin]]
+name = "liquid-manager-frontend"
+path = "src/main.rs"
 
 [dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
