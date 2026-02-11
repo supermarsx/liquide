@@ -1,10 +1,8 @@
 use anyhow::Result;
 use tracing::info;
+use liquide_apps_text_editor::{EditorConfig, EditorRuntime};
 
-/// Built-in text editor for the Liquide desktop environment.
-///
-/// `liquid-text-editor` provides a lightweight text editor with syntax
-/// highlighting, search/replace, and CSS-based theming.
+/// Built-in text editor for the LiquiDE desktop environment.
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -13,32 +11,14 @@ fn main() -> Result<()> {
         )
         .init();
 
-    run()
-}
+    let config = EditorConfig::default();
+    info!(font = %config.font_family, size = config.font_size, "Starting liquid-text-editor");
 
-fn run() -> Result<()> {
-    info!("Starting liquid-text-editor");
+    let mut rt = EditorRuntime::new(config);
+    let id = rt.new_document();
+    info!(doc_id = id, "New document created");
 
-    // TODO: Initialize the Liquide UI application context.
-    info!("Initializing UI application...");
-
-    // TODO: Load the editor CSS theme.
-    info!("Loading editor theme...");
-
-    // TODO: Create the editor widget with text buffer and gutter.
-    info!("Creating editor widget...");
-
-    // TODO: Set up syntax highlighting and auto-indent.
-    info!("Initializing syntax highlighting...");
-
-    // TODO: Open the file specified on the command line (if any).
-    info!("Editor ready");
-
-    // TODO: Enter the UI event loop (typing, selection, save, find).
-    info!("Entering event loop");
-
-    // Placeholder: simulate the event loop.
-    println!("liquid-text-editor: stub — event loop not yet implemented");
+    println!("liquid-text-editor: {} document(s) open", rt.document_count());
 
     Ok(())
 }
