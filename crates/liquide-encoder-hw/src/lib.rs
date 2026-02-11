@@ -4,21 +4,21 @@
 //! encoders with zero-copy framebuffer support, adaptive rate control,
 //! multi-GPU load balancing, HDR metadata passthrough, and fallback cascade.
 
+pub mod amf;
 pub mod api;
 pub mod config;
+pub mod fallback;
 pub mod framebuffer;
 pub mod hdr;
-pub mod session;
-pub mod vaapi;
-pub mod nvenc;
-pub mod amf;
-pub mod v4l2;
-pub mod probe;
-pub mod rate_control;
-pub mod queue;
-pub mod fallback;
-pub mod metrics;
 pub mod manager;
+pub mod metrics;
+pub mod nvenc;
+pub mod probe;
+pub mod queue;
+pub mod rate_control;
+pub mod session;
+pub mod v4l2;
+pub mod vaapi;
 
 use thiserror::Error;
 
@@ -82,21 +82,28 @@ pub enum HwEncoderError {
 pub type Result<T> = std::result::Result<T, HwEncoderError>;
 
 // Re-exports
-pub use api::{CodecCapability, CodecId, EncoderCapabilities, HwEncoderApi};
-pub use config::{ApiPreference, FallbackConfig, GpuProfile, HwEncoderConfig, QualityPreset, RateControlMode};
-pub use session::{EncodedPacket, FrameInput, FrameInputData, HwEncoderSession, SessionConfig, SessionHandle, SessionState};
-pub use probe::{EncoderProber, ProbeResult};
-pub use vaapi::VaapiEncoder;
-pub use nvenc::NvencEncoder;
 pub use amf::AmfEncoder;
-pub use v4l2::V4l2Encoder;
-pub use rate_control::{QualityAdjustment, QualityController};
-pub use queue::{EncoderQueueManager, GpuSlot};
-pub use framebuffer::{CudaHandle, DmaBufHandle, VulkanHandle, ZeroCopyImport};
-pub use hdr::{ColorPrimaries, HdrFormat, HdrMetadata, MasteringDisplay, ToneMapOperator, TransferFunction};
+pub use api::{CodecCapability, CodecId, EncoderCapabilities, HwEncoderApi};
+pub use config::{
+    ApiPreference, FallbackConfig, GpuProfile, HwEncoderConfig, QualityPreset, RateControlMode,
+};
 pub use fallback::{FallbackAction, FallbackManager, FallbackReason, FallbackState};
-pub use metrics::{EncoderMetrics, GpuMetrics, MetricsSnapshot};
+pub use framebuffer::{CudaHandle, DmaBufHandle, VulkanHandle, ZeroCopyImport};
+pub use hdr::{
+    ColorPrimaries, HdrFormat, HdrMetadata, MasteringDisplay, ToneMapOperator, TransferFunction,
+};
 pub use manager::{HwEncoderManager, HwVideoEncoder};
+pub use metrics::{EncoderMetrics, GpuMetrics, MetricsSnapshot};
+pub use nvenc::NvencEncoder;
+pub use probe::{EncoderProber, ProbeResult};
+pub use queue::{EncoderQueueManager, GpuSlot};
+pub use rate_control::{QualityAdjustment, QualityController};
+pub use session::{
+    EncodedPacket, FrameInput, FrameInputData, HwEncoderSession, SessionConfig, SessionHandle,
+    SessionState,
+};
+pub use v4l2::V4l2Encoder;
+pub use vaapi::VaapiEncoder;
 
 #[cfg(test)]
 mod tests;
