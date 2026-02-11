@@ -1,0 +1,10 @@
+mod device_tests;
+mod config_tests;
+mod policy_tests;
+mod message_tests;
+mod manager_tests;
+mod smartcard_tests;
+mod file_transfer_tests;
+mod audit_tests;
+mod bandwidth_tests;
+mod tier_tests;
