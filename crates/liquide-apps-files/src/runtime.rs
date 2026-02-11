@@ -1,0 +1,161 @@
+//! File manager runtime coordinator.
+
+use crate::clipboard::FileClipboard;
+use crate::config::FilesConfig;
+use crate::entry::FileEntry;
+use crate::listing::DirectoryListing;
+use crate::operations::OperationQueue;
+use crate::search::FileSearch;
+use crate::sidebar::Sidebar;
+
+/// Central coordinator for the file manager.
+pub struct FilesRuntime {
+    config: FilesConfig,
+    sidebar: Sidebar,
+    current_listing: DirectoryListing,
+    clipboard: FileClipboard,
+    search: FileSearch,
+    operations: OperationQueue,
+    navigation_history: Vec<String>,
+    history_index: usize,
+    selection: Vec<usize>,
+}
+
+impl FilesRuntime {
+    /// Create a new files runtime.
+    #[must_use]
+    pub fn new(config: FilesConfig) -> Self {
+        let mut listing = DirectoryListing::new(config.initial_directory.clone());
+        listing.show_hidden = config.show_hidden;
+        listing.sort_field = config.default_sort;
+        listing.sort_ascending = config.sort_ascending;
+        listing.view_mode = config.view_mode;
+
+        Self {
+            config,
+            sidebar: Sidebar::new(),
+            current_listing: listing,
+            clipboard: FileClipboard::new(),
+            search: FileSearch::new(),
+            operations: OperationQueue::new(),
+            navigation_history: Vec::new(),
+            history_index: 0,
+            selection: Vec::new(),
+        }
+    }
+
+    /// Get config.
+    #[must_use]
+    pub fn config(&self) -> &FilesConfig { &self.config }
+
+    /// Get the sidebar.
+    #[must_use]
+    pub fn sidebar(&self) -> &Sidebar { &self.sidebar }
+
+    /// Get mutable sidebar.
+    pub fn sidebar_mut(&mut self) -> &mut Sidebar { &mut self.sidebar }
+
+    /// Get current directory listing.
+    #[must_use]
+    pub fn current_listing(&self) -> &DirectoryListing { &self.current_listing }
+
+    /// Navigate to a directory.
+    pub fn navigate(&mut self, path: String, entries: Vec<FileEntry>) {
+        // Push to history.
+        if self.navigation_history.is_empty() || self.navigation_history.last().map(|s| s.as_str()) != Some(&path) {
+            // Truncate forward history.
+            self.navigation_history.truncate(self.history_index + 1);
+            self.navigation_history.push(path.clone());
+            self.history_index = self.navigation_history.len() - 1;
+        }
+
+        self.current_listing = DirectoryListing::new(path);
+        self.current_listing.show_hidden = self.config.show_hidden;
+        self.current_listing.sort_field = self.config.default_sort;
+        self.current_listing.sort_ascending = self.config.sort_ascending;
+        self.current_listing.view_mode = self.config.view_mode;
+        self.current_listing.set_entries(entries);
+        self.selection.clear();
+    }
+
+    /// Navigate up to parent directory.
+    pub fn navigate_up(&mut self) -> Option<String> {
+        self.current_listing.parent()
+    }
+
+    /// Navigate back in history.
+    #[must_use]
+    pub fn can_go_back(&self) -> bool { self.history_index > 0 }
+
+    /// Navigate forward in history.
+    #[must_use]
+    pub fn can_go_forward(&self) -> bool { self.history_index + 1 < self.navigation_history.len() }
+
+    /// Go back, returning the path.
+    pub fn go_back(&mut self) -> Option<&str> {
+        if self.can_go_back() {
+            self.history_index -= 1;
+            Some(&self.navigation_history[self.history_index])
+        } else {
+            None
+        }
+    }
+
+    /// Go forward, returning the path.
+    pub fn go_forward(&mut self) -> Option<&str> {
+        if self.can_go_forward() {
+            self.history_index += 1;
+            Some(&self.navigation_history[self.history_index])
+        } else {
+            None
+        }
+    }
+
+    /// Get the clipboard.
+    #[must_use]
+    pub fn clipboard(&self) -> &FileClipboard { &self.clipboard }
+
+    /// Get mutable clipboard.
+    pub fn clipboard_mut(&mut self) -> &mut FileClipboard { &mut self.clipboard }
+
+    /// Get the search state.
+    #[must_use]
+    pub fn search(&self) -> &FileSearch { &self.search }
+
+    /// Get mutable search state.
+    pub fn search_mut(&mut self) -> &mut FileSearch { &mut self.search }
+
+    /// Get the operation queue.
+    #[must_use]
+    pub fn operations(&self) -> &OperationQueue { &self.operations }
+
+    /// Get mutable operation queue.
+    pub fn operations_mut(&mut self) -> &mut OperationQueue { &mut self.operations }
+
+    /// Current selection indices.
+    #[must_use]
+    pub fn selection(&self) -> &[usize] { &self.selection }
+
+    /// Set selection.
+    pub fn set_selection(&mut self, indices: Vec<usize>) { self.selection = indices; }
+
+    /// Select all visible entries.
+    pub fn select_all(&mut self) {
+        self.selection = (0..self.current_listing.visible_count()).collect();
+    }
+
+    /// Clear selection.
+    pub fn clear_selection(&mut self) { self.selection.clear(); }
+
+    /// Get selected entries.
+    #[must_use]
+    pub fn selected_entries(&self) -> Vec<&FileEntry> {
+        self.selection.iter()
+            .filter_map(|&i| self.current_listing.get(i))
+            .collect()
+    }
+
+    /// Navigation history.
+    #[must_use]
+    pub fn history(&self) -> &[String] { &self.navigation_history }
+}

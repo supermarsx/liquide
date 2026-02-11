@@ -1,4 +1,5 @@
 use anyhow::Result;
+use liquide_apps_files::{FilesConfig, FilesRuntime};
 use tracing::info;
 
 /// Built-in file manager for the Liquide desktop environment.
@@ -19,26 +20,31 @@ fn main() -> Result<()> {
 fn run() -> Result<()> {
     info!("Starting liquid-files");
 
-    // TODO: Initialize the Liquide UI application context.
-    info!("Initializing UI application...");
+    // Load file manager configuration.
+    info!("Loading configuration...");
+    let config = FilesConfig::default();
 
-    // TODO: Load the file manager CSS theme.
-    info!("Loading file manager theme...");
+    // Initialize the file manager runtime.
+    info!("Initializing file manager runtime...");
+    let runtime = FilesRuntime::new(config);
 
-    // TODO: Create the file browser widget with sidebar and content pane.
-    info!("Creating file browser...");
+    info!(
+        bookmarks = runtime.sidebar().bookmarks().len(),
+        "File manager initialized"
+    );
 
-    // TODO: Initialize the interop layer for host filesystem access.
-    info!("Initializing host interop...");
+    // Navigate to home directory.
+    let listing = runtime.current_listing();
+    info!(
+        path = %listing.path,
+        entries = listing.entries.len(),
+        "Directory listing loaded"
+    );
 
-    // TODO: Populate the initial directory listing.
-    info!("Loading home directory...");
-
-    // TODO: Enter the UI event loop (navigation, file operations, preview).
     info!("File manager ready — entering event loop");
 
     // Placeholder: simulate the event loop.
-    println!("liquid-files: stub — event loop not yet implemented");
+    println!("liquid-files: event loop not yet wired to actual UI toolkit");
 
     Ok(())
 }
