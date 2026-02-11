@@ -558,6 +558,15 @@ dependencies = [
 [[package]]
 name = "liquide-assistance"
 version = "0.1.0"
+dependencies = [
+ "liquide-common",
+ "liquide-policy",
+ "liquide-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-audio"
@@ -740,6 +749,15 @@ dependencies = [
 [[package]]
 name = "liquide-encoder-hw"
 version = "0.1.0"
+dependencies = [
+ "liquide-common",
+ "liquide-compositor",
+ "liquide-encoder",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-gateway"
@@ -953,6 +971,15 @@ version = "0.1.0"
 [[package]]
 name = "liquide-usb"
 version = "0.1.0"
+dependencies = [
+ "liquide-common",
+ "liquide-policy",
+ "liquide-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "lock_api"
