@@ -9246,11 +9246,11 @@ Global search (Super then type) is **launcher-scoped by default**. A separate fi
 | Metric | Value |
 |--------|-------|
 | Total crates | 40 |
-| Fully implemented | 30 (75%) |
-| Stub / scaffolded | 10 (25%) |
-| Total `.rs` source files | 511 |
-| Total lines of Rust | ~67,700 |
-| Crates with test suites | 21 |
+| Fully implemented | 33 (82.5%) |
+| Stub / scaffolded | 7 (17.5%) |
+| Total `.rs` source files | 571 |
+| Total lines of Rust | ~76,200 |
+| Crates with test suites | 24 |
 
 ### Crate Implementation Matrix
 
@@ -9277,6 +9277,7 @@ Each crate is categorized by implementation status:
 | `liquide-session` | 10 | 13 | Yes | `liquid-session` | Per-user session lifecycle, state machine, crash recovery, resume, sandboxing |
 | `liquide-gateway` | 14 | 22 | Yes | `liquid-gateway` | Connection gateway: routing, relay, rate limiting, health, cluster |
 | `liquide-supervisor` | 14 | 15 | Yes | `liquid-desktopd` | Session supervisor: admission control, heartbeat, crash handling, restart policy, resource monitoring, auto-downgrade |
+| `liquide-manager` | 11 | 26 | Yes | `liquid-manager` | Management backend: dashboard, server/session/user/gateway/policy subsystems, audit, metrics, REST API (23 endpoints) |
 | `liquide-compositor` | 8 | 17 | Yes | — | Wayland-style compositor: damage tracking, scene graph, effects |
 | `liquide-shell` | 10 | 23 | Yes | — | Desktop shell: windows, workspaces, focus, layout, dock |
 | `liquide-ctl` | 29 cmds | 35 | — | `liquidctl` | Admin CLI tool |
@@ -9319,15 +9320,19 @@ Each crate is categorized by implementation status:
 | `liquide-assistance` | 17 | 30 | Yes | — | Remote assistance: shadowing, consent, chat, invite, stealth, policy |
 | `liquide-ui` | 11 | 20 | Yes | — | UI toolkit: geometry, widget tree, layout engines (box/stack/grid), focus chain, animation, paint context, panels, theming |
 
+#### Built-in Applications
+
+| Crate | Modules | Source Files | Tests | Binary | Description |
+|-------|---------|-------------|-------|--------|-------------|
+| `liquide-apps-terminal` | 10 | 17 | Yes | `liquid-terminal` | Terminal emulator: VT parser, character grid, PTY, scrollback, search, shell integration, URL detection, tabs |
+| `liquide-apps-files` | 10 | 17 | Yes | `liquid-files` | File manager: directory listing, natural sort, sidebar bookmarks, preview, clipboard, search, file operations queue, navigation history |
+
 #### Stub Crates (Not Yet Implemented)
 
 | Crate | Category | Description |
 |-------|----------|-------------|
-| `liquide-manager` | Management | Web-based management backend |
 | `liquide-manager-frontend` | Management | Management UI frontend |
 | `liquide-mobile-core` | Client | Shared mobile client library (iOS/Android) |
-| `liquide-apps-terminal` | Apps | Built-in terminal application |
-| `liquide-apps-files` | Apps | Built-in file manager |
 | `liquide-apps-settings` | Apps | Built-in settings application |
 | `liquide-apps-text-editor` | Apps | Built-in text editor |
 | `liquide-apps-software-center` | Apps | Built-in software center |
@@ -9339,9 +9344,9 @@ Each crate is categorized by implementation status:
 | Milestone | Total Features | Implemented | Percentage |
 |-----------|---------------|-------------|------------|
 | **MVP** | 9 | 9 | **100%** |
-| **v1** | 11 | 10 | **91%** |
-| **vNext** | 16 | 12 | **75%** |
-| **Overall** | 36 | 31 | **86%** |
+| **v1** | 11 | 11 | **100%** |
+| **vNext** | 16 | 13 | **81%** |
+| **Overall** | 36 | 33 | **92%** |
 
 ### Features Implemented Beyond Original Spec
 
@@ -9367,4 +9372,14 @@ The following capabilities were implemented but not originally listed in section
 | Box/stack/grid layout engines | `liquide-ui` | §14 Desktop Environment |
 | Animation manager with easing curves | `liquide-ui` | §14 Desktop Environment |
 | Focus chain with directional navigation | `liquide-ui` | §14 Desktop Environment |
+| Policy versioning with diff and rollback | `liquide-manager` | §18 Management |
+| Dashboard builder with alert severity levels | `liquide-manager` | §18 Management |
+| Admin lockout after failed authentication attempts | `liquide-manager` | §15 Security |
+| Metrics collector with configurable retention | `liquide-manager` | §16 Stream Analysis |
+| VT100/xterm sequence parser with SGR, OSC, CSI dispatch | `liquide-apps-terminal` | §14 Desktop Environment |
+| Shell integration via OSC 7/133 (CWD, prompt, command tracking) | `liquide-apps-terminal` | §14 Desktop Environment |
+| URL and file path detection in terminal output | `liquide-apps-terminal` | §14 Desktop Environment |
+| Natural sort for file listings (file1 < file2 < file10) | `liquide-apps-files` | §14 Desktop Environment |
+| File operation queue with progress tracking | `liquide-apps-files` | §14 Desktop Environment |
+| Navigation history with back/forward | `liquide-apps-files` | §14 Desktop Environment |
 
