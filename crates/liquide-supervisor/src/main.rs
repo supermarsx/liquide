@@ -1,6 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
+
+use liquide_supervisor::{
+    AdmissionConfig, ControlCommand, ControlResponse, DowngradeThresholds,
+    ResourceDefaults, RestartPolicy, SupervisorConfig,
+};
+use liquide_supervisor::runtime::SupervisorRuntime;
 
 /// Supervisor daemon for the Liquide desktop environment.
 ///
@@ -17,6 +23,14 @@ struct Cli {
     /// Enable developer mode with relaxed security and verbose diagnostics.
     #[arg(long)]
     dev_mode: bool,
+
+    /// Override the number of CPU cores available (for testing).
+    #[arg(long, default_value = "8")]
+    host_cpu_cores: f64,
+
+    /// Override the memory in megabytes available (for testing).
+    #[arg(long, default_value = "32768")]
+    host_memory_mb: u64,
 }
 
 #[tokio::main]
@@ -40,30 +54,86 @@ async fn run(cli: Cli) -> Result<()> {
         warn!("Developer mode is enabled — authentication and policy checks are relaxed");
     }
 
-    // TODO: Load and validate the configuration file.
+    // Load configuration (a real implementation would parse the TOML file).
     info!(path = %cli.config, "Loading configuration...");
+    let mut supervisor_config = SupervisorConfig::default();
+    supervisor_config.dev_mode = cli.dev_mode;
 
-    // TODO: Initialize the crypto subsystem (TLS certificates, key storage).
-    info!("Initializing crypto subsystem...");
+    let resource_defaults = ResourceDefaults::default();
+    let admission_config = AdmissionConfig::default();
+    let downgrade_thresholds = DowngradeThresholds::default();
+    let restart_policy = RestartPolicy::default();
 
-    // TODO: Initialize the authentication backend.
-    info!("Initializing authentication backend...");
+    // Create the supervisor runtime.
+    let mut runtime = SupervisorRuntime::new(
+        supervisor_config,
+        resource_defaults,
+        admission_config,
+        downgrade_thresholds,
+        restart_policy,
+        cli.host_cpu_cores,
+        cli.host_memory_mb,
+    );
 
-    // TODO: Load policy engine rules.
-    info!("Loading policy rules...");
+    info!(
+        socket = %runtime.control_channel().socket_path(),
+        "Opening control socket..."
+    );
+    info!(
+        host_cpu = cli.host_cpu_cores,
+        host_memory_mb = cli.host_memory_mb,
+        "Supervisor ready — listening for connections"
+    );
 
-    // TODO: Open the IPC control socket for management tools.
-    let control_socket = "/run/liquide/supervisor.sock";
-    info!(socket = %control_socket, "Opening control socket...");
+    // Drain and log startup audit events.
+    for event in runtime.drain_audit_events() {
+        info!(event = event.event_name(), "audit: {:?}", event);
+    }
 
-    // TODO: Start the listener that accepts session-spawn requests.
-    info!("Supervisor ready — listening for connections");
+    // Enter the main event loop.
+    let heartbeat_interval = tokio::time::Duration::from_secs(5);
+    let mut heartbeat_tick = tokio::time::interval(heartbeat_interval);
 
-    // Placeholder: keep the daemon alive until shutdown signal.
-    tokio::signal::ctrl_c()
-        .await
-        .context("Failed to listen for shutdown signal")?;
+    // Consume the first immediate tick.
+    heartbeat_tick.tick().await;
 
-    info!("Received shutdown signal — stopping supervisor");
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received shutdown signal — stopping supervisor");
+                let resp = runtime.handle_control_command(ControlCommand::Shutdown);
+                if let ControlResponse::Error(msg) = resp {
+                    error!(error = %msg, "Error during shutdown");
+                }
+                break;
+            }
+            _ = heartbeat_tick.tick() => {
+                runtime.tick();
+
+                // Drain and log audit events from the tick.
+                for event in runtime.drain_audit_events() {
+                    match event.level() {
+                        liquide_supervisor::AuditLevel::Error => {
+                            error!(event = event.event_name(), "{:?}", event);
+                        }
+                        liquide_supervisor::AuditLevel::Warn => {
+                            warn!(event = event.event_name(), "{:?}", event);
+                        }
+                        _ => {
+                            info!(event = event.event_name(), "{:?}", event);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let status = runtime.status();
+    info!(
+        active_sessions = status.active_sessions,
+        uptime_sec = status.uptime_sec,
+        "Supervisor stopped"
+    );
+
     Ok(())
 }

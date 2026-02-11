@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Supervisor daemon that manages session lifecycle and system-wide policy"
 
+[lib]
+name = "liquide_supervisor"
+path = "src/lib.rs"
+
 [[bin]]
 name = "liquid-desktopd"
 path = "src/main.rs"
@@ -21,3 +25,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
