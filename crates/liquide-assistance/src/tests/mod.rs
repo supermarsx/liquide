@@ -1,0 +1,14 @@
+mod mode_tests;
+mod config_tests;
+mod message_tests;
+mod session_tests;
+mod observer_tests;
+mod consent_tests;
+mod input_tests;
+mod cursor_tests;
+mod chat_tests;
+mod invite_tests;
+mod stealth_tests;
+mod audit_tests;
+mod coordinator_tests;
+mod policy_tests;
