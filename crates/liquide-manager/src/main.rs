@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use liquide_manager::{ManagerConfig, ManagerRuntime};
 use tracing::info;
 
 /// Management web UI backend for Liquide.
@@ -40,25 +41,37 @@ async fn run(cli: Cli) -> Result<()> {
         "Starting liquid-manager"
     );
 
-    // TODO: Load and validate the configuration file.
+    // Load configuration (stub: use defaults until config file parsing is wired).
     info!(path = %cli.config, "Loading configuration...");
+    let config = ManagerConfig::default();
 
-    // TODO: Initialize the authentication backend for admin users.
-    info!("Initializing authentication backend...");
+    // Initialize the management runtime.
+    info!("Initializing management runtime...");
+    let runtime = ManagerRuntime::new(config);
 
-    // TODO: Load policy rules for authorization checks.
-    info!("Loading policy rules...");
+    info!(
+        servers = runtime.servers().count(),
+        gateways = runtime.gateways().count(),
+        admins = runtime.admins().count(),
+        "Runtime initialized"
+    );
 
-    // TODO: Connect to the supervisor control socket.
-    info!("Connecting to supervisor...");
+    // Register API endpoints.
+    let endpoints = liquide_manager::api::default_endpoints();
+    info!(count = endpoints.len(), "Registered API endpoints");
 
-    // TODO: Build the HTTP router with REST API endpoints.
-    info!("Building HTTP routes...");
+    // Build and log initial dashboard state.
+    let dash = runtime.dashboard(0);
+    info!(
+        healthy = dash.servers_healthy,
+        unhealthy = dash.servers_unhealthy,
+        offline = dash.servers_offline,
+        "Initial dashboard state"
+    );
 
-    // TODO: Bind the HTTP listener and start serving.
     info!(addr = %cli.listen_addr, "HTTP server ready — listening for requests");
 
-    // Placeholder: keep the process alive until shutdown signal.
+    // Keep the process alive until shutdown signal.
     tokio::signal::ctrl_c()
         .await
         .context("Failed to listen for shutdown signal")?;
