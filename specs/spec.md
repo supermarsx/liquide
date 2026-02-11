@@ -9246,11 +9246,11 @@ Global search (Super then type) is **launcher-scoped by default**. A separate fi
 | Metric | Value |
 |--------|-------|
 | Total crates | 40 |
-| Fully implemented | 36 (90%) |
-| Stub / scaffolded | 4 (10%) |
-| Total `.rs` source files | 620 |
-| Total lines of Rust | ~82,000 |
-| Crates with test suites | 27 |
+| Fully implemented | 39 (97.5%) |
+| Stub / scaffolded | 1 (2.5%) |
+| Total `.rs` source files | 668 |
+| Total lines of Rust | ~90,000 |
+| Crates with test suites | 30 |
 
 ### Crate Implementation Matrix
 
@@ -9278,6 +9278,7 @@ Each crate is categorized by implementation status:
 | `liquide-gateway` | 14 | 22 | Yes | `liquid-gateway` | Connection gateway: routing, relay, rate limiting, health, cluster |
 | `liquide-supervisor` | 14 | 15 | Yes | `liquid-desktopd` | Session supervisor: admission control, heartbeat, crash handling, restart policy, resource monitoring, auto-downgrade |
 | `liquide-manager` | 11 | 26 | Yes | `liquid-manager` | Management backend: dashboard, server/session/user/gateway/policy subsystems, audit, metrics, REST API (23 endpoints) |
+| `liquide-manager-frontend` | 9 | 16 | Yes | `liquid-manager-frontend` | Management UI frontend: auth state machine, navigation with breadcrumbs, data tables, view models, theme presets, API client |
 | `liquide-compositor` | 8 | 17 | Yes | — | Wayland-style compositor: damage tracking, scene graph, effects |
 | `liquide-shell` | 10 | 23 | Yes | — | Desktop shell: windows, workspaces, focus, layout, dock |
 | `liquide-ctl` | 29 cmds | 35 | — | `liquidctl` | Admin CLI tool |
@@ -9298,6 +9299,7 @@ Each crate is categorized by implementation status:
 |-------|---------|-------------|-------|--------|-------------|
 | `liquide-client` | 15 | 25 | Yes | `liquidclient` | Native desktop client: connection, display, input, cursor, decoder, overlay, crash screen, color, credentials |
 | `liquide-client-renderer` | 6 | 15 | Yes | — | Client-side rendering: frame decode, surface presentation, cursor |
+| `liquide-mobile-core` | 10 | 16 | Yes | — | Mobile client core: touch input, gesture recognition, adaptive quality, codec negotiation, connection state machine, platform abstraction, mobile policy |
 
 #### Input / Output
 
@@ -9320,6 +9322,12 @@ Each crate is categorized by implementation status:
 | `liquide-assistance` | 17 | 30 | Yes | — | Remote assistance: shadowing, consent, chat, invite, stealth, policy |
 | `liquide-ui` | 11 | 20 | Yes | — | UI toolkit: geometry, widget tree, layout engines (box/stack/grid), focus chain, animation, paint context, panels, theming |
 
+#### Testing & Benchmarking
+
+| Crate | Modules | Source Files | Tests | Binary | Description |
+|-------|---------|-------------|-------|--------|-------------|
+| `liquide-bench` | 9 | 16 | Yes | `liquide-bench` | Benchmark harness: workload profiles (8), network emulation (8 presets), SLO validation, measurement with percentile stats, regression detection, JSON reporting |
+
 #### Built-in Applications
 
 | Crate | Modules | Source Files | Tests | Binary | Description |
@@ -9334,9 +9342,6 @@ Each crate is categorized by implementation status:
 
 | Crate | Category | Description |
 |-------|----------|-------------|
-| `liquide-manager-frontend` | Management | Management UI frontend |
-| `liquide-mobile-core` | Client | Shared mobile client library (iOS/Android) |
-| `liquide-bench` | Testing | Benchmark suite |
 | `liquide-conformance` | Testing | Conformance test suite |
 
 ### Scope Completion Summary
@@ -9391,4 +9396,14 @@ The following capabilities were implemented but not originally listed in section
 | Package catalog with scored search ranking | `liquide-apps-software-center` | §14 Desktop Environment |
 | Install queue with download/install progress tracking | `liquide-apps-software-center` | §14 Desktop Environment |
 | Repository manager with official/community/flatpak defaults | `liquide-apps-software-center` | §14 Desktop Environment |
+| Role-based navigation with sidebar filtering and breadcrumbs | `liquide-manager-frontend` | §18 Management |
+| Data table component with sorting, pagination, and column config | `liquide-manager-frontend` | §18 Management |
+| Theme presets (Liquid Glass, Dark, Light, High Contrast) | `liquide-manager-frontend` | §18 Management |
+| Touch input translation with direct/trackpad/hybrid modes | `liquide-mobile-core` | §19 Mobile |
+| Gesture recognizer (tap, double-tap, long-press, pan, pinch) | `liquide-mobile-core` | §19 Mobile |
+| Adaptive quality controller with network condition classification | `liquide-mobile-core` | §19 Mobile |
+| Codec negotiation with hardware preference scoring | `liquide-mobile-core` | §19 Mobile |
+| Workload simulation with 8 profiles and damage fraction modeling | `liquide-bench` | §16 Stream Analysis |
+| Network emulation with 8 presets and deterministic jitter | `liquide-bench` | §16 Stream Analysis |
+| SLO validation framework with LAN/WAN threshold sets | `liquide-bench` | §16 Stream Analysis |
 
