@@ -6,14 +6,19 @@
 
 pub mod channel;
 pub mod codec;
+pub mod compress;
+pub mod fragment;
 pub mod frame;
 pub mod message;
+pub mod messages;
+pub mod state;
 pub mod version;
 
 // Re-exports for convenience.
 pub use channel::ChannelId;
 pub use frame::{FrameFlags, FrameHeader};
 pub use message::MessageType;
+pub use state::{ChannelEvent, ChannelState, SessionEvent, SessionState};
 pub use version::{MAGIC, PROTOCOL_VERSION};
 
 /// Protocol magic bytes identifying a Liquide stream (`"LD"` as little-endian u16).
@@ -40,6 +45,18 @@ pub enum ProtocolError {
     /// CBOR encoding or decoding failed.
     #[error("CBOR codec error: {0}")]
     Cbor(String),
+
+    /// CRC-32C checksum mismatch.
+    #[error("CRC mismatch: expected 0x{expected:08X}, got 0x{actual:08X}")]
+    CrcMismatch { expected: u32, actual: u32 },
+
+    /// Compression or decompression failed.
+    #[error("compression error: {0}")]
+    Compression(String),
+
+    /// Not enough data to parse a complete structure.
+    #[error("incomplete data: need {needed} bytes, have {available}")]
+    Incomplete { needed: usize, available: usize },
 
     /// Generic I/O error.
     #[error("I/O error: {0}")]

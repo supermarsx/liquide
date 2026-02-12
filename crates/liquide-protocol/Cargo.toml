@@ -11,3 +11,9 @@ serde.workspace = true
 ciborium.workspace = true
 bytes.workspace = true
 thiserror.workspace = true
+lz4_flex.workspace = true
+zstd.workspace = true
+crc32c = "0.6"
+
+[dev-dependencies]
+serde_json.workspace = true
