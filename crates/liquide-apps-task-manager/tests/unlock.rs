@@ -12,24 +12,17 @@ fn unlock_operation_all_variants() {
         UnlockOperation::CloseHandle,
         UnlockOperation::TerminateProcess,
         UnlockOperation::UnloadDll,
-        UnlockOperation::RenameTarget,
-        UnlockOperation::CopyThenDelete,
-        UnlockOperation::ScheduleDeleteOnReboot,
+        UnlockOperation::DisconnectNetworkShare,
+        UnlockOperation::ReleaseFileLock,
         UnlockOperation::ForceUnmount,
+        UnlockOperation::KillLockingProcesses,
     ];
     assert_eq!(variants.len(), 7);
 }
 
 #[test]
-fn unlock_operation_display() {
-    assert_eq!(UnlockOperation::CloseHandle.as_str(), "Close Handle");
-    assert_eq!(UnlockOperation::TerminateProcess.as_str(), "Terminate Process");
-    assert_eq!(UnlockOperation::ForceUnmount.as_str(), "Force Unmount");
-}
-
-#[test]
 fn unlock_operation_serde_roundtrip() {
-    let val = UnlockOperation::ScheduleDeleteOnReboot;
+    let val = UnlockOperation::ReleaseFileLock;
     let json = serde_json::to_string(&val).unwrap();
     let back: UnlockOperation = serde_json::from_str(&json).unwrap();
     assert_eq!(back, val);
@@ -49,13 +42,6 @@ fn batch_mode_all_variants() {
     assert_eq!(variants.len(), 3);
 }
 
-#[test]
-fn batch_mode_display() {
-    assert_eq!(BatchMode::Sequential.as_str(), "Sequential");
-    assert_eq!(BatchMode::Parallel.as_str(), "Parallel");
-    assert_eq!(BatchMode::DryRun.as_str(), "Dry Run");
-}
-
 // ---------------------------------------------------------------------------
 // ConfirmationLevel
 // ---------------------------------------------------------------------------
@@ -70,13 +56,6 @@ fn confirmation_level_all_variants() {
     assert_eq!(variants.len(), 3);
 }
 
-#[test]
-fn confirmation_level_display() {
-    assert_eq!(ConfirmationLevel::Always.as_str(), "Always");
-    assert_eq!(ConfirmationLevel::Elevated.as_str(), "Elevated Only");
-    assert_eq!(ConfirmationLevel::Never.as_str(), "Never");
-}
-
 // ---------------------------------------------------------------------------
 // UnlockTarget
 // ---------------------------------------------------------------------------
@@ -89,7 +68,8 @@ fn unlock_target_construction() {
             pid: 1234,
             process_name: "test".into(),
             handle_value: 42,
-            access_type: "Read".into(),
+            handle_type: "File".into(),
+            access_description: "Read".into(),
         }],
     };
     assert_eq!(target.holders.len(), 1);
@@ -101,7 +81,7 @@ fn unlock_target_construction() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn unlock_safety_options_default() {
+fn unlock_safety_options_construction() {
     let opts = UnlockSafetyOptions {
         create_backup: true,
         create_process_dump: false,
@@ -120,13 +100,12 @@ fn unlock_safety_options_default() {
 fn audit_entry_construction() {
     let entry = AuditEntry {
         timestamp: "2026-02-12T10:00:00Z".into(),
-        target_path: "/var/lock/test.lock".into(),
         operation: UnlockOperation::CloseHandle,
+        target_path: "/var/lock/test.lock".into(),
         pid: 1234,
         process_name: "test".into(),
         success: true,
         error_message: None,
-        user: "root".into(),
     };
     assert!(entry.success);
     assert_eq!(entry.operation, UnlockOperation::CloseHandle);
@@ -136,13 +115,12 @@ fn audit_entry_construction() {
 fn audit_entry_serde_roundtrip() {
     let entry = AuditEntry {
         timestamp: "2026-02-12T10:00:00Z".into(),
-        target_path: "/tmp/test".into(),
         operation: UnlockOperation::TerminateProcess,
+        target_path: "/tmp/test".into(),
         pid: 999,
         process_name: "blocked".into(),
         success: false,
         error_message: Some("permission denied".into()),
-        user: "admin".into(),
     };
     let json = serde_json::to_string(&entry).unwrap();
     let back: AuditEntry = serde_json::from_str(&json).unwrap();

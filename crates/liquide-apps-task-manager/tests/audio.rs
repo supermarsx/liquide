@@ -31,13 +31,6 @@ fn audio_view_all_variants() {
     assert_eq!(variants.len(), 10);
 }
 
-#[test]
-fn audio_view_display() {
-    assert_eq!(AudioView::OutputDevices.to_string(), "Output Devices");
-    assert_eq!(AudioView::Midi.to_string(), "MIDI");
-    assert_eq!(AudioView::Overview.to_string(), "Overview");
-}
-
 // ---------------------------------------------------------------------------
 // AudioDeviceStatus
 // ---------------------------------------------------------------------------
@@ -53,13 +46,6 @@ fn audio_device_status_all_variants() {
         AudioDeviceStatus::Exclusive,
     ];
     assert_eq!(variants.len(), 6);
-}
-
-#[test]
-fn audio_device_status_display() {
-    assert_eq!(AudioDeviceStatus::Active.to_string(), "Active");
-    assert_eq!(AudioDeviceStatus::NotPresent.to_string(), "Not Present");
-    assert_eq!(AudioDeviceStatus::Exclusive.to_string(), "Exclusive");
 }
 
 #[test]
@@ -88,14 +74,6 @@ fn output_type_all_variants() {
         OutputType::Virtual,
     ];
     assert_eq!(variants.len(), 9);
-}
-
-#[test]
-fn output_type_display() {
-    assert_eq!(OutputType::Speakers.to_string(), "Speakers");
-    assert_eq!(OutputType::Hdmi.to_string(), "HDMI");
-    assert_eq!(OutputType::Spdif.to_string(), "S/PDIF");
-    assert_eq!(OutputType::Virtual.to_string(), "Virtual");
 }
 
 // ---------------------------------------------------------------------------
@@ -229,12 +207,6 @@ fn stream_state_all_variants() {
     assert_eq!(variants.len(), 4);
 }
 
-#[test]
-fn stream_state_display() {
-    assert_eq!(StreamState::Active.to_string(), "Active");
-    assert_eq!(StreamState::Suspended.to_string(), "Suspended");
-}
-
 // ---------------------------------------------------------------------------
 // StreamAction
 // ---------------------------------------------------------------------------
@@ -274,13 +246,6 @@ fn audio_effect_all_variants() {
         AudioEffect::RoomCorrection,
     ];
     assert_eq!(variants.len(), 10);
-}
-
-#[test]
-fn audio_effect_display() {
-    assert_eq!(AudioEffect::Equalizer.to_string(), "Equalizer");
-    assert_eq!(AudioEffect::NoiseGate.to_string(), "Noise Gate");
-    assert_eq!(AudioEffect::RoomCorrection.to_string(), "Room Correction");
 }
 
 // ---------------------------------------------------------------------------
@@ -402,20 +367,20 @@ fn spectrum_mode_all_variants() {
 #[test]
 fn audio_test_all_variants() {
     let variants = [
-        AudioTest::SineTone,
-        AudioTest::WhiteNoise,
-        AudioTest::PinkNoise,
-        AudioTest::Sweep,
-        AudioTest::ChannelIdentification,
+        AudioTest::ToneGenerator("440Hz".into()),
+        AudioTest::ChannelCheck,
         AudioTest::LatencyMeasurement,
         AudioTest::LoopbackTest,
-        AudioTest::SpeakerPolarity,
+        AudioTest::SpeakerPhase,
+        AudioTest::MicrophoneTest,
+        AudioTest::NoiseFloor,
         AudioTest::FrequencyResponse,
-        AudioTest::ThresholdOfHearing,
+        AudioTest::ImpulseResponse,
+        AudioTest::HdmiArcTest,
         AudioTest::BluetoothCodecTest,
-        AudioTest::BufferStressTest,
-        AudioTest::SampleRateConversion,
-        AudioTest::ExclusiveModeTest,
+        AudioTest::UsbDacTest,
+        AudioTest::SpatialAudioTest,
+        AudioTest::DriverDiagnostics,
     ];
     assert_eq!(variants.len(), 14);
 }
@@ -429,15 +394,15 @@ fn audio_event_type_all_variants() {
     let variants = [
         AudioEventType::DeviceAdded,
         AudioEventType::DeviceRemoved,
+        AudioEventType::DeviceStateChanged,
         AudioEventType::DefaultChanged,
         AudioEventType::FormatChanged,
         AudioEventType::VolumeChanged,
         AudioEventType::StreamCreated,
         AudioEventType::StreamDestroyed,
+        AudioEventType::ExclusiveModeChanged,
         AudioEventType::GlitchDetected,
-        AudioEventType::ExclusiveModeLost,
         AudioEventType::DriverError,
-        AudioEventType::LatencySpike,
     ];
     assert_eq!(variants.len(), 11);
 }

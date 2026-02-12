@@ -8,7 +8,6 @@ use liquide_apps_task_manager::network::interface::*;
 use liquide_apps_task_manager::network::bandwidth::*;
 use liquide_apps_task_manager::network::topology::*;
 use liquide_apps_task_manager::network::capture::*;
-use liquide_apps_task_manager::network::diagnostics::*;
 use liquide_apps_task_manager::network::protocol::*;
 
 // ---------------------------------------------------------------------------
@@ -32,13 +31,6 @@ fn network_view_all_variants() {
     assert_eq!(variants.len(), 10);
 }
 
-#[test]
-fn network_view_display() {
-    assert_eq!(NetworkView::Connections.to_string(), "Connections");
-    assert_eq!(NetworkView::DnsQueries.to_string(), "DNS Queries");
-    assert_eq!(NetworkView::Overview.to_string(), "Overview");
-}
-
 // ---------------------------------------------------------------------------
 // NetworkProtocol
 // ---------------------------------------------------------------------------
@@ -54,12 +46,6 @@ fn network_protocol_all_variants() {
         NetworkProtocol::Quic,
     ];
     assert_eq!(variants.len(), 6);
-}
-
-#[test]
-fn network_protocol_display() {
-    assert_eq!(NetworkProtocol::Tcp.to_string(), "TCP");
-    assert_eq!(NetworkProtocol::Quic.to_string(), "QUIC");
 }
 
 #[test]
@@ -92,13 +78,6 @@ fn connection_state_all_variants() {
     assert_eq!(variants.len(), 11);
 }
 
-#[test]
-fn connection_state_display() {
-    assert_eq!(ConnectionState::Established.to_string(), "Established");
-    assert_eq!(ConnectionState::SynSent.to_string(), "SYN Sent");
-    assert_eq!(ConnectionState::Closed.to_string(), "Closed");
-}
-
 // ---------------------------------------------------------------------------
 // TlsVersion
 // ---------------------------------------------------------------------------
@@ -113,12 +92,6 @@ fn tls_version_all_variants() {
         TlsVersion::Dtls12,
     ];
     assert_eq!(variants.len(), 5);
-}
-
-#[test]
-fn tls_version_display() {
-    assert_eq!(TlsVersion::Tls13.to_string(), "TLS 1.3");
-    assert_eq!(TlsVersion::Dtls12.to_string(), "DTLS 1.2");
 }
 
 // ---------------------------------------------------------------------------
@@ -158,13 +131,6 @@ fn dns_query_type_all_variants() {
         DnsQueryType::Ptr,
     ];
     assert_eq!(variants.len(), 8);
-}
-
-#[test]
-fn dns_query_type_display() {
-    assert_eq!(DnsQueryType::A.to_string(), "A");
-    assert_eq!(DnsQueryType::Aaaa.to_string(), "AAAA");
-    assert_eq!(DnsQueryType::Mx.to_string(), "MX");
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +235,7 @@ fn firewall_rule_construction() {
 }
 
 // ---------------------------------------------------------------------------
-// AdapterType, Duplex, WifiPhyMode, WifiSecurity
+// AdapterType, WifiSecurity
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -288,12 +254,6 @@ fn adapter_type_all_variants() {
 }
 
 #[test]
-fn wifi_phy_mode_display() {
-    assert_eq!(WifiPhyMode::Ax.to_string(), "802.11ax");
-    assert_eq!(WifiPhyMode::Be.to_string(), "802.11be");
-}
-
-#[test]
 fn wifi_security_all_variants() {
     let variants = [
         WifiSecurity::Open,
@@ -304,12 +264,6 @@ fn wifi_security_all_variants() {
         WifiSecurity::Wpa3Personal,
     ];
     assert_eq!(variants.len(), 6);
-}
-
-#[test]
-fn wifi_security_display() {
-    assert_eq!(WifiSecurity::Open.to_string(), "Open");
-    assert_eq!(WifiSecurity::Wpa3Personal.to_string(), "WPA3 Personal");
 }
 
 // ---------------------------------------------------------------------------

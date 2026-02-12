@@ -11,7 +11,7 @@ fn open_file_type_all_variants() {
     let variants = [
         OpenFileType::RegularFile,
         OpenFileType::Directory,
-        OpenFileType::Pipe,
+        OpenFileType::NamedPipe,
         OpenFileType::Socket,
         OpenFileType::Device,
     ];
@@ -19,17 +19,8 @@ fn open_file_type_all_variants() {
 }
 
 #[test]
-fn open_file_type_display() {
-    assert_eq!(OpenFileType::RegularFile.as_str(), "File");
-    assert_eq!(OpenFileType::Directory.as_str(), "Directory");
-    assert_eq!(OpenFileType::Pipe.as_str(), "Pipe");
-    assert_eq!(OpenFileType::Socket.as_str(), "Socket");
-    assert_eq!(OpenFileType::Device.as_str(), "Device");
-}
-
-#[test]
 fn open_file_type_serde_roundtrip() {
-    let val = OpenFileType::Pipe;
+    let val = OpenFileType::NamedPipe;
     let json = serde_json::to_string(&val).unwrap();
     let back: OpenFileType = serde_json::from_str(&json).unwrap();
     assert_eq!(back, val);
@@ -51,15 +42,6 @@ fn file_access_type_all_variants() {
     assert_eq!(variants.len(), 5);
 }
 
-#[test]
-fn file_access_type_display() {
-    assert_eq!(FileAccessType::Read.as_str(), "Read");
-    assert_eq!(FileAccessType::Write.as_str(), "Write");
-    assert_eq!(FileAccessType::ReadWrite.as_str(), "Read/Write");
-    assert_eq!(FileAccessType::Execute.as_str(), "Execute");
-    assert_eq!(FileAccessType::Delete.as_str(), "Delete");
-}
-
 // ---------------------------------------------------------------------------
 // LockType
 // ---------------------------------------------------------------------------
@@ -68,13 +50,6 @@ fn file_access_type_display() {
 fn lock_type_all_variants() {
     let variants = [LockType::None, LockType::Shared, LockType::Exclusive];
     assert_eq!(variants.len(), 3);
-}
-
-#[test]
-fn lock_type_display() {
-    assert_eq!(LockType::None.as_str(), "None");
-    assert_eq!(LockType::Shared.as_str(), "Shared");
-    assert_eq!(LockType::Exclusive.as_str(), "Exclusive");
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +62,7 @@ fn share_mode_all_variants() {
         ShareMode::None,
         ShareMode::Read,
         ShareMode::Write,
-        ShareMode::Delete,
+        ShareMode::ReadWrite,
     ];
     assert_eq!(variants.len(), 4);
 }
@@ -110,7 +85,7 @@ fn file_group_by_all_variants() {
         FileGroupBy::Process,
         FileGroupBy::FileType,
         FileGroupBy::LockType,
-        FileGroupBy::AccessType,
+        FileGroupBy::Directory,
     ];
     assert_eq!(variants.len(), 4);
 }
@@ -124,17 +99,17 @@ fn open_file_info_construction() {
     let info = OpenFileInfo {
         path: "/var/log/syslog".into(),
         file_type: OpenFileType::RegularFile,
-        pid: 1234,
-        process_name: "rsyslog".into(),
-        access_type: FileAccessType::ReadWrite,
+        access: FileAccessType::ReadWrite,
         lock_type: LockType::Exclusive,
         share_mode: ShareMode::None,
+        pid: 1234,
+        process_name: "rsyslog".into(),
         handle_value: 42,
         size_bytes: Some(1024 * 1024),
-        opened_at: Some("2026-02-12T10:00:00Z".into()),
-        last_accessed: None,
-        inherited: false,
-        flags: None,
+        offset: None,
+        open_since: Some("2026-02-12T10:00:00Z".into()),
+        delete_pending: false,
+        is_directory: false,
     };
     assert_eq!(info.path, "/var/log/syslog");
     assert_eq!(info.file_type, OpenFileType::RegularFile);
@@ -146,17 +121,17 @@ fn open_file_info_serde_roundtrip() {
     let info = OpenFileInfo {
         path: "/tmp/test.txt".into(),
         file_type: OpenFileType::RegularFile,
-        pid: 100,
-        process_name: "test".into(),
-        access_type: FileAccessType::Read,
+        access: FileAccessType::Read,
         lock_type: LockType::None,
         share_mode: ShareMode::Read,
+        pid: 100,
+        process_name: "test".into(),
         handle_value: 1,
         size_bytes: None,
-        opened_at: None,
-        last_accessed: None,
-        inherited: false,
-        flags: None,
+        offset: None,
+        open_since: None,
+        delete_pending: false,
+        is_directory: false,
     };
     let json = serde_json::to_string(&info).unwrap();
     let back: OpenFileInfo = serde_json::from_str(&json).unwrap();

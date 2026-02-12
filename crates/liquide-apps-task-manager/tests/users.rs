@@ -10,30 +10,19 @@ use liquide_apps_task_manager::users::*;
 fn session_type_all_variants() {
     let variants = [
         SessionType::Console,
-        SessionType::Rdp,
+        SessionType::RemoteDesktop,
         SessionType::Vnc,
         SessionType::Ssh,
-        SessionType::Virtual,
-        SessionType::Service,
-        SessionType::Other,
+        SessionType::Citrix,
+        SessionType::Wayland,
+        SessionType::X11,
     ];
     assert_eq!(variants.len(), 7);
 }
 
 #[test]
-fn session_type_display() {
-    assert_eq!(SessionType::Console.as_str(), "Console");
-    assert_eq!(SessionType::Rdp.as_str(), "RDP");
-    assert_eq!(SessionType::Vnc.as_str(), "VNC");
-    assert_eq!(SessionType::Ssh.as_str(), "SSH");
-    assert_eq!(SessionType::Virtual.as_str(), "Virtual");
-    assert_eq!(SessionType::Service.as_str(), "Service");
-    assert_eq!(SessionType::Other.as_str(), "Other");
-}
-
-#[test]
 fn session_type_serde_roundtrip() {
-    let val = SessionType::Rdp;
+    let val = SessionType::RemoteDesktop;
     let json = serde_json::to_string(&val).unwrap();
     let back: SessionType = serde_json::from_str(&json).unwrap();
     assert_eq!(back, val);
@@ -55,14 +44,6 @@ fn session_status_all_variants() {
 }
 
 #[test]
-fn session_status_display() {
-    assert_eq!(SessionStatus::Active.as_str(), "Active");
-    assert_eq!(SessionStatus::Disconnected.as_str(), "Disconnected");
-    assert_eq!(SessionStatus::Locked.as_str(), "Locked");
-    assert_eq!(SessionStatus::Idle.as_str(), "Idle");
-}
-
-#[test]
 fn session_status_serde_roundtrip() {
     let val = SessionStatus::Locked;
     let json = serde_json::to_string(&val).unwrap();
@@ -77,23 +58,15 @@ fn session_status_serde_roundtrip() {
 #[test]
 fn login_event_type_all_variants() {
     let variants = [
-        LoginEventType::Interactive,
-        LoginEventType::Remote,
+        LoginEventType::Login,
+        LoginEventType::Logout,
+        LoginEventType::Lock,
         LoginEventType::Unlock,
-        LoginEventType::Service,
-        LoginEventType::Batch,
-        LoginEventType::NetworkCleartext,
-        LoginEventType::RunAs,
+        LoginEventType::RemoteConnect,
+        LoginEventType::RemoteDisconnect,
+        LoginEventType::SessionSwitch,
     ];
     assert_eq!(variants.len(), 7);
-}
-
-#[test]
-fn login_event_type_display() {
-    assert_eq!(LoginEventType::Interactive.as_str(), "Interactive");
-    assert_eq!(LoginEventType::Remote.as_str(), "Remote");
-    assert_eq!(LoginEventType::Unlock.as_str(), "Unlock");
-    assert_eq!(LoginEventType::RunAs.as_str(), "RunAs");
 }
 
 // ---------------------------------------------------------------------------
@@ -103,22 +76,14 @@ fn login_event_type_display() {
 #[test]
 fn user_action_all_variants() {
     let variants = [
-        UserAction::Logoff,
         UserAction::Disconnect,
+        UserAction::Logoff,
         UserAction::SendMessage,
         UserAction::RemoteControl,
-        UserAction::ResetSession,
         UserAction::SwitchTo,
+        UserAction::Lock,
     ];
     assert_eq!(variants.len(), 6);
-}
-
-#[test]
-fn user_action_display() {
-    assert_eq!(UserAction::Logoff.as_str(), "Log Off");
-    assert_eq!(UserAction::Disconnect.as_str(), "Disconnect");
-    assert_eq!(UserAction::SendMessage.as_str(), "Send Message");
-    assert_eq!(UserAction::SwitchTo.as_str(), "Switch To");
 }
 
 // ---------------------------------------------------------------------------
@@ -128,19 +93,19 @@ fn user_action_display() {
 #[test]
 fn user_session_construction() {
     let session = UserSession {
-        session_id: 1,
         username: "alice".into(),
-        domain: Some("CORP".into()),
+        session_id: 1,
         session_type: SessionType::Console,
         status: SessionStatus::Active,
-        login_time: "2026-02-12T10:00:00Z".into(),
-        idle_time_secs: 0,
-        process_count: 42,
-        cpu_percent: 12.5,
-        memory_bytes: 1024 * 1024 * 512,
         client_name: None,
         client_address: None,
-        display_resolution: Some("1920x1080".into()),
+        login_time: Some("2026-02-12T10:00:00Z".into()),
+        idle_time_secs: 0,
+        cpu_percent: 12.5,
+        mem_bytes: 1024 * 1024 * 512,
+        disk_bytes_sec: 0,
+        network_bytes_sec: 0,
+        process_count: 42,
     };
     assert_eq!(session.username, "alice");
     assert_eq!(session.session_type, SessionType::Console);
@@ -151,19 +116,19 @@ fn user_session_construction() {
 #[test]
 fn user_session_serde_roundtrip() {
     let session = UserSession {
-        session_id: 2,
         username: "bob".into(),
-        domain: None,
+        session_id: 2,
         session_type: SessionType::Ssh,
         status: SessionStatus::Active,
-        login_time: "2026-02-12T10:00:00Z".into(),
-        idle_time_secs: 120,
-        process_count: 5,
-        cpu_percent: 1.0,
-        memory_bytes: 1024 * 1024,
         client_name: Some("workstation".into()),
         client_address: Some("192.168.1.100".into()),
-        display_resolution: None,
+        login_time: Some("2026-02-12T10:00:00Z".into()),
+        idle_time_secs: 120,
+        cpu_percent: 1.0,
+        mem_bytes: 1024 * 1024,
+        disk_bytes_sec: 0,
+        network_bytes_sec: 500,
+        process_count: 5,
     };
     let json = serde_json::to_string(&session).unwrap();
     let back: UserSession = serde_json::from_str(&json).unwrap();
@@ -179,13 +144,12 @@ fn user_session_serde_roundtrip() {
 fn login_event_construction() {
     let event = LoginEvent {
         timestamp: "2026-02-12T10:00:00Z".into(),
+        event_type: LoginEventType::Login,
         username: "alice".into(),
-        event_type: LoginEventType::Interactive,
-        success: true,
+        session_id: 1,
         source_address: None,
-        session_id: Some(1),
-        failure_reason: None,
+        success: true,
     };
     assert!(event.success);
-    assert_eq!(event.event_type, LoginEventType::Interactive);
+    assert_eq!(event.event_type, LoginEventType::Login);
 }

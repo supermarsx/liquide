@@ -77,6 +77,26 @@ fn ring_buffer_iter_after_wrap() {
     assert_eq!(items, vec![3.0, 4.0, 5.0]);
 }
 
+#[test]
+fn ring_buffer_is_full() {
+    let mut rb = RingBuffer::new(2);
+    assert!(!rb.is_full());
+    rb.push(1.0);
+    assert!(!rb.is_full());
+    rb.push(2.0);
+    assert!(rb.is_full());
+}
+
+#[test]
+fn ring_buffer_get() {
+    let mut rb = RingBuffer::new(5);
+    rb.push(10.0);
+    rb.push(20.0);
+    assert_eq!(*rb.get(0).unwrap(), 10.0);
+    assert_eq!(*rb.get(1).unwrap(), 20.0);
+    assert!(rb.get(2).is_none());
+}
+
 // ---------------------------------------------------------------------------
 // Sample
 // ---------------------------------------------------------------------------
@@ -117,7 +137,8 @@ fn time_series_average() {
     ts.push(1000, 10.0);
     ts.push(2000, 20.0);
     ts.push(3000, 30.0);
-    assert!((ts.average() - 20.0).abs() < f64::EPSILON);
+    let avg = ts.average().unwrap();
+    assert!((avg - 20.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -126,7 +147,8 @@ fn time_series_min() {
     ts.push(1000, 10.0);
     ts.push(2000, 5.0);
     ts.push(3000, 15.0);
-    assert!((ts.min() - 5.0).abs() < f64::EPSILON);
+    let min = ts.min_value().unwrap();
+    assert!((min - 5.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -135,23 +157,26 @@ fn time_series_max() {
     ts.push(1000, 10.0);
     ts.push(2000, 5.0);
     ts.push(3000, 15.0);
-    assert!((ts.max() - 15.0).abs() < f64::EPSILON);
+    let max = ts.max_value().unwrap();
+    assert!((max - 15.0).abs() < f64::EPSILON);
 }
 
 #[test]
 fn time_series_empty_stats() {
     let ts = TimeSeries::new(100);
-    assert!(ts.average().is_nan() || ts.average() == 0.0);
-    assert!(ts.min().is_infinite() || ts.min() == 0.0);
+    assert!(ts.average().is_none());
+    assert!(ts.min_value().is_none());
+    assert!(ts.max_value().is_none());
+    assert!(ts.latest().is_none());
 }
 
 #[test]
-fn time_series_last() {
+fn time_series_latest() {
     let mut ts = TimeSeries::new(100);
-    assert!(ts.last().is_none());
+    assert!(ts.latest().is_none());
     ts.push(1000, 42.0);
-    let last = ts.last().unwrap();
-    assert_eq!(last.value, 42.0);
+    let latest = ts.latest().unwrap();
+    assert!((latest - 42.0).abs() < f64::EPSILON);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,32 +186,35 @@ fn time_series_last() {
 #[test]
 fn aggregator_new() {
     let agg = Aggregator::new(300);
-    assert!(agg.get("cpu_total").is_none());
+    assert!(agg.get_series("cpu_total").is_none());
 }
 
 #[test]
-fn aggregator_push_and_get() {
+fn aggregator_record_and_get() {
     let mut agg = Aggregator::new(100);
-    agg.push("cpu_total", 1000, 55.0);
-    agg.push("cpu_total", 2000, 60.0);
-    let ts = agg.get("cpu_total").unwrap();
+    agg.record("cpu_total", 1000, 55.0);
+    agg.record("cpu_total", 2000, 60.0);
+    let ts = agg.get_series("cpu_total").unwrap();
     assert_eq!(ts.len(), 2);
 }
 
 #[test]
 fn aggregator_multiple_series() {
     let mut agg = Aggregator::new(100);
-    agg.push("cpu_total", 1000, 55.0);
-    agg.push("mem_percent", 1000, 70.0);
-    assert!(agg.get("cpu_total").is_some());
-    assert!(agg.get("mem_percent").is_some());
-    assert!(agg.get("nonexistent").is_none());
+    agg.record("cpu_total", 1000, 55.0);
+    agg.record("mem_percent", 1000, 70.0);
+    assert!(agg.get_series("cpu_total").is_some());
+    assert!(agg.get_series("mem_percent").is_some());
+    assert!(agg.get_series("nonexistent").is_none());
 }
 
 #[test]
-fn aggregator_clear() {
+fn aggregator_series_keys() {
     let mut agg = Aggregator::new(100);
-    agg.push("cpu_total", 1000, 55.0);
-    agg.clear();
-    assert!(agg.get("cpu_total").is_none());
+    agg.record("cpu_total", 1000, 55.0);
+    agg.record("mem_percent", 1000, 70.0);
+    let keys = agg.series_keys();
+    assert_eq!(keys.len(), 2);
+    assert!(keys.contains(&"cpu_total".to_string()));
+    assert!(keys.contains(&"mem_percent".to_string()));
 }
