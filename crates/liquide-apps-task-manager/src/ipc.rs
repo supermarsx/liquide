@@ -139,6 +139,18 @@ pub enum IpcRequest {
     /// Export data from a tab in the specified format.
     ExportData { tab: String, format: String },
 
+    // -- System event viewer requests ----------------------------------------
+    /// List system events matching a filter.
+    ListSystemEvents { filter_json: Option<String> },
+    /// Get detailed information for a specific event.
+    GetSystemEvent { record_id: u64, source: String },
+    /// Get summary statistics for the system event log.
+    GetEventLogStats,
+    /// Clear all events in a log source (requires elevation).
+    ClearEventLog { source: String },
+    /// Export system events in a given format.
+    ExportEventLog { filter_json: Option<String>, format: String },
+
     // -- Subscription requests ----------------------------------------------
     /// Subscribe to a set of event types.
     Subscribe { events: Vec<String> },
@@ -202,6 +214,11 @@ impl IpcRequest {
             Self::GetConfig => "Get Config",
             Self::SetConfig { .. } => "Set Config",
             Self::ExportData { .. } => "Export Data",
+            Self::ListSystemEvents { .. } => "List System Events",
+            Self::GetSystemEvent { .. } => "Get System Event",
+            Self::GetEventLogStats => "Get Event Log Stats",
+            Self::ClearEventLog { .. } => "Clear Event Log",
+            Self::ExportEventLog { .. } => "Export Event Log",
             Self::Subscribe { .. } => "Subscribe",
             Self::Unsubscribe => "Unsubscribe",
             Self::Ping => "Ping",

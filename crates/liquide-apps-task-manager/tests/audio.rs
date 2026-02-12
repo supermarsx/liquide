@@ -84,13 +84,13 @@ fn output_type_all_variants() {
 fn input_type_all_variants() {
     let variants = [
         InputType::Microphone,
-        InputType::LineIn,
+        InputType::Line,
+        InputType::Hdmi,
         InputType::Bluetooth,
         InputType::Usb,
-        InputType::Hdmi,
-        InputType::Spdif,
         InputType::Loopback,
         InputType::Virtual,
+        InputType::Array,
     ];
     assert_eq!(variants.len(), 8);
 }
@@ -138,7 +138,7 @@ fn exclusive_mode_all_variants() {
     let variants = [
         ExclusiveMode::Shared,
         ExclusiveMode::Exclusive,
-        ExclusiveMode::Passthrough,
+        ExclusiveMode::ExclusiveAllowed,
     ];
     assert_eq!(variants.len(), 3);
 }
@@ -151,10 +151,10 @@ fn exclusive_mode_all_variants() {
 fn spatial_mode_all_variants() {
     let variants = [
         SpatialMode::Off,
-        SpatialMode::Stereo,
-        SpatialMode::Surround,
-        SpatialMode::Binaural,
-        SpatialMode::ObjectBased,
+        SpatialMode::WindowsSonic,
+        SpatialMode::DolbyAtmos,
+        SpatialMode::DtsX,
+        SpatialMode::Custom,
     ];
     assert_eq!(variants.len(), 5);
 }
@@ -217,12 +217,12 @@ fn stream_action_all_variants() {
         StreamAction::Mute,
         StreamAction::Unmute,
         StreamAction::SetVolume,
+        StreamAction::Pause,
+        StreamAction::Resume,
         StreamAction::Redirect,
-        StreamAction::AddEffect,
-        StreamAction::RemoveEffect,
-        StreamAction::Properties,
-        StreamAction::Record,
-        StreamAction::Monitor,
+        StreamAction::Duck,
+        StreamAction::Unduck,
+        StreamAction::Close,
     ];
     assert_eq!(variants.len(), 9);
 }
@@ -349,12 +349,12 @@ fn fft_window_all_variants() {
 #[test]
 fn spectrum_mode_all_variants() {
     let variants = [
-        SpectrumMode::ThirdOctave,
-        SpectrumMode::FullOctave,
         SpectrumMode::Linear,
-        SpectrumMode::Log,
-        SpectrumMode::Mel,
+        SpectrumMode::Logarithmic,
+        SpectrumMode::Octave,
+        SpectrumMode::ThirdOctave,
         SpectrumMode::Bark,
+        SpectrumMode::Mel,
         SpectrumMode::Erb,
     ];
     assert_eq!(variants.len(), 7);

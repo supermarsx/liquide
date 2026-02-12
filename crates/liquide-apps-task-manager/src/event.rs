@@ -124,6 +124,12 @@ pub enum TaskManagerEvent {
     // -- Configuration events -----------------------------------------------
     /// A configuration value was changed.
     ConfigChanged { key: String },
+
+    // -- System event log events --------------------------------------------
+    /// A critical or error event appeared in the system event log.
+    SystemEventLogAlert { source: String, event_id: u32, message: String },
+    /// An event log was cleared.
+    EventLogCleared { source: String },
 }
 
 impl TaskManagerEvent {
@@ -171,6 +177,8 @@ impl TaskManagerEvent {
             Self::PluginLoaded { .. } => "Plugin Loaded",
             Self::PluginUnloaded { .. } => "Plugin Unloaded",
             Self::ConfigChanged { .. } => "Config Changed",
+            Self::SystemEventLogAlert { .. } => "System Event Log Alert",
+            Self::EventLogCleared { .. } => "Event Log Cleared",
         }
     }
 }
@@ -190,6 +198,7 @@ impl fmt::Display for TaskManagerEvent {
 /// All fields are optional; when `None` the corresponding dimension is
 /// unfiltered (i.e. all values pass).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct EventFilter {
     /// Only emit events whose type name (snake_case) is in this list.
     pub event_types: Option<Vec<String>>,
@@ -199,12 +208,3 @@ pub struct EventFilter {
     pub min_severity: Option<String>,
 }
 
-impl Default for EventFilter {
-    fn default() -> Self {
-        Self {
-            event_types: None,
-            pids: None,
-            min_severity: None,
-        }
-    }
-}

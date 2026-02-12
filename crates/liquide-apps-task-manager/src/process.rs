@@ -121,20 +121,17 @@ impl fmt::Display for GroupingMode {
 /// Scheduling priority classes (see spec section 4.5 – Set Priority).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SchedulingPriority {
     Realtime,
     High,
     AboveNormal,
+    #[default]
     Normal,
     BelowNormal,
     Idle,
 }
 
-impl Default for SchedulingPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 impl SchedulingPriority {
     pub fn as_str(&self) -> &'static str {
@@ -162,19 +159,16 @@ impl fmt::Display for SchedulingPriority {
 /// I/O scheduling priority levels (see spec section 4.5 – Set I/O Priority).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum IoPriority {
     Critical,
     High,
+    #[default]
     Normal,
     Low,
     VeryLow,
 }
 
-impl Default for IoPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 impl IoPriority {
     pub fn as_str(&self) -> &'static str {

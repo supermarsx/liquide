@@ -17,7 +17,7 @@ use liquide_apps_task_manager::ui::TabId;
 #[derive(Debug, Parser)]
 #[command(name = "liquid-taskmanager", version, about)]
 struct Cli {
-    /// Tab name (processes, performance, app_history, startup, users, services, devices, files, unlock, process_tree, network, energy, audio).
+    /// Tab name (processes, performance, app_history, startup, users, services, devices, files, unlock, process_tree, network, energy, audio, events).
     #[arg(long)]
     tab: Option<String>,
 
@@ -263,6 +263,52 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
+
+    // ── Event viewer subcommands ────────────────────────────────────
+
+    /// List system events with optional filtering.
+    EventLog {
+        /// Log source (application, system, security, setup, hardware, all).
+        #[arg(long, default_value = "all")]
+        source: String,
+        /// Minimum severity level (verbose, information, warning, error, critical).
+        #[arg(long, default_value = "information")]
+        level: String,
+        /// Maximum number of events to return.
+        #[arg(long, default_value = "100")]
+        limit: u32,
+        /// Output format.
+        #[arg(long, default_value = "json")]
+        format: String,
+        /// Output file path.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Get summary statistics for the system event log.
+    EventStats,
+
+    /// Clear a specific event log (requires elevation).
+    EventClear {
+        /// Log source to clear (application, system, security).
+        source: String,
+    },
+
+    /// Export system events.
+    EventExport {
+        /// Output format (csv, json, xml, evtx, html).
+        #[arg(long, default_value = "csv")]
+        format: String,
+        /// Output file path.
+        #[arg(long)]
+        output: PathBuf,
+        /// Log source filter.
+        #[arg(long)]
+        source: Option<String>,
+        /// Maximum number of hours to include.
+        #[arg(long)]
+        hours: Option<u32>,
+    },
 }
 
 #[tokio::main]
@@ -303,6 +349,7 @@ async fn main() -> Result<()> {
             "network" => TabId::NetworkTraffic,
             "energy" => TabId::EnergyPower,
             "audio" => TabId::Audio,
+            "events" | "event_viewer" => TabId::SystemEventViewer,
             other => anyhow::bail!("unknown tab: {other}"),
         };
         runtime.set_active_tab(tab).await;
@@ -469,6 +516,37 @@ async fn main() -> Result<()> {
             output,
         }) => {
             tracing::info!(%device, duration, ?output, "audio record");
+            Ok(())
+        }
+
+        Some(Command::EventLog {
+            source,
+            level,
+            limit,
+            format,
+            output,
+        }) => {
+            tracing::info!(%source, %level, limit, %format, ?output, "event log");
+            Ok(())
+        }
+
+        Some(Command::EventStats) => {
+            tracing::info!("event stats");
+            Ok(())
+        }
+
+        Some(Command::EventClear { source }) => {
+            tracing::info!(%source, "event clear");
+            Ok(())
+        }
+
+        Some(Command::EventExport {
+            format,
+            output,
+            source,
+            hours,
+        }) => {
+            tracing::info!(%format, ?output, ?source, ?hours, "event export");
             Ok(())
         }
     }

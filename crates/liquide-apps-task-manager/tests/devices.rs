@@ -57,12 +57,12 @@ fn device_status_all_variants() {
 fn bus_type_all_variants() {
     let variants = [
         BusType::Pci,
-        BusType::Pcie,
+        BusType::PciExpress,
         BusType::Usb,
         BusType::Thunderbolt,
         BusType::Sata,
         BusType::Nvme,
-        BusType::I2c,
+        BusType::Bluetooth,
         BusType::Virtual,
     ];
     assert_eq!(variants.len(), 8);
@@ -75,10 +75,10 @@ fn bus_type_all_variants() {
 #[test]
 fn device_view_mode_all_variants() {
     let variants = [
-        DeviceViewMode::ByCategory,
-        DeviceViewMode::ByBus,
+        DeviceViewMode::ByType,
+        DeviceViewMode::ByConnection,
         DeviceViewMode::ByStatus,
-        DeviceViewMode::FlatList,
+        DeviceViewMode::ByDriver,
     ];
     assert_eq!(variants.len(), 4);
 }
@@ -107,7 +107,7 @@ fn usb_speed_all_variants() {
 fn bluetooth_type_all_variants() {
     let variants = [
         BluetoothType::Classic,
-        BluetoothType::Le,
+        BluetoothType::LowEnergy,
         BluetoothType::Dual,
     ];
     assert_eq!(variants.len(), 3);
@@ -120,7 +120,7 @@ fn bt_protocol_all_variants() {
         BtProtocol::Hfp,
         BtProtocol::Hid,
         BtProtocol::Pan,
-        BtProtocol::Gatt,
+        BtProtocol::Spp,
     ];
     assert_eq!(variants.len(), 5);
 }
@@ -140,7 +140,7 @@ fn device_info_construction() {
         driver_name: Some("e1000e".into()),
         driver_version: Some("12.19.0".into()),
         driver_date: Some("2025-11-01".into()),
-        bus_type: Some(BusType::Pcie),
+        bus_type: Some(BusType::PciExpress),
         location: Some("PCI bus 0, device 25".into()),
         physical_device_object: None,
         hardware_ids: vec!["PCI\\VEN_8086&DEV_1234".into()],
@@ -218,7 +218,7 @@ fn bluetooth_device_construction() {
     let bt = BluetoothDevice {
         name: "AirPods".into(),
         address: "AA:BB:CC:DD:EE:FF".into(),
-        bt_type: BluetoothType::Le,
+        bt_type: BluetoothType::LowEnergy,
         connected: true,
         paired: true,
         battery_percent: Some(85),

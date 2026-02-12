@@ -275,22 +275,22 @@ fn app_protocol_all_variants() {
     let variants = [
         AppProtocol::Http,
         AppProtocol::Https,
-        AppProtocol::Dns,
-        AppProtocol::Ssh,
         AppProtocol::Ftp,
+        AppProtocol::Ssh,
         AppProtocol::Smtp,
-        AppProtocol::Imap,
         AppProtocol::Pop3,
+        AppProtocol::Imap,
+        AppProtocol::Dns,
+        AppProtocol::Dhcp,
+        AppProtocol::Ntp,
+        AppProtocol::Snmp,
         AppProtocol::Rdp,
         AppProtocol::Vnc,
-        AppProtocol::Ntp,
-        AppProtocol::Dhcp,
-        AppProtocol::Smb,
-        AppProtocol::Nfs,
         AppProtocol::Mqtt,
-        AppProtocol::Websocket,
+        AppProtocol::WebSocket,
         AppProtocol::Grpc,
-        AppProtocol::Unknown,
+        AppProtocol::Quic,
+        AppProtocol::Other,
     ];
     assert_eq!(variants.len(), 18);
 }
@@ -302,9 +302,9 @@ fn app_protocol_all_variants() {
 #[test]
 fn qos_priority_all_variants() {
     let variants = [
-        QosPriority::Realtime,
+        QosPriority::Critical,
         QosPriority::High,
-        QosPriority::Normal,
+        QosPriority::Medium,
         QosPriority::Low,
         QosPriority::Background,
     ];
@@ -320,8 +320,8 @@ fn node_type_all_variants() {
     let variants = [
         NodeType::Router,
         NodeType::Switch,
-        NodeType::AccessPoint,
         NodeType::Host,
+        NodeType::Firewall,
         NodeType::Unknown,
     ];
     assert_eq!(variants.len(), 5);

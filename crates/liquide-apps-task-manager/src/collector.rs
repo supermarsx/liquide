@@ -11,6 +11,7 @@ use crate::network::connection::ConnectionInfo;
 use crate::performance::*;
 use crate::process::ProcessInfo;
 use crate::services::ServiceInfo;
+use crate::system_events::SystemEvent;
 
 /// Collects per-process data from the operating system.
 ///
@@ -94,4 +95,13 @@ pub trait EnergyCollector {
 pub trait AudioCollector {
     /// Return a snapshot of every active audio stream.
     fn list_audio_streams(&self) -> Result<Vec<AudioStream>, String>;
+}
+
+/// Collects system event log entries.
+///
+/// Implementations read from the Windows Event Log, Linux journald,
+/// or macOS Unified Logging to enumerate system events.
+pub trait SystemEventCollector {
+    /// Return recent system events, optionally filtered by source.
+    fn list_events(&self, source: Option<&str>, max: u32) -> Result<Vec<SystemEvent>, String>;
 }

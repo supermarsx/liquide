@@ -36,6 +36,8 @@ pub enum TabId {
     EnergyPower,
     /// Audio device and stream management.
     Audio,
+    /// System event log viewer.
+    SystemEventViewer,
 }
 
 impl TabId {
@@ -56,6 +58,7 @@ impl TabId {
             Self::NetworkTraffic => "Network Traffic",
             Self::EnergyPower => "Energy & Power",
             Self::Audio => "Audio",
+            Self::SystemEventViewer => "Event Viewer",
         }
     }
 }

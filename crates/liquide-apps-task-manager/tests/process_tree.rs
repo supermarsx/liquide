@@ -37,8 +37,8 @@ fn tree_feature_serde_roundtrip() {
 #[test]
 fn tree_color_mode_all_variants() {
     let variants = [
+        TreeColorMode::None,
         TreeColorMode::ByUser,
-        TreeColorMode::ByCpu,
         TreeColorMode::ByStatus,
     ];
     assert_eq!(variants.len(), 3);

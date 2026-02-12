@@ -26,6 +26,7 @@ pub mod runtime;
 pub mod services;
 pub mod shortcut;
 pub mod startup;
+pub mod system_events;
 pub mod ui;
 pub mod unlock;
 pub mod users;
@@ -86,6 +87,10 @@ pub enum TaskManagerError {
     /// Network diagnostics error.
     #[error("network error: {0}")]
     NetworkError(String),
+
+    /// Event log query failure.
+    #[error("event log error: {0}")]
+    EventLogError(String),
 }
 
 /// Convenience result alias for this crate.

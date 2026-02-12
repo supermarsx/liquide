@@ -38,6 +38,7 @@ impl fmt::Display for TimePeriod {
 
 /// Historical resource consumption record for a single application.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AppHistoryEntry {
     /// Application name.
     pub name: String,
@@ -77,27 +78,3 @@ pub struct AppHistoryEntry {
     pub first_seen: Option<String>,
 }
 
-impl Default for AppHistoryEntry {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            publisher: None,
-            cpu_time_total_ms: 0,
-            cpu_time_foreground_ms: 0,
-            network_bytes_total: 0,
-            network_bytes_foreground: 0,
-            metered_network_bytes: 0,
-            tile_updates: 0,
-            notifications_sent: 0,
-            gpu_time_ms: 0,
-            gpu_dedicated_bytes_peak: 0,
-            gpu_shared_bytes_peak: 0,
-            disk_read_total_bytes: 0,
-            disk_write_total_bytes: 0,
-            power_usage_avg: None,
-            launch_count: 0,
-            last_used: None,
-            first_seen: None,
-        }
-    }
-}

@@ -477,6 +477,7 @@ impl Default for CpuStats {
 
 /// Detailed memory statistics displayed in the memory performance panel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct MemoryStats {
     /// Physical RAM currently in use (bytes).
     pub in_use_bytes: u64,
@@ -524,34 +525,6 @@ pub struct MemoryStats {
     pub compressed_bytes: Option<u64>,
 }
 
-impl Default for MemoryStats {
-    fn default() -> Self {
-        Self {
-            in_use_bytes: 0,
-            available_bytes: 0,
-            committed_bytes: 0,
-            commit_limit_bytes: 0,
-            cached_bytes: 0,
-            paged_pool_bytes: 0,
-            nonpaged_pool_bytes: 0,
-            total_bytes: 0,
-            speed_mhz: 0,
-            effective_speed_mt: 0,
-            slots_used: 0,
-            slots_total: 0,
-            form_factor: String::new(),
-            memory_type: String::new(),
-            channel_config: String::new(),
-            hardware_reserved_bytes: 0,
-            numa_nodes: 0,
-            ecc: None,
-            page_file_usage_bytes: 0,
-            page_file_max_bytes: 0,
-            compression_ratio: None,
-            compressed_bytes: None,
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // DiskStats
@@ -778,6 +751,7 @@ impl Default for GpuStats {
 /// Detailed per-adapter network statistics displayed in the network
 /// performance panel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct NetworkPerfStats {
     /// Current outbound throughput (bytes per second).
     pub send_bytes_sec: u64,
@@ -837,40 +811,6 @@ pub struct NetworkPerfStats {
     pub discards_out: u64,
 }
 
-impl Default for NetworkPerfStats {
-    fn default() -> Self {
-        Self {
-            send_bytes_sec: 0,
-            recv_bytes_sec: 0,
-            send_total_bytes: 0,
-            recv_total_bytes: 0,
-            send_packets_sec: 0,
-            recv_packets_sec: 0,
-            send_total_packets: 0,
-            recv_total_packets: 0,
-            active_connections: 0,
-            adapter_name: String::new(),
-            adapter_type: String::new(),
-            link_speed_mbps: 0,
-            ipv4_address: None,
-            ipv6_address: None,
-            mac_address: None,
-            dns_servers: Vec::new(),
-            gateway: None,
-            subnet_mask: None,
-            dhcp_enabled: false,
-            connection_type: String::new(),
-            signal_strength_dbm: None,
-            ssid: None,
-            frequency_mhz: None,
-            channel: None,
-            errors_in: 0,
-            errors_out: 0,
-            discards_in: 0,
-            discards_out: 0,
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // PowerStats
@@ -878,6 +818,7 @@ impl Default for NetworkPerfStats {
 
 /// Power and battery statistics displayed in the power performance panel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct PowerStats {
     /// Whether the system is running on AC power.
     pub ac_power: bool,
@@ -905,24 +846,6 @@ pub struct PowerStats {
     pub charge_rate_watts: Option<f64>,
 }
 
-impl Default for PowerStats {
-    fn default() -> Self {
-        Self {
-            ac_power: false,
-            battery_present: false,
-            battery_percent: None,
-            battery_remaining_secs: None,
-            battery_state: String::new(),
-            system_power_watts: None,
-            cpu_power_watts: None,
-            gpu_power_watts: None,
-            display_power_watts: None,
-            current_power_plan: String::new(),
-            energy_rate_mwh: None,
-            charge_rate_watts: None,
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // AudioPerfStats

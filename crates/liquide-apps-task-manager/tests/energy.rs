@@ -281,10 +281,10 @@ fn fan_info_construction() {
 #[test]
 fn carbon_intensity_source_all_variants() {
     let variants = [
-        CarbonIntensitySource::ElectricityMaps,
-        CarbonIntensitySource::WattTime,
+        CarbonIntensitySource::Grid,
+        CarbonIntensitySource::Average,
         CarbonIntensitySource::Manual,
-        CarbonIntensitySource::None,
+        CarbonIntensitySource::Estimated,
     ];
     assert_eq!(variants.len(), 4);
 }
@@ -318,8 +318,8 @@ fn wake_lock_type_all_variants() {
     let variants = [
         WakeLockType::System,
         WakeLockType::Display,
-        WakeLockType::Audio,
-        WakeLockType::Network,
+        WakeLockType::PartialWake,
+        WakeLockType::ProximityWake,
     ];
     assert_eq!(variants.len(), 4);
 }

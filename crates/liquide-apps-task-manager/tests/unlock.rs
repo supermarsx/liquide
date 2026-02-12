@@ -35,9 +35,9 @@ fn unlock_operation_serde_roundtrip() {
 #[test]
 fn batch_mode_all_variants() {
     let variants = [
-        BatchMode::Sequential,
-        BatchMode::Parallel,
-        BatchMode::DryRun,
+        BatchMode::Individual,
+        BatchMode::AllForFile,
+        BatchMode::AllForProcess,
     ];
     assert_eq!(variants.len(), 3);
 }
@@ -49,9 +49,9 @@ fn batch_mode_all_variants() {
 #[test]
 fn confirmation_level_all_variants() {
     let variants = [
-        ConfirmationLevel::Always,
-        ConfirmationLevel::Elevated,
-        ConfirmationLevel::Never,
+        ConfirmationLevel::None,
+        ConfirmationLevel::Simple,
+        ConfirmationLevel::Detailed,
     ];
     assert_eq!(variants.len(), 3);
 }
@@ -83,13 +83,14 @@ fn unlock_target_construction() {
 #[test]
 fn unlock_safety_options_construction() {
     let opts = UnlockSafetyOptions {
-        create_backup: true,
-        create_process_dump: false,
-        confirmation_level: ConfirmationLevel::Always,
-        batch_mode: BatchMode::Sequential,
+        confirm_level: ConfirmationLevel::Simple,
+        create_restore_point: true,
+        backup_before_unlock: true,
+        close_gracefully_first: false,
+        timeout_ms: 5000,
     };
-    assert!(opts.create_backup);
-    assert!(!opts.create_process_dump);
+    assert!(opts.backup_before_unlock);
+    assert!(!opts.close_gracefully_first);
 }
 
 // ---------------------------------------------------------------------------

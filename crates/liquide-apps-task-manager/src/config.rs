@@ -13,6 +13,7 @@ use crate::ui::{TabId, ViewMode};
 
 /// Complete task-manager configuration, serializable to/from TOML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct TaskManagerConfig {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -48,36 +49,16 @@ pub struct TaskManagerConfig {
     pub accessibility: AccessibilityConfig,
     #[serde(default)]
     pub advanced: AdvancedConfig,
+    #[serde(default)]
+    pub system_events: SystemEventsConfig,
 }
 
-impl Default for TaskManagerConfig {
-    fn default() -> Self {
-        Self {
-            general: GeneralConfig::default(),
-            processes: ProcessesConfig::default(),
-            performance: PerformanceConfig::default(),
-            app_history: AppHistoryConfig::default(),
-            startup: StartupConfig::default(),
-            services: ServicesConfig::default(),
-            files_in_use: FilesInUseConfig::default(),
-            unlock: UnlockConfig::default(),
-            network_traffic: NetworkTrafficConfig::default(),
-            energy: EnergyConfig::default(),
-            audio: AudioConfig::default(),
-            notifications: NotificationsConfig::default(),
-            export: ExportConfig::default(),
-            plugins: PluginsConfig::default(),
-            keyboard: KeyboardConfig::default(),
-            accessibility: AccessibilityConfig::default(),
-            advanced: AdvancedConfig::default(),
-        }
-    }
-}
 
 // ── §17.1  General ─────────────────────────────────────────────────
 
 /// General application settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GeneralConfig {
     pub default_tab: TabId,
     pub view_mode: ViewMode,
@@ -1110,4 +1091,54 @@ pub enum LogLevel {
 pub enum ScanMethod {
     Snapshot,
     Incremental,
+}
+
+// ── §17.18  System Events ──────────────────────────────────────────
+
+/// System event viewer settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemEventsConfig {
+    /// Default log source view on tab open.
+    pub default_view: String,
+    /// Maximum number of events to load at startup.
+    pub max_events_loaded: u32,
+    /// Auto-refresh interval in milliseconds (0 = off).
+    pub auto_refresh_ms: u32,
+    /// Whether to show verbose-level events by default.
+    pub show_verbose: bool,
+    /// Whether to show informational events by default.
+    pub show_information: bool,
+    /// Whether to show warning events by default.
+    pub show_warnings: bool,
+    /// Whether to show error events by default.
+    pub show_errors: bool,
+    /// Whether to show critical events by default.
+    pub show_critical: bool,
+    /// Enable desktop notifications for critical events.
+    pub notify_critical: bool,
+    /// Enable desktop notifications for error events.
+    pub notify_errors: bool,
+    /// Date range in hours to load on initial view (0 = all).
+    pub default_hours_range: u32,
+    /// Whether to resolve SIDs to user names.
+    pub resolve_sids: bool,
+}
+
+impl Default for SystemEventsConfig {
+    fn default() -> Self {
+        Self {
+            default_view: "all".into(),
+            max_events_loaded: 10000,
+            auto_refresh_ms: 5000,
+            show_verbose: false,
+            show_information: true,
+            show_warnings: true,
+            show_errors: true,
+            show_critical: true,
+            notify_critical: true,
+            notify_errors: false,
+            default_hours_range: 24,
+            resolve_sids: true,
+        }
+    }
 }
