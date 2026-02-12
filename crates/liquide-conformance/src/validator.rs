@@ -68,13 +68,16 @@ pub fn validate_version(version: &str) -> ValidationResult {
 
 /// Validate that a channel ID is a known channel.
 #[must_use]
-pub fn validate_channel_id(raw: u8) -> ValidationResult {
-    if ChannelId::from_u8(raw).is_some() {
-        ValidationResult::pass(format!("channel ID {raw} is valid"))
+pub fn validate_channel_id(raw: u16) -> ValidationResult {
+    let channel = ChannelId::from_u16(raw);
+    if channel != ChannelId::RESERVED
+        && liquide_protocol::channel::ALL_CHANNELS.contains(&channel)
+    {
+        ValidationResult::pass(format!("channel ID 0x{raw:02X} is valid"))
     } else {
         ValidationResult::fail(
-            format!("channel ID {raw} is valid"),
-            format!("unknown channel ID: {raw}"),
+            format!("channel ID 0x{raw:02X} is valid"),
+            format!("unknown channel ID: 0x{raw:02X}"),
         )
     }
 }
@@ -98,18 +101,20 @@ pub fn validate_frame_header(header: &FrameHeader) -> Vec<ValidationResult> {
     let mut results = Vec::new();
 
     // Channel must be valid.
-    results.push(validate_channel_id(header.channel.as_u8()));
+    results.push(validate_channel_id(header.channel.as_u16()));
 
     // Payload must be within limits.
-    results.push(validate_payload_size(header.payload_len));
+    results.push(validate_payload_size(header.payload_len as u32));
 
     // Flags should only use known bits.
-    let known_mask = FrameFlags::FIN
-        | FrameFlags::COMPRESSED
-        | FrameFlags::ENCRYPTED
-        | FrameFlags::ACK_REQUIRED
-        | FrameFlags::ACK
-        | FrameFlags::PRIORITY;
+    let known_mask = FrameFlags::COMPRESSED
+        | FrameFlags::FRAGMENTED
+        | FrameFlags::CRC
+        | FrameFlags::PRIORITY
+        | FrameFlags::RELIABLE
+        | FrameFlags::ORDERED
+        | FrameFlags::KEYFRAME
+        | FrameFlags::CONGESTION_MARK;
     let unknown = header.flags & !known_mask;
     if unknown == 0 {
         results.push(ValidationResult::pass("frame flags use only known bits"));
@@ -120,17 +125,10 @@ pub fn validate_frame_header(header: &FrameHeader) -> Vec<ValidationResult> {
         ));
     }
 
-    // ACK and ACK_REQUIRED are mutually exclusive.
-    if header.flags & FrameFlags::ACK != 0 && header.flags & FrameFlags::ACK_REQUIRED != 0 {
-        results.push(ValidationResult::fail(
-            "ACK and ACK_REQUIRED mutually exclusive",
-            "frame has both ACK and ACK_REQUIRED set",
-        ));
-    } else {
-        results.push(ValidationResult::pass(
-            "ACK and ACK_REQUIRED mutually exclusive",
-        ));
-    }
+    // RELIABLE and ORDERED are independent; no mutual-exclusion constraint.
+    results.push(ValidationResult::pass(
+        "frame flag combinations are valid",
+    ));
 
     results
 }
@@ -158,13 +156,14 @@ pub fn validate_message_type(raw: u16) -> ValidationResult {
     // Known ranges from the protocol spec.
     let known = matches!(
         raw,
-        0x0001..=0x0007 // Handshake & session
-        | 0x0100..=0x0103 // Auth
-        | 0x0200..=0x0202 // Graphics
-        | 0x0300..=0x0302 // Input
-        | 0x0400..=0x0402 // Clipboard
-        | 0x0500..=0x0501 // Audio
-        | 0x0600..=0x0602 // USB
+        0x0001..=0x0031 // Control channel
+        | 0x0101..=0x010E // Emergency channel
+        | 0x1001..=0x1006 // Video channel
+        | 0x1101..=0x1103 // Cursor channel
+        | 0x1201..=0x1207 // Tile channel
+        | 0x2001..=0x2004 // Audio channel
+        | 0x3001..=0x3007 // Clipboard channel
+        | 0x5001..=0x500E // Input channel
     );
 
     if known {
@@ -180,14 +179,15 @@ pub fn validate_message_type(raw: u16) -> ValidationResult {
 /// Validate that a frame header on the Control channel uses the expected channel.
 #[must_use]
 pub fn validate_control_channel(header: &FrameHeader) -> ValidationResult {
-    if header.channel == ChannelId::Control {
+    if header.channel == ChannelId::CONTROL {
         ValidationResult::pass("message routed on Control channel")
     } else {
         ValidationResult::fail(
             "message routed on Control channel",
             format!(
-                "expected Control (0), got channel {}",
-                header.channel.as_u8()
+                "expected Control (0x{:02X}), got channel 0x{:02X}",
+                ChannelId::CONTROL.as_u16(),
+                header.channel.as_u16()
             ),
         )
     }

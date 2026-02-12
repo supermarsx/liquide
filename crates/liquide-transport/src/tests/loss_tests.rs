@@ -64,23 +64,23 @@ fn tracker_first_packet_always_in_order() {
 fn default_strategies() {
     let mgr = LossRecoveryManager::new();
     assert_eq!(
-        mgr.strategy(ChannelId::Graphics),
+        mgr.strategy(ChannelId::VIDEO),
         RecoveryStrategy::VideoKeyframe
     );
     assert_eq!(
-        mgr.strategy(ChannelId::Audio),
+        mgr.strategy(ChannelId::AUDIO_PLAYBACK),
         RecoveryStrategy::AudioPlc
     );
     assert_eq!(
-        mgr.strategy(ChannelId::Input),
+        mgr.strategy(ChannelId::INPUT),
         RecoveryStrategy::ReliableRetransmit
     );
     assert_eq!(
-        mgr.strategy(ChannelId::Control),
+        mgr.strategy(ChannelId::CONTROL),
         RecoveryStrategy::ReliableRetransmit
     );
     assert_eq!(
-        mgr.strategy(ChannelId::File),
+        mgr.strategy(ChannelId::FILE_TRANSFER),
         RecoveryStrategy::ReliableRetransmit
     );
 }
@@ -92,33 +92,33 @@ fn default_strategies() {
 #[test]
 fn dispatch_video_keyframe() {
     let mut mgr = LossRecoveryManager::new();
-    mgr.on_packet(ChannelId::Graphics, 0);
-    let action = mgr.on_packet(ChannelId::Graphics, 5); // gap
+    mgr.on_packet(ChannelId::VIDEO, 0);
+    let action = mgr.on_packet(ChannelId::VIDEO, 5); // gap
     assert_eq!(action, Some(RecoveryAction::KeyFrameRequest));
 }
 
 #[test]
 fn dispatch_audio_plc() {
     let mut mgr = LossRecoveryManager::new();
-    mgr.on_packet(ChannelId::Audio, 0);
-    let action = mgr.on_packet(ChannelId::Audio, 3); // gap
+    mgr.on_packet(ChannelId::AUDIO_PLAYBACK, 0);
+    let action = mgr.on_packet(ChannelId::AUDIO_PLAYBACK, 3); // gap
     assert_eq!(action, Some(RecoveryAction::Plc));
 }
 
 #[test]
 fn dispatch_retransmit() {
     let mut mgr = LossRecoveryManager::new();
-    mgr.on_packet(ChannelId::Input, 0);
-    let action = mgr.on_packet(ChannelId::Input, 2); // gap
+    mgr.on_packet(ChannelId::INPUT, 0);
+    let action = mgr.on_packet(ChannelId::INPUT, 2); // gap
     assert_eq!(action, Some(RecoveryAction::Retransmit));
 }
 
 #[test]
 fn dispatch_in_order_no_action() {
     let mut mgr = LossRecoveryManager::new();
-    assert!(mgr.on_packet(ChannelId::Control, 0).is_none());
-    assert!(mgr.on_packet(ChannelId::Control, 1).is_none());
-    assert!(mgr.on_packet(ChannelId::Control, 2).is_none());
+    assert!(mgr.on_packet(ChannelId::CONTROL, 0).is_none());
+    assert!(mgr.on_packet(ChannelId::CONTROL, 1).is_none());
+    assert!(mgr.on_packet(ChannelId::CONTROL, 2).is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -128,9 +128,9 @@ fn dispatch_in_order_no_action() {
 #[test]
 fn custom_strategy() {
     let mut mgr = LossRecoveryManager::new();
-    mgr.set_strategy(ChannelId::Graphics, RecoveryStrategy::CursorLatest);
-    mgr.on_packet(ChannelId::Graphics, 0);
-    let action = mgr.on_packet(ChannelId::Graphics, 5);
+    mgr.set_strategy(ChannelId::VIDEO, RecoveryStrategy::CursorLatest);
+    mgr.on_packet(ChannelId::VIDEO, 0);
+    let action = mgr.on_packet(ChannelId::VIDEO, 5);
     assert_eq!(action, Some(RecoveryAction::Ignore));
 }
 
@@ -141,8 +141,8 @@ fn custom_strategy() {
 #[test]
 fn tracker_access() {
     let mut mgr = LossRecoveryManager::new();
-    assert!(mgr.tracker(ChannelId::Control).is_none());
-    mgr.on_packet(ChannelId::Control, 0);
-    let tracker = mgr.tracker(ChannelId::Control).unwrap();
+    assert!(mgr.tracker(ChannelId::CONTROL).is_none());
+    mgr.on_packet(ChannelId::CONTROL, 0);
+    let tracker = mgr.tracker(ChannelId::CONTROL).unwrap();
     assert_eq!(tracker.expected_seq(), 1);
 }

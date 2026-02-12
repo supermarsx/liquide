@@ -16,11 +16,11 @@ async fn connection_send_recv_frame() {
         let (transport, _) = listener.accept().await.unwrap();
         let conn = Connection::new(transport);
         let (header, payload) = conn.recv_frame().await.unwrap();
-        assert_eq!(header.channel, ChannelId::Graphics);
+        assert_eq!(header.channel, ChannelId::VIDEO);
         assert_eq!(header.sequence, 1);
         assert_eq!(&payload[..], b"tile data");
 
-        let reply_hdr = FrameHeader::new(ChannelId::Control, 2, FrameFlags::FIN, 2);
+        let reply_hdr = FrameHeader::new(ChannelId::CONTROL, 2, 0, 0, FrameFlags::RELIABLE, 2);
         conn.send_frame(&reply_hdr, b"ok").await.unwrap();
     });
 
@@ -29,13 +29,13 @@ async fn connection_send_recv_frame() {
         .unwrap();
     assert!(conn.is_connected());
 
-    let hdr = FrameHeader::new(ChannelId::Graphics, 1, FrameFlags::NONE, 9);
+    let hdr = FrameHeader::new(ChannelId::VIDEO, 1, 0, 0, 0, 9);
     conn.send_frame(&hdr, b"tile data").await.unwrap();
 
     let (reply_hdr, reply_payload) = conn.recv_frame().await.unwrap();
-    assert_eq!(reply_hdr.channel, ChannelId::Control);
+    assert_eq!(reply_hdr.channel, ChannelId::CONTROL);
     assert_eq!(reply_hdr.sequence, 2);
-    assert!(reply_hdr.is_fin());
+    assert!(reply_hdr.is_reliable());
     assert_eq!(&reply_payload[..], b"ok");
 
     server.await.unwrap();

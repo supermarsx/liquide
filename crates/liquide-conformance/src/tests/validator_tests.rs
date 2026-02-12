@@ -1,6 +1,7 @@
 //! Tests for protocol validators.
 
 use crate::validator;
+use liquide_protocol::channel::ALL_CHANNELS;
 use liquide_protocol::{ChannelId, FrameFlags, FrameHeader, MessageType, MAGIC, PROTOCOL_VERSION};
 
 // ===========================================================================
@@ -49,22 +50,22 @@ fn test_empty_version() {
 
 #[test]
 fn test_known_channels() {
-    for id in 0..=10u8 {
-        let result = validator::validate_channel_id(id);
-        assert!(result.passed, "channel {id} should be valid");
+    for &channel in ALL_CHANNELS {
+        let result = validator::validate_channel_id(channel.as_u16());
+        assert!(result.passed, "channel 0x{:02X} should be valid", channel.as_u16());
     }
 }
 
 #[test]
 fn test_unknown_channel() {
-    let result = validator::validate_channel_id(255);
+    let result = validator::validate_channel_id(0xFF);
     assert!(!result.passed);
 }
 
 #[test]
 fn test_channel_boundary() {
-    // Channel 11 should be unknown.
-    let result = validator::validate_channel_id(11);
+    // Channel 0x99 is not assigned to any known channel.
+    let result = validator::validate_channel_id(0x99);
     assert!(!result.passed);
 }
 
@@ -108,40 +109,39 @@ fn test_huge_payload() {
 
 #[test]
 fn test_valid_frame_header() {
-    let header = FrameHeader::new(ChannelId::Control, 1, FrameFlags::FIN, 100);
+    let header = FrameHeader::new(ChannelId::CONTROL, 1, 0, 0, FrameFlags::RELIABLE, 100);
     let results = validator::validate_frame_header(&header);
     assert!(results.iter().all(|r| r.passed));
 }
 
 #[test]
-fn test_frame_header_unknown_flags() {
-    let header = FrameHeader::new(ChannelId::Control, 1, 0xC0, 10);
+fn test_frame_header_all_known_flags() {
+    // All flag bits are defined in the protocol, so 0xFF should be all known.
+    let header = FrameHeader::new(ChannelId::CONTROL, 1, 0, 0, 0xFF, 10);
     let results = validator::validate_frame_header(&header);
     let flags_check = results.iter().find(|r| r.check.contains("known bits"));
     assert!(flags_check.is_some());
-    assert!(!flags_check.unwrap().passed);
+    assert!(flags_check.unwrap().passed);
 }
 
 #[test]
-fn test_frame_header_ack_conflict() {
-    // Both ACK and ACK_REQUIRED set — should fail.
-    let flags = FrameFlags::ACK | FrameFlags::ACK_REQUIRED;
-    let header = FrameHeader::new(ChannelId::Control, 1, flags, 10);
+fn test_frame_header_flag_combinations_valid() {
+    let flags = FrameFlags::RELIABLE | FrameFlags::ORDERED;
+    let header = FrameHeader::new(ChannelId::CONTROL, 1, 0, 0, flags, 10);
     let results = validator::validate_frame_header(&header);
-    let ack_check = results
+    let combo_check = results
         .iter()
-        .find(|r| r.check.contains("mutually exclusive"));
-    assert!(ack_check.is_some());
-    assert!(!ack_check.unwrap().passed);
+        .find(|r| r.check.contains("flag combinations"));
+    assert!(combo_check.is_some());
+    assert!(combo_check.unwrap().passed);
 }
 
 #[test]
 fn test_frame_header_oversized_payload() {
-    let header = FrameHeader::new(ChannelId::Graphics, 1, FrameFlags::FIN, u32::MAX);
-    let results = validator::validate_frame_header(&header);
-    let size_check = results.iter().find(|r| r.check.contains("payload"));
-    assert!(size_check.is_some());
-    assert!(!size_check.unwrap().passed);
+    // payload_len is u16, max 65535 — always within MAX_FRAME_PAYLOAD (16 MiB).
+    // Test via validate_payload_size directly with a value that exceeds.
+    let result = validator::validate_payload_size(u32::MAX);
+    assert!(!result.passed);
 }
 
 // ===========================================================================
@@ -192,17 +192,16 @@ fn test_known_message_types() {
         MessageType::Disconnect as u16,
         MessageType::Ping as u16,
         MessageType::Pong as u16,
-        MessageType::AuthChallenge as u16,
-        MessageType::AuthSuccess as u16,
-        MessageType::AuthFailure as u16,
-        MessageType::FrameUpdate as u16,
-        MessageType::TileUpdate as u16,
-        MessageType::CursorUpdate as u16,
-        MessageType::KeyEvent as u16,
+        MessageType::LoginPrompt as u16,
+        MessageType::LoginSuccess as u16,
+        MessageType::LoginFailure as u16,
+        MessageType::VideoFrameData as u16,
+        MessageType::TileBatch as u16,
+        MessageType::CursorPosition as u16,
+        MessageType::KeyDown as u16,
         MessageType::ClipboardOffer as u16,
         MessageType::ClipboardData as u16,
         MessageType::AudioConfig as u16,
-        MessageType::UsbAttach as u16,
     ];
     for mt in known {
         let result = validator::validate_message_type(mt);
@@ -228,14 +227,14 @@ fn test_zero_message_type() {
 
 #[test]
 fn test_control_channel_correct() {
-    let header = FrameHeader::new(ChannelId::Control, 1, FrameFlags::FIN, 0);
+    let header = FrameHeader::new(ChannelId::CONTROL, 1, 0, 0, FrameFlags::RELIABLE, 0);
     let result = validator::validate_control_channel(&header);
     assert!(result.passed);
 }
 
 #[test]
 fn test_non_control_channel() {
-    let header = FrameHeader::new(ChannelId::Graphics, 1, FrameFlags::FIN, 0);
+    let header = FrameHeader::new(ChannelId::VIDEO, 1, 0, 0, FrameFlags::RELIABLE, 0);
     let result = validator::validate_control_channel(&header);
     assert!(!result.passed);
 }

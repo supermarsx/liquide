@@ -174,26 +174,24 @@ impl ConformanceRunner {
     }
 
     fn run_capability_exchange(&self, case: &TestCase) -> CaseResult {
-        // Validate that CapabilityRequest and CapabilityResponse are known message types.
-        let req = validator::validate_message_type(MessageType::CapabilityRequest as u16);
-        let resp = validator::validate_message_type(MessageType::CapabilityResponse as u16);
-        if req.passed && resp.passed {
+        // Validate that Capabilities message type is known.
+        let result = validator::validate_message_type(MessageType::Capabilities as u16);
+        if result.passed {
             CaseResult::pass(case, 12)
         } else {
-            let msg = if !req.passed { req.reason } else { resp.reason };
-            CaseResult::fail(case, 12, msg)
+            CaseResult::fail(case, 12, result.reason)
         }
     }
 
     fn run_frame_header_format(&self, case: &TestCase) -> CaseResult {
-        // Validate that WIRE_SIZE is 10.
-        if FrameHeader::WIRE_SIZE == 10 {
+        // Validate that WIRE_SIZE matches the protocol spec (22 bytes).
+        if FrameHeader::WIRE_SIZE == 22 {
             CaseResult::pass(case, 5)
         } else {
             CaseResult::fail(
                 case,
                 5,
-                format!("expected WIRE_SIZE=10, got {}", FrameHeader::WIRE_SIZE),
+                format!("expected WIRE_SIZE=22, got {}", FrameHeader::WIRE_SIZE),
             )
         }
     }
@@ -238,7 +236,7 @@ impl ConformanceRunner {
     }
 
     fn run_control_routing(&self, case: &TestCase) -> CaseResult {
-        let header = FrameHeader::new(ChannelId::Control, 1, FrameFlags::FIN, 0);
+        let header = FrameHeader::new(ChannelId::CONTROL, 1, 0, 0, FrameFlags::RELIABLE, 0);
         let result = validator::validate_control_channel(&header);
         if result.passed {
             CaseResult::pass(case, 5)
@@ -252,7 +250,7 @@ impl ConformanceRunner {
     // ============================
 
     fn run_auth_challenge(&self, case: &TestCase) -> CaseResult {
-        let result = validator::validate_message_type(MessageType::AuthChallenge as u16);
+        let result = validator::validate_message_type(MessageType::LoginPrompt as u16);
         if result.passed {
             CaseResult::pass(case, 10)
         } else {
@@ -261,7 +259,7 @@ impl ConformanceRunner {
     }
 
     fn run_auth_success(&self, case: &TestCase) -> CaseResult {
-        let result = validator::validate_message_type(MessageType::AuthSuccess as u16);
+        let result = validator::validate_message_type(MessageType::LoginSuccess as u16);
         if result.passed {
             CaseResult::pass(case, 15)
         } else {
@@ -270,7 +268,7 @@ impl ConformanceRunner {
     }
 
     fn run_auth_failure(&self, case: &TestCase) -> CaseResult {
-        let result = validator::validate_message_type(MessageType::AuthFailure as u16);
+        let result = validator::validate_message_type(MessageType::LoginFailure as u16);
         if result.passed {
             CaseResult::pass(case, 10)
         } else {
@@ -280,7 +278,7 @@ impl ConformanceRunner {
 
     fn run_auth_rate_limit(&self, case: &TestCase) -> CaseResult {
         // Validate the auth failure message type exists (rate limiting is server behaviour).
-        let result = validator::validate_message_type(MessageType::AuthFailure as u16);
+        let result = validator::validate_message_type(MessageType::LoginFailure as u16);
         if result.passed {
             CaseResult::pass(case, 12)
         } else {
@@ -290,7 +288,7 @@ impl ConformanceRunner {
 
     fn run_auth_channel(&self, case: &TestCase) -> CaseResult {
         // Auth messages should be on Control channel.
-        let header = FrameHeader::new(ChannelId::Control, 1, FrameFlags::FIN, 64);
+        let header = FrameHeader::new(ChannelId::CONTROL, 1, 0, 0, FrameFlags::RELIABLE, 64);
         let result = validator::validate_control_channel(&header);
         if result.passed {
             CaseResult::pass(case, 5)
@@ -302,7 +300,7 @@ impl ConformanceRunner {
     fn run_auth_required(&self, case: &TestCase) -> CaseResult {
         // Sending data on Graphics channel before auth should be rejected.
         // We validate that Graphics (1) is not Control (0).
-        let header = FrameHeader::new(ChannelId::Graphics, 1, FrameFlags::FIN, 100);
+        let header = FrameHeader::new(ChannelId::VIDEO, 1, 0, 0, FrameFlags::RELIABLE, 100);
         let result = validator::validate_control_channel(&header);
         if !result.passed {
             // Good — data on Graphics is not on Control, confirming auth boundary.
@@ -317,7 +315,7 @@ impl ConformanceRunner {
     // ============================
 
     fn run_graphics_channel(&self, case: &TestCase) -> CaseResult {
-        let result = validator::validate_channel_id(ChannelId::Graphics.as_u8());
+        let result = validator::validate_channel_id(ChannelId::VIDEO.as_u16());
         if result.passed {
             CaseResult::pass(case, 5)
         } else {
@@ -337,7 +335,7 @@ impl ConformanceRunner {
 
     fn run_tile_batch(&self, case: &TestCase) -> CaseResult {
         // Validate TileUpdate message type is known.
-        let result = validator::validate_message_type(MessageType::TileUpdate as u16);
+        let result = validator::validate_message_type(MessageType::TileBatch as u16);
         if result.passed {
             CaseResult::pass(case, 12)
         } else {
@@ -357,9 +355,11 @@ impl ConformanceRunner {
 
     fn run_compressed_flag(&self, case: &TestCase) -> CaseResult {
         let header = FrameHeader::new(
-            ChannelId::Graphics,
+            ChannelId::VIDEO,
             1,
-            FrameFlags::FIN | FrameFlags::COMPRESSED,
+            0,
+            0,
+            FrameFlags::RELIABLE | FrameFlags::COMPRESSED,
             512,
         );
         if header.is_compressed() {
@@ -370,7 +370,7 @@ impl ConformanceRunner {
     }
 
     fn run_keyframe(&self, case: &TestCase) -> CaseResult {
-        let result = validator::validate_message_type(MessageType::FrameUpdate as u16);
+        let result = validator::validate_message_type(MessageType::VideoFrameData as u16);
         if result.passed {
             CaseResult::pass(case, 10)
         } else {
@@ -379,7 +379,7 @@ impl ConformanceRunner {
     }
 
     fn run_cursor_update(&self, case: &TestCase) -> CaseResult {
-        let result = validator::validate_message_type(MessageType::CursorUpdate as u16);
+        let result = validator::validate_message_type(MessageType::CursorPosition as u16);
         if result.passed {
             CaseResult::pass(case, 8)
         } else {
@@ -388,11 +388,11 @@ impl ConformanceRunner {
     }
 
     fn run_fin_flag(&self, case: &TestCase) -> CaseResult {
-        let header = FrameHeader::new(ChannelId::Control, 1, FrameFlags::FIN, 10);
-        if header.is_fin() {
+        let header = FrameHeader::new(ChannelId::CONTROL, 1, 0, 0, FrameFlags::RELIABLE, 10);
+        if header.is_reliable() {
             CaseResult::pass(case, 5)
         } else {
-            CaseResult::fail(case, 5, "FIN flag not detected in single-frame message")
+            CaseResult::fail(case, 5, "RELIABLE flag not detected in single-frame message")
         }
     }
 
@@ -428,7 +428,7 @@ impl ConformanceRunner {
     }
 
     fn run_clipboard_channel(&self, case: &TestCase) -> CaseResult {
-        let result = validator::validate_channel_id(ChannelId::Clipboard.as_u8());
+        let result = validator::validate_channel_id(ChannelId::CLIPBOARD.as_u16());
         if result.passed {
             CaseResult::pass(case, 5)
         } else {
@@ -469,7 +469,7 @@ impl ConformanceRunner {
 
     fn run_brute_force_limit(&self, case: &TestCase) -> CaseResult {
         // Rate limiting is server-side; we validate the auth failure type exists.
-        let result = validator::validate_message_type(MessageType::AuthFailure as u16);
+        let result = validator::validate_message_type(MessageType::LoginFailure as u16);
         if result.passed {
             CaseResult::pass(case, 12)
         } else {
@@ -478,15 +478,15 @@ impl ConformanceRunner {
     }
 
     fn run_channel_injection(&self, case: &TestCase) -> CaseResult {
-        // Validate all 11 channels are known and distinct.
+        // Validate all known channels are valid.
         let mut all_valid = true;
-        for id in 0..=10u8 {
-            if !validator::validate_channel_id(id).passed {
+        for &channel in liquide_protocol::channel::ALL_CHANNELS.iter() {
+            if !validator::validate_channel_id(channel.as_u16()).passed {
                 all_valid = false;
             }
         }
-        // Channel 11+ should be unknown.
-        let unknown = validator::validate_channel_id(255);
+        // Channel 0xFF (RESERVED) should be unknown.
+        let unknown = validator::validate_channel_id(0xFF);
         if all_valid && !unknown.passed {
             CaseResult::pass(case, 10)
         } else {
@@ -496,7 +496,7 @@ impl ConformanceRunner {
 
     fn run_emergency_bypass(&self, case: &TestCase) -> CaseResult {
         // Auth messages must be on Control — anything else is a bypass attempt.
-        let header = FrameHeader::new(ChannelId::Recording, 1, FrameFlags::FIN, 50);
+        let header = FrameHeader::new(ChannelId::CAMERA, 1, 0, 0, FrameFlags::RELIABLE, 50);
         let result = validator::validate_control_channel(&header);
         if !result.passed {
             CaseResult::pass(case, 8)
@@ -515,15 +515,15 @@ impl ConformanceRunner {
     }
 
     fn run_unknown_flags(&self, case: &TestCase) -> CaseResult {
-        // Frame with all flag bits set — validate header checks catch unknown bits.
-        let header = FrameHeader::new(ChannelId::Control, 1, 0xFF, 10);
+        // All 8 flag bits are defined in the protocol, so 0xFF should pass validation.
+        let header = FrameHeader::new(ChannelId::CONTROL, 1, 0, 0, 0xFF, 10);
         let results = validator::validate_frame_header(&header);
-        let unknown_flags_check = results.iter().find(|r| r.check.contains("known bits"));
-        if let Some(check) = unknown_flags_check {
-            if !check.passed {
+        let flags_check = results.iter().find(|r| r.check.contains("known bits"));
+        if let Some(check) = flags_check {
+            if check.passed {
                 CaseResult::pass(case, 8)
             } else {
-                CaseResult::fail(case, 8, "accepted unknown flag bits")
+                CaseResult::fail(case, 8, "rejected valid flag bits")
             }
         } else {
             CaseResult::fail(case, 8, "no flag validation performed")
