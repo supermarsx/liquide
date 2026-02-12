@@ -1,7 +1,7 @@
 //! Protocol validators for wire-level conformance checks.
 
 use liquide_protocol::version::is_compatible;
-use liquide_protocol::{ChannelId, FrameFlags, FrameHeader, MessageType, MAX_FRAME_PAYLOAD};
+use liquide_protocol::{ChannelId, FrameFlags, FrameHeader, MAX_FRAME_PAYLOAD, MessageType};
 use liquide_protocol::{MAGIC, PROTOCOL_VERSION};
 
 /// Validation outcome with reason.

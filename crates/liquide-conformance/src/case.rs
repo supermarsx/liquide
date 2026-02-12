@@ -215,7 +215,11 @@ impl CaseResult {
 impl fmt::Display for CaseResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.message.is_empty() {
-            write!(f, "[{}] {} — {}", self.outcome, self.case_id, self.case_name)
+            write!(
+                f,
+                "[{}] {} — {}",
+                self.outcome, self.case_id, self.case_name
+            )
         } else {
             write!(
                 f,
