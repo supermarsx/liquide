@@ -132,7 +132,6 @@ pub enum SchedulingPriority {
     Idle,
 }
 
-
 impl SchedulingPriority {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -168,7 +167,6 @@ pub enum IoPriority {
     Low,
     VeryLow,
 }
-
 
 impl IoPriority {
     pub fn as_str(&self) -> &'static str {

@@ -109,10 +109,7 @@ impl<T: Clone> RingBuffer<T> {
 
     /// Return an iterator over items from oldest to newest.
     pub fn iter(&self) -> RingBufferIter<'_, T> {
-        RingBufferIter {
-            buf: self,
-            pos: 0,
-        }
+        RingBufferIter { buf: self, pos: 0 }
     }
 }
 
@@ -213,19 +210,13 @@ impl TimeSeries {
     /// Return the minimum value in the series.
     #[must_use]
     pub fn min_value(&self) -> Option<f64> {
-        self.ring
-            .iter()
-            .map(|s| s.value)
-            .reduce(f64::min)
+        self.ring.iter().map(|s| s.value).reduce(f64::min)
     }
 
     /// Return the maximum value in the series.
     #[must_use]
     pub fn max_value(&self) -> Option<f64> {
-        self.ring
-            .iter()
-            .map(|s| s.value)
-            .reduce(f64::max)
+        self.ring.iter().map(|s| s.value).reduce(f64::max)
     }
 
     /// Return an iterator over the stored samples from oldest to newest.
