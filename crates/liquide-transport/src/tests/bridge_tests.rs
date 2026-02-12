@@ -16,12 +16,7 @@ fn make_bridge() -> TransportBridge {
 }
 
 fn make_header(channel: ChannelId, seq: u32) -> FrameHeader {
-    FrameHeader {
-        channel,
-        sequence: seq,
-        flags: FrameFlags::NONE,
-        payload_len: 0,
-    }
+    FrameHeader::new(channel, seq, 0, 0, 0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -39,10 +34,10 @@ fn bridge_initial_state() {
 #[test]
 fn register_and_get_channel() {
     let mut bridge = make_bridge();
-    let handle = bridge.register_channel(ChannelId::Control);
-    assert_eq!(handle.channel(), ChannelId::Control);
-    assert!(bridge.channel(ChannelId::Control).is_some());
-    assert!(bridge.channel(ChannelId::Audio).is_none());
+    let handle = bridge.register_channel(ChannelId::CONTROL);
+    assert_eq!(handle.channel(), ChannelId::CONTROL);
+    assert!(bridge.channel(ChannelId::CONTROL).is_some());
+    assert!(bridge.channel(ChannelId::AUDIO_PLAYBACK).is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -52,9 +47,9 @@ fn register_and_get_channel() {
 #[test]
 fn enqueue_and_drain() {
     let mut bridge = make_bridge();
-    bridge.register_channel(ChannelId::Control);
+    bridge.register_channel(ChannelId::CONTROL);
 
-    let header = make_header(ChannelId::Control, 1);
+    let header = make_header(ChannelId::CONTROL, 1);
     bridge
         .enqueue(header, Bytes::from_static(b"hello"))
         .unwrap();
@@ -69,7 +64,7 @@ fn enqueue_wakes_idle() {
     let bridge = make_bridge();
     assert_eq!(bridge.scheduling_mode(), SchedulingMode::Idle);
 
-    let header = make_header(ChannelId::Control, 1);
+    let header = make_header(ChannelId::CONTROL, 1);
     bridge
         .enqueue(header, Bytes::from_static(b"data"))
         .unwrap();
@@ -85,33 +80,33 @@ fn enqueue_wakes_idle() {
 #[test]
 fn priority_ordering_in_drain() {
     let mut bridge = make_bridge();
-    bridge.register_channel(ChannelId::Control);
-    bridge.register_channel(ChannelId::Input);
-    bridge.register_channel(ChannelId::Audio);
-    bridge.register_channel(ChannelId::Graphics);
+    bridge.register_channel(ChannelId::CONTROL);
+    bridge.register_channel(ChannelId::INPUT);
+    bridge.register_channel(ChannelId::AUDIO_PLAYBACK);
+    bridge.register_channel(ChannelId::VIDEO);
 
     // Enqueue in reverse priority order
     bridge
         .enqueue(
-            make_header(ChannelId::Graphics, 1),
+            make_header(ChannelId::VIDEO, 1),
             Bytes::from_static(b"gfx"),
         )
         .unwrap();
     bridge
         .enqueue(
-            make_header(ChannelId::Audio, 1),
+            make_header(ChannelId::AUDIO_PLAYBACK, 1),
             Bytes::from_static(b"audio"),
         )
         .unwrap();
     bridge
         .enqueue(
-            make_header(ChannelId::Input, 1),
+            make_header(ChannelId::INPUT, 1),
             Bytes::from_static(b"input"),
         )
         .unwrap();
     bridge
         .enqueue(
-            make_header(ChannelId::Control, 1),
+            make_header(ChannelId::CONTROL, 1),
             Bytes::from_static(b"ctrl"),
         )
         .unwrap();
@@ -137,19 +132,19 @@ fn priority_ordering_in_drain() {
 #[test]
 fn emergency_flag_promotes_to_p0() {
     let mut bridge = make_bridge();
-    bridge.register_channel(ChannelId::Control);
-    bridge.register_channel(ChannelId::Input);
+    bridge.register_channel(ChannelId::CONTROL);
+    bridge.register_channel(ChannelId::INPUT);
 
     // Normal input at P1
     bridge
         .enqueue(
-            make_header(ChannelId::Input, 1),
+            make_header(ChannelId::INPUT, 1),
             Bytes::from_static(b"input"),
         )
         .unwrap();
 
     // Emergency control frame
-    let mut header = make_header(ChannelId::Control, 1);
+    let mut header = make_header(ChannelId::CONTROL, 1);
     header.flags = FrameFlags::PRIORITY;
     bridge
         .enqueue(header, Bytes::from_static(b"emergency"))
@@ -169,17 +164,12 @@ fn emergency_flag_promotes_to_p0() {
 #[test]
 fn cursor_coalescing() {
     let mut bridge = make_bridge();
-    bridge.register_channel(ChannelId::Graphics);
+    bridge.register_channel(ChannelId::VIDEO);
 
     // Enqueue multiple cursor updates to P2
     // We need to manually enqueue at P2 (Cursor) priority
     for i in 0..5 {
-        let header = FrameHeader {
-            channel: ChannelId::Graphics,
-            sequence: i,
-            flags: FrameFlags::NONE,
-            payload_len: 0,
-        };
+        let header = FrameHeader::new(ChannelId::VIDEO, i, 0, 0, 0, 0);
         let frame = crate::bridge::QueuedFrame {
             header,
             payload: Bytes::from(format!("cursor-{i}")),
@@ -208,10 +198,10 @@ fn cursor_coalescing() {
 #[test]
 fn deliver_to_channel() {
     let mut bridge = make_bridge();
-    let handle = bridge.register_channel(ChannelId::Audio);
+    let handle = bridge.register_channel(ChannelId::AUDIO_PLAYBACK);
 
     bridge
-        .deliver(ChannelId::Audio, Bytes::from_static(b"audio-frame"))
+        .deliver(ChannelId::AUDIO_PLAYBACK, Bytes::from_static(b"audio-frame"))
         .unwrap();
 
     let msg = handle.recv().unwrap();
@@ -221,8 +211,11 @@ fn deliver_to_channel() {
 #[test]
 fn deliver_unknown_channel() {
     let bridge = make_bridge();
-    let err = bridge.deliver(ChannelId::Audio, Bytes::from_static(b"data"));
-    assert_eq!(err, Err(BridgeError::UnknownChannel(ChannelId::Audio)));
+    let err = bridge.deliver(ChannelId::AUDIO_PLAYBACK, Bytes::from_static(b"data"));
+    assert_eq!(
+        err,
+        Err(BridgeError::UnknownChannel(ChannelId::AUDIO_PLAYBACK))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +239,7 @@ fn priority_mode_on_p0_p1() {
     let bridge = make_bridge();
 
     // Enqueue input (P1) → should promote to Priority mode
-    let header = make_header(ChannelId::Input, 1);
+    let header = make_header(ChannelId::INPUT, 1);
     bridge
         .enqueue(header, Bytes::from_static(b"input"))
         .unwrap();

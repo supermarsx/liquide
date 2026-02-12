@@ -8,8 +8,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 /// Size of the length prefix used by stream transports (TCP, QUIC).
 pub const LENGTH_PREFIX_SIZE: usize = 4;
 
-/// Wire size of a [`FrameHeader`].
-pub const FRAME_HEADER_SIZE: usize = FrameHeader::WIRE_SIZE; // 10
+/// Wire size of a frame header in the transport codec's simplified format.
+/// Layout: channel(1) + sequence(4) + flags(1) + payload_len(4) = 10 bytes.
+pub const FRAME_HEADER_SIZE: usize = 10;
 
 // ---------------------------------------------------------------------------
 // Length-prefixed message framing (used by TCP / QUIC stream transports)
@@ -53,36 +54,39 @@ pub async fn read_msg<R: AsyncReadExt + Unpin>(
 // Protocol frame header encoding / decoding
 // ---------------------------------------------------------------------------
 
-/// Encode a [`FrameHeader`] into 10 bytes (little-endian).
+/// Encode a [`FrameHeader`] into bytes (little-endian).
 ///
 /// Wire layout:
 /// ```text
-/// [0]      channel   (u8)
+/// [0]      channel   (u8, low byte of channel ID)
 /// [1..5]   sequence  (u32 LE)
 /// [5]      flags     (u8)
 /// [6..10]  payload_len (u32 LE)
 /// ```
 pub fn encode_header(header: &FrameHeader, buf: &mut BytesMut) {
-    buf.put_u8(header.channel.as_u8());
+    buf.put_u8(header.channel.as_u16() as u8);
     buf.put_u32_le(header.sequence);
     buf.put_u8(header.flags);
-    buf.put_u32_le(header.payload_len);
+    buf.put_u32_le(header.payload_len as u32);
 }
 
 /// Decode a [`FrameHeader`] from the front of `buf`.
 ///
 /// Returns `None` if there are fewer than [`FRAME_HEADER_SIZE`] bytes or
-/// the channel byte is invalid.
+/// the channel byte is reserved (0xFF).
 pub fn decode_header(buf: &mut BytesMut) -> Option<FrameHeader> {
     if buf.remaining() < FRAME_HEADER_SIZE {
         return None;
     }
     let channel_raw = buf.get_u8();
-    let channel = ChannelId::from_u8(channel_raw)?;
+    let channel = ChannelId::from_u16(channel_raw as u16);
+    if channel == ChannelId::RESERVED {
+        return None;
+    }
     let sequence = buf.get_u32_le();
     let flags = buf.get_u8();
-    let payload_len = buf.get_u32_le();
-    Some(FrameHeader::new(channel, sequence, flags, payload_len))
+    let payload_len = buf.get_u32_le() as u16;
+    Some(FrameHeader::new(channel, sequence, 0, 0, flags, payload_len))
 }
 
 /// Encode a full frame (header + payload) into `buf`.

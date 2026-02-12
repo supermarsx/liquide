@@ -49,31 +49,31 @@ fn priority_is_bulk() {
 #[test]
 fn default_channel_mapping() {
     let mapper = PriorityMapper::new();
-    assert_eq!(mapper.base_priority(ChannelId::Input), Priority::P1Input);
-    assert_eq!(mapper.base_priority(ChannelId::Audio), Priority::P3Audio);
+    assert_eq!(mapper.base_priority(ChannelId::INPUT), Priority::P1Input);
     assert_eq!(
-        mapper.base_priority(ChannelId::Control),
+        mapper.base_priority(ChannelId::AUDIO_PLAYBACK),
+        Priority::P3Audio
+    );
+    assert_eq!(
+        mapper.base_priority(ChannelId::CONTROL),
         Priority::P4Control
     );
     assert_eq!(
-        mapper.base_priority(ChannelId::Graphics),
+        mapper.base_priority(ChannelId::VIDEO),
         Priority::P5Graphics
     );
 
     // Bulk channels
     assert_eq!(
-        mapper.base_priority(ChannelId::Clipboard),
+        mapper.base_priority(ChannelId::CLIPBOARD),
         Priority::P6Bulk
     );
-    assert_eq!(mapper.base_priority(ChannelId::Usb), Priority::P6Bulk);
-    assert_eq!(mapper.base_priority(ChannelId::File), Priority::P6Bulk);
-    assert_eq!(mapper.base_priority(ChannelId::Print), Priority::P6Bulk);
-    assert_eq!(mapper.base_priority(ChannelId::Serial), Priority::P6Bulk);
-    assert_eq!(mapper.base_priority(ChannelId::Plugin), Priority::P6Bulk);
+    assert_eq!(mapper.base_priority(ChannelId::USB), Priority::P6Bulk);
     assert_eq!(
-        mapper.base_priority(ChannelId::Recording),
+        mapper.base_priority(ChannelId::FILE_TRANSFER),
         Priority::P6Bulk
     );
+    assert_eq!(mapper.base_priority(ChannelId::CAMERA), Priority::P6Bulk);
 }
 
 #[test]
@@ -81,17 +81,17 @@ fn emergency_priority_flag() {
     let mapper = PriorityMapper::new();
     // Normal control frame -> P4
     assert_eq!(
-        mapper.effective_priority(ChannelId::Control, FrameFlags::NONE),
+        mapper.effective_priority(ChannelId::CONTROL, 0),
         Priority::P4Control,
     );
     // Control frame with PRIORITY flag -> P0
     assert_eq!(
-        mapper.effective_priority(ChannelId::Control, FrameFlags::PRIORITY),
+        mapper.effective_priority(ChannelId::CONTROL, FrameFlags::PRIORITY),
         Priority::P0Emergency,
     );
     // Non-control frame with PRIORITY flag stays at base priority
     assert_eq!(
-        mapper.effective_priority(ChannelId::Graphics, FrameFlags::PRIORITY),
+        mapper.effective_priority(ChannelId::VIDEO, FrameFlags::PRIORITY),
         Priority::P5Graphics,
     );
 }
@@ -99,10 +99,13 @@ fn emergency_priority_flag() {
 #[test]
 fn custom_channel_priority() {
     let mut mapper = PriorityMapper::new();
-    mapper.set_channel_priority(ChannelId::File, Priority::P3Audio);
-    assert_eq!(mapper.base_priority(ChannelId::File), Priority::P3Audio);
+    mapper.set_channel_priority(ChannelId::FILE_TRANSFER, Priority::P3Audio);
+    assert_eq!(
+        mapper.base_priority(ChannelId::FILE_TRANSFER),
+        Priority::P3Audio
+    );
     // Others unchanged
-    assert_eq!(mapper.base_priority(ChannelId::Input), Priority::P1Input);
+    assert_eq!(mapper.base_priority(ChannelId::INPUT), Priority::P1Input);
 }
 
 #[test]
@@ -110,11 +113,11 @@ fn mapper_default_trait() {
     let m1 = PriorityMapper::new();
     let m2 = PriorityMapper::default();
     for ch in [
-        ChannelId::Control,
-        ChannelId::Graphics,
-        ChannelId::Audio,
-        ChannelId::Input,
-        ChannelId::Clipboard,
+        ChannelId::CONTROL,
+        ChannelId::VIDEO,
+        ChannelId::AUDIO_PLAYBACK,
+        ChannelId::INPUT,
+        ChannelId::CLIPBOARD,
     ] {
         assert_eq!(m1.base_priority(ch), m2.base_priority(ch));
     }

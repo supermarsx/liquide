@@ -90,44 +90,55 @@ impl Priority {
 ///
 /// | Priority | Channels |
 /// |----------|----------|
-/// | P0 | Any channel with `FrameFlags::PRIORITY` on Control |
-/// | P1 | Input(3) |
-/// | P2 | (cursor subset of Graphics — detected at bridge level) |
-/// | P3 | Audio(2) |
-/// | P4 | Control(0) |
-/// | P5 | Graphics(1) |
-/// | P6 | Clipboard, Usb, File, Print, Serial, Plugin, Recording |
+/// | P0 | Any channel with `FrameFlags::PRIORITY` on CONTROL |
+/// | P1 | INPUT |
+/// | P2 | CURSOR (detected at bridge level) |
+/// | P3 | AUDIO_PLAYBACK, AUDIO_CAPTURE |
+/// | P4 | CONTROL, EMERGENCY |
+/// | P5 | VIDEO, TILE |
+/// | P6 | CLIPBOARD, USB, FILE_TRANSFER, CAMERA, virtual channels |
 #[derive(Debug, Clone)]
 pub struct PriorityMapper {
-    /// Per-channel base priority (indexed by `ChannelId::as_u8()`).
-    table: [Priority; 11],
+    /// Per-channel base priority.
+    table: std::collections::HashMap<ChannelId, Priority>,
 }
 
 impl PriorityMapper {
     /// Create a mapper with the spec-default channel→priority mapping.
     #[must_use]
     pub fn new() -> Self {
-        let mut table = [Priority::P6Bulk; 11];
-        table[ChannelId::Control.as_u8() as usize] = Priority::P4Control;
-        table[ChannelId::Graphics.as_u8() as usize] = Priority::P5Graphics;
-        table[ChannelId::Audio.as_u8() as usize] = Priority::P3Audio;
-        table[ChannelId::Input.as_u8() as usize] = Priority::P1Input;
-        // Clipboard(4)..Recording(10) remain P6Bulk
+        let mut table = std::collections::HashMap::new();
+        table.insert(ChannelId::CONTROL, Priority::P4Control);
+        table.insert(ChannelId::EMERGENCY, Priority::P4Control);
+        table.insert(ChannelId::VIDEO, Priority::P5Graphics);
+        table.insert(ChannelId::TILE, Priority::P5Graphics);
+        table.insert(ChannelId::AUDIO_PLAYBACK, Priority::P3Audio);
+        table.insert(ChannelId::AUDIO_CAPTURE, Priority::P3Audio);
+        table.insert(ChannelId::INPUT, Priority::P1Input);
+        table.insert(ChannelId::CURSOR, Priority::P2Cursor);
+        // Bulk channels remain P6Bulk (the default for unmapped)
+        table.insert(ChannelId::CLIPBOARD, Priority::P6Bulk);
+        table.insert(ChannelId::USB, Priority::P6Bulk);
+        table.insert(ChannelId::FILE_TRANSFER, Priority::P6Bulk);
+        table.insert(ChannelId::CAMERA, Priority::P6Bulk);
         Self { table }
     }
 
     /// Look up the base priority for a channel.
     #[must_use]
     pub fn base_priority(&self, channel: ChannelId) -> Priority {
-        self.table[channel.as_u8() as usize]
+        self.table
+            .get(&channel)
+            .copied()
+            .unwrap_or(Priority::P6Bulk)
     }
 
     /// Determine the effective priority for a frame, taking flags into account.
     ///
-    /// If the `PRIORITY` flag is set on a `Control` frame, it is promoted to P0.
+    /// If the `PRIORITY` flag is set on a `CONTROL` frame, it is promoted to P0.
     #[must_use]
     pub fn effective_priority(&self, channel: ChannelId, flags: u8) -> Priority {
-        if channel == ChannelId::Control && (flags & FrameFlags::PRIORITY) != 0 {
+        if channel == ChannelId::CONTROL && (flags & FrameFlags::PRIORITY) != 0 {
             return Priority::P0Emergency;
         }
         self.base_priority(channel)
@@ -135,7 +146,7 @@ impl PriorityMapper {
 
     /// Override the base priority for a specific channel.
     pub fn set_channel_priority(&mut self, channel: ChannelId, priority: Priority) {
-        self.table[channel.as_u8() as usize] = priority;
+        self.table.insert(channel, priority);
     }
 }
 

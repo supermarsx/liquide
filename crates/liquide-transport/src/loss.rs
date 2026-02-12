@@ -146,17 +146,18 @@ impl LossRecoveryManager {
     #[must_use]
     pub fn new() -> Self {
         let mut strategies = HashMap::new();
-        strategies.insert(ChannelId::Control, RecoveryStrategy::ReliableRetransmit);
-        strategies.insert(ChannelId::Graphics, RecoveryStrategy::VideoKeyframe);
-        strategies.insert(ChannelId::Audio, RecoveryStrategy::AudioPlc);
-        strategies.insert(ChannelId::Input, RecoveryStrategy::ReliableRetransmit);
-        strategies.insert(ChannelId::Clipboard, RecoveryStrategy::ReliableRetransmit);
-        strategies.insert(ChannelId::Usb, RecoveryStrategy::ReliableRetransmit);
-        strategies.insert(ChannelId::File, RecoveryStrategy::ReliableRetransmit);
-        strategies.insert(ChannelId::Print, RecoveryStrategy::ReliableRetransmit);
-        strategies.insert(ChannelId::Serial, RecoveryStrategy::ReliableRetransmit);
-        strategies.insert(ChannelId::Plugin, RecoveryStrategy::ReliableRetransmit);
-        strategies.insert(ChannelId::Recording, RecoveryStrategy::VideoKeyframe);
+        strategies.insert(ChannelId::CONTROL, RecoveryStrategy::ReliableRetransmit);
+        strategies.insert(ChannelId::EMERGENCY, RecoveryStrategy::ReliableRetransmit);
+        strategies.insert(ChannelId::VIDEO, RecoveryStrategy::VideoKeyframe);
+        strategies.insert(ChannelId::TILE, RecoveryStrategy::VideoKeyframe);
+        strategies.insert(ChannelId::AUDIO_PLAYBACK, RecoveryStrategy::AudioPlc);
+        strategies.insert(ChannelId::AUDIO_CAPTURE, RecoveryStrategy::AudioPlc);
+        strategies.insert(ChannelId::INPUT, RecoveryStrategy::ReliableRetransmit);
+        strategies.insert(ChannelId::CURSOR, RecoveryStrategy::CursorLatest);
+        strategies.insert(ChannelId::CLIPBOARD, RecoveryStrategy::ReliableRetransmit);
+        strategies.insert(ChannelId::USB, RecoveryStrategy::ReliableRetransmit);
+        strategies.insert(ChannelId::FILE_TRANSFER, RecoveryStrategy::ReliableRetransmit);
+        strategies.insert(ChannelId::CAMERA, RecoveryStrategy::VideoKeyframe);
 
         Self {
             trackers: HashMap::new(),

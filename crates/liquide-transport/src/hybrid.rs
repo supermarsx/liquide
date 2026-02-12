@@ -43,17 +43,14 @@ impl RoutingTable {
     #[must_use]
     pub fn standard_hybrid() -> Self {
         let mut routes = HashMap::new();
-        routes.insert(ChannelId::Control, TransportKind::TlsTcp);
-        routes.insert(ChannelId::Graphics, TransportKind::Quic);
-        routes.insert(ChannelId::Audio, TransportKind::Udp);
-        routes.insert(ChannelId::Input, TransportKind::TlsTcp);
-        routes.insert(ChannelId::Clipboard, TransportKind::TlsTcp);
-        routes.insert(ChannelId::Usb, TransportKind::TlsTcp);
-        routes.insert(ChannelId::File, TransportKind::TlsTcp);
-        routes.insert(ChannelId::Print, TransportKind::TlsTcp);
-        routes.insert(ChannelId::Serial, TransportKind::TlsTcp);
-        routes.insert(ChannelId::Plugin, TransportKind::TlsTcp);
-        routes.insert(ChannelId::Recording, TransportKind::Quic);
+        routes.insert(ChannelId::CONTROL, TransportKind::TlsTcp);
+        routes.insert(ChannelId::VIDEO, TransportKind::Quic);
+        routes.insert(ChannelId::AUDIO_PLAYBACK, TransportKind::Udp);
+        routes.insert(ChannelId::INPUT, TransportKind::TlsTcp);
+        routes.insert(ChannelId::CLIPBOARD, TransportKind::TlsTcp);
+        routes.insert(ChannelId::USB, TransportKind::TlsTcp);
+        routes.insert(ChannelId::FILE_TRANSFER, TransportKind::TlsTcp);
+        routes.insert(ChannelId::CAMERA, TransportKind::Quic);
 
         Self {
             routes,
