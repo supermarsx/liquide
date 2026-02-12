@@ -2,15 +2,15 @@
 
 ## Executive Summary
 
-The workspace contains **40 crates**, **~93,000 lines of Rust**, **686 `.rs` files**, and **2,517 passing tests** across 31 test suites. However, the implementation depth varies drastically across crates. Roughly **~35% is real working logic**, **~50% is type scaffolding with thin behavioral wrappers**, and **~15% is explicit stubs** (`todo!()`, `"not implemented"` returns, or immediate no-ops).
+The workspace contains **40 crates**, **~98,000 lines of Rust**, **706 `.rs` files**, and **2,668 passing tests** across 31 test suites. Implementation depth varies across crates. Roughly **~40% is real working logic**, **~45% is type scaffolding with thin behavioral wrappers**, and **~15% is explicit stubs** (`todo!()`, `"not implemented"` returns, or immediate no-ops).
 
-The system **cannot function as an actual remote desktop** today. Critical I/O layers (network transport, cryptography, authentication backends, and platform device access) are entirely unimplemented.
+The system **cannot function as an actual remote desktop** today. Critical I/O layers (cryptography, authentication backends, and platform device access) are unimplemented. However, the **transport layer is now fully functional** with real TCP/UDP/TLS/QUIC/WebSocket I/O, advanced congestion control, FEC, and priority scheduling.
 
 ---
 
 ## 1. Implementation Depth Matrix
 
-### Tier 1 — Real, Production-Grade Logic (5 crates)
+### Tier 1 — Real, Production-Grade Logic (6 crates)
 
 | Crate | Depth | What's Real |
 |---|---|---|
@@ -18,6 +18,7 @@ The system **cannot function as an actual remote desktop** today. Critical I/O l
 | `liquide-encoder` | **90%** | LZ4 and Zstd compression, XOR delta encoding, tile extraction, real byte-level encoding/decoding |
 | `liquide-compositor` | **85%** | CRC-32C tile hashing, damage region tracking, double buffering, surface z-ordering, dirty-rect coalescing |
 | `liquide-session` | **85%** | Full state machine (Created→Running→Suspended→Terminated), orchestration, channel management |
+| `liquide-transport` | **80%** | Real TCP/UDP/TLS/QUIC/WebSocket I/O, frame codec, connection pooling, listeners; BBRv2 congestion control, P0–P6 priority scheduling, XOR FEC, path MTU discovery, slab send buffer pool, per-channel loss recovery, adaptive bitrate controller, transport negotiation/probing, priority I/O bridge with 7-level drain, multi-transport hybrid routing, TCP tuning (keepalive via socket2, BDP buffer auto-sizing, vectored batch send). 239 tests |
 | `liquide-policy` | **80%** | Working rule evaluation engine, condition matching, policy merging, deny-override and permit-override algorithms |
 
 ### Tier 2 — Substantial Logic with Gaps (8 crates)
@@ -52,11 +53,10 @@ The system **cannot function as an actual remote desktop** today. Critical I/O l
 | `apps-software-center` | 20% | Package data models — no package manager integration |
 | `liquide-audio` | 15% | Null device manager — no actual audio device access |
 
-### Tier 4 — Pure Stubs / Type Definitions Only (13 crates)
+### Tier 4 — Pure Stubs / Type Definitions Only (12 crates)
 
 | Crate | Depth | Status |
 |---|---|---|
-| `liquide-transport` | **5%** | ALL `connect()`, `send()`, `recv()` are `todo!()` — TCP, QUIC, UDP, WebSocket |
 | `liquide-protocol` | **5%** | Types and constants defined. `Codec::decode()` returns `Ok(None)`. No serialization. |
 | `liquide-crypto` | **5%** | TLS config, certificate handling, token generation — all return `Err("not implemented")` |
 | `liquide-renderer-gpu` | **10%** | Vulkan pipeline abstraction — `probe_devices()` returns empty, no actual GPU API calls |
@@ -77,7 +77,7 @@ The system **cannot function as an actual remote desktop** today. Critical I/O l
 These are the **blockers** that must be resolved before LiquiDE can transmit a single frame:
 
 ```
-1. liquide-transport  →  Implement TCP connect/send/recv (minimum viable)
+1. liquide-transport  →  ✅ DONE — TCP/UDP/TLS/QUIC/WebSocket with real I/O, 239 tests
 2. liquide-protocol   →  Implement frame codec (serialize/deserialize FrameHeader + payload)
 3. liquide-crypto     →  Implement TLS wrapper (rustls or native-tls)
 4. liquide-auth       →  Implement at least one backend (e.g., PAM or password file)
@@ -85,7 +85,7 @@ These are the **blockers** that must be resolved before LiquiDE can transmit a s
 6. liquide-client     →  Wire transport + protocol + crypto into actual connection
 ```
 
-Without these 6 crates reaching functional status, no data flows between server and client.
+With transport completed, the next logical step is `liquide-protocol` (frame codec) since the transport already imports and uses its `FrameHeader` and `ChannelId` types. After that, `liquide-crypto` (TLS/encryption) can be wired through the existing TLS transport backend.
 
 ---
 
@@ -158,23 +158,24 @@ This pattern is used by projects like Alacritty, Zed, and wezterm for cross-plat
 
 ## 4. Test Coverage Assessment
 
-The **2,517 tests** primarily validate:
+The **2,668 tests** primarily validate:
 
 - Data model construction and field access
 - State machine transitions (in-memory)
 - Algorithmic correctness (sorting, routing, scoring, layout)
 - Serialization round-trips (JSON)
 - Error variant construction
+- **Real network I/O** — TCP, UDP, TLS, QUIC, and WebSocket connect/send/recv over loopback (transport crate, 239 tests)
 
 What tests do **not** cover:
 
-- Any actual I/O (network, file, device)
 - Integration between crates over a real transport
 - Performance under load
-- Concurrency / thread safety
-- Error recovery from real failures
+- Concurrency / thread safety under contention
+- Error recovery from real failures (network partitions, TLS renegotiation)
+- File or device I/O outside the transport crate
 
-The tests are structurally sound but test **the scaffolding** rather than **the system**.
+The transport crate's tests are a notable exception to the "scaffold-only" pattern — they test **real network I/O** including TCP connections, TLS handshakes, QUIC streams, WebSocket upgrades, and UDP datagrams over actual loopback sockets.
 
 ---
 
