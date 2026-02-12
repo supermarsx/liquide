@@ -67,11 +67,41 @@ impl QuicTransport {
         t.endpoint = Some(endpoint);
         t
     }
+
+    /// Wrap an existing QUIC connection (server-side).
+    ///
+    /// Accepts the first bidirectional stream opened by the remote peer.
+    pub async fn from_connection(connection: quinn::Connection) -> crate::Result<Self> {
+        let remote = connection.remote_address();
+        let (send, recv) = connection.accept_bi().await.map_err(|e| {
+            crate::TransportError::Protocol(format!("failed to accept bi stream: {e}"))
+        })?;
+        Ok(Self {
+            remote: Some(remote),
+            local: None,
+            connection: Some(connection),
+            sender: Some(Arc::new(Mutex::new(send))),
+            receiver: Some(Arc::new(Mutex::new(recv))),
+            endpoint: None,
+        })
+    }
 }
 
 impl Default for QuicTransport {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for QuicTransport {
+    fn drop(&mut self) {
+        // Best-effort: finish the send stream so quinn sends buffered data
+        // with a FIN rather than a RESET_STREAM.
+        if let Some(sender) = self.sender.take() {
+            if let Ok(mut s) = sender.try_lock() {
+                let _ = s.finish();
+            }
+        }
     }
 }
 
@@ -135,15 +165,20 @@ impl crate::Transport for QuicTransport {
     }
 
     async fn close(&mut self) -> crate::Result<()> {
-        if let Some(ref conn) = self.connection {
-            conn.close(VarInt::from_u32(0), b"goodbye");
+        // Gracefully finish the send stream before closing the connection.
+        // This ensures buffered data is transmitted with a FIN rather than
+        // being discarded by an immediate CONNECTION_CLOSE.
+        if let Some(sender) = self.sender.take() {
+            let mut s = sender.lock().await;
+            let _ = s.finish();
         }
-        self.sender = None;
         self.receiver = None;
-        self.connection = None;
+        if let Some(conn) = self.connection.take() {
+            conn.close(VarInt::from_u32(0), b"done");
+        }
         self.remote = None;
         if let Some(ep) = self.endpoint.take() {
-            ep.close(VarInt::from_u32(0), b"shutdown");
+            ep.close(VarInt::from_u32(0), b"done");
         }
         Ok(())
     }
