@@ -1,4 +1,4 @@
-//! TCP transport backend with length-prefixed message framing.
+//! Optional TLS wrapping for TCP transports using `tokio-rustls`.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -7,64 +7,78 @@ use bytes::Bytes;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::TlsConnector;
 
 use crate::codec;
 
-/// Plain TCP transport with automatic length-prefix framing.
-///
-/// Each call to [`send`](crate::Transport::send) writes a 4-byte little-endian
-/// length followed by the payload.  [`recv`](crate::Transport::recv) reads the
-/// length prefix and then exactly that many bytes.
-pub struct TcpTransport {
+/// TCP transport wrapped in a TLS layer.
+pub struct TlsTcpTransport {
     remote: Option<SocketAddr>,
     local: Option<SocketAddr>,
-    reader: Option<Arc<Mutex<tokio::net::tcp::OwnedReadHalf>>>,
-    writer: Option<Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>>,
+    reader: Option<Arc<Mutex<tokio::io::ReadHalf<TlsStream<TcpStream>>>>>,
+    writer: Option<Arc<Mutex<tokio::io::WriteHalf<TlsStream<TcpStream>>>>>,
+    connector: TlsConnector,
+    server_name: String,
 }
 
-impl TcpTransport {
-    /// Create a new, unconnected TCP transport.
+impl TlsTcpTransport {
+    /// Create a new TLS TCP transport with the given `rustls` client config
+    /// and expected server name (used for SNI / certificate verification).
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(client_config: Arc<rustls::ClientConfig>, server_name: String) -> Self {
         Self {
             remote: None,
             local: None,
             reader: None,
             writer: None,
+            connector: TlsConnector::from(client_config),
+            server_name,
         }
     }
 
-    /// Wrap an already-connected [`TcpStream`].
-    pub fn from_stream(stream: TcpStream) -> crate::Result<Self> {
-        let peer = stream.peer_addr()?;
-        let local = stream.local_addr().ok();
-        stream.set_nodelay(true)?;
-        let (reader, writer) = stream.into_split();
+    /// Wrap an existing TLS stream.
+    pub fn from_stream(
+        stream: TlsStream<TcpStream>,
+        peer: SocketAddr,
+    ) -> crate::Result<Self> {
+        let local = stream.get_ref().0.local_addr().ok();
+        let (reader, writer) = tokio::io::split(stream);
         Ok(Self {
             remote: Some(peer),
             local,
             reader: Some(Arc::new(Mutex::new(reader))),
             writer: Some(Arc::new(Mutex::new(writer))),
+            connector: TlsConnector::from(Arc::new(
+                rustls::ClientConfig::builder()
+                    .with_root_certificates(rustls::RootCertStore::empty())
+                    .with_no_client_auth(),
+            )),
+            server_name: String::new(),
         })
     }
 }
 
-impl Default for TcpTransport {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl crate::Transport for TcpTransport {
+impl crate::Transport for TlsTcpTransport {
     async fn connect(&mut self, addr: SocketAddr) -> crate::Result<()> {
-        let stream = TcpStream::connect(addr).await?;
-        stream.set_nodelay(true)?;
-        self.local = stream.local_addr().ok();
-        let (reader, writer) = stream.into_split();
+        let tcp = TcpStream::connect(addr).await?;
+        tcp.set_nodelay(true)?;
+        self.local = tcp.local_addr().ok();
+
+        let domain = rustls::pki_types::ServerName::try_from(self.server_name.clone())
+            .map_err(|e| crate::TransportError::Tls(format!("invalid server name: {e}")))?;
+
+        let tls_stream = self
+            .connector
+            .connect(domain, tcp)
+            .await
+            .map_err(|e| crate::TransportError::Tls(e.to_string()))?;
+
+        let (reader, writer) = tokio::io::split(tls_stream);
         self.remote = Some(addr);
         self.reader = Some(Arc::new(Mutex::new(reader)));
         self.writer = Some(Arc::new(Mutex::new(writer)));
-        tracing::debug!(%addr, "TCP connected");
+        tracing::debug!(%addr, "TLS TCP connected");
         Ok(())
     }
 
@@ -94,7 +108,6 @@ impl crate::Transport for TcpTransport {
     }
 
     async fn close(&mut self) -> crate::Result<()> {
-        // Attempt a graceful shutdown on the write half.
         if let Some(writer) = self.writer.take() {
             if let Ok(mut w) = Arc::try_unwrap(writer) {
                 let _ = w.get_mut().shutdown().await;

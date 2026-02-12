@@ -91,6 +91,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Crypto & TLS
 rustls = "0.23"
+tokio-rustls = "0.26"
+quinn = "0.11"
+tokio-tungstenite = "0.24"
+rcgen = "0.13"
+rustls-pemfile = "2"
 
 # Compression
 zstd = "0.13"
@@ -98,6 +103,7 @@ lz4_flex = "0.11"
 
 # Bytes & I/O
 bytes = "1"
+futures-util = "0.3"
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }

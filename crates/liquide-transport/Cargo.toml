@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 description = "Transport layer abstractions: QUIC, TCP, UDP, and WebSocket backends"
 
+[features]
+default = ["tls", "quic", "websocket"]
+tls = ["dep:tokio-rustls", "dep:rustls-pemfile"]
+quic = ["dep:quinn"]
+websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
+full = ["tls", "quic", "websocket"]
+
 [dependencies]
 liquide-common.workspace = true
 liquide-protocol.workspace = true
@@ -13,3 +20,17 @@ tokio.workspace = true
 bytes.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rustls.workspace = true
+
+# Optional transport backends
+quinn = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+tokio-rustls = { workspace = true, optional = true }
+rustls-pemfile = { workspace = true, optional = true }
+
+[dev-dependencies]
+rcgen.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
