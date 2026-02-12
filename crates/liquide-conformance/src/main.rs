@@ -1,6 +1,10 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::Parser;
 use tracing::info;
+
+use liquide_conformance::config::ConformanceConfig;
+use liquide_conformance::runner::ConformanceRunner;
+use liquide_conformance::suite::SuiteName;
 
 /// Protocol conformance test runner for Liquide.
 ///
@@ -11,12 +15,12 @@ use tracing::info;
 #[command(name = "liquide-conformance", version, about)]
 struct Cli {
     /// Server address in the form `host:port`.
-    #[arg(long)]
+    #[arg(long, default_value = "localhost:3389")]
     server: String,
 
     /// Test suite to run.
     ///
-    /// Available suites: handshake, auth, streaming, clipboard, all.
+    /// Available suites: handshake, auth, streaming, clipboard, security, all.
     #[arg(long, default_value = "all")]
     suite: String,
 
@@ -27,6 +31,22 @@ struct Cli {
     /// Password for authentication during testing.
     #[arg(long)]
     password: Option<String>,
+
+    /// Per-test timeout in milliseconds.
+    #[arg(long, default_value = "5000")]
+    timeout: u64,
+
+    /// Output path for the JSON report.
+    #[arg(long)]
+    output: Option<String>,
+
+    /// Enable verbose output.
+    #[arg(long)]
+    verbose: bool,
+
+    /// List all test cases without running them.
+    #[arg(long)]
+    list: bool,
 }
 
 #[tokio::main]
@@ -40,79 +60,51 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    run(cli).await
-}
+    let suite = SuiteName::from_name(&cli.suite)
+        .ok_or_else(|| anyhow::anyhow!("unknown suite: {}", cli.suite))?;
 
-async fn run(cli: Cli) -> Result<()> {
-    info!(
-        server = %cli.server,
-        suite = %cli.suite,
-        "Starting liquide-conformance"
-    );
-
-    // TODO: Establish a connection to the target server.
-    info!(server = %cli.server, "Connecting to server...");
-
-    let results = match cli.suite.as_str() {
-        "handshake" => run_handshake_suite(&cli).await,
-        "auth" => run_auth_suite(&cli).await,
-        "streaming" => run_streaming_suite(&cli).await,
-        "clipboard" => run_clipboard_suite(&cli).await,
-        "all" => {
-            let mut passed = 0u32;
-            let mut failed = 0u32;
-
-            for (p, f) in [
-                run_handshake_suite(&cli).await?,
-                run_auth_suite(&cli).await?,
-                run_streaming_suite(&cli).await?,
-                run_clipboard_suite(&cli).await?,
-            ] {
-                passed += p;
-                failed += f;
-            }
-            Ok((passed, failed))
-        }
-        other => bail!("Unknown test suite: {other}"),
+    let config = ConformanceConfig {
+        server: cli.server,
+        suite,
+        username: cli.username,
+        password: cli.password,
+        timeout_ms: cli.timeout,
+        verbose: cli.verbose,
+        output: cli.output.clone(),
     };
 
-    let (passed, failed) = results.context("Conformance suite failed")?;
+    let runner = ConformanceRunner::new(config);
 
-    println!("\n--- Conformance Results ---");
-    println!("  Passed: {passed}");
-    println!("  Failed: {failed}");
+    if cli.list {
+        println!("Conformance test cases ({}):", runner.case_count());
+        for id in runner.case_ids() {
+            println!("  {id}");
+        }
+        return Ok(());
+    }
 
-    if failed > 0 {
-        bail!("{failed} conformance test(s) failed");
+    info!(
+        suite = %suite,
+        cases = runner.case_count(),
+        "Starting conformance run"
+    );
+
+    let report = runner.run();
+
+    println!("{}", report.summary());
+
+    if let Some(output) = &cli.output {
+        let json = report.to_json()?;
+        std::fs::write(output, json)?;
+        info!(path = %output, "Report written");
+    }
+
+    if !report.all_passed() {
+        bail!(
+            "{} conformance test(s) failed",
+            report.total_failed()
+        );
     }
 
     Ok(())
-}
-
-async fn run_handshake_suite(_cli: &Cli) -> Result<(u32, u32)> {
-    info!("Running handshake conformance suite...");
-    // TODO: Test protocol version negotiation, capability exchange, etc.
-    println!("  [SKIP] handshake suite — not yet implemented");
-    Ok((0, 0))
-}
-
-async fn run_auth_suite(_cli: &Cli) -> Result<(u32, u32)> {
-    info!("Running authentication conformance suite...");
-    // TODO: Test password auth, token auth, MFA challenge flows.
-    println!("  [SKIP] auth suite — not yet implemented");
-    Ok((0, 0))
-}
-
-async fn run_streaming_suite(_cli: &Cli) -> Result<(u32, u32)> {
-    info!("Running streaming conformance suite...");
-    // TODO: Test frame delivery, damage regions, resize handling.
-    println!("  [SKIP] streaming suite — not yet implemented");
-    Ok((0, 0))
-}
-
-async fn run_clipboard_suite(_cli: &Cli) -> Result<(u32, u32)> {
-    info!("Running clipboard conformance suite...");
-    // TODO: Test clipboard copy/paste, MIME type negotiation.
-    println!("  [SKIP] clipboard suite — not yet implemented");
-    Ok((0, 0))
 }

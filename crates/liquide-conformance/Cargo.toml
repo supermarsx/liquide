@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Protocol conformance test runner for validating Liquide server implementations"
 
+[lib]
+name = "liquide_conformance"
+path = "src/lib.rs"
+
 [[bin]]
 name = "liquide-conformance"
 path = "src/main.rs"
@@ -19,3 +23,6 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
