@@ -40,19 +40,28 @@ impl SuiteSelection {
     /// Whether this selection includes the compositor suite.
     #[must_use]
     pub fn includes_compositor(&self) -> bool {
-        matches!(self, Self::All | Self::Compositor | Self::CiQuick | Self::CiFull)
+        matches!(
+            self,
+            Self::All | Self::Compositor | Self::CiQuick | Self::CiFull
+        )
     }
 
     /// Whether this selection includes the encoder suite.
     #[must_use]
     pub fn includes_encoder(&self) -> bool {
-        matches!(self, Self::All | Self::Encoder | Self::CiQuick | Self::CiFull)
+        matches!(
+            self,
+            Self::All | Self::Encoder | Self::CiQuick | Self::CiFull
+        )
     }
 
     /// Whether this selection includes the protocol suite.
     #[must_use]
     pub fn includes_protocol(&self) -> bool {
-        matches!(self, Self::All | Self::Protocol | Self::CiQuick | Self::CiFull)
+        matches!(
+            self,
+            Self::All | Self::Protocol | Self::CiQuick | Self::CiFull
+        )
     }
 
     /// Label for display purposes.
