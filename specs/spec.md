@@ -9246,18 +9246,19 @@ Global search (Super then type) is **launcher-scoped by default**. A separate fi
 | Metric | Value |
 |--------|-------|
 | Total crates | 40 |
-| Fully implemented | 39 (97.5%) |
-| Stub / scaffolded | 1 (2.5%) |
-| Total `.rs` source files | 668 |
-| Total lines of Rust | ~90,000 |
-| Crates with test suites | 30 |
+| Fully implemented | 40 (100%) |
+| Stub / scaffolded | 0 (0%) |
+| Total `.rs` source files | 686 |
+| Total lines of Rust | ~93,000 |
+| Crates with test suites | 31 |
 
 ### Crate Implementation Matrix
 
 Each crate is categorized by implementation status:
 
 - **Implemented** — has full module structure, types, logic, and (usually) tests.
-- **Stub** — crate exists in the workspace but contains only placeholder code.
+
+All 40 crates are fully implemented.
 
 #### Core Infrastructure
 
@@ -9327,6 +9328,7 @@ Each crate is categorized by implementation status:
 | Crate | Modules | Source Files | Tests | Binary | Description |
 |-------|---------|-------------|-------|--------|-------------|
 | `liquide-bench` | 9 | 16 | Yes | `liquide-bench` | Benchmark harness: workload profiles (8), network emulation (8 presets), SLO validation, measurement with percentile stats, regression detection, JSON reporting |
+| `liquide-conformance` | 11 | 18 | Yes | `liquide-conformance` | Protocol conformance runner: 5 suites (handshake, auth, streaming, clipboard, security), 43 test cases, wire-format validators, JSON/text reporting |
 
 #### Built-in Applications
 
@@ -9337,12 +9339,6 @@ Each crate is categorized by implementation status:
 | `liquide-apps-settings` | 9 | 16 | Yes | `liquid-settings` | Settings app: 8 categories, typed entries with validation, change tracking with undo/redo, policy constraints, notifications |
 | `liquide-apps-text-editor` | 10 | 17 | Yes | `liquid-text-editor` | Text editor: line buffer, cursor/selection/multi-cursor, syntax highlighting (5 languages), auto-indent, search/replace, undo/redo, diagnostics, multi-document |
 | `liquide-apps-software-center` | 9 | 16 | Yes | `liquid-software-center` | Software center: package catalog with search, repository management, install queue with progress, update manager, reviews/ratings, screenshot gallery |
-
-#### Stub Crates (Not Yet Implemented)
-
-| Crate | Category | Description |
-|-------|----------|-------------|
-| `liquide-conformance` | Testing | Conformance test suite |
 
 ### Scope Completion Summary
 
@@ -9406,4 +9402,7 @@ The following capabilities were implemented but not originally listed in section
 | Workload simulation with 8 profiles and damage fraction modeling | `liquide-bench` | §16 Stream Analysis |
 | Network emulation with 8 presets and deterministic jitter | `liquide-bench` | §16 Stream Analysis |
 | SLO validation framework with LAN/WAN threshold sets | `liquide-bench` | §16 Stream Analysis |
+| Protocol validators for magic, version, channels, frames, sequences | `liquide-conformance` | §7 Protocol |
+| 43-case conformance runner across 5 suites with JSON/text reporting | `liquide-conformance` | §7 Protocol |
+| Frame header wire-format validation with flag conflict detection | `liquide-conformance` | §7 Protocol |
 
