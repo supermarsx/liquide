@@ -773,6 +773,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-apps-task-manager"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "liquide-apps-terminal"
 version = "0.1.0"
 dependencies = [

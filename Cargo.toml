@@ -52,6 +52,7 @@ members = [
     "crates/liquide-apps-settings",
     "crates/liquide-apps-text-editor",
     "crates/liquide-apps-software-center",
+    "crates/liquide-apps-task-manager",
 
     # Infrastructure (binaries)
     "crates/liquide-gateway",
