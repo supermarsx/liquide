@@ -1,7 +1,9 @@
 //! TCP transport backend with length-prefixed message framing.
 
+use std::io::IoSlice;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use tokio::io::AsyncWriteExt;
@@ -9,6 +11,93 @@ use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 
 use crate::codec;
+
+// ---------------------------------------------------------------------------
+// TCP Tuning Config
+// ---------------------------------------------------------------------------
+
+/// Minimum socket buffer size (256 KiB).
+pub const MIN_BUFFER_SIZE: usize = 256 * 1024;
+
+/// Maximum socket buffer size (4 MiB).
+pub const MAX_BUFFER_SIZE: usize = 4 * 1024 * 1024;
+
+/// Default keepalive idle time.
+const DEFAULT_KEEPALIVE_IDLE: Duration = Duration::from_secs(30);
+
+/// Default keepalive probe interval.
+const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Configuration for TCP socket tuning.
+#[derive(Debug, Clone)]
+pub struct TcpTuning {
+    /// Enable TCP_NODELAY (disable Nagle's algorithm). Default: true.
+    pub nodelay: bool,
+    /// Enable TCP keepalive. Default: true.
+    pub keepalive: bool,
+    /// Time a connection must be idle before sending keepalive probes.
+    pub keepalive_idle: Duration,
+    /// Interval between keepalive probes.
+    pub keepalive_interval: Duration,
+    /// Whether to auto-size socket buffers based on BDP. Default: true.
+    pub auto_buffer: bool,
+    /// Send buffer size override (bytes). None = OS default or auto-tuned.
+    pub send_buffer: Option<usize>,
+    /// Receive buffer size override (bytes). None = OS default or auto-tuned.
+    pub recv_buffer: Option<usize>,
+}
+
+impl TcpTuning {
+    /// Default tuning for interactive (low-latency) traffic.
+    #[must_use]
+    pub fn interactive() -> Self {
+        Self {
+            nodelay: true,
+            keepalive: true,
+            keepalive_idle: DEFAULT_KEEPALIVE_IDLE,
+            keepalive_interval: DEFAULT_KEEPALIVE_INTERVAL,
+            auto_buffer: true,
+            send_buffer: None,
+            recv_buffer: None,
+        }
+    }
+
+    /// Tuning for bulk transfer (higher throughput, more buffering).
+    #[must_use]
+    pub fn bulk() -> Self {
+        Self {
+            nodelay: false, // allow Nagle for better coalescing
+            keepalive: true,
+            keepalive_idle: DEFAULT_KEEPALIVE_IDLE,
+            keepalive_interval: DEFAULT_KEEPALIVE_INTERVAL,
+            auto_buffer: true,
+            send_buffer: None,
+            recv_buffer: None,
+        }
+    }
+
+    /// Compute optimal socket buffer size from network conditions.
+    ///
+    /// Uses Bandwidth-Delay Product (BDP): `rtt_seconds * bandwidth_bytes_per_sec`.
+    /// The buffer is set to `BDP * 2` (double-buffering), clamped to
+    /// `[MIN_BUFFER_SIZE, MAX_BUFFER_SIZE]`.
+    #[must_use]
+    pub fn auto_buffer_size(rtt: Duration, bandwidth_bytes_per_sec: f64) -> usize {
+        let bdp = rtt.as_secs_f64() * bandwidth_bytes_per_sec;
+        let target = (bdp * 2.0) as usize;
+        target.clamp(MIN_BUFFER_SIZE, MAX_BUFFER_SIZE)
+    }
+}
+
+impl Default for TcpTuning {
+    fn default() -> Self {
+        Self::interactive()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TCP Transport
+// ---------------------------------------------------------------------------
 
 /// Plain TCP transport with automatic length-prefix framing.
 ///
@@ -20,6 +109,7 @@ pub struct TcpTransport {
     local: Option<SocketAddr>,
     reader: Option<Arc<Mutex<tokio::net::tcp::OwnedReadHalf>>>,
     writer: Option<Arc<Mutex<tokio::net::tcp::OwnedWriteHalf>>>,
+    tuning: TcpTuning,
 }
 
 impl TcpTransport {
@@ -31,6 +121,19 @@ impl TcpTransport {
             local: None,
             reader: None,
             writer: None,
+            tuning: TcpTuning::default(),
+        }
+    }
+
+    /// Create with the given tuning configuration.
+    #[must_use]
+    pub fn with_tuning(tuning: TcpTuning) -> Self {
+        Self {
+            remote: None,
+            local: None,
+            reader: None,
+            writer: None,
+            tuning,
         }
     }
 
@@ -45,7 +148,137 @@ impl TcpTransport {
             local,
             reader: Some(Arc::new(Mutex::new(reader))),
             writer: Some(Arc::new(Mutex::new(writer))),
+            tuning: TcpTuning::default(),
         })
+    }
+
+    /// Get the current tuning configuration.
+    #[must_use]
+    pub fn tuning(&self) -> &TcpTuning {
+        &self.tuning
+    }
+
+    /// Set the tuning configuration.
+    ///
+    /// If the transport is already connected, call [`apply_tuning`] afterward
+    /// to apply the settings to the live socket.
+    pub fn set_tuning(&mut self, tuning: TcpTuning) {
+        self.tuning = tuning;
+    }
+
+    /// Apply the current tuning to a raw `TcpStream` via socket2.
+    ///
+    /// This is called automatically during `connect` and `from_stream_tuned`,
+    /// but can also be called manually if tuning is changed after connect.
+    fn apply_tuning_to_stream(stream: &TcpStream, tuning: &TcpTuning) -> crate::Result<()> {
+        stream.set_nodelay(tuning.nodelay)?;
+
+        let sock_ref = socket2::SockRef::from(stream);
+
+        if tuning.keepalive {
+            let ka = socket2::TcpKeepalive::new()
+                .with_time(tuning.keepalive_idle)
+                .with_interval(tuning.keepalive_interval);
+            sock_ref.set_tcp_keepalive(&ka)?;
+        }
+
+        if let Some(size) = tuning.send_buffer {
+            sock_ref.set_send_buffer_size(size)?;
+        }
+        if let Some(size) = tuning.recv_buffer {
+            sock_ref.set_recv_buffer_size(size)?;
+        }
+
+        Ok(())
+    }
+
+    /// Wrap an already-connected `TcpStream`, applying the given tuning.
+    pub fn from_stream_tuned(stream: TcpStream, tuning: TcpTuning) -> crate::Result<Self> {
+        let peer = stream.peer_addr()?;
+        let local = stream.local_addr().ok();
+        Self::apply_tuning_to_stream(&stream, &tuning)?;
+        let (reader, writer) = stream.into_split();
+        Ok(Self {
+            remote: Some(peer),
+            local,
+            reader: Some(Arc::new(Mutex::new(reader))),
+            writer: Some(Arc::new(Mutex::new(writer))),
+            tuning,
+        })
+    }
+
+    /// Update socket buffers for current network conditions.
+    ///
+    /// Computes ideal buffer sizes from RTT and bandwidth, then applies them.
+    /// This requires the transport to be connected.
+    pub fn auto_tune_buffers(
+        &self,
+        stream: &TcpStream,
+        rtt: Duration,
+        bandwidth: f64,
+    ) -> crate::Result<()> {
+        let size = TcpTuning::auto_buffer_size(rtt, bandwidth);
+        let sock_ref = socket2::SockRef::from(stream);
+        sock_ref.set_send_buffer_size(size)?;
+        sock_ref.set_recv_buffer_size(size)?;
+        Ok(())
+    }
+
+    /// Send multiple payloads in a single coalesced write using vectored I/O.
+    ///
+    /// Each payload is length-prefixed, and all are written in one syscall
+    /// (via `write_vectored`), reducing the number of small packets sent.
+    pub async fn send_batch(&self, payloads: &[Bytes]) -> crate::Result<()> {
+        let writer = self
+            .writer
+            .as_ref()
+            .ok_or(crate::TransportError::NotConnected)?;
+
+        // Pre-encode each payload as length + data
+        let mut buffers: Vec<Vec<u8>> = Vec::with_capacity(payloads.len());
+        for payload in payloads {
+            if payload.len() > crate::MAX_MESSAGE_SIZE {
+                return Err(crate::TransportError::MessageTooLarge {
+                    size: payload.len(),
+                    max: crate::MAX_MESSAGE_SIZE,
+                });
+            }
+            let len = (payload.len() as u32).to_le_bytes();
+            let mut buf = Vec::with_capacity(4 + payload.len());
+            buf.extend_from_slice(&len);
+            buf.extend_from_slice(payload);
+            buffers.push(buf);
+        }
+
+        let slices: Vec<IoSlice<'_>> = buffers.iter().map(|b| IoSlice::new(b)).collect();
+
+        let mut w = writer.lock().await;
+        let total: usize = slices.iter().map(|s| s.len()).sum();
+        let mut written = 0;
+
+        // write_vectored may not write everything in one call
+        while written < total {
+            // Recompute slices for remaining data
+            let n = w.write_vectored(&slices).await?;
+            if n == 0 {
+                return Err(crate::TransportError::ConnectionReset);
+            }
+            written += n;
+            if written < total {
+                // Fallback: write remaining bytes individually
+                for buf in &buffers {
+                    // Skip already-written prefix
+                    let remaining_start = written.saturating_sub(total - buf.len());
+                    if remaining_start < buf.len() {
+                        w.write_all(&buf[remaining_start..]).await?;
+                    }
+                }
+                break;
+            }
+        }
+
+        w.flush().await?;
+        Ok(())
     }
 }
 
@@ -58,7 +291,7 @@ impl Default for TcpTransport {
 impl crate::Transport for TcpTransport {
     async fn connect(&mut self, addr: SocketAddr) -> crate::Result<()> {
         let stream = TcpStream::connect(addr).await?;
-        stream.set_nodelay(true)?;
+        Self::apply_tuning_to_stream(&stream, &self.tuning)?;
         self.local = stream.local_addr().ok();
         let (reader, writer) = stream.into_split();
         self.remote = Some(addr);

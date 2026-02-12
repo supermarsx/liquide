@@ -52,8 +52,7 @@ pub fn make_quinn_server_config(tc: &TestCert) -> quinn::ServerConfig {
         .with_no_client_auth()
         .with_single_cert(vec![tc.cert_der.clone()], tc.key_der.clone_key())
         .unwrap();
-    let quic_config =
-        quinn::crypto::rustls::QuicServerConfig::try_from(rustls_config).unwrap();
+    let quic_config = quinn::crypto::rustls::QuicServerConfig::try_from(rustls_config).unwrap();
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_config));
     let mut transport = quinn::TransportConfig::default();
     transport.max_idle_timeout(Some(

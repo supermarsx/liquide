@@ -23,6 +23,7 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rustls = { workspace = true, features = ["ring"] }
+socket2.workspace = true
 
 # Optional transport backends
 quinn = { workspace = true, optional = true }

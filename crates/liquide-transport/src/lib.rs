@@ -5,11 +5,21 @@
 #![doc = "The transport layer sits between protocol framing (`liquide-protocol`)"]
 #![doc = "and the session management layer above."]
 
+pub mod abr;
 pub mod backoff;
+pub mod bridge;
 pub mod codec;
+pub mod congestion;
 pub mod connection;
+pub mod fec;
+pub mod hybrid;
 pub mod listener;
+pub mod loss;
+pub mod mtu;
+pub mod negotiate;
 pub mod pool;
+pub mod priority;
+pub mod sendbuf;
 pub mod stats;
 pub mod tcp;
 #[cfg(feature = "tls")]
