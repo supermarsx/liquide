@@ -165,6 +165,10 @@ pub struct Shell {
     hovered_button: Option<(WindowId, HitZone)>,
     /// Current cursor shape (updated on every mouse move).
     cursor_shape: CursorShape,
+    /// Status bar visibility state (for auto-hide).
+    status_bar_visible: bool,
+    /// Active app menu dropdown (app_id).
+    app_menu_open: Option<String>,
 }
 
 impl Shell {
