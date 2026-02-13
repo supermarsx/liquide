@@ -11,11 +11,11 @@ use liquide_platform::PlatformEvent;
 
 use crate::app_history::AppHistory;
 use crate::config::ShellConfig;
-use crate::decoration::DecorationStyle;
+use crate::decoration::{hit_test_decoration, DecorationStyle, HitZone};
 use crate::dock::Dock;
 use crate::focus::{FocusManager, FocusPolicy};
 use crate::history::{WindowEventKind, WindowHistory};
-use crate::launcher::Launcher;
+use crate::launcher::{Launcher, LauncherApp, SearchResultKind};
 use crate::layout::{FloatingLayout, LayoutPolicy};
 use crate::notification::NotificationManager;
 use crate::screen_time::ScreenTimeTracker;
@@ -25,7 +25,7 @@ use crate::stats::StatsCollector;
 use crate::status_bar::ShellStatusBar;
 use crate::theme::ShellTheme;
 use crate::tiling::TilingEngine;
-use crate::window::{Window, WindowId, WindowState};
+use crate::window::{Window, WindowFlags, WindowId, WindowState};
 use crate::workspace::WorkspaceManager;
 use crate::{ShellError, Result};
 
@@ -52,6 +52,7 @@ pub struct Shell {
     seamless: SeamlessManager,
     config: ShellConfig,
     theme: ShellTheme,
+    session_menu_visible: bool,
 }
 
 impl Shell {
@@ -75,6 +76,11 @@ impl Shell {
         dock.add_pinned("com.liquide.terminal", "Terminal", "terminal");
         dock.add_pinned("com.liquide.browser", "Browser", "web-browser");
         dock.add_pinned("com.liquide.settings", "Settings", "preferences-system");
+
+        let mut launcher = Launcher::new(config.launcher.clone());
+        // Register default apps so they appear in launcher search.
+        Self::register_default_apps(&mut launcher);
+
         Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
@@ -89,13 +95,14 @@ impl Shell {
             next_event_timestamp: 1,
             dock,
             status_bar: ShellStatusBar::new(config.status_bar.clone()),
-            launcher: Launcher::new(config.launcher.clone()),
+            launcher,
             tiling: TilingEngine::new(config.tiling.clone()),
             shortcuts: ShortcutManager::new(),
             notifications: NotificationManager::new(config.notifications.clone()),
             seamless: SeamlessManager::new(config.seamless.clone()),
             config,
             theme: ShellTheme::default_dark(),
+            session_menu_visible: false,
         }
     }
 
@@ -117,6 +124,8 @@ impl Shell {
         dock.add_pinned("com.liquide.terminal", "Terminal", "terminal");
         dock.add_pinned("com.liquide.browser", "Browser", "web-browser");
         dock.add_pinned("com.liquide.settings", "Settings", "preferences-system");
+        let mut launcher = Launcher::new(config.launcher.clone());
+        Self::register_default_apps(&mut launcher);
         Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
@@ -131,13 +140,14 @@ impl Shell {
             next_event_timestamp: 1,
             dock,
             status_bar: ShellStatusBar::new(config.status_bar.clone()),
-            launcher: Launcher::new(config.launcher.clone()),
+            launcher,
             tiling: TilingEngine::new(config.tiling.clone()),
             shortcuts: ShortcutManager::new(),
             notifications: NotificationManager::new(config.notifications.clone()),
             seamless: SeamlessManager::new(config.seamless.clone()),
             config,
             theme: ShellTheme::default_dark(),
+            session_menu_visible: false,
         }
     }
 
@@ -208,6 +218,7 @@ impl Shell {
             self.app_history
                 .record_close(&window.app_id, id, window.bounds, ts);
             self.screen_time.feed_close(&window.app_id, id, ts);
+            self.dock.remove_running(&window.app_id);
         }
         Ok(window)
     }
@@ -716,9 +727,103 @@ impl Shell {
         self.shortcuts.handle_key_event(event)
     }
 
+    /// Whether the session menu is currently visible.
+    #[must_use]
+    pub fn session_menu_visible(&self) -> bool {
+        self.session_menu_visible
+    }
+
+    /// Toggle the session menu overlay.
+    pub fn toggle_session_menu(&mut self) {
+        self.session_menu_visible = !self.session_menu_visible;
+    }
+
     // ====================================================================
-    // Scene graph, event handling, and periodic updates
+    // App launching helpers
     // ====================================================================
+
+    /// Register built-in applications with the launcher.
+    fn register_default_apps(launcher: &mut Launcher) {
+        let defaults = [
+            ("com.liquide.files", "Files", "folder", "File manager"),
+            ("com.liquide.terminal", "Terminal", "terminal", "Command line"),
+            ("com.liquide.browser", "Browser", "web-browser", "Web browser"),
+            ("com.liquide.settings", "Settings", "preferences-system", "System settings"),
+            ("com.liquide.calculator", "Calculator", "calculator", "Calculator"),
+        ];
+        for (app_id, name, icon, desc) in &defaults {
+            launcher.add_app(LauncherApp {
+                app_id: app_id.to_string(),
+                name: name.to_string(),
+                description: Some(desc.to_string()),
+                icon: Some(icon.to_string()),
+                exec: None,
+                categories: Vec::new(),
+                keywords: Vec::new(),
+                terminal: false,
+                no_display: false,
+                launch_count: 0,
+                last_launched_us: 0,
+            });
+        }
+    }
+
+    /// Open a new window for the given application, or focus an existing one.
+    ///
+    /// Returns the window ID of the focused or newly created window.
+    pub fn open_app_window(&mut self, app_id: &str) -> WindowId {
+        // Check if a window with this app_id is already open.
+        if let Some(existing) = self.windows.values().find(|w| w.app_id == app_id && w.visible) {
+            let wid = existing.id;
+            let _ = self.set_focus(wid);
+            let _ = self.raise_window(wid);
+            return wid;
+        }
+
+        let screen = self.screen_rect;
+        let (title, w, h): (&str, f32, f32) = match app_id {
+            "com.liquide.settings" => ("Settings", 700.0, 500.0),
+            "com.liquide.terminal" => ("Terminal", 720.0, 480.0),
+            "com.liquide.files" => ("Files", 800.0, 550.0),
+            "com.liquide.browser" => ("Browser", 900.0, 600.0),
+            "com.liquide.calculator" => ("Calculator", 360.0, 420.0),
+            _ => ("Application", 640.0, 480.0),
+        };
+        let x = (screen.width - w) / 2.0;
+        let y = (screen.height - h) / 2.0;
+
+        let id = self.open_window_with_app(title, Rect::new(x, y, w, h), app_id);
+        self.dock.add_running(app_id);
+        let _ = self.set_focus(id);
+        let _ = self.raise_window(id);
+        id
+    }
+
+    /// Map a `KeyCode` to a lowercase character for text input.
+    fn keycode_to_char(key: liquide_input::keyboard::KeyCode) -> Option<char> {
+        use liquide_input::keyboard::KeyCode;
+        match key {
+            KeyCode::A => Some('a'), KeyCode::B => Some('b'), KeyCode::C => Some('c'),
+            KeyCode::D => Some('d'), KeyCode::E => Some('e'), KeyCode::F => Some('f'),
+            KeyCode::G => Some('g'), KeyCode::H => Some('h'), KeyCode::I => Some('i'),
+            KeyCode::J => Some('j'), KeyCode::K => Some('k'), KeyCode::L => Some('l'),
+            KeyCode::M => Some('m'), KeyCode::N => Some('n'), KeyCode::O => Some('o'),
+            KeyCode::P => Some('p'), KeyCode::Q => Some('q'), KeyCode::R => Some('r'),
+            KeyCode::S => Some('s'), KeyCode::T => Some('t'), KeyCode::U => Some('u'),
+            KeyCode::V => Some('v'), KeyCode::W => Some('w'), KeyCode::X => Some('x'),
+            KeyCode::Y => Some('y'), KeyCode::Z => Some('z'),
+            KeyCode::Digit0 => Some('0'), KeyCode::Digit1 => Some('1'),
+            KeyCode::Digit2 => Some('2'), KeyCode::Digit3 => Some('3'),
+            KeyCode::Digit4 => Some('4'), KeyCode::Digit5 => Some('5'),
+            KeyCode::Digit6 => Some('6'), KeyCode::Digit7 => Some('7'),
+            KeyCode::Digit8 => Some('8'), KeyCode::Digit9 => Some('9'),
+            KeyCode::Space => Some(' '),
+            KeyCode::Minus => Some('-'), KeyCode::Equal => Some('='),
+            KeyCode::Period => Some('.'), KeyCode::Comma => Some(','),
+            KeyCode::Slash => Some('/'),
+            _ => None,
+        }
+    }
 
     /// Build the complete shell scene graph.
     ///
@@ -726,7 +831,6 @@ impl Shell {
     /// status bar, dock, notifications, and launcher overlay.
     pub fn build_scene(&self) -> SceneNode {
         use crate::scene_builder::*;
-        use crate::window::WindowFlags;
 
         let screen = self.screen_rect;
         let theme = &self.theme;
@@ -820,16 +924,26 @@ impl Shell {
                 window.bounds.width,
                 (window.bounds.height - title_h).max(0.0),
             );
-            ws_node.add_child(SceneNode::new(
+            let z_content = window.z_order as u32 * 10 + 2;
+
+            // Background fill for the content area.
+            let content_bg = liquide_compositor::pixel::Color::new(35, 35, 40, 255);
+            ws_node.add_child(solid_rect(
                 win_base + 2,
-                SceneNodeKind::Surface {
-                    surface_id: window.id.0,
-                    buffer: None,
-                },
-                NodeProperties::new(content_bounds)
-                    .with_z_order(window.z_order as u32 * 10 + 2)
-                    .with_opacity(window.opacity),
+                content_bg,
+                content_bounds,
+                z_content,
             ));
+
+            // App-specific content nodes.
+            self.build_window_content(
+                &mut ws_node,
+                window,
+                content_bounds,
+                win_base,
+                z_content,
+                theme,
+            );
         }
         root.add_child(ws_node);
 
@@ -849,21 +963,253 @@ impl Shell {
             root.add_child(self.launcher.build_scene(screen, theme));
         }
 
+        // Session menu (anchored below the session button on the status bar)
+        if self.session_menu_visible {
+            let menu_w = 180.0_f32;
+            let menu_h = 160.0_f32;
+            let bar_h = self.status_bar.config().height as f32;
+            let menu_x = screen.width - menu_w - 8.0;
+            let menu_y = bar_h + 4.0;
+            let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
+
+            use liquide_compositor::scene::GlassParams;
+            root.add_child(SceneNode::new(
+                NODE_SESSION_MENU,
+                SceneNodeKind::Glass(GlassParams {
+                    blur_radius: 20,
+                    tint_color: theme.dock_glass_tint,
+                    inner_glow: true,
+                    parallax: false,
+                }),
+                NodeProperties::new(menu_bounds).with_z_order(990),
+            ));
+
+            let items_data = [
+                (16_u32, "Lock"),
+                (16, "Log Out"),
+                (16, "Restart"),
+                (16, "Shut Down"),
+            ];
+            for (i, (icon_id, label)) in items_data.iter().enumerate() {
+                let iy = menu_y + 8.0 + i as f32 * 36.0;
+                let item_rect = Rect::new(menu_x + 8.0, iy, menu_w - 16.0, 32.0);
+                root.add_child(icon_node(
+                    NODE_SESSION_MENU + 10 + i as u64 * 2,
+                    *icon_id,
+                    theme.status_bar_text,
+                    Rect::new(menu_x + 14.0, iy + 4.0, 24.0, 24.0),
+                    991,
+                ));
+                root.add_child(text_node(
+                    NODE_SESSION_MENU + 11 + i as u64 * 2,
+                    label.to_string(),
+                    theme.status_bar_text,
+                    Rect::new(menu_x + 44.0, iy + 6.0, menu_w - 60.0, 20.0),
+                    991,
+                    1,
+                ));
+                let _ = item_rect; // used for hit testing in handle_platform_event
+            }
+        }
+
         root
+    }
+
+    /// Render app-specific content inside a window's content area.
+    fn build_window_content(
+        &self,
+        parent: &mut SceneNode,
+        window: &Window,
+        content: Rect,
+        win_base: u64,
+        z: u32,
+        theme: &ShellTheme,
+    ) {
+        use crate::scene_builder::*;
+
+        let text_color = theme.status_bar_text;
+        let cx = content.x;
+        let cy = content.y;
+        let cw = content.width;
+
+        match window.app_id.as_str() {
+            "com.liquide.settings" => {
+                // Settings heading
+                parent.add_child(icon_node(
+                    win_base + 3, 4, text_color,
+                    Rect::new(cx + 20.0, cy + 16.0, 28.0, 28.0), z + 1,
+                ));
+                parent.add_child(text_node(
+                    win_base + 4, "Settings".into(), text_color,
+                    Rect::new(cx + 56.0, cy + 20.0, 200.0, 20.0), z + 1, 1,
+                ));
+                // Category list
+                let categories = [
+                    "Display", "Input", "Audio", "Network",
+                    "Appearance", "Privacy", "Users", "System",
+                ];
+                for (i, cat) in categories.iter().enumerate() {
+                    let iy = cy + 60.0 + i as f32 * 32.0;
+                    // Sidebar item background
+                    let item_bg = liquide_compositor::pixel::Color::new(45, 45, 55, 200);
+                    parent.add_child(solid_rect(
+                        win_base + 5 + i as u64,
+                        item_bg,
+                        Rect::new(cx + 8.0, iy, 160.0, 28.0),
+                        z + 1,
+                    ));
+                    parent.add_child(text_node(
+                        win_base + 50 + i as u64, cat.to_string(), text_color,
+                        Rect::new(cx + 16.0, iy + 4.0, 140.0, 20.0), z + 2, 1,
+                    ));
+                }
+            }
+            "com.liquide.terminal" => {
+                // Dark terminal background
+                let term_bg = liquide_compositor::pixel::Color::new(20, 20, 25, 255);
+                parent.add_child(solid_rect(
+                    win_base + 3, term_bg, content, z + 1,
+                ));
+                parent.add_child(text_node(
+                    win_base + 4, "user@liquide:~$".into(),
+                    liquide_compositor::pixel::Color::new(100, 220, 100, 255),
+                    Rect::new(cx + 12.0, cy + 12.0, cw - 24.0, 20.0), z + 2, 1,
+                ));
+            }
+            "com.liquide.files" => {
+                parent.add_child(icon_node(
+                    win_base + 3, 1, text_color,
+                    Rect::new(cx + 20.0, cy + 16.0, 28.0, 28.0), z + 1,
+                ));
+                parent.add_child(text_node(
+                    win_base + 4, "Home".into(), text_color,
+                    Rect::new(cx + 56.0, cy + 20.0, 200.0, 20.0), z + 1, 1,
+                ));
+                let folders = ["Documents", "Downloads", "Pictures", "Music", "Desktop"];
+                for (i, name) in folders.iter().enumerate() {
+                    let iy = cy + 60.0 + i as f32 * 32.0;
+                    parent.add_child(icon_node(
+                        win_base + 5 + i as u64, 1, text_color,
+                        Rect::new(cx + 24.0, iy + 2.0, 24.0, 24.0), z + 1,
+                    ));
+                    parent.add_child(text_node(
+                        win_base + 50 + i as u64, name.to_string(), text_color,
+                        Rect::new(cx + 56.0, iy + 4.0, 200.0, 20.0), z + 2, 1,
+                    ));
+                }
+            }
+            "com.liquide.browser" => {
+                // URL bar
+                let bar_bg = liquide_compositor::pixel::Color::new(55, 55, 65, 255);
+                parent.add_child(solid_rect(
+                    win_base + 3, bar_bg,
+                    Rect::new(cx + 8.0, cy + 8.0, cw - 16.0, 32.0), z + 1,
+                ));
+                parent.add_child(text_node(
+                    win_base + 4, "liquide://home".into(), text_color,
+                    Rect::new(cx + 16.0, cy + 14.0, cw - 32.0, 20.0), z + 2, 1,
+                ));
+                // Page placeholder
+                parent.add_child(text_node(
+                    win_base + 5, "Welcome to Liquide Browser".into(), text_color,
+                    Rect::new(cx + 20.0, cy + 60.0, cw - 40.0, 20.0), z + 2, 1,
+                ));
+            }
+            "com.liquide.calculator" => {
+                parent.add_child(icon_node(
+                    win_base + 3, 5, text_color,
+                    Rect::new(cx + cw / 2.0 - 24.0, cy + 20.0, 48.0, 48.0), z + 1,
+                ));
+                parent.add_child(text_node(
+                    win_base + 4, "0".into(), text_color,
+                    Rect::new(cx + 16.0, cy + 80.0, cw - 32.0, 24.0), z + 1, 1,
+                ));
+            }
+            _ => {
+                // Generic: show the window title centered
+                parent.add_child(text_node(
+                    win_base + 3, window.title.clone(), text_color,
+                    Rect::new(
+                        cx + 20.0,
+                        cy + content.height / 2.0 - 10.0,
+                        cw - 40.0,
+                        20.0,
+                    ),
+                    z + 1,
+                    1,
+                ));
+            }
+        }
     }
 
     /// Handle a platform event and return any resulting shell action.
     pub fn handle_platform_event(&mut self, event: &PlatformEvent) -> Option<ShellAction> {
-        use liquide_input::keyboard::KeyState;
+        use liquide_input::keyboard::{KeyCode, KeyState};
         use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
 
         match event {
             PlatformEvent::KeyInput { event: ke, .. } => {
-                if ke.state == KeyState::Pressed {
-                    self.shortcuts.handle_key_event(ke).cloned()
-                } else {
-                    None
+                if ke.state != KeyState::Pressed {
+                    return None;
                 }
+
+                // When the launcher is visible, route keyboard input to it.
+                if self.launcher.is_visible() {
+                    match ke.key {
+                        KeyCode::Escape => {
+                            self.launcher.close();
+                            return Some(ShellAction::OpenLauncher); // toggles → redraws
+                        }
+                        KeyCode::ArrowUp => {
+                            self.launcher.select_prev();
+                            return Some(ShellAction::OpenLauncher);
+                        }
+                        KeyCode::ArrowDown => {
+                            self.launcher.select_next();
+                            return Some(ShellAction::OpenLauncher);
+                        }
+                        KeyCode::Enter => {
+                            if let Some(kind) = self.launcher.activate_selected().cloned() {
+                                self.launcher.close();
+                                match kind {
+                                    SearchResultKind::Application { ref app_id } => {
+                                        self.open_app_window(app_id);
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                self.launcher.close();
+                            }
+                            return Some(ShellAction::OpenLauncher);
+                        }
+                        KeyCode::Backspace => {
+                            let q = self.launcher.query().to_string();
+                            if !q.is_empty() {
+                                let new_q = &q[..q.len() - 1];
+                                self.launcher.set_query(new_q);
+                            }
+                            return Some(ShellAction::OpenLauncher);
+                        }
+                        other => {
+                            if let Some(ch) = Self::keycode_to_char(other) {
+                                let mut q = self.launcher.query().to_string();
+                                q.push(ch);
+                                self.launcher.set_query(&q);
+                                return Some(ShellAction::OpenLauncher);
+                            }
+                            return None;
+                        }
+                    }
+                }
+
+                // When the session menu is visible, Escape closes it.
+                if self.session_menu_visible && ke.key == KeyCode::Escape {
+                    self.session_menu_visible = false;
+                    return Some(ShellAction::ShowDesktop); // triggers redraw
+                }
+
+                // Normal shortcut dispatch.
+                self.shortcuts.handle_key_event(ke).cloned()
             }
             PlatformEvent::MouseInput { event: me, .. } => {
                 match me {
@@ -895,16 +1241,152 @@ impl Shell {
                         x,
                         y,
                     } => {
-                        if *button == MouseButton::Left && *state == ButtonState::Pressed {
-                            // Focus window under cursor
-                            let mut clicked = None;
-                            for window in self.visible_windows().into_iter().rev() {
-                                if window.bounds.contains(Point::new(*x, *y)) {
-                                    clicked = Some(window.id);
+                        if *button != MouseButton::Left || *state != ButtonState::Pressed {
+                            return None;
+                        }
+                        let pt = Point::new(*x, *y);
+
+                        // --- Session menu interaction ---
+                        if self.session_menu_visible {
+                            let menu_w = 180.0_f32;
+                            let menu_h = 160.0_f32;
+                            let bar_h = self.status_bar.config().height as f32;
+                            let menu_x = self.screen_rect.width - menu_w - 8.0;
+                            let menu_y = bar_h + 4.0;
+                            let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
+
+                            if menu_bounds.contains(pt) {
+                                // Determine which item was clicked.
+                                let rel_y = *y - menu_y - 8.0;
+                                let idx = (rel_y / 36.0) as usize;
+                                self.session_menu_visible = false;
+                                return match idx {
+                                    0 => Some(ShellAction::LockSession),
+                                    3 => {
+                                        // Shut Down → no-op for now, just close menu
+                                        None
+                                    }
+                                    _ => None,
+                                };
+                            }
+                            // Click outside menu → close it.
+                            self.session_menu_visible = false;
+                            // Fall through to normal click handling.
+                        }
+
+                        // --- Launcher click handling ---
+                        if self.launcher.is_visible() {
+                            let screen = self.screen_rect;
+                            let panel_w = screen.width * 0.6;
+                            let panel_h = screen.height * 0.7;
+                            let panel_x = screen.x + (screen.width - panel_w) / 2.0;
+                            let panel_y = screen.y + (screen.height - panel_h) / 2.0;
+                            let panel_bounds = Rect::new(panel_x, panel_y, panel_w, panel_h);
+
+                            if !panel_bounds.contains(pt) {
+                                // Click outside launcher → close it.
+                                self.launcher.close();
+                                return Some(ShellAction::OpenLauncher);
+                            }
+
+                            // Click inside the item area → select and activate.
+                            let item_start_y = panel_y + 65.0;
+                            let item_height = 40.0_f32;
+                            let item_gap = 4.0_f32;
+                            if *y >= item_start_y {
+                                let rel_y = *y - item_start_y;
+                                let idx = (rel_y / (item_height + item_gap)) as usize;
+                                self.launcher.select_index(idx);
+                                if let Some(kind) = self.launcher.activate_selected().cloned() {
+                                    self.launcher.close();
+                                    if let SearchResultKind::Application { ref app_id } = kind {
+                                        self.open_app_window(app_id);
+                                    }
+                                }
+                                return Some(ShellAction::OpenLauncher);
+                            }
+
+                            return None;
+                        }
+
+                        // --- Status bar click (session button) ---
+                        let bar_bounds = self.status_bar.compute_bounds(self.screen_rect);
+                        if bar_bounds.contains(pt) {
+                            // Check if the click is on the session button (rightmost ~36px).
+                            let session_x = self.screen_rect.width - 36.0;
+                            if *x >= session_x {
+                                self.session_menu_visible = !self.session_menu_visible;
+                                return Some(ShellAction::OpenSessionMenu);
+                            }
+                            return None;
+                        }
+
+                        // --- Dock click (launch or focus app) ---
+                        let dock_bounds = self.dock.compute_bounds(self.screen_rect);
+                        if dock_bounds.contains(pt) {
+                            let item_rects = self.dock.compute_item_rects(self.screen_rect);
+                            for (i, (_, rect)) in item_rects.iter().enumerate() {
+                                if rect.contains(pt) {
+                                    let items = self.dock.items();
+                                    if i < items.len() {
+                                        let app_id = items[i].app_id.clone();
+                                        if !app_id.is_empty() {
+                                            self.open_app_window(&app_id);
+                                            return Some(ShellAction::ShowDesktop);
+                                        }
+                                    }
                                     break;
                                 }
                             }
-                            if let Some(wid) = clicked {
+                            return None;
+                        }
+
+                        // --- Window click with decoration hit-testing ---
+                        let mut clicked = None;
+                        let tbh = self.decoration_style.title_bar_height;
+                        for window in self.visible_windows().into_iter().rev() {
+                            // The window.bounds includes the title bar, so
+                            // a click anywhere in window.bounds can be a title/content hit.
+                            if window.bounds.contains(pt) {
+                                clicked = Some(window.id);
+                                break;
+                            }
+                        }
+
+                        if let Some(wid) = clicked {
+                            let is_decorated = self.windows.get(&wid)
+                                .map(|w| w.flags.contains(WindowFlags::DECORATED))
+                                .unwrap_or(false);
+
+                            if is_decorated {
+                                let bounds = self.windows[&wid].bounds;
+                                // hit_test_decoration expects the client (content) rect.
+                                let client = Rect::new(
+                                    bounds.x,
+                                    bounds.y + tbh,
+                                    bounds.width,
+                                    (bounds.height - tbh).max(0.0),
+                                );
+                                let zone = hit_test_decoration(client, &self.decoration_style, *x, *y);
+                                match zone {
+                                    HitZone::CloseButton => {
+                                        let _ = self.set_focus(wid);
+                                        return Some(ShellAction::CloseWindow);
+                                    }
+                                    HitZone::MaximizeButton => {
+                                        let _ = self.set_focus(wid);
+                                        return Some(ShellAction::MaximizeWindow);
+                                    }
+                                    HitZone::MinimizeButton => {
+                                        let _ = self.set_focus(wid);
+                                        return Some(ShellAction::MinimizeWindow);
+                                    }
+                                    _ => {
+                                        let _ = self.set_focus(wid);
+                                        let _ = self.raise_window(wid);
+                                    }
+                                }
+                            } else {
                                 let _ = self.set_focus(wid);
                                 let _ = self.raise_window(wid);
                             }
@@ -1026,6 +1508,40 @@ impl Shell {
             ShellAction::WorkspaceAdd => {
                 let n = self.workspaces.workspace_count();
                 self.workspaces.create_workspace(format!("Workspace {}", n + 1));
+                true
+            }
+            ShellAction::OpenSettings => {
+                self.open_app_window("com.liquide.settings");
+                true
+            }
+            ShellAction::OpenTerminal => {
+                self.open_app_window("com.liquide.terminal");
+                true
+            }
+            ShellAction::OpenFileManager => {
+                self.open_app_window("com.liquide.files");
+                true
+            }
+            ShellAction::OpenTaskManager => {
+                self.open_app_window("com.liquide.taskmanager");
+                true
+            }
+            ShellAction::OpenSessionMenu => {
+                self.session_menu_visible = !self.session_menu_visible;
+                true
+            }
+            ShellAction::LockSession => {
+                // Visual feedback only — no real lock in a simulated shell.
+                true
+            }
+            ShellAction::LaunchDockApp(n) => {
+                let idx = (*n as usize).saturating_sub(1);
+                let app_id = self.dock.items().get(idx).map(|i| i.app_id.clone());
+                if let Some(aid) = app_id {
+                    if !aid.is_empty() {
+                        self.open_app_window(&aid);
+                    }
+                }
                 true
             }
             _ => false,

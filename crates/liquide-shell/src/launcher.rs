@@ -813,6 +813,7 @@ impl Launcher {
             NodeProperties::new(panel_bounds).with_z_order(981),
         ));
 
+        // Search bar background.
         let search_bounds = GRect::new(panel_x + 20.0, panel_y + 15.0, panel_w - 40.0, 36.0);
         launcher_root.add_child(solid_rect(
             NODE_LAUNCHER + 2,
@@ -821,14 +822,48 @@ impl Launcher {
             982,
         ));
 
+        // Search query text (or placeholder).
+        let query_text = if self.query.is_empty() {
+            "Search...".to_string()
+        } else {
+            self.query.clone()
+        };
+        launcher_root.add_child(text_node(
+            NODE_LAUNCHER + 3,
+            query_text,
+            theme.status_bar_text,
+            GRect::new(
+                panel_x + 28.0,
+                panel_y + 23.0,
+                panel_w - 56.0,
+                20.0,
+            ),
+            983,
+            1,
+        ));
+
+        // Search icon in the search bar.
+        launcher_root.add_child(icon_node(
+            NODE_LAUNCHER + 4,
+            15, // search icon
+            theme.status_bar_text,
+            GRect::new(panel_x + 24.0, panel_y + 19.0, 16.0, 16.0),
+            983,
+        ));
+
         let item_start_y = panel_y + 65.0;
         let item_height = 40.0_f32;
         let item_gap = 4.0_f32;
         let max_visible = ((panel_h - 80.0) / (item_height + item_gap)) as usize;
-        let items_to_show = if self.results.is_empty() {
+
+        // Determine items to show: search results or favourites/all apps.
+        let showing_results = !self.results.is_empty();
+        let items_to_show = if showing_results {
+            self.results.len().min(max_visible)
+        } else if !self.favorites.is_empty() {
             self.favorites.len().min(max_visible)
         } else {
-            self.results.len().min(max_visible)
+            self.apps.len().min(max_visible)
         };
 
         for i in 0..items_to_show {
@@ -839,7 +874,64 @@ impl Launcher {
             } else {
                 theme.launcher_item_normal
             };
-            launcher_root.add_child(solid_rect(NODE_LAUNCHER + 10 + i as u64, color, item_bounds, 983));
+            // Item background.
+            launcher_root.add_child(solid_rect(
+                NODE_LAUNCHER + 10 + i as u64,
+                color,
+                item_bounds,
+                983,
+            ));
+
+            // Resolve label and icon for this item.
+            let (label, icon_name) = if showing_results {
+                let r = &self.results[i];
+                (
+                    r.title.clone(),
+                    r.icon.clone(),
+                )
+            } else if !self.favorites.is_empty() {
+                if let Some(fav_id) = self.favorites.get(i) {
+                    if let Some(app) = self.apps.iter().find(|a| &a.app_id == fav_id) {
+                        (app.name.clone(), app.icon.clone())
+                    } else {
+                        (fav_id.clone(), None)
+                    }
+                } else {
+                    (String::new(), None)
+                }
+            } else {
+                let app = &self.apps[i];
+                (app.name.clone(), app.icon.clone())
+            };
+
+            // Item icon (left side).
+            if let Some(ref icon) = icon_name {
+                let iid = icon_id_for_name(icon);
+                launcher_root.add_child(icon_node(
+                    NODE_LAUNCHER + 60 + i as u64,
+                    iid,
+                    theme.status_bar_text,
+                    GRect::new(panel_x + 28.0, iy + 6.0, 28.0, 28.0),
+                    984,
+                ));
+            }
+
+            // Item text label.
+            if !label.is_empty() {
+                let text_x = if icon_name.is_some() {
+                    panel_x + 64.0
+                } else {
+                    panel_x + 32.0
+                };
+                launcher_root.add_child(text_node(
+                    NODE_LAUNCHER + 110 + i as u64,
+                    label,
+                    theme.status_bar_text,
+                    GRect::new(text_x, iy + 10.0, panel_w - 80.0, 20.0),
+                    984,
+                    1,
+                ));
+            }
         }
 
         launcher_root

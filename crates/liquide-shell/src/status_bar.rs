@@ -86,6 +86,8 @@ pub enum StatusBarItemKind {
     TrayArea,
     /// Plugin-provided custom content.
     Custom { plugin_id: String, content: String },
+    /// Session / power button (shutdown, lock, etc.).
+    SessionButton,
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +183,16 @@ impl ShellStatusBar {
                 last_update_us: 0,
             });
         }
+
+        // Session / power button always present on the far right.
+        items.push(StatusBarItem {
+            id: "session".into(),
+            kind: StatusBarItemKind::SessionButton,
+            slot: StatusBarSlot::Right,
+            visible: true,
+            cached: false,
+            last_update_us: 0,
+        });
 
         Self {
             config,
@@ -390,6 +402,7 @@ impl ShellStatusBar {
                 StatusBarItemKind::ConnectionQuality { .. } => 40.0,
                 StatusBarItemKind::TrayArea => 80.0,
                 StatusBarItemKind::Custom { .. } => 60.0,
+                StatusBarItemKind::SessionButton => 28.0,
             };
 
             let ix = match item.slot {
@@ -426,6 +439,7 @@ impl ShellStatusBar {
                 }
                 StatusBarItemKind::TrayArea => theme.status_bar_tray,
                 StatusBarItemKind::Custom { .. } => theme.status_bar_notification_inactive,
+                StatusBarItemKind::SessionButton => theme.status_bar_text,
             };
 
             match &item.kind {
@@ -479,6 +493,10 @@ impl ShellStatusBar {
                         951,
                         1,
                     ));
+                }
+                StatusBarItemKind::SessionButton => {
+                    // Power icon (icon_id 16 = power/shutdown).
+                    bar_node.add_child(icon_node(item_id, 16, color, item_bounds, 951));
                 }
             }
         }

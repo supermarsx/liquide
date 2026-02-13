@@ -6,11 +6,12 @@ use liquide_compositor::geometry::Rect;
 #[test]
 fn status_bar_new_default_config_creates_four_items() {
     let bar = ShellStatusBar::new(StatusBarConfig::default());
-    assert_eq!(bar.item_count(), 4);
+    assert_eq!(bar.item_count(), 5); // clock, notifications, connection, tray, session
     assert!(bar.find_item("clock").is_some());
     assert!(bar.find_item("notifications").is_some());
     assert!(bar.find_item("connection").is_some());
     assert!(bar.find_item("tray").is_some());
+    assert!(bar.find_item("session").is_some());
 }
 
 #[test]
@@ -23,7 +24,7 @@ fn status_bar_new_all_disabled_creates_zero_items() {
         ..StatusBarConfig::default()
     };
     let bar = ShellStatusBar::new(config);
-    assert_eq!(bar.item_count(), 0);
+    assert_eq!(bar.item_count(), 1); // session button always present
 }
 
 // ========== add_item ==========
@@ -37,7 +38,7 @@ fn status_bar_add_item() {
         show_tray: false,
         ..StatusBarConfig::default()
     });
-    assert_eq!(bar.item_count(), 0);
+    assert_eq!(bar.item_count(), 1); // session button
     bar.add_item(StatusBarItem {
         id: "custom".into(),
         kind: StatusBarItemKind::Custom {
@@ -49,8 +50,7 @@ fn status_bar_add_item() {
         cached: false,
         last_update_us: 0,
     });
-    assert_eq!(bar.item_count(), 1);
-    assert!(bar.find_item("custom").is_some());
+    assert_eq!(bar.item_count(), 2); // session + custom
 }
 
 // ========== remove_item ==========
@@ -58,10 +58,10 @@ fn status_bar_add_item() {
 #[test]
 fn status_bar_remove_item() {
     let mut bar = ShellStatusBar::new(StatusBarConfig::default());
-    assert_eq!(bar.item_count(), 4);
+    assert_eq!(bar.item_count(), 5);
     let removed = bar.remove_item("clock");
     assert!(removed);
-    assert_eq!(bar.item_count(), 3);
+    assert_eq!(bar.item_count(), 4);
     assert!(bar.find_item("clock").is_none());
 }
 
@@ -70,7 +70,7 @@ fn status_bar_remove_item_nonexistent() {
     let mut bar = ShellStatusBar::new(StatusBarConfig::default());
     let removed = bar.remove_item("nonexistent");
     assert!(!removed);
-    assert_eq!(bar.item_count(), 4);
+    assert_eq!(bar.item_count(), 5);
 }
 
 // ========== update_clock ==========
@@ -174,13 +174,13 @@ fn status_bar_dirty_starts_true_mark_clean_then_update() {
 fn status_bar_items_returns_all() {
     let bar = ShellStatusBar::new(StatusBarConfig::default());
     let items = bar.items();
-    assert_eq!(items.len(), 4);
+    assert_eq!(items.len(), 5);
 }
 
 #[test]
 fn status_bar_item_count() {
     let bar = ShellStatusBar::new(StatusBarConfig::default());
-    assert_eq!(bar.item_count(), 4);
+    assert_eq!(bar.item_count(), 5);
 }
 
 // ========== items_in_slot ==========
@@ -204,7 +204,7 @@ fn status_bar_items_in_slot_center() {
 fn status_bar_items_in_slot_right() {
     let bar = ShellStatusBar::new(StatusBarConfig::default());
     let right_items = bar.items_in_slot(StatusBarSlot::Right);
-    assert_eq!(right_items.len(), 3); // notifications, connection, tray
+    assert_eq!(right_items.len(), 4); // notifications, connection, tray, session
 }
 
 // ========== find_item ==========
@@ -278,7 +278,7 @@ fn status_bar_slot_display() {
 fn status_bar_display() {
     let bar = ShellStatusBar::new(StatusBarConfig::default());
     let s = format!("{bar}");
-    assert!(s.contains("4 items"));
+    assert!(s.contains("5 items"));
     assert!(s.contains("dirty"));
 
     let mut bar2 = ShellStatusBar::new(StatusBarConfig::default());
