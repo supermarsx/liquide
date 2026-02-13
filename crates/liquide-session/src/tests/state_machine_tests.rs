@@ -1,5 +1,5 @@
-use crate::state::{SessionState, SessionStateMachine};
 use crate::SessionError;
+use crate::state::{SessionState, SessionStateMachine};
 
 fn make_state_machine(id: &str) -> SessionStateMachine {
     SessionStateMachine::new(id.to_string())
