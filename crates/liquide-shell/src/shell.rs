@@ -227,6 +227,8 @@ impl Shell {
             drag_state: None,
             hovered_button: None,
             cursor_shape: CursorShape::Arrow,
+            status_bar_visible: true,
+            app_menu_open: None,
         }
     }
 
@@ -280,6 +282,8 @@ impl Shell {
             drag_state: None,
             hovered_button: None,
             cursor_shape: CursorShape::Arrow,
+            status_bar_visible: true,
+            app_menu_open: None,
         }
     }
 
