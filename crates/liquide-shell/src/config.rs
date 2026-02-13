@@ -26,15 +26,22 @@ pub struct ShellConfig {
     pub seamless: SeamlessConfig,
 }
 
-
 impl std::fmt::Display for ShellConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "ShellConfig(dock={}, status_bar={}, launcher={}, tiling={})",
-            if self.dock.auto_hide { "auto-hide" } else { "visible" },
+            if self.dock.auto_hide {
+                "auto-hide"
+            } else {
+                "visible"
+            },
             if self.status_bar.enabled { "on" } else { "off" },
-            if self.launcher.calculator_enabled { "calc" } else { "no-calc" },
+            if self.launcher.calculator_enabled {
+                "calc"
+            } else {
+                "no-calc"
+            },
             if self.tiling.enabled { "on" } else { "off" },
         )
     }

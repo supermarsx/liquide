@@ -93,7 +93,9 @@ pub fn tokenize(expr: &str) -> Result<Vec<CalcToken>, String> {
                     i += 1;
                 }
                 let s: String = chars[start..i].iter().collect();
-                let n = s.parse::<f64>().map_err(|_| format!("invalid number: {s}"))?;
+                let n = s
+                    .parse::<f64>()
+                    .map_err(|_| format!("invalid number: {s}"))?;
                 tokens.push(CalcToken::Number(n));
             }
             c if c.is_ascii_alphabetic() => {
