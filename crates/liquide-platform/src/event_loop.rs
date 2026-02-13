@@ -9,8 +9,8 @@ use liquide_input::keyboard::KeyEvent;
 use liquide_input::mouse::MouseEvent;
 use liquide_input::touch::TouchEvent;
 
-use crate::window_host::NativeWindowHandle;
 use crate::PlatformResult;
+use crate::window_host::NativeWindowHandle;
 
 /// Events dispatched by the platform event loop.
 #[derive(Debug, Clone)]
@@ -23,14 +23,10 @@ pub enum PlatformEvent {
     },
 
     /// The user requested a window to close (e.g. clicked the X button).
-    WindowCloseRequested {
-        handle: NativeWindowHandle,
-    },
+    WindowCloseRequested { handle: NativeWindowHandle },
 
     /// A window was destroyed by the platform.
-    WindowDestroyed {
-        handle: NativeWindowHandle,
-    },
+    WindowDestroyed { handle: NativeWindowHandle },
 
     /// A window was resized.
     WindowResized {
@@ -47,19 +43,13 @@ pub enum PlatformEvent {
     },
 
     /// A window needs to be repainted.
-    WindowRedraw {
-        handle: NativeWindowHandle,
-    },
+    WindowRedraw { handle: NativeWindowHandle },
 
     /// A window gained keyboard focus.
-    FocusGained {
-        handle: NativeWindowHandle,
-    },
+    FocusGained { handle: NativeWindowHandle },
 
     /// A window lost keyboard focus.
-    FocusLost {
-        handle: NativeWindowHandle,
-    },
+    FocusLost { handle: NativeWindowHandle },
 
     /// Keyboard input event.
     KeyInput {
@@ -87,19 +77,13 @@ pub enum PlatformEvent {
     },
 
     /// A window was minimized.
-    WindowMinimized {
-        handle: NativeWindowHandle,
-    },
+    WindowMinimized { handle: NativeWindowHandle },
 
     /// A window was maximized.
-    WindowMaximized {
-        handle: NativeWindowHandle,
-    },
+    WindowMaximized { handle: NativeWindowHandle },
 
     /// A window was restored from minimized / maximized state.
-    WindowRestored {
-        handle: NativeWindowHandle,
-    },
+    WindowRestored { handle: NativeWindowHandle },
 
     /// A file was dropped onto a window.
     FileDrop {

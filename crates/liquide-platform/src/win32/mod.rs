@@ -118,10 +118,18 @@ unsafe extern "system" fn wndproc(
                 }
                 ffi::SIZE_MAXIMIZED => {
                     queue.push_back(PlatformEvent::WindowMaximized { handle });
-                    queue.push_back(PlatformEvent::WindowResized { handle, width, height });
+                    queue.push_back(PlatformEvent::WindowResized {
+                        handle,
+                        width,
+                        height,
+                    });
                 }
                 _ => {
-                    queue.push_back(PlatformEvent::WindowResized { handle, width, height });
+                    queue.push_back(PlatformEvent::WindowResized {
+                        handle,
+                        width,
+                        height,
+                    });
                 }
             }
         }
@@ -161,7 +169,11 @@ unsafe extern "system" fn wndproc(
             let scancode = ((lp as u32) >> 16) & 0x1FF; // bits 16-24
             let repeat = (lp & 0x40000000) != 0;
             if let Some(key) = input::vk_to_keycode(vk) {
-                let state = if repeat { KeyState::Repeat } else { KeyState::Pressed };
+                let state = if repeat {
+                    KeyState::Repeat
+                } else {
+                    KeyState::Pressed
+                };
                 let mods = input::modifiers_from_state();
                 let event = KeyEvent::new(key, state, mods, scancode, timestamp_us());
                 queue.push_back(PlatformEvent::KeyInput { handle, event });
@@ -209,7 +221,9 @@ unsafe extern "system" fn wndproc(
                     y,
                 },
             });
-            unsafe { ffi::SetCapture(hwnd); }
+            unsafe {
+                ffi::SetCapture(hwnd);
+            }
             return 0;
         }
 
@@ -225,7 +239,9 @@ unsafe extern "system" fn wndproc(
                     y,
                 },
             });
-            unsafe { ffi::ReleaseCapture(); }
+            unsafe {
+                ffi::ReleaseCapture();
+            }
             return 0;
         }
 
@@ -296,7 +312,9 @@ unsafe extern "system" fn wndproc(
                 x: ffi::get_x_lparam(lp),
                 y: ffi::get_y_lparam(lp),
             };
-            unsafe { ffi::ScreenToClient(hwnd, &mut pt); }
+            unsafe {
+                ffi::ScreenToClient(hwnd, &mut pt);
+            }
             queue.push_back(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Scroll {
@@ -315,7 +333,9 @@ unsafe extern "system" fn wndproc(
                 x: ffi::get_x_lparam(lp),
                 y: ffi::get_y_lparam(lp),
             };
-            unsafe { ffi::ScreenToClient(hwnd, &mut pt); }
+            unsafe {
+                ffi::ScreenToClient(hwnd, &mut pt);
+            }
             queue.push_back(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Scroll {
@@ -491,10 +511,7 @@ struct Win32WindowHost {
 unsafe impl Send for Win32WindowHost {}
 
 impl NativeWindowHost for Win32WindowHost {
-    fn create_window(
-        &mut self,
-        params: NativeWindowParams,
-    ) -> PlatformResult<NativeWindowHandle> {
+    fn create_window(&mut self, params: NativeWindowParams) -> PlatformResult<NativeWindowHandle> {
         let handle = NativeWindowHandle(self.next_handle);
         self.next_handle += 1;
 
@@ -590,7 +607,9 @@ impl NativeWindowHost for Win32WindowHost {
 
         // Push a WindowCreated event.
         let mut rc = ffi::RECT::default();
-        unsafe { ffi::GetClientRect(hwnd, &mut rc); }
+        unsafe {
+            ffi::GetClientRect(hwnd, &mut rc);
+        }
         let width = (rc.right - rc.left) as u32;
         let height = (rc.bottom - rc.top) as u32;
         // Safety: the event_queue pointer is valid for the lifetime of
@@ -619,11 +638,7 @@ impl NativeWindowHost for Win32WindowHost {
         Ok(())
     }
 
-    fn set_geometry(
-        &mut self,
-        handle: NativeWindowHandle,
-        geometry: Rect,
-    ) -> PlatformResult<()> {
+    fn set_geometry(&mut self, handle: NativeWindowHandle, geometry: Rect) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
             // Safety: MoveWindow is safe to call on a valid HWND.
             unsafe {
@@ -652,22 +667,14 @@ impl NativeWindowHost for Win32WindowHost {
         Ok(())
     }
 
-    fn set_icon(
-        &mut self,
-        _handle: NativeWindowHandle,
-        _icon_data: &[u8],
-    ) -> PlatformResult<()> {
+    fn set_icon(&mut self, _handle: NativeWindowHandle, _icon_data: &[u8]) -> PlatformResult<()> {
         // Setting a window icon from raw pixel data requires creating an
         // HICON via CreateIconIndirect, which is non-trivial. For now we
         // accept the call but do nothing.
         Ok(())
     }
 
-    fn set_state(
-        &mut self,
-        handle: NativeWindowHandle,
-        state: &str,
-    ) -> PlatformResult<()> {
+    fn set_state(&mut self, handle: NativeWindowHandle, state: &str) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
             let cmd = match state {
                 "maximized" => ffi::SW_MAXIMIZE,
@@ -676,16 +683,14 @@ impl NativeWindowHost for Win32WindowHost {
                 "hidden" => ffi::SW_HIDE,
                 _ => ffi::SW_SHOW,
             };
-            unsafe { ffi::ShowWindow(info.hwnd, cmd); }
+            unsafe {
+                ffi::ShowWindow(info.hwnd, cmd);
+            }
         }
         Ok(())
     }
 
-    fn set_z_order(
-        &mut self,
-        handle: NativeWindowHandle,
-        z_order: i32,
-    ) -> PlatformResult<()> {
+    fn set_z_order(&mut self, handle: NativeWindowHandle, z_order: i32) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
             let insert_after = if z_order > 0 {
                 ffi::HWND_TOPMOST
@@ -709,7 +714,9 @@ impl NativeWindowHost for Win32WindowHost {
 
     fn set_focus(&mut self, handle: NativeWindowHandle) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
-            unsafe { ffi::SetForegroundWindow(info.hwnd); }
+            unsafe {
+                ffi::SetForegroundWindow(info.hwnd);
+            }
         }
         Ok(())
     }
@@ -778,10 +785,7 @@ impl Win32Tray {
 }
 
 impl NativeTray for Win32Tray {
-    fn add_icon(
-        &mut self,
-        params: NativeTrayParams,
-    ) -> PlatformResult<NativeTrayHandle> {
+    fn add_icon(&mut self, params: NativeTrayParams) -> PlatformResult<NativeTrayHandle> {
         let handle_id = self.next_id;
         self.next_id += 1;
         let uid = handle_id as u32;
@@ -801,18 +805,16 @@ impl NativeTray for Win32Tray {
         // Safety: Shell_NotifyIconW with NIM_ADD adds a tray icon.
         let ok = unsafe { ffi::Shell_NotifyIconW(ffi::NIM_ADD, &mut nid) };
         if ok == 0 {
-            return Err(PlatformError::Tray("Shell_NotifyIconW NIM_ADD failed".into()));
+            return Err(PlatformError::Tray(
+                "Shell_NotifyIconW NIM_ADD failed".into(),
+            ));
         }
 
         self.icons.insert(handle_id, TrayIconInfo { uid });
         Ok(NativeTrayHandle(handle_id))
     }
 
-    fn update_icon(
-        &mut self,
-        handle: NativeTrayHandle,
-        update: TrayUpdate,
-    ) -> PlatformResult<()> {
+    fn update_icon(&mut self, handle: NativeTrayHandle, update: TrayUpdate) -> PlatformResult<()> {
         let info = self
             .icons
             .get(&handle.0)
@@ -830,7 +832,9 @@ impl NativeTray for Win32Tray {
             nid.szTip[..copy_len].copy_from_slice(&tip[..copy_len]);
         }
 
-        unsafe { ffi::Shell_NotifyIconW(ffi::NIM_MODIFY, &mut nid); }
+        unsafe {
+            ffi::Shell_NotifyIconW(ffi::NIM_MODIFY, &mut nid);
+        }
         Ok(())
     }
 
@@ -840,7 +844,9 @@ impl NativeTray for Win32Tray {
             nid.cbSize = std::mem::size_of::<ffi::NOTIFYICONDATAW>() as ffi::DWORD;
             nid.hWnd = self.msg_hwnd;
             nid.uID = info.uid;
-            unsafe { ffi::Shell_NotifyIconW(ffi::NIM_DELETE, &mut nid); }
+            unsafe {
+                ffi::Shell_NotifyIconW(ffi::NIM_DELETE, &mut nid);
+            }
         }
         Ok(())
     }
@@ -949,7 +955,9 @@ impl Win32Platform {
         // running executable, which is always valid.
         let hinstance = unsafe { ffi::GetModuleHandleW(ptr::null()) };
         if hinstance.is_null() {
-            return Err(PlatformError::Other("GetModuleHandleW returned null".into()));
+            return Err(PlatformError::Other(
+                "GetModuleHandleW returned null".into(),
+            ));
         }
 
         let class_name = "LiquiDE_Win32_Window";
@@ -998,7 +1006,9 @@ impl Win32Platform {
             lpszClassName: msg_class_wide.as_ptr(),
             hIconSm: ptr::null_mut(),
         };
-        unsafe { ffi::RegisterClassExW(&msg_wc); }
+        unsafe {
+            ffi::RegisterClassExW(&msg_wc);
+        }
 
         let msg_title = to_wide("");
         let msg_hwnd = unsafe {
@@ -1007,7 +1017,10 @@ impl Win32Platform {
                 msg_class_wide.as_ptr(),
                 msg_title.as_ptr(),
                 0, // not visible
-                0, 0, 0, 0,
+                0,
+                0,
+                0,
+                0,
                 ptr::null_mut(),
                 ptr::null_mut(),
                 hinstance,
@@ -1056,9 +1069,7 @@ impl Win32Platform {
         let mut msg = ffi::MSG::default();
         // Safety: PeekMessageW retrieves messages from the calling thread's
         // queue. The MSG struct is valid.
-        while unsafe {
-            ffi::PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, ffi::PM_REMOVE) != 0
-        } {
+        while unsafe { ffi::PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, ffi::PM_REMOVE) != 0 } {
             if msg.message == ffi::WM_QUIT {
                 self.event_queue.push_back(PlatformEvent::Quit);
                 return;
@@ -1094,7 +1105,9 @@ impl Drop for Win32Platform {
 
         // Destroy the hidden message window.
         if !self.msg_hwnd.is_null() {
-            unsafe { ffi::DestroyWindow(self.msg_hwnd); }
+            unsafe {
+                ffi::DestroyWindow(self.msg_hwnd);
+            }
         }
 
         // Unregister the window class.
@@ -1162,8 +1175,7 @@ impl PlatformBackend for Win32Platform {
         let mut msg = ffi::MSG::default();
         // Safety: GetMessageW blocks until a message is available. A return
         // value of 0 means WM_QUIT, and -1 is an error (treated as Quit).
-        let ret =
-            unsafe { ffi::GetMessageW(&mut msg, ptr::null_mut(), 0, 0) };
+        let ret = unsafe { ffi::GetMessageW(&mut msg, ptr::null_mut(), 0, 0) };
 
         if ret <= 0 {
             return PlatformEvent::Quit;
@@ -1238,14 +1250,14 @@ impl PlatformBackend for Win32Platform {
 
             ffi::SetDIBitsToDevice(
                 hdc,
-                0,                     // xDest
-                0,                     // yDest
-                width,                 // dwWidth
-                height,                // dwHeight
-                0,                     // xSrc
-                0,                     // ySrc
-                0,                     // uStartScan
-                height,                // cScanLines
+                0,      // xDest
+                0,      // yDest
+                width,  // dwWidth
+                height, // dwHeight
+                0,      // xSrc
+                0,      // ySrc
+                0,      // uStartScan
+                height, // cScanLines
                 pixels.as_ptr() as *const c_void,
                 &mut bmi,
                 ffi::DIB_RGB_COLORS,
