@@ -5,7 +5,10 @@
 use std::collections::HashMap;
 
 use liquide_compositor::geometry::{Point, Rect};
-use liquide_compositor::scene::{CursorShape, DecorationButtons, NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::pixel::Color;
+use liquide_compositor::scene::{
+    CursorShape, DecorationButtons, NodeProperties, SceneNode, SceneNodeKind,
+};
 use liquide_input::KeyEvent;
 use liquide_platform::PlatformEvent;
 
@@ -18,6 +21,7 @@ use crate::history::{WindowEventKind, WindowHistory};
 use crate::launcher::{Launcher, LauncherApp, SearchResultKind};
 use crate::layout::{FloatingLayout, LayoutPolicy};
 use crate::notification::NotificationManager;
+use crate::scene_builder;
 use crate::screen_time::ScreenTimeTracker;
 use crate::seamless::SeamlessManager;
 use crate::shortcuts::{ShellAction, ShortcutManager};
@@ -1196,7 +1200,7 @@ impl Shell {
         }
 
         // App menu dropdown (macOS-style, anchored below app title in status bar)
-        if let Some(ref app_id) = self.app_menu_open {
+        if let Some(ref _app_id) = self.app_menu_open {
             let menu_w = 200.0_f32;
             let item_h = 32.0_f32;
             let menu_items = vec![
@@ -1822,7 +1826,7 @@ impl Shell {
                                 .max(0.0);
                             let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
                             let prev_hover = self.context_menu_hover_index;
-                            
+
                             // Only process hover if mouse is within menu bounds
                             if ctx_bounds.contains(pt) {
                                 let rel_y = *y - ctx_y - 8.0;
@@ -1855,7 +1859,7 @@ impl Shell {
                             let menu_y = bar_h + 4.0;
                             let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
                             let prev_hover = self.session_menu_hover_index;
-                            
+
                             // Only process hover if mouse is within menu bounds
                             if menu_bounds.contains(pt) {
                                 let rel_y = *y - menu_y - 8.0;
@@ -1907,12 +1911,8 @@ impl Shell {
                                     window.bounds.width,
                                     (window.bounds.height - tbh).max(0.0),
                                 );
-                                let zone = hit_test_decoration(
-                                    client,
-                                    &self.decoration_style,
-                                    *x,
-                                    *y,
-                                );
+                                let zone =
+                                    hit_test_decoration(client, &self.decoration_style, *x, *y);
                                 match zone {
                                     HitZone::Outside => continue,
                                     HitZone::TitleBar => {
@@ -1921,8 +1921,7 @@ impl Shell {
                                     }
                                     HitZone::Client => break,
                                     zone => {
-                                        self.cursor_shape =
-                                            Self::cursor_for_hit_zone(zone);
+                                        self.cursor_shape = Self::cursor_for_hit_zone(zone);
                                         break;
                                     }
                                 }
@@ -2260,16 +2259,16 @@ impl Shell {
         if bar_dirty {
             self.status_bar.mark_clean();
         }
-        
+
         // Window repatriation: ensure windows stay within screen bounds
         let mut repatriation_dirty = false;
         if self.config.window_management.auto_repatriate {
             repatriation_dirty = self.repatriate_offscreen_windows();
         }
-        
+
         // Status bar auto-hide based on cursor position and maximized windows
         let auto_hide_dirty = self.update_status_bar_visibility();
-        
+
         bar_dirty || !expired.is_empty() || repatriation_dirty || auto_hide_dirty
     }
 
@@ -2280,9 +2279,12 @@ impl Shell {
         let screen = self.screen_rect;
         let mut dirty = false;
 
-        for window in self.windows.values_mut() {
-            let bounds = &window.bounds;
-            
+        // Collect window IDs and old bounds that need repatriation
+        let mut updates: Vec<(WindowId, Rect, Rect)> = Vec::new();
+
+        for window in self.windows.values() {
+            let bounds = window.bounds;
+
             // Calculate visible portions on each edge
             let visible_left = bounds.x + bounds.width;
             let visible_right = screen.width - bounds.x;
@@ -2317,19 +2319,32 @@ impl Shell {
                     new_y = screen.height - threshold;
                 }
 
-                window.bounds.x = new_x.max(0.0).min(screen.width - 50.0);
-                window.bounds.y = new_y.max(0.0).min(screen.height - 50.0);
-                
+                let new_bounds = Rect::new(
+                    new_x.max(0.0).min(screen.width - 50.0),
+                    new_y.max(0.0).min(screen.height - 50.0),
+                    bounds.width,
+                    bounds.height,
+                );
+
+                updates.push((window.id, bounds, new_bounds));
+            }
+        }
+
+        // Apply updates
+        for (window_id, old_bounds, new_bounds) in updates {
+            if let Some(window) = self.windows.get_mut(&window_id) {
+                window.bounds = new_bounds;
+
                 let ts = self.next_timestamp();
                 self.window_history.record_at(
-                    window.id,
+                    window_id,
                     WindowEventKind::Moved {
-                        from: (bounds.x, bounds.y),
-                        to: (window.bounds.x, window.bounds.y),
+                        from: old_bounds,
+                        to: new_bounds,
                     },
                     ts,
                 );
-                
+
                 dirty = true;
             }
         }
@@ -2353,7 +2368,7 @@ impl Shell {
         let has_maximized = self
             .windows
             .values()
-            .any(|w| w.flags.contains(WindowFlags::MAXIMIZED) && !w.flags.contains(WindowFlags::MINIMIZED));
+            .any(|w| w.state == WindowState::Maximized && w.state != WindowState::Minimized);
 
         if !has_maximized {
             // No maximized windows, always show bar
@@ -2364,12 +2379,10 @@ impl Shell {
             return false;
         }
 
-        // Maximized window present: show bar only if cursor near top edge
-        let reveal_dist = self.config.status_bar.auto_hide_reveal_distance;
-        let should_show = self.pointer.y < reveal_dist;
-
-        if should_show != self.status_bar_visible {
-            self.status_bar_visible = should_show;
+        // Maximized window present: always hide for now (will show on mouse hover in future)
+        // TODO: Track mouse position to reveal on top-edge hover
+        if self.status_bar_visible {
+            self.status_bar_visible = false;
             true
         } else {
             false

@@ -356,7 +356,9 @@ impl DesktopCompositor {
             let cursor_bounds = Rect::new(self.cursor_x, self.cursor_y, cursor_size, cursor_size);
             scene.add_child(SceneNode::new(
                 999_999,
-                SceneNodeKind::Cursor { shape: self.shell.cursor_shape() },
+                SceneNodeKind::Cursor {
+                    shape: self.shell.cursor_shape(),
+                },
                 NodeProperties::new(cursor_bounds).with_z_order(9999),
             ));
         }
@@ -418,7 +420,9 @@ impl DesktopCompositor {
         let cursor_bounds = Rect::new(self.cursor_x, self.cursor_y, cursor_size, cursor_size);
         scene.add_child(SceneNode::new(
             999_999,
-            SceneNodeKind::Cursor { shape: self.shell.cursor_shape() },
+            SceneNodeKind::Cursor {
+                shape: self.shell.cursor_shape(),
+            },
             NodeProperties::new(cursor_bounds).with_z_order(9999),
         ));
 
