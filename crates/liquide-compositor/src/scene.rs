@@ -193,10 +193,7 @@ pub enum SceneNodeKind {
         scale: u32,
     },
     /// Built-in vector icon rendered at the node bounds.
-    Icon {
-        icon_id: u32,
-        color: Color,
-    },
+    Icon { icon_id: u32, color: Color },
     /// Lock screen overlay.
     LockScreen,
     /// Emergency crash overlay.
@@ -355,7 +352,11 @@ impl SceneNode {
         if self.children.is_empty() {
             return 0;
         }
-        self.children.iter().map(|c| c.depth() + 1).max().unwrap_or(0)
+        self.children
+            .iter()
+            .map(|c| c.depth() + 1)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Total number of descendants (recursive child count, excludes self).
@@ -390,7 +391,10 @@ impl SceneNode {
         let mut result = Vec::new();
         self.walk(&mut |node, abs_transform| {
             // Skip non-visual structural nodes (Root, Workspace containers)
-            let is_visual = !matches!(node.kind, SceneNodeKind::Root | SceneNodeKind::Workspace { .. });
+            let is_visual = !matches!(
+                node.kind,
+                SceneNodeKind::Root | SceneNodeKind::Workspace { .. }
+            );
 
             if is_visual {
                 let abs_bounds = abs_transform.transform_rect(Rect::new(

@@ -72,7 +72,13 @@ pub enum IconShape {
         width: f32,
     },
     /// Filled rectangle with uniform corner rounding.
-    RoundedRect { x: f32, y: f32, w: f32, h: f32, r: f32 },
+    RoundedRect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        r: f32,
+    },
 }
 
 /// A built-in icon definition made up of one or more shapes.
@@ -802,10 +808,7 @@ mod tests {
             for (i, shape) in def.shapes.iter().enumerate() {
                 match *shape {
                     IconShape::FilledRect { x, y, w, h } => {
-                        assert!(
-                            x >= 0.0 && y >= 0.0,
-                            "{id:?} shape {i}: negative origin"
-                        );
+                        assert!(x >= 0.0 && y >= 0.0, "{id:?} shape {i}: negative origin");
                         assert!(
                             x + w <= 1.01 && y + h <= 1.01,
                             "{id:?} shape {i}: rect exceeds unit square"
@@ -829,10 +832,7 @@ mod tests {
                         y2,
                         width,
                     } => {
-                        assert!(
-                            width > 0.0,
-                            "{id:?} shape {i}: non-positive line width"
-                        );
+                        assert!(width > 0.0, "{id:?} shape {i}: non-positive line width");
                         assert!(
                             x1 >= 0.0 && y1 >= 0.0 && x2 >= 0.0 && y2 >= 0.0,
                             "{id:?} shape {i}: negative line endpoint"
@@ -843,18 +843,12 @@ mod tests {
                         );
                     }
                     IconShape::RoundedRect { x, y, w, h, r } => {
-                        assert!(
-                            x >= 0.0 && y >= 0.0,
-                            "{id:?} shape {i}: negative origin"
-                        );
+                        assert!(x >= 0.0 && y >= 0.0, "{id:?} shape {i}: negative origin");
                         assert!(
                             x + w <= 1.01 && y + h <= 1.01,
                             "{id:?} shape {i}: rounded rect exceeds unit square"
                         );
-                        assert!(
-                            r >= 0.0,
-                            "{id:?} shape {i}: negative corner radius"
-                        );
+                        assert!(r >= 0.0, "{id:?} shape {i}: negative corner radius");
                     }
                 }
             }
