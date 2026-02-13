@@ -697,6 +697,8 @@ fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
         SceneNodeKind::Overlay => "Overlay",
         SceneNodeKind::ShellLayer => "ShellLayer",
         SceneNodeKind::Cursor => "Cursor",
+        SceneNodeKind::Text { .. } => "Text",
+        SceneNodeKind::Icon { .. } => "Icon",
         SceneNodeKind::LockScreen => "LockScreen",
         SceneNodeKind::CrashScreen => "CrashScreen",
         SceneNodeKind::Workspace { .. } => "Workspace",

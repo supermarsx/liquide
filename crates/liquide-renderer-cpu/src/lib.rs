@@ -5,6 +5,7 @@
 #![doc = "rendering.  This is the reference renderer — all other renderers"]
 #![doc = "must produce visually equivalent output."]
 
+pub mod bitmap_font;
 pub mod blend;
 pub mod blit;
 pub mod blur;
@@ -12,6 +13,7 @@ pub(crate) mod blur_worker;
 pub mod color;
 pub mod effects;
 pub mod glyph;
+pub mod icons;
 pub mod path;
 pub mod rasterizer;
 pub mod renderer;

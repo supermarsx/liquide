@@ -69,12 +69,15 @@ const D3D11_USAGE_STAGING: u32 = 3;
 const D3D11_CPU_ACCESS_WRITE: u32 = 0x10000;
 const D3D11_MAP_WRITE_DISCARD: u32 = 4;
 const D3D11_CREATE_DEVICE_BGRA_SUPPORT: u32 = 0x20;
+const DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING: u32 = 0x00000080;
+const DXGI_PRESENT_ALLOW_TEARING: u32 = 0x00000200;
 
 // ---------------------------------------------------------------------------
 // DXGI / D3D11 structures
 // ---------------------------------------------------------------------------
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct DXGI_MODE_DESC {
     width: u32,
     height: u32,
@@ -86,12 +89,14 @@ struct DXGI_MODE_DESC {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct DXGI_SAMPLE_DESC {
     count: u32,
     quality: u32,
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct DXGI_SWAP_CHAIN_DESC {
     buffer_desc: DXGI_MODE_DESC,
     sample_desc: DXGI_SAMPLE_DESC,
@@ -239,6 +244,7 @@ pub struct DxgiPresenter {
     staging: *mut c_void,       // ID3D11Texture2D (staging, CPU-writable)
     width: u32,
     height: u32,
+    tearing: bool,              // swap chain supports ALLOW_TEARING
 }
 
 // Safety: the COM pointers are only accessed from the thread that created
@@ -288,12 +294,12 @@ impl DxgiPresenter {
             return Err(format!("CreateDXGIFactory1 failed: 0x{:08X}", hr));
         }
 
-        // 3. Create swap chain.
+        // 3. Create swap chain with tearing support for immediate present.
         let sc_desc = DXGI_SWAP_CHAIN_DESC {
             buffer_desc: DXGI_MODE_DESC {
                 width,
                 height,
-                refresh_rate_numerator: 60,
+                refresh_rate_numerator: 0, // let driver choose
                 refresh_rate_denominator: 1,
                 format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 scanline_ordering: 0,
@@ -308,7 +314,7 @@ impl DxgiPresenter {
             output_window: hwnd,
             windowed: ffi::TRUE,
             swap_effect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
-            flags: 0,
+            flags: DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING,
         };
 
         let mut swap_chain: *mut c_void = ptr::null_mut();
@@ -324,21 +330,33 @@ impl DxgiPresenter {
             unsafe { std::mem::transmute(vtable_fn(factory, 10)) };
         let hr = unsafe { create_sc(factory, device, &sc_desc, &mut swap_chain) };
 
-        // If flip-discard fails (older Windows), try classic discard.
+        // If flip-discard + tearing fails, try without tearing flag.
         if hr != S_OK || swap_chain.is_null() {
-            let mut sc_desc_fallback = sc_desc;
-            sc_desc_fallback.swap_effect = DXGI_SWAP_EFFECT_DISCARD;
-            sc_desc_fallback.buffer_count = 1;
-            let hr2 = unsafe { create_sc(factory, device, &sc_desc_fallback, &mut swap_chain) };
+            let mut sc_desc_no_tear = sc_desc;
+            sc_desc_no_tear.flags = 0;
+            let hr2 = unsafe { create_sc(factory, device, &sc_desc_no_tear, &mut swap_chain) };
+
+            // If that also fails, try classic discard model.
             if hr2 != S_OK || swap_chain.is_null() {
-                unsafe {
-                    Self::release(factory);
-                    Self::release(device);
-                    Self::release(context);
+                let mut sc_desc_fallback = sc_desc;
+                sc_desc_fallback.swap_effect = DXGI_SWAP_EFFECT_DISCARD;
+                sc_desc_fallback.buffer_count = 1;
+                sc_desc_fallback.flags = 0;
+                let hr3 = unsafe { create_sc(factory, device, &sc_desc_fallback, &mut swap_chain) };
+                if hr3 != S_OK || swap_chain.is_null() {
+                    unsafe {
+                        Self::release(factory);
+                        Self::release(device);
+                        Self::release(context);
+                    }
+                    return Err(format!("CreateSwapChain failed: 0x{:08X} / 0x{:08X} / 0x{:08X}", hr, hr2, hr3));
                 }
-                return Err(format!("CreateSwapChain failed: 0x{:08X} / 0x{:08X}", hr, hr2));
             }
         }
+
+        // Determine whether the swap chain was created with tearing support.
+        // We set tearing=true only if the first attempt (with ALLOW_TEARING flag) succeeded.
+        let tearing = hr == S_OK && !swap_chain.is_null();
 
         // Release factory (no longer needed).
         unsafe { Self::release(factory); }
@@ -353,6 +371,7 @@ impl DxgiPresenter {
             staging,
             width,
             height,
+            tearing,
         })
     }
 
@@ -457,6 +476,8 @@ impl DxgiPresenter {
             // Present immediately (no vsync wait).
             // The desktop event loop already throttles to the target frame
             // rate, so blocking on vsync here just adds latency.
+            // When tearing is supported, use DXGI_PRESENT_ALLOW_TEARING for
+            // truly immediate presentation.
             // IDXGISwapChain::Present = vtable slot 8
             type PresentFn = unsafe extern "system" fn(
                 this: *mut c_void,
@@ -464,7 +485,8 @@ impl DxgiPresenter {
                 flags: u32,
             ) -> HRESULT;
             let present: PresentFn = std::mem::transmute(vtable_fn(self.swap_chain, 8));
-            let hr = present(self.swap_chain, 0, 0);
+            let present_flags = if self.tearing { DXGI_PRESENT_ALLOW_TEARING } else { 0 };
+            let hr = present(self.swap_chain, 0, present_flags);
             if hr != S_OK {
                 return Err(format!("Present failed: 0x{:08X}", hr));
             }

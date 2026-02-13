@@ -186,6 +186,17 @@ pub enum SceneNodeKind {
     ShellLayer,
     /// Hardware cursor (dispatched on a separate channel).
     Cursor,
+    /// Text label rendered with the built-in bitmap font.
+    Text {
+        text: String,
+        color: Color,
+        scale: u32,
+    },
+    /// Built-in vector icon rendered at the node bounds.
+    Icon {
+        icon_id: u32,
+        color: Color,
+    },
     /// Lock screen overlay.
     LockScreen,
     /// Emergency crash overlay.
