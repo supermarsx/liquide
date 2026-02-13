@@ -381,9 +381,8 @@ impl TilingEngine {
         let side_w = usable.width * 0.2;
         let center_w = usable.width - 2.0 * side_w - 2.0 * g;
 
-        let mut rects = Vec::new();
         // First window → center (master).
-        rects.push(Rect::new(usable.x + side_w + g, usable.y, center_w, usable.height));
+        let center_rect = Rect::new(usable.x + side_w + g, usable.y, center_w, usable.height);
 
         // Remaining windows alternate left / right columns.
         let mut left_items = Vec::new();
@@ -418,7 +417,7 @@ impl TilingEngine {
         // Merge into a flat Vec at the right indices.
         let total = n;
         let mut result = vec![Rect::new(0.0, 0.0, 0.0, 0.0); total];
-        result[0] = rects[0];
+        result[0] = center_rect;
         for (idx, r) in left_rects {
             result[idx] = r;
         }

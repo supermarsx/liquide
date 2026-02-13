@@ -67,7 +67,6 @@ pub fn evaluate(expr: &str) -> CalcResult {
 }
 
 /// Tokenize a mathematical expression into a sequence of [`CalcToken`]s.
-#[must_use]
 pub fn tokenize(expr: &str) -> Result<Vec<CalcToken>, String> {
     let chars: Vec<char> = expr.chars().collect();
     let mut tokens = Vec::new();

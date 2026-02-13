@@ -20,18 +20,13 @@ use crate::window::{WindowId, WindowState};
 // ---------------------------------------------------------------------------
 
 /// Display mode for a remote session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SeamlessMode {
     /// Traditional full-desktop view rendered inside a single local window.
+    #[default]
     Desktop,
     /// Each remote window is surfaced as an independent host window.
     Seamless,
-}
-
-impl Default for SeamlessMode {
-    fn default() -> Self {
-        Self::Desktop
-    }
 }
 
 impl fmt::Display for SeamlessMode {
@@ -48,9 +43,10 @@ impl fmt::Display for SeamlessMode {
 // ---------------------------------------------------------------------------
 
 /// The type hint for a seamless window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SeamlessWindowType {
     /// A regular application window.
+    #[default]
     Normal,
     /// A dialog box (typically modal or transient).
     Dialog,
@@ -60,12 +56,6 @@ pub enum SeamlessWindowType {
     Tooltip,
     /// A custom overlay (e.g. on-screen keyboard, notification).
     Overlay,
-}
-
-impl Default for SeamlessWindowType {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 impl fmt::Display for SeamlessWindowType {

@@ -44,6 +44,7 @@ members = [
     # Desktop integration
     "crates/liquide-interop",
     "crates/liquide-a11y",
+    "crates/liquide-platform",
 
     # UI toolkit & apps
     "crates/liquide-ui",
@@ -145,6 +146,7 @@ liquide-clipboard = { path = "crates/liquide-clipboard" }
 liquide-usb = { path = "crates/liquide-usb" }
 liquide-input = { path = "crates/liquide-input" }
 liquide-interop = { path = "crates/liquide-interop" }
+liquide-platform = { path = "crates/liquide-platform" }
 liquide-a11y = { path = "crates/liquide-a11y" }
 liquide-ui = { path = "crates/liquide-ui" }
 liquide-gateway = { path = "crates/liquide-gateway" }

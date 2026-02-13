@@ -3,6 +3,8 @@
 use liquide_compositor::geometry::Rect;
 use serde::{Deserialize, Serialize};
 
+use crate::tiling::SnapZone;
+
 /// Unique window identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WindowId(pub u64);
@@ -66,6 +68,12 @@ pub struct Window {
     pub parent: Option<WindowId>,
     pub app_id: String,
     saved_bounds: Option<Rect>,
+    /// Whether this window is currently tiled.
+    pub tiled: bool,
+    /// The snap zone this window occupies, if tiled.
+    pub tile_zone: Option<SnapZone>,
+    /// Minimum size constraint.
+    pub min_size: Option<(f32, f32)>,
 }
 
 impl Window {
@@ -84,6 +92,9 @@ impl Window {
             parent: None,
             app_id: String::new(),
             saved_bounds: None,
+            tiled: false,
+            tile_zone: None,
+            min_size: None,
         }
     }
 

@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::tiling::{TilingLayoutKind, TilingMode};
 use crate::window::WindowId;
 use crate::{ShellError, Result};
 
@@ -16,6 +17,10 @@ pub struct Workspace {
     pub name: String,
     pub windows: Vec<WindowId>,
     pub active: bool,
+    /// Per-workspace tiling mode override.
+    pub tiling_mode: Option<TilingMode>,
+    /// Per-workspace tiling layout override.
+    pub tiling_layout: Option<TilingLayoutKind>,
 }
 
 impl Workspace {
@@ -27,6 +32,8 @@ impl Workspace {
             name: name.into(),
             windows: Vec::new(),
             active: false,
+            tiling_mode: None,
+            tiling_layout: None,
         }
     }
 

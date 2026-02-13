@@ -2,15 +2,15 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::dock::{DockConfig, DockMonitorMode, DockPosition};
-use crate::launcher::{AppCategory, LauncherConfig, LauncherView};
-use crate::notification::{NotificationConfig, NotificationPosition};
-use crate::seamless::{SeamlessConfig, SeamlessMode};
+use crate::dock::DockConfig;
+use crate::launcher::LauncherConfig;
+use crate::notification::NotificationConfig;
+use crate::seamless::SeamlessConfig;
 use crate::status_bar::StatusBarConfig;
-use crate::tiling::{TilingConfig, TilingLayoutKind, TilingMode};
+use crate::tiling::TilingConfig;
 
 /// Aggregate shell configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ShellConfig {
     /// Dock settings.
     pub dock: DockConfig,
@@ -26,18 +26,6 @@ pub struct ShellConfig {
     pub seamless: SeamlessConfig,
 }
 
-impl Default for ShellConfig {
-    fn default() -> Self {
-        Self {
-            dock: DockConfig::default(),
-            status_bar: StatusBarConfig::default(),
-            launcher: LauncherConfig::default(),
-            tiling: TilingConfig::default(),
-            notifications: NotificationConfig::default(),
-            seamless: SeamlessConfig::default(),
-        }
-    }
-}
 
 impl std::fmt::Display for ShellConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

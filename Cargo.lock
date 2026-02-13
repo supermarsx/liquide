@@ -1103,6 +1103,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-platform"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-input",
+ "liquide-interop",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "liquide-plugin-abi"
 version = "0.1.0"
 dependencies = [

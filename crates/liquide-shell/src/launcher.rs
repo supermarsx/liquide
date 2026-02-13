@@ -16,18 +16,13 @@ use crate::calculator::{self, CalcResult};
 // ---------------------------------------------------------------------------
 
 /// Presentation mode for the launcher overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LauncherView {
     /// One-column scrollable list.
+    #[default]
     List,
     /// Icon grid.
     Grid,
-}
-
-impl Default for LauncherView {
-    fn default() -> Self {
-        Self::List
-    }
 }
 
 impl fmt::Display for LauncherView {
@@ -44,7 +39,7 @@ impl fmt::Display for LauncherView {
 // ---------------------------------------------------------------------------
 
 /// Coarse category for a desktop application.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AppCategory {
     System,
     Development,
@@ -55,13 +50,8 @@ pub enum AppCategory {
     Utilities,
     Games,
     Settings,
+    #[default]
     Other,
-}
-
-impl Default for AppCategory {
-    fn default() -> Self {
-        Self::Other
-    }
 }
 
 impl fmt::Display for AppCategory {
