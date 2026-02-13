@@ -31,7 +31,7 @@ use liquide_renderer_cpu::{Renderer, SoftwareRenderer};
 use liquide_shell::Shell;
 use tracing::{debug, info, warn};
 
-use crate::telemetry::{create_telemetry, TelemetryHandle};
+use crate::telemetry::{TelemetryHandle, create_telemetry};
 
 // ---------------------------------------------------------------------------
 // Render thread types
@@ -123,7 +123,12 @@ impl DesktopCompositor {
         let tile_size = 64;
         Self {
             shell: Shell::new(width as f32, height as f32),
-            compositor: Some(Compositor::new(width, height, tile_size, QualityProfile::Balanced)),
+            compositor: Some(Compositor::new(
+                width,
+                height,
+                tile_size,
+                QualityProfile::Balanced,
+            )),
             renderer: Some(SoftwareRenderer::new()),
             input_state: InputState::new(),
             width,
@@ -630,10 +635,8 @@ impl DesktopCompositor {
                     let _ = compositor.submit_scene(scene);
                     compositor.begin_frame();
 
-                    let mut flat_nodes = compositor
-                        .scene()
-                        .map(|s| s.flatten())
-                        .unwrap_or_default();
+                    let mut flat_nodes =
+                        compositor.scene().map(|s| s.flatten()).unwrap_or_default();
 
                     // 3. Skeleton mode filtering during drag.
                     if let Some(window_id) = latest_job.dragged_window {
@@ -740,7 +743,7 @@ impl DesktopCompositor {
             PlatformEvent::WindowResized { width, height, .. } => {
                 self.width = *width;
                 self.height = *height;
-                
+
                 // During loading, resize compositor directly
                 if let Some(ref mut compositor) = self.compositor {
                     let _ = compositor.resize(*width, *height);
@@ -751,7 +754,7 @@ impl DesktopCompositor {
                         height: *height,
                     });
                 }
-                
+
                 self.shell.resize_screen(*width as f32, *height as f32);
                 needs_redraw = true;
             }

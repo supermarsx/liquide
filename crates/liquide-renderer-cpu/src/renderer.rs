@@ -7,7 +7,7 @@ use liquide_compositor::effects::EffectParams;
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::{BlendMode, Color};
-use liquide_compositor::scene::{CursorShape, FlatNode, NodeId, SceneNodeKind};
+use liquide_compositor::scene::{CursorShape, FlatNode, NodeId, ResizeDirection, SceneNodeKind};
 
 use crate::blur_worker::BlurWorker;
 use crate::color::SrgbLut;
@@ -897,17 +897,22 @@ impl SoftwareRenderer {
                     CursorShape::Move => {
                         Self::draw_cursor_move(fb, cx, cy, s, outline, fill);
                     }
-                    CursorShape::ResizeNS => {
-                        Self::draw_cursor_resize_ns(fb, cx, cy, s, outline, fill);
-                    }
-                    CursorShape::ResizeEW => {
-                        Self::draw_cursor_resize_ew(fb, cx, cy, s, outline, fill);
-                    }
-                    CursorShape::ResizeNWSE => {
-                        Self::draw_cursor_resize_nwse(fb, cx, cy, s, outline, fill);
-                    }
-                    CursorShape::ResizeNESW => {
-                        Self::draw_cursor_resize_nesw(fb, cx, cy, s, outline, fill);
+                    CursorShape::Resize(dir) => {
+                        use ResizeDirection::*;
+                        match dir {
+                            North | South => {
+                                Self::draw_cursor_resize_ns(fb, cx, cy, s, outline, fill);
+                            }
+                            East | West => {
+                                Self::draw_cursor_resize_ew(fb, cx, cy, s, outline, fill);
+                            }
+                            NorthWest | SouthEast => {
+                                Self::draw_cursor_resize_nwse(fb, cx, cy, s, outline, fill);
+                            }
+                            NorthEast | SouthWest => {
+                                Self::draw_cursor_resize_nesw(fb, cx, cy, s, outline, fill);
+                            }
+                        }
                     }
                     CursorShape::Pointer => {
                         Self::draw_cursor_pointer(fb, cx, cy, s, outline, fill);
@@ -980,11 +985,14 @@ impl SoftwareRenderer {
                     CursorShape::AllScroll => {
                         Self::draw_cursor_all_scroll(fb, cx, cy, s, outline, fill);
                     }
-                    CursorShape::ExpandH => {
+                    CursorShape::ColResize => {
                         Self::draw_cursor_resize_ew(fb, cx, cy, s, outline, fill);
                     }
-                    CursorShape::ExpandV => {
+                    CursorShape::RowResize => {
                         Self::draw_cursor_resize_ns(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::Custom { .. } | CursorShape::Hidden => {
+                        // Custom cursors handled elsewhere, Hidden means don't draw
                     }
                 }
             }

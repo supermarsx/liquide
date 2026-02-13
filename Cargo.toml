@@ -22,6 +22,7 @@ members = [
     "crates/liquide-context-menu",
     "crates/liquide-dock",
     "crates/liquide-shell",
+    "crates/liquide-cursor",
 
     # Plugins & extensions
     "crates/liquide-plugin-host",
@@ -63,6 +64,7 @@ members = [
     "crates/liquide-manager",
     "crates/liquide-manager-frontend",
     "crates/liquide-ctl",
+    "crates/liquide-telemetry-viewer",
 
     # Testing & benchmarking
     "crates/liquide-bench",
@@ -77,6 +79,9 @@ repository = "https://github.com/liquide/liquide"
 rust-version = "1.85"
 
 [workspace.dependencies]
+# Local crates
+liquide-cursor = { path = "crates/liquide-cursor" }
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 

@@ -20,6 +20,7 @@ liquide-common.workspace = true
 liquide-protocol.workspace = true
 liquide-transport.workspace = true
 liquide-compositor.workspace = true
+liquide-cursor.workspace = true
 liquide-renderer-cpu.workspace = true
 liquide-encoder.workspace = true
 liquide-shell.workspace = true

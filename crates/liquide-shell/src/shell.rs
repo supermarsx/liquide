@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{
-    CursorShape, DecorationButtons, NodeProperties, SceneNode, SceneNodeKind,
+    CursorShape, DecorationButtons, NodeProperties, ResizeDirection, SceneNode, SceneNodeKind,
 };
 use liquide_input::KeyEvent;
 use liquide_platform::PlatformEvent;
@@ -676,10 +676,14 @@ impl Shell {
     /// Map a decoration hit zone to the appropriate cursor shape.
     fn cursor_for_hit_zone(zone: HitZone) -> CursorShape {
         match zone {
-            HitZone::ResizeTop | HitZone::ResizeBottom => CursorShape::ResizeNS,
-            HitZone::ResizeLeft | HitZone::ResizeRight => CursorShape::ResizeEW,
-            HitZone::ResizeTopLeft | HitZone::ResizeBottomRight => CursorShape::ResizeNWSE,
-            HitZone::ResizeTopRight | HitZone::ResizeBottomLeft => CursorShape::ResizeNESW,
+            HitZone::ResizeTop => CursorShape::Resize(ResizeDirection::North),
+            HitZone::ResizeBottom => CursorShape::Resize(ResizeDirection::South),
+            HitZone::ResizeLeft => CursorShape::Resize(ResizeDirection::West),
+            HitZone::ResizeRight => CursorShape::Resize(ResizeDirection::East),
+            HitZone::ResizeTopLeft => CursorShape::Resize(ResizeDirection::NorthWest),
+            HitZone::ResizeBottomRight => CursorShape::Resize(ResizeDirection::SouthEast),
+            HitZone::ResizeTopRight => CursorShape::Resize(ResizeDirection::NorthEast),
+            HitZone::ResizeBottomLeft => CursorShape::Resize(ResizeDirection::SouthWest),
             HitZone::CloseButton
             | HitZone::MaximizeButton
             | HitZone::MinimizeButton

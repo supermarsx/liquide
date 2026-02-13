@@ -156,64 +156,83 @@ pub struct SurfaceBuffer {
     pub format: PixelFormat,
 }
 
-/// Cursor shape for the software cursor.
+// Re-export cursor types from liquide-cursor crate
+pub use liquide_cursor::{CursorShape as NewCursorShape, ResizeDirection};
+
+/// Legacy cursor shape enum for backward compatibility.
+/// 
+/// **Deprecated**: Use `liquide_cursor::CursorShape` directly.
+/// This enum provides compatibility with existing code but will be removed in a future version.
+#[deprecated(since = "0.1.0", note = "use liquide_cursor::CursorShape instead")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum CursorShape {
-    /// Default arrow pointer.
+pub enum LegacyCursorShape {
     Arrow,
-    /// Four-way move cursor (title bar drag).
     Move,
-    /// Vertical resize (top/bottom edge).
     ResizeNS,
-    /// Horizontal resize (left/right edge).
     ResizeEW,
-    /// Diagonal resize (top-left / bottom-right).
     ResizeNWSE,
-    /// Diagonal resize (top-right / bottom-left).
     ResizeNESW,
-    /// Pointing hand (clickable items).
     Pointer,
-    /// Text selection I-beam.
     Text,
-    /// Not-allowed / forbidden.
     NotAllowed,
-    /// Busy / waiting (spinning wheel).
     Wait,
-    /// Progress (arrow + wait).
     Progress,
-    /// Help (arrow + question mark).
     Help,
-    /// Crosshair / precise selection.
     Crosshair,
-    /// Open hand (pan/grab).
     Grab,
-    /// Closed hand (grabbing/panning).
     Grabbing,
-    /// Zoom in (magnifying glass +).
     ZoomIn,
-    /// Zoom out (magnifying glass -).
     ZoomOut,
-    /// Context menu available.
     ContextMenu,
-    /// Alias / shortcut.
     Alias,
-    /// Copy operation.
     Copy,
-    /// No drop zone.
     NoDrop,
-    /// Cell selection.
     Cell,
-    /// Vertical text I-beam.
     VerticalText,
-    /// All-scroll (4-way pan).
     AllScroll,
-    /// Expand horizontally.
     ExpandH,
-    /// Expand vertically.
     ExpandV,
 }
 
-impl Default for CursorShape {
+/// Current cursor shape type alias.
+/// Points to the new unified cursor type from liquide-cursor crate.
+pub type CursorShape = NewCursorShape;
+
+/// Convert legacy cursor shape to new format.
+impl From<LegacyCursorShape> for NewCursorShape {
+    fn from(legacy: LegacyCursorShape) -> Self {
+        match legacy {
+            LegacyCursorShape::Arrow => NewCursorShape::Arrow,
+            LegacyCursorShape::Move => NewCursorShape::Move,
+            LegacyCursorShape::ResizeNS => NewCursorShape::Resize(ResizeDirection::North),
+            LegacyCursorShape::ResizeEW => NewCursorShape::Resize(ResizeDirection::East),
+            LegacyCursorShape::ResizeNWSE => NewCursorShape::Resize(ResizeDirection::NorthWest),
+            LegacyCursorShape::ResizeNESW => NewCursorShape::Resize(ResizeDirection::NorthEast),
+            LegacyCursorShape::Pointer => NewCursorShape::Pointer,
+            LegacyCursorShape::Text => NewCursorShape::Text,
+            LegacyCursorShape::NotAllowed => NewCursorShape::NotAllowed,
+            LegacyCursorShape::Wait => NewCursorShape::Wait,
+            LegacyCursorShape::Progress => NewCursorShape::Progress,
+            LegacyCursorShape::Help => NewCursorShape::Help,
+            LegacyCursorShape::Crosshair => NewCursorShape::Crosshair,
+            LegacyCursorShape::Grab => NewCursorShape::Grab,
+            LegacyCursorShape::Grabbing => NewCursorShape::Grabbing,
+            LegacyCursorShape::ZoomIn => NewCursorShape::ZoomIn,
+            LegacyCursorShape::ZoomOut => NewCursorShape::ZoomOut,
+            LegacyCursorShape::ContextMenu => NewCursorShape::ContextMenu,
+            LegacyCursorShape::Alias => NewCursorShape::Alias,
+            LegacyCursorShape::Copy => NewCursorShape::Copy,
+            LegacyCursorShape::NoDrop => NewCursorShape::NoDrop,
+            LegacyCursorShape::Cell => NewCursorShape::Cell,
+            LegacyCursorShape::VerticalText => NewCursorShape::VerticalText,
+            LegacyCursorShape::AllScroll => NewCursorShape::AllScroll,
+            LegacyCursorShape::ExpandH => NewCursorShape::ColResize,
+            LegacyCursorShape::ExpandV => NewCursorShape::RowResize,
+        }
+    }
+}
+
+impl Default for LegacyCursorShape {
     fn default() -> Self {
         Self::Arrow
     }

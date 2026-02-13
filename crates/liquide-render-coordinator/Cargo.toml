@@ -1,0 +1,36 @@
+[package]
+name = "liquide-render-coordinator"
+version = "0.1.0"
+edition = "2024"
+authors = ["Liquide Contributors"]
+description = "Multi-threaded render coordinator for Liquide compositor"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.42", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+# Threading utilities
+crossbeam-channel = "0.5"
+rayon = "1.10"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+
+# Metrics
+metrics = "0.24"
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = "0.5"
+
+[[bench]]
+name = "render_coordinator"
+harness = false
