@@ -15,6 +15,7 @@ members = [
     "crates/liquide-compositor",
     "crates/liquide-renderer-cpu",
     "crates/liquide-renderer-gpu",
+    "crates/liquide-render-coordinator",
     "crates/liquide-encoder",
     "crates/liquide-encoder-hw",
     "crates/liquide-css",
@@ -23,6 +24,8 @@ members = [
     "crates/liquide-dock",
     "crates/liquide-shell",
     "crates/liquide-cursor",
+    "crates/liquide-cursor-vector",
+    "crates/liquide-theme-css",
 
     # Plugins & extensions
     "crates/liquide-plugin-host",
