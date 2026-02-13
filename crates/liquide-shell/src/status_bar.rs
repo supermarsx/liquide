@@ -333,7 +333,10 @@ impl ShellStatusBar {
 
     /// Build the scene graph for the status bar.
     pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
-        use crate::scene_builder::*;
+        use crate::scene_builder::{
+            icon_node, solid_rect, text_node,
+            NODE_STATUS_BAR, NODE_STATUS_BAR_ITEM_BASE,
+        };
         use liquide_compositor::geometry::Rect as GRect;
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
@@ -425,7 +428,59 @@ impl ShellStatusBar {
                 StatusBarItemKind::Custom { .. } => theme.status_bar_notification_inactive,
             };
 
-            bar_node.add_child(solid_rect(item_id, color, item_bounds, 951));
+            match &item.kind {
+                StatusBarItemKind::Clock { .. } => {
+                    // Format time from the stored UNIX-epoch timestamp.
+                    let total_secs = item.last_update_us / 1_000_000;
+                    let hours = (total_secs / 3600) % 24;
+                    let minutes = (total_secs / 60) % 60;
+                    let time_str = format!("{hours:02}:{minutes:02}");
+                    bar_node.add_child(text_node(
+                        item_id, time_str, color, item_bounds, 951, 1,
+                    ));
+                }
+                StatusBarItemKind::NotificationIndicator { unread_count, .. } => {
+                    // Bell icon (icon_id 14 = Notification).
+                    bar_node.add_child(icon_node(item_id, 14, color, item_bounds, 951));
+                    // Badge count overlay if unread > 0.
+                    if *unread_count > 0 {
+                        let badge_text = format!("{unread_count}");
+                        let badge_w = badge_text.len() as f32 * 8.0 + 4.0;
+                        let badge_rect = GRect::new(
+                            ix + item_width - badge_w,
+                            item_y,
+                            badge_w,
+                            12.0,
+                        );
+                        bar_node.add_child(text_node(
+                            item_id + 1,
+                            badge_text,
+                            theme.status_bar_notification_active,
+                            badge_rect,
+                            952,
+                            1,
+                        ));
+                    }
+                }
+                StatusBarItemKind::ConnectionQuality { .. } => {
+                    // WiFi icon (icon_id 12 = Wifi).
+                    bar_node.add_child(icon_node(item_id, 12, color, item_bounds, 951));
+                }
+                StatusBarItemKind::TrayArea => {
+                    // Battery icon (icon_id 13 = Battery).
+                    bar_node.add_child(icon_node(item_id, 13, color, item_bounds, 951));
+                }
+                StatusBarItemKind::Custom { content, .. } => {
+                    bar_node.add_child(text_node(
+                        item_id,
+                        content.clone(),
+                        color,
+                        item_bounds,
+                        951,
+                        1,
+                    ));
+                }
+            }
         }
 
         bar_node

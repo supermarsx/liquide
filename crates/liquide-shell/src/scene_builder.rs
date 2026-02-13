@@ -49,3 +49,49 @@ pub fn tint_overlay(id: u64, color: Color, bounds: Rect, z: u32) -> SceneNode {
         NodeProperties::new(bounds).with_z_order(z),
     )
 }
+
+/// Helper to create a text label node.
+pub fn text_node(id: u64, text: String, color: Color, bounds: Rect, z: u32, scale: u32) -> SceneNode {
+    SceneNode::new(
+        id,
+        SceneNodeKind::Text { text, color, scale },
+        NodeProperties::new(bounds).with_z_order(z),
+    )
+}
+
+/// Helper to create a built-in icon node.
+pub fn icon_node(id: u64, icon_id: u32, color: Color, bounds: Rect, z: u32) -> SceneNode {
+    SceneNode::new(
+        id,
+        SceneNodeKind::Icon { icon_id, color },
+        NodeProperties::new(bounds).with_z_order(z),
+    )
+}
+
+/// Map a named icon string to the numeric icon ID used by the renderer.
+///
+/// Returns 0 for unrecognised names (the renderer draws a filled rect
+/// as a fallback for unknown IDs).
+pub fn icon_id_for_name(name: &str) -> u32 {
+    match name {
+        "folder" | "file-manager" => 1,
+        "terminal" | "console" | "utilities-terminal" => 2,
+        "web-browser" | "browser" | "internet-web-browser" => 3,
+        "preferences-system" | "settings" | "system-preferences" => 4,
+        "calculator" | "accessories-calculator" => 5,
+        "text-editor" | "accessories-text-editor" => 6,
+        "audio-x-generic" | "music" | "multimedia-audio-player" => 7,
+        "camera" | "camera-photo" => 8,
+        "mail" | "internet-mail" => 9,
+        "calendar" | "office-calendar" => 10,
+        "clock" | "preferences-clock" => 11,
+        "network-wireless" | "wifi" => 12,
+        "battery" | "battery-full" => 13,
+        "notification" | "preferences-desktop-notification" => 14,
+        "search" | "system-search" | "edit-find" => 15,
+        "power" | "system-shutdown" => 16,
+        "audio-volume-high" | "volume" => 17,
+        "user-trash" | "trash" => 18,
+        _ => 0,
+    }
+}

@@ -426,7 +426,10 @@ impl Dock {
 
     /// Build the scene graph for the dock.
     pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
-        use crate::scene_builder::*;
+        use crate::scene_builder::{
+            icon_id_for_name, icon_node, solid_rect, tint_overlay,
+            NODE_DOCK, NODE_DOCK_ITEM_BASE,
+        };
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
         let dock_bounds = self.compute_bounds(screen);
@@ -450,7 +453,7 @@ impl Dock {
         dock_node.add_child(solid_rect(NODE_DOCK + 1, theme.dock_border, border_rect, 903));
 
         for (i, (_idx, item_rect)) in item_rects.iter().enumerate() {
-            let item_id = NODE_DOCK_ITEM_BASE + i as u64;
+            let item_id = NODE_DOCK_ITEM_BASE + i as u64 * 3;
             let color = if i < self.items.len() && self.items[i].running_window_count > 0 {
                 theme.dock_item_active
             } else {
@@ -462,7 +465,33 @@ impl Dock {
                 item_rect.width,
                 item_rect.height,
             );
-            dock_node.add_child(solid_rect(item_id, color, local_rect, 901));
+
+            // Resolve the icon ID from the item's icon name.
+            let iid = if i < self.items.len() {
+                icon_id_for_name(&self.items[i].icon)
+            } else {
+                0
+            };
+
+            // Render the icon filling the item rect.
+            dock_node.add_child(icon_node(item_id, iid, color, local_rect, 901));
+
+            // Running indicator dot below the icon.
+            if i < self.items.len()
+                && self.items[i].running_window_count > 0
+                && self.config.show_running_indicators
+            {
+                let dot_size = 4.0_f32;
+                let dot_x = local_rect.x + (local_rect.width - dot_size) / 2.0;
+                let dot_y = local_rect.y + local_rect.height - dot_size - 1.0;
+                let dot_rect = Rect::new(dot_x, dot_y, dot_size, dot_size);
+                dock_node.add_child(solid_rect(
+                    item_id + 2,
+                    theme.dock_item_active,
+                    dot_rect,
+                    902,
+                ));
+            }
         }
 
         if let Some(hover_idx) = self.hover_index {

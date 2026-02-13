@@ -531,7 +531,7 @@ impl SoftwareRenderer {
             // Root and Workspace are structural, not visual
             SceneNodeKind::Root | SceneNodeKind::Workspace { .. } => {}
 
-            SceneNodeKind::Text { ref text, ref color, scale } => {
+            SceneNodeKind::Text { text, color, scale } => {
                 let mut c = *color;
                 if opacity < 1.0 {
                     c.a = (c.a as f32 * opacity + 0.5) as u8;
@@ -542,11 +542,11 @@ impl SoftwareRenderer {
                     bounds.x as i32,
                     bounds.y as i32,
                     c,
-                    scale,
+                    *scale,
                 );
             }
 
-            SceneNodeKind::Icon { icon_id, ref color } => {
+            SceneNodeKind::Icon { icon_id, color } => {
                 let mut c = *color;
                 if opacity < 1.0 {
                     c.a = (c.a as f32 * opacity + 0.5) as u8;
