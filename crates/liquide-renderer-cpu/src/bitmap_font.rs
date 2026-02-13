@@ -6,6 +6,12 @@
 //! file I/O required.
 //!
 //! Glyph patterns are in the style of the classic VGA/CP437 ROM font.
+//!
+//! Antialiasing is achieved via a greyscale glyph cache: each 1-bit
+//! glyph is upscaled 4x, Gaussian-blurred, and downsampled back to
+//! 8x16 alpha values.  The cache is computed once on first use.
+
+use std::sync::OnceLock;
 
 /// A built-in 8x16 bitmap font.
 ///
