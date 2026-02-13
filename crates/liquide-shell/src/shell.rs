@@ -11,7 +11,7 @@ use liquide_platform::PlatformEvent;
 
 use crate::app_history::AppHistory;
 use crate::config::ShellConfig;
-use crate::decoration::{hit_test_decoration, DecorationStyle, HitZone};
+use crate::decoration::{DecorationStyle, HitZone, hit_test_decoration};
 use crate::dock::Dock;
 use crate::focus::{FocusManager, FocusPolicy};
 use crate::history::{WindowEventKind, WindowHistory};
@@ -27,7 +27,7 @@ use crate::theme::ShellTheme;
 use crate::tiling::TilingEngine;
 use crate::window::{Window, WindowFlags, WindowId, WindowState};
 use crate::workspace::WorkspaceManager;
-use crate::{ShellError, Result};
+use crate::{Result, ShellError};
 
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
@@ -89,8 +89,16 @@ impl ContextMenuItem {
     #[must_use]
     pub fn defaults() -> Vec<Self> {
         vec![
-            Self::new("Configure Desktop & Wallpaper", "preferences-system", ShellAction::OpenSettings),
-            Self::new("Display Settings", "preferences-system", ShellAction::OpenSettings),
+            Self::new(
+                "Configure Desktop & Wallpaper",
+                "preferences-system",
+                ShellAction::OpenSettings,
+            ),
+            Self::new(
+                "Display Settings",
+                "preferences-system",
+                ShellAction::OpenSettings,
+            ),
         ]
     }
 }
@@ -273,8 +281,7 @@ impl Shell {
         self.window_history
             .record_at(id, WindowEventKind::Opened, ts);
         if !app_id_str.is_empty() {
-            self.app_history
-                .record_open(&app_id_str, id, bounds, ts);
+            self.app_history.record_open(&app_id_str, id, bounds, ts);
             self.screen_time.feed_open(&app_id_str, id, ts);
         }
         id
@@ -824,10 +831,30 @@ impl Shell {
     fn register_default_apps(launcher: &mut Launcher) {
         let defaults = [
             ("com.liquide.files", "Files", "folder", "File manager"),
-            ("com.liquide.terminal", "Terminal", "terminal", "Command line"),
-            ("com.liquide.browser", "Browser", "web-browser", "Web browser"),
-            ("com.liquide.settings", "Settings", "preferences-system", "System settings"),
-            ("com.liquide.calculator", "Calculator", "calculator", "Calculator"),
+            (
+                "com.liquide.terminal",
+                "Terminal",
+                "terminal",
+                "Command line",
+            ),
+            (
+                "com.liquide.browser",
+                "Browser",
+                "web-browser",
+                "Web browser",
+            ),
+            (
+                "com.liquide.settings",
+                "Settings",
+                "preferences-system",
+                "System settings",
+            ),
+            (
+                "com.liquide.calculator",
+                "Calculator",
+                "calculator",
+                "Calculator",
+            ),
         ];
         for (app_id, name, icon, desc) in &defaults {
             launcher.add_app(LauncherApp {
@@ -851,7 +878,11 @@ impl Shell {
     /// Returns the window ID of the focused or newly created window.
     pub fn open_app_window(&mut self, app_id: &str) -> WindowId {
         // Check if a window with this app_id is already open.
-        if let Some(existing) = self.windows.values().find(|w| w.app_id == app_id && w.visible) {
+        if let Some(existing) = self
+            .windows
+            .values()
+            .find(|w| w.app_id == app_id && w.visible)
+        {
             let wid = existing.id;
             let _ = self.set_focus(wid);
             let _ = self.raise_window(wid);
@@ -881,23 +912,47 @@ impl Shell {
     fn keycode_to_char(key: liquide_input::keyboard::KeyCode) -> Option<char> {
         use liquide_input::keyboard::KeyCode;
         match key {
-            KeyCode::A => Some('a'), KeyCode::B => Some('b'), KeyCode::C => Some('c'),
-            KeyCode::D => Some('d'), KeyCode::E => Some('e'), KeyCode::F => Some('f'),
-            KeyCode::G => Some('g'), KeyCode::H => Some('h'), KeyCode::I => Some('i'),
-            KeyCode::J => Some('j'), KeyCode::K => Some('k'), KeyCode::L => Some('l'),
-            KeyCode::M => Some('m'), KeyCode::N => Some('n'), KeyCode::O => Some('o'),
-            KeyCode::P => Some('p'), KeyCode::Q => Some('q'), KeyCode::R => Some('r'),
-            KeyCode::S => Some('s'), KeyCode::T => Some('t'), KeyCode::U => Some('u'),
-            KeyCode::V => Some('v'), KeyCode::W => Some('w'), KeyCode::X => Some('x'),
-            KeyCode::Y => Some('y'), KeyCode::Z => Some('z'),
-            KeyCode::Digit0 => Some('0'), KeyCode::Digit1 => Some('1'),
-            KeyCode::Digit2 => Some('2'), KeyCode::Digit3 => Some('3'),
-            KeyCode::Digit4 => Some('4'), KeyCode::Digit5 => Some('5'),
-            KeyCode::Digit6 => Some('6'), KeyCode::Digit7 => Some('7'),
-            KeyCode::Digit8 => Some('8'), KeyCode::Digit9 => Some('9'),
+            KeyCode::A => Some('a'),
+            KeyCode::B => Some('b'),
+            KeyCode::C => Some('c'),
+            KeyCode::D => Some('d'),
+            KeyCode::E => Some('e'),
+            KeyCode::F => Some('f'),
+            KeyCode::G => Some('g'),
+            KeyCode::H => Some('h'),
+            KeyCode::I => Some('i'),
+            KeyCode::J => Some('j'),
+            KeyCode::K => Some('k'),
+            KeyCode::L => Some('l'),
+            KeyCode::M => Some('m'),
+            KeyCode::N => Some('n'),
+            KeyCode::O => Some('o'),
+            KeyCode::P => Some('p'),
+            KeyCode::Q => Some('q'),
+            KeyCode::R => Some('r'),
+            KeyCode::S => Some('s'),
+            KeyCode::T => Some('t'),
+            KeyCode::U => Some('u'),
+            KeyCode::V => Some('v'),
+            KeyCode::W => Some('w'),
+            KeyCode::X => Some('x'),
+            KeyCode::Y => Some('y'),
+            KeyCode::Z => Some('z'),
+            KeyCode::Digit0 => Some('0'),
+            KeyCode::Digit1 => Some('1'),
+            KeyCode::Digit2 => Some('2'),
+            KeyCode::Digit3 => Some('3'),
+            KeyCode::Digit4 => Some('4'),
+            KeyCode::Digit5 => Some('5'),
+            KeyCode::Digit6 => Some('6'),
+            KeyCode::Digit7 => Some('7'),
+            KeyCode::Digit8 => Some('8'),
+            KeyCode::Digit9 => Some('9'),
             KeyCode::Space => Some(' '),
-            KeyCode::Minus => Some('-'), KeyCode::Equal => Some('='),
-            KeyCode::Period => Some('.'), KeyCode::Comma => Some(','),
+            KeyCode::Minus => Some('-'),
+            KeyCode::Equal => Some('='),
+            KeyCode::Period => Some('.'),
+            KeyCode::Comma => Some(','),
             KeyCode::Slash => Some('/'),
             _ => None,
         }
@@ -914,11 +969,7 @@ impl Shell {
         let screen = self.screen_rect;
         let theme = &self.theme;
 
-        let mut root = SceneNode::new(
-            NODE_ROOT,
-            SceneNodeKind::Root,
-            NodeProperties::new(screen),
-        );
+        let mut root = SceneNode::new(NODE_ROOT, SceneNodeKind::Root, NodeProperties::new(screen));
 
         // Background
         root.add_child(solid_rect(
@@ -955,8 +1006,7 @@ impl Shell {
                     blur_radius: 12.0,
                     color: theme.window_shadow,
                 },
-                NodeProperties::new(shadow_bounds)
-                    .with_z_order(window.z_order as u32 * 10),
+                NodeProperties::new(shadow_bounds).with_z_order(window.z_order as u32 * 10),
             ));
 
             // Decoration
@@ -986,8 +1036,7 @@ impl Shell {
                             minimize: true,
                         },
                     },
-                    NodeProperties::new(window.bounds)
-                        .with_z_order(window.z_order as u32 * 10 + 1),
+                    NodeProperties::new(window.bounds).with_z_order(window.z_order as u32 * 10 + 1),
                 ));
             }
 
@@ -1091,8 +1140,16 @@ impl Shell {
             let ctx_w = 260.0_f32;
             let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
             // Clamp position so menu stays on-screen.
-            let ctx_x = self.context_menu_pos.x.min(screen.width - ctx_w - 4.0).max(0.0);
-            let ctx_y = self.context_menu_pos.y.min(screen.height - ctx_h - 4.0).max(0.0);
+            let ctx_x = self
+                .context_menu_pos
+                .x
+                .min(screen.width - ctx_w - 4.0)
+                .max(0.0);
+            let ctx_y = self
+                .context_menu_pos
+                .y
+                .min(screen.height - ctx_h - 4.0)
+                .max(0.0);
             let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
 
             root.add_child(SceneNode::new(
@@ -1151,17 +1208,30 @@ impl Shell {
             "com.liquide.settings" => {
                 // Settings heading
                 parent.add_child(icon_node(
-                    win_base + 3, 4, text_color,
-                    Rect::new(cx + 20.0, cy + 16.0, 28.0, 28.0), z + 1,
+                    win_base + 3,
+                    4,
+                    text_color,
+                    Rect::new(cx + 20.0, cy + 16.0, 28.0, 28.0),
+                    z + 1,
                 ));
                 parent.add_child(text_node(
-                    win_base + 4, "Settings".into(), text_color,
-                    Rect::new(cx + 56.0, cy + 20.0, 200.0, 20.0), z + 1, 1,
+                    win_base + 4,
+                    "Settings".into(),
+                    text_color,
+                    Rect::new(cx + 56.0, cy + 20.0, 200.0, 20.0),
+                    z + 1,
+                    1,
                 ));
                 // Category list
                 let categories = [
-                    "Display", "Input", "Audio", "Network",
-                    "Appearance", "Privacy", "Users", "System",
+                    "Display",
+                    "Input",
+                    "Audio",
+                    "Network",
+                    "Appearance",
+                    "Privacy",
+                    "Users",
+                    "System",
                 ];
                 for (i, cat) in categories.iter().enumerate() {
                     let iy = cy + 60.0 + i as f32 * 32.0;
@@ -1174,42 +1244,61 @@ impl Shell {
                         z + 1,
                     ));
                     parent.add_child(text_node(
-                        win_base + 50 + i as u64, cat.to_string(), text_color,
-                        Rect::new(cx + 16.0, iy + 4.0, 140.0, 20.0), z + 2, 1,
+                        win_base + 50 + i as u64,
+                        cat.to_string(),
+                        text_color,
+                        Rect::new(cx + 16.0, iy + 4.0, 140.0, 20.0),
+                        z + 2,
+                        1,
                     ));
                 }
             }
             "com.liquide.terminal" => {
                 // Dark terminal background
                 let term_bg = liquide_compositor::pixel::Color::new(20, 20, 25, 255);
-                parent.add_child(solid_rect(
-                    win_base + 3, term_bg, content, z + 1,
-                ));
+                parent.add_child(solid_rect(win_base + 3, term_bg, content, z + 1));
                 parent.add_child(text_node(
-                    win_base + 4, "user@liquide:~$".into(),
+                    win_base + 4,
+                    "user@liquide:~$".into(),
                     liquide_compositor::pixel::Color::new(100, 220, 100, 255),
-                    Rect::new(cx + 12.0, cy + 12.0, cw - 24.0, 20.0), z + 2, 1,
+                    Rect::new(cx + 12.0, cy + 12.0, cw - 24.0, 20.0),
+                    z + 2,
+                    1,
                 ));
             }
             "com.liquide.files" => {
                 parent.add_child(icon_node(
-                    win_base + 3, 1, text_color,
-                    Rect::new(cx + 20.0, cy + 16.0, 28.0, 28.0), z + 1,
+                    win_base + 3,
+                    1,
+                    text_color,
+                    Rect::new(cx + 20.0, cy + 16.0, 28.0, 28.0),
+                    z + 1,
                 ));
                 parent.add_child(text_node(
-                    win_base + 4, "Home".into(), text_color,
-                    Rect::new(cx + 56.0, cy + 20.0, 200.0, 20.0), z + 1, 1,
+                    win_base + 4,
+                    "Home".into(),
+                    text_color,
+                    Rect::new(cx + 56.0, cy + 20.0, 200.0, 20.0),
+                    z + 1,
+                    1,
                 ));
                 let folders = ["Documents", "Downloads", "Pictures", "Music", "Desktop"];
                 for (i, name) in folders.iter().enumerate() {
                     let iy = cy + 60.0 + i as f32 * 32.0;
                     parent.add_child(icon_node(
-                        win_base + 5 + i as u64, 1, text_color,
-                        Rect::new(cx + 24.0, iy + 2.0, 24.0, 24.0), z + 1,
+                        win_base + 5 + i as u64,
+                        1,
+                        text_color,
+                        Rect::new(cx + 24.0, iy + 2.0, 24.0, 24.0),
+                        z + 1,
                     ));
                     parent.add_child(text_node(
-                        win_base + 50 + i as u64, name.to_string(), text_color,
-                        Rect::new(cx + 56.0, iy + 4.0, 200.0, 20.0), z + 2, 1,
+                        win_base + 50 + i as u64,
+                        name.to_string(),
+                        text_color,
+                        Rect::new(cx + 56.0, iy + 4.0, 200.0, 20.0),
+                        z + 2,
+                        1,
                     ));
                 }
             }
@@ -1217,39 +1306,53 @@ impl Shell {
                 // URL bar
                 let bar_bg = liquide_compositor::pixel::Color::new(55, 55, 65, 255);
                 parent.add_child(solid_rect(
-                    win_base + 3, bar_bg,
-                    Rect::new(cx + 8.0, cy + 8.0, cw - 16.0, 32.0), z + 1,
+                    win_base + 3,
+                    bar_bg,
+                    Rect::new(cx + 8.0, cy + 8.0, cw - 16.0, 32.0),
+                    z + 1,
                 ));
                 parent.add_child(text_node(
-                    win_base + 4, "liquide://home".into(), text_color,
-                    Rect::new(cx + 16.0, cy + 14.0, cw - 32.0, 20.0), z + 2, 1,
+                    win_base + 4,
+                    "liquide://home".into(),
+                    text_color,
+                    Rect::new(cx + 16.0, cy + 14.0, cw - 32.0, 20.0),
+                    z + 2,
+                    1,
                 ));
                 // Page placeholder
                 parent.add_child(text_node(
-                    win_base + 5, "Welcome to Liquide Browser".into(), text_color,
-                    Rect::new(cx + 20.0, cy + 60.0, cw - 40.0, 20.0), z + 2, 1,
+                    win_base + 5,
+                    "Welcome to Liquide Browser".into(),
+                    text_color,
+                    Rect::new(cx + 20.0, cy + 60.0, cw - 40.0, 20.0),
+                    z + 2,
+                    1,
                 ));
             }
             "com.liquide.calculator" => {
                 parent.add_child(icon_node(
-                    win_base + 3, 5, text_color,
-                    Rect::new(cx + cw / 2.0 - 24.0, cy + 20.0, 48.0, 48.0), z + 1,
+                    win_base + 3,
+                    5,
+                    text_color,
+                    Rect::new(cx + cw / 2.0 - 24.0, cy + 20.0, 48.0, 48.0),
+                    z + 1,
                 ));
                 parent.add_child(text_node(
-                    win_base + 4, "0".into(), text_color,
-                    Rect::new(cx + 16.0, cy + 80.0, cw - 32.0, 24.0), z + 1, 1,
+                    win_base + 4,
+                    "0".into(),
+                    text_color,
+                    Rect::new(cx + 16.0, cy + 80.0, cw - 32.0, 24.0),
+                    z + 1,
+                    1,
                 ));
             }
             _ => {
                 // Generic: show the window title centered
                 parent.add_child(text_node(
-                    win_base + 3, window.title.clone(), text_color,
-                    Rect::new(
-                        cx + 20.0,
-                        cy + content.height / 2.0 - 10.0,
-                        cw - 40.0,
-                        20.0,
-                    ),
+                    win_base + 3,
+                    window.title.clone(),
+                    text_color,
+                    Rect::new(cx + 20.0, cy + content.height / 2.0 - 10.0, cw - 40.0, 20.0),
                     z + 1,
                     1,
                 ));
@@ -1376,7 +1479,11 @@ impl Shell {
                             // (not on dock, status bar, or window).
                             let bar_bounds = self.status_bar.compute_bounds(self.screen_rect);
                             let dock_bounds = self.dock.compute_bounds(self.screen_rect);
-                            let on_window = self.visible_windows().iter().rev().any(|w| w.bounds.contains(pt));
+                            let on_window = self
+                                .visible_windows()
+                                .iter()
+                                .rev()
+                                .any(|w| w.bounds.contains(pt));
                             if !bar_bounds.contains(pt) && !dock_bounds.contains(pt) && !on_window {
                                 self.context_menu_visible = !self.context_menu_visible;
                                 self.context_menu_pos = pt;
@@ -1395,8 +1502,16 @@ impl Shell {
                             let ctx_item_h = 36.0_f32;
                             let ctx_w = 260.0_f32;
                             let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
-                            let ctx_x = self.context_menu_pos.x.min(self.screen_rect.width - ctx_w - 4.0).max(0.0);
-                            let ctx_y = self.context_menu_pos.y.min(self.screen_rect.height - ctx_h - 4.0).max(0.0);
+                            let ctx_x = self
+                                .context_menu_pos
+                                .x
+                                .min(self.screen_rect.width - ctx_w - 4.0)
+                                .max(0.0);
+                            let ctx_y = self
+                                .context_menu_pos
+                                .y
+                                .min(self.screen_rect.height - ctx_h - 4.0)
+                                .max(0.0);
                             let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
 
                             if ctx_bounds.contains(pt) {
@@ -1519,7 +1634,9 @@ impl Shell {
                         }
 
                         if let Some(wid) = clicked {
-                            let is_decorated = self.windows.get(&wid)
+                            let is_decorated = self
+                                .windows
+                                .get(&wid)
                                 .map(|w| w.flags.contains(WindowFlags::DECORATED))
                                 .unwrap_or(false);
 
@@ -1532,7 +1649,8 @@ impl Shell {
                                     bounds.width,
                                     (bounds.height - tbh).max(0.0),
                                 );
-                                let zone = hit_test_decoration(client, &self.decoration_style, *x, *y);
+                                let zone =
+                                    hit_test_decoration(client, &self.decoration_style, *x, *y);
                                 match zone {
                                     HitZone::CloseButton => {
                                         let _ = self.set_focus(wid);
@@ -1672,7 +1790,8 @@ impl Shell {
             }
             ShellAction::WorkspaceAdd => {
                 let n = self.workspaces.workspace_count();
-                self.workspaces.create_workspace(format!("Workspace {}", n + 1));
+                self.workspaces
+                    .create_workspace(format!("Workspace {}", n + 1));
                 true
             }
             ShellAction::OpenSettings => {

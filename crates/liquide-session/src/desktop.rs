@@ -16,17 +16,15 @@
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use liquide_compositor::{Compositor, CompositorContract};
 use liquide_compositor::damage::DamageSet;
 use liquide_compositor::effects::QualityProfile;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::{Compositor, CompositorContract};
 use liquide_input::InputState;
 use liquide_input::event::InputEvent;
-use liquide_platform::{
-    NativeWindowHandle, NativeWindowParams, PlatformBackend, PlatformEvent,
-};
+use liquide_platform::{NativeWindowHandle, NativeWindowParams, PlatformBackend, PlatformEvent};
 use liquide_renderer_cpu::{Renderer, SoftwareRenderer};
 use liquide_shell::Shell;
 use tracing::{debug, info, warn};
@@ -112,11 +110,7 @@ impl DesktopCompositor {
         let h = self.height as f32;
         let screen = Rect::new(0.0, 0.0, w, h);
 
-        let mut root = SceneNode::new(
-            0,
-            SceneNodeKind::Root,
-            NodeProperties::new(screen),
-        );
+        let mut root = SceneNode::new(0, SceneNodeKind::Root, NodeProperties::new(screen));
 
         // Full-screen dark background with a subtle blue tint.
         root.add_child(SceneNode::new(
@@ -217,8 +211,7 @@ impl DesktopCompositor {
                 SceneNodeKind::Background {
                     color: Color::new(60, 140, blue, alpha),
                 },
-                NodeProperties::new(Rect::new(lx, brand_y, letter_w, letter_h))
-                    .with_z_order(13),
+                NodeProperties::new(Rect::new(lx, brand_y, letter_w, letter_h)).with_z_order(13),
             ));
         }
 
@@ -311,12 +304,7 @@ impl DesktopCompositor {
         // 2. Add software cursor to the scene.
         if !self.loading {
             let cursor_size = 24.0_f32;
-            let cursor_bounds = Rect::new(
-                self.cursor_x,
-                self.cursor_y,
-                cursor_size,
-                cursor_size,
-            );
+            let cursor_bounds = Rect::new(self.cursor_x, self.cursor_y, cursor_size, cursor_size);
             scene.add_child(SceneNode::new(
                 999_999,
                 SceneNodeKind::Cursor,
@@ -381,12 +369,7 @@ impl DesktopCompositor {
         let t4 = Instant::now();
         if let Some(handle) = self.window_handle {
             let _ = platform.present_frame(
-                handle,
-                &fb.pixels,
-                fb.width,
-                fb.height,
-                fb.stride,
-                fb.format,
+                handle, &fb.pixels, fb.width, fb.height, fb.stride, fb.format,
             );
         }
         let present_ms = t4.elapsed().as_secs_f64() * 1000.0;
@@ -445,9 +428,7 @@ impl DesktopCompositor {
         let mut needs_redraw = false;
 
         match event {
-            PlatformEvent::WindowResized {
-                width, height, ..
-            } => {
+            PlatformEvent::WindowResized { width, height, .. } => {
                 self.width = *width;
                 self.height = *height;
                 let _ = self.compositor.resize(*width, *height);
@@ -461,8 +442,7 @@ impl DesktopCompositor {
                 needs_redraw = true;
             }
             PlatformEvent::KeyInput { event: ke, .. } => {
-                self.input_state
-                    .handle_event(&InputEvent::Keyboard(*ke));
+                self.input_state.handle_event(&InputEvent::Keyboard(*ke));
             }
             PlatformEvent::MouseInput { event: me, .. } => {
                 // Track cursor position for software cursor rendering.
@@ -479,12 +459,10 @@ impl DesktopCompositor {
                     }
                     _ => {}
                 }
-                self.input_state
-                    .handle_event(&InputEvent::Mouse(*me));
+                self.input_state.handle_event(&InputEvent::Mouse(*me));
             }
             PlatformEvent::TouchInput { event: te, .. } => {
-                self.input_state
-                    .handle_event(&InputEvent::Touch(*te));
+                self.input_state.handle_event(&InputEvent::Touch(*te));
             }
             _ => {}
         }
@@ -532,8 +510,10 @@ impl DesktopCompositor {
         let screen_h = screen_rect.height as u32;
         if screen_w > 0 && screen_h > 0 && (screen_w != self.width || screen_h != self.height) {
             info!(
-                old_w = self.width, old_h = self.height,
-                new_w = screen_w, new_h = screen_h,
+                old_w = self.width,
+                old_h = self.height,
+                new_w = screen_w,
+                new_h = screen_h,
                 "resizing compositor to match primary screen"
             );
             self.width = screen_w;
@@ -558,7 +538,8 @@ impl DesktopCompositor {
             self.window_handle = Some(handle);
         }
         info!(
-            width = self.width, height = self.height,
+            width = self.width,
+            height = self.height,
             elapsed_ms = format!("{:.1}", t_win.elapsed().as_secs_f64() * 1000.0),
             "desktop window created (borderless fullscreen)"
         );
