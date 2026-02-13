@@ -453,25 +453,22 @@ impl DesktopCompositor {
         // Other windows continue rendering normally.
         if let Some(window_id) = dragged_window {
             use liquide_compositor::scene::SceneNodeKind;
-            
+
             // Calculate node ID range for the dragged window
             // From scene_builder.rs: NODE_WINDOW_BASE=10_000, NODE_WINDOW_STRIDE=10
             const NODE_WINDOW_BASE: u64 = 10_000;
             const NODE_WINDOW_STRIDE: u64 = 10;
             let win_base = NODE_WINDOW_BASE + window_id.0 * NODE_WINDOW_STRIDE;
             let win_end = win_base + NODE_WINDOW_STRIDE;
-            
+
             let original_count = flat_nodes.len();
             flat_nodes.retain(|node| {
                 let node_id = node.id;
                 let is_dragged_window_node = node_id >= win_base && node_id < win_end;
-                
+
                 if is_dragged_window_node {
                     // For dragged window: only keep basic decoration border, no shadows, no content
-                    matches!(
-                        node.kind,
-                        SceneNodeKind::Decoration { .. }
-                    )
+                    matches!(node.kind, SceneNodeKind::Decoration { .. })
                 } else {
                     // All other windows and UI elements: render normally
                     true
