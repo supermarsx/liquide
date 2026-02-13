@@ -53,6 +53,12 @@ pub struct Shell {
     config: ShellConfig,
     theme: ShellTheme,
     session_menu_visible: bool,
+    /// Desktop right-click context menu state.
+    context_menu_visible: bool,
+    /// Position where context menu was opened.
+    context_menu_pos: Point,
+    /// Configurable session dialog items.
+    session_menu_items: Vec<SessionMenuItem>,
 }
 
 impl Shell {
@@ -103,6 +109,9 @@ impl Shell {
             config,
             theme: ShellTheme::default_dark(),
             session_menu_visible: false,
+            context_menu_visible: false,
+            context_menu_pos: Point::new(0.0, 0.0),
+            session_menu_items: SessionMenuItem::defaults(),
         }
     }
 
