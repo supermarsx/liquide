@@ -620,32 +620,33 @@ impl DesktopCompositor {
                 }
             }
 
-            // Sleep to avoid busy-spinning and burning CPU.
-            // Three cases:
-            //   1. Dirty but throttled — sleep until the next frame is due.
-            //   2. Idle (no events, not dirty) — sleep up to the frame budget.
-            //   3. Had events but not dirty — yield briefly.
+            // Efficient idle: use the platform's blocking wait (e.g.
+            // Win32 GetMessage / X11 XNextEvent) when nothing is happening.
+            // This drops CPU usage to ~0% when idle instead of busy-spinning.
             if self.dirty && !self.frame_interval.is_zero() {
+                // Dirty but throttled — sleep until next frame is due.
                 let elapsed = self.last_render.elapsed();
                 if elapsed < self.frame_interval {
                     let remaining = self.frame_interval - elapsed;
                     thread::sleep(remaining.min(Duration::from_millis(4)));
                 }
-            } else if !had_event && !self.dirty {
-                let sleep_ms = if !self.frame_interval.is_zero() {
-                    let elapsed = self.last_render.elapsed();
-                    if elapsed < self.frame_interval {
-                        let remaining = self.frame_interval - elapsed;
-                        remaining.as_millis().min(16) as u64
-                    } else {
-                        1
+            } else if !self.dirty {
+                // Idle — block on the platform's native event wait.
+                // This uses WaitMessage/GetMessage on Win32, which is
+                // zero-CPU until a message arrives.  We also set a 1-second
+                // timeout via the tick interval to keep the clock updating.
+                let tick_remaining = Duration::from_secs(1)
+                    .saturating_sub(self.last_tick.elapsed());
+                if tick_remaining > Duration::from_millis(50) && !had_event {
+                    // Use platform wait_event for true zero-CPU idle.
+                    let event = platform.wait_event();
+                    if self.handle_event(&event) {
+                        self.dirty = true;
                     }
                 } else {
-                    1
-                };
-                thread::sleep(Duration::from_millis(sleep_ms));
-            } else if had_event && !self.dirty {
-                thread::sleep(Duration::from_millis(1));
+                    // Near tick time or just had events — brief yield.
+                    thread::sleep(Duration::from_millis(1));
+                }
             }
         }
 
