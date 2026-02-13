@@ -2,26 +2,62 @@
 //!
 //! This crate defines trait interfaces for every major platform integration
 //! point (displays, windows, taskbar, tray, notifications, drag-and-drop,
-//! and keymap translation) together with null / default implementations
-//! that can be used in tests or headless environments.
+//! keymap translation, event loops, and frame presentation) together with
+//! null / default implementations for tests or headless environments.
+//!
+//! Real platform backends are compiled conditionally:
+//!
+//! - **Windows**: `win32` module — Win32 / GDI via raw FFI.
+//! - **Linux (X11)**: `x11` module — Xlib via raw FFI.
+//! - **Linux (Wayland)**: `wayland` module — libwayland-client via raw FFI.
+//! - **macOS**: `macos` module — Cocoa / Core Graphics via Objective-C runtime FFI.
 
 pub mod display;
 pub mod dnd;
+pub mod event_loop;
 pub mod keymap;
 pub mod notifications;
 pub mod taskbar;
 pub mod tray;
 pub mod window_host;
 
-// Re-exports
+// Platform-specific backends
+#[cfg(target_os = "windows")]
+pub mod win32;
+
+#[cfg(target_os = "linux")]
+pub mod x11;
+
+#[cfg(target_os = "linux")]
+pub mod wayland;
+
+#[cfg(target_os = "macos")]
+pub mod macos;
+
+// Re-exports — common types
 pub use display::{DisplayBackend, MonitorInfo, NullDisplayBackend};
 pub use dnd::{NativeDragDrop, NullDragDrop};
+pub use event_loop::{ControlFlow, FramePresenter, NullFramePresenter, PlatformEvent};
 pub use keymap::{DefaultKeymap, KeymapTranslator};
 pub use notifications::{NativeNotificationParams, NativeNotifications, NullNativeNotifications};
 pub use taskbar::{JumpListItem, NullTaskbar, TaskbarIntegration};
 pub use tray::{NativeTray, NativeTrayHandle, NativeTrayParams, NullNativeTray, TrayUpdate};
 pub use window_host::{NativeWindowHandle, NativeWindowHost, NativeWindowParams, NullWindowHost};
 
+// Re-exports — platform backends
+#[cfg(target_os = "windows")]
+pub use win32::Win32Platform;
+
+#[cfg(target_os = "linux")]
+pub use x11::X11Platform;
+
+#[cfg(target_os = "linux")]
+pub use wayland::WaylandPlatform;
+
+#[cfg(target_os = "macos")]
+pub use macos::MacOSPlatform;
+
+use liquide_compositor::pixel::PixelFormat;
 use thiserror::Error;
 
 /// Errors that can occur within the platform abstraction layer.
@@ -55,6 +91,14 @@ pub enum PlatformError {
     #[error("keymap error: {0}")]
     Keymap(String),
 
+    /// An event loop error.
+    #[error("event loop error: {0}")]
+    EventLoop(String),
+
+    /// A frame presentation error.
+    #[error("presentation error: {0}")]
+    Presentation(String),
+
     /// An unclassified platform error.
     #[error("{0}")]
     Other(String),
@@ -67,7 +111,13 @@ pub type PlatformResult<T> = std::result::Result<T, PlatformError>;
 ///
 /// Each method returns the corresponding sub-backend.  Implementations
 /// are expected to be `Send` so they can be moved between threads.
+///
+/// The event-loop and frame-presentation methods have default no-op
+/// implementations so that [`NullPlatform`] (and other headless backends)
+/// compile without requiring a real windowing system.
 pub trait PlatformBackend: Send {
+    // ── existing sub-backend accessors ──────────────────────────────
+
     /// Access the display / monitor backend.
     fn display(&self) -> &dyn DisplayBackend;
 
@@ -92,6 +142,50 @@ pub trait PlatformBackend: Send {
     /// Return the human-readable name of the current platform.
     #[must_use]
     fn platform_name(&self) -> &str;
+
+    // ── event loop ──────────────────────────────────────────────────
+
+    /// Poll for the next platform event without blocking.
+    ///
+    /// Returns `None` if no events are pending. Real backends translate
+    /// window-system messages into [`PlatformEvent`] variants.
+    fn poll_event(&mut self) -> Option<PlatformEvent> {
+        None
+    }
+
+    /// Wait for the next platform event, blocking until one is available.
+    ///
+    /// Default implementation returns [`PlatformEvent::Quit`] immediately.
+    fn wait_event(&mut self) -> PlatformEvent {
+        PlatformEvent::Quit
+    }
+
+    // ── frame presentation ──────────────────────────────────────────
+
+    /// Present a rendered BGRA8 frame to the specified window.
+    ///
+    /// `pixels` contains `height * stride` bytes in `format` layout.
+    /// The platform backend copies the data to the display surface using
+    /// the fastest available mechanism (GDI `SetDIBitsToDevice` on Win32,
+    /// `XPutImage`/MIT-SHM on X11, `wl_surface.attach` on Wayland,
+    /// `CGBitmapContext` on macOS).
+    fn present_frame(
+        &mut self,
+        _handle: NativeWindowHandle,
+        _pixels: &[u8],
+        _width: u32,
+        _height: u32,
+        _stride: u32,
+        _format: PixelFormat,
+    ) -> PlatformResult<()> {
+        Ok(())
+    }
+
+    /// Request the window to be repainted.
+    ///
+    /// This causes a [`PlatformEvent::WindowRedraw`] to be emitted on the
+    /// next event loop iteration.
+    fn request_redraw(&mut self, _handle: NativeWindowHandle) {}
 }
 
 /// A [`PlatformBackend`] composed entirely of null / no-op sub-backends.
@@ -157,6 +251,39 @@ impl PlatformBackend for NullPlatform {
     fn platform_name(&self) -> &str {
         "null"
     }
+}
+
+/// Detect and create the best available platform backend for the current OS.
+///
+/// - On Windows: returns [`Win32Platform`].
+/// - On Linux: tries Wayland first, falls back to X11.
+/// - On macOS: returns [`MacOSPlatform`].
+/// - Otherwise (or on failure): returns [`NullPlatform`].
+pub fn create_platform() -> PlatformResult<Box<dyn PlatformBackend>> {
+    #[cfg(target_os = "windows")]
+    {
+        return Win32Platform::new().map(|p| Box::new(p) as Box<dyn PlatformBackend>);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Prefer Wayland if $WAYLAND_DISPLAY is set.
+        if std::env::var("WAYLAND_DISPLAY").is_ok() {
+            if let Ok(p) = WaylandPlatform::new() {
+                return Ok(Box::new(p));
+            }
+        }
+        // Fall back to X11.
+        return X11Platform::new().map(|p| Box::new(p) as Box<dyn PlatformBackend>);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return MacOSPlatform::new().map(|p| Box::new(p) as Box<dyn PlatformBackend>);
+    }
+
+    #[allow(unreachable_code)]
+    Ok(Box::new(NullPlatform::new()))
 }
 
 #[cfg(test)]
