@@ -30,6 +30,7 @@ pub enum HitZone {
     CloseButton,
     MinimizeButton,
     MaximizeButton,
+    AlwaysOnTopButton,
     ResizeTop,
     ResizeBottom,
     ResizeLeft,
@@ -114,6 +115,7 @@ pub fn hit_test_decoration(
         let close_x = right - btn - 4.0;
         let max_x = close_x - btn - 4.0;
         let min_x = max_x - btn - 4.0;
+        let aot_x = min_x - btn - 4.0;
         let btn_y_center = top + tbh / 2.0;
 
         if x >= close_x && x < close_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
@@ -124,6 +126,9 @@ pub fn hit_test_decoration(
         }
         if x >= min_x && x < min_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
             return HitZone::MinimizeButton;
+        }
+        if x >= aot_x && x < aot_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
+            return HitZone::AlwaysOnTopButton;
         }
 
         return HitZone::TitleBar;

@@ -113,6 +113,10 @@ pub struct DecorationButtons {
     pub maximize: bool,
     /// Whether the minimize button is visible.
     pub minimize: bool,
+    /// Whether the always-on-top (pin) button is visible.
+    pub always_on_top: bool,
+    /// Whether the window is currently pinned as always-on-top.
+    pub is_topmost: bool,
 }
 
 impl Default for DecorationButtons {
@@ -121,6 +125,8 @@ impl Default for DecorationButtons {
             close: true,
             maximize: true,
             minimize: true,
+            always_on_top: true,
+            is_topmost: false,
         }
     }
 }

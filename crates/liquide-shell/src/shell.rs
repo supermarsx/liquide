@@ -1790,6 +1790,10 @@ impl Shell {
                                         let _ = self.set_focus(wid);
                                         return Some(ShellAction::MinimizeWindow);
                                     }
+                                    HitZone::AlwaysOnTopButton => {
+                                        let _ = self.set_focus(wid);
+                                        return Some(ShellAction::ToggleAlwaysOnTop);
+                                    }
                                     _ => {
                                         let _ = self.set_focus(wid);
                                         let _ = self.raise_window(wid);
