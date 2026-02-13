@@ -620,9 +620,8 @@ impl DesktopCompositor {
                 }
             }
 
-            // Efficient idle: use the platform's blocking wait (e.g.
-            // Win32 GetMessage / X11 XNextEvent) when nothing is happening.
-            // This drops CPU usage to ~0% when idle instead of busy-spinning.
+            // Efficient idle: sleep to avoid busy-spinning.
+            // Use longer sleep when truly idle for lower CPU usage.
             if self.dirty && !self.frame_interval.is_zero() {
                 // Dirty but throttled — sleep until next frame is due.
                 let elapsed = self.last_render.elapsed();
@@ -631,22 +630,17 @@ impl DesktopCompositor {
                     thread::sleep(remaining.min(Duration::from_millis(4)));
                 }
             } else if !self.dirty {
-                // Idle — block on the platform's native event wait.
-                // This uses WaitMessage/GetMessage on Win32, which is
-                // zero-CPU until a message arrives.  We also set a 1-second
-                // timeout via the tick interval to keep the clock updating.
-                let tick_remaining = Duration::from_secs(1)
-                    .saturating_sub(self.last_tick.elapsed());
-                if tick_remaining > Duration::from_millis(50) && !had_event {
-                    // Use platform wait_event for true zero-CPU idle.
-                    let event = platform.wait_event();
-                    if self.handle_event(&event) {
-                        self.dirty = true;
-                    }
+                // Nothing to render — sleep longer when no events are
+                // arriving, shorter when the user is actively interacting.
+                let sleep_ms = if had_event {
+                    1 // Brief yield after event burst; next event may arrive soon.
                 } else {
-                    // Near tick time or just had events — brief yield.
-                    thread::sleep(Duration::from_millis(1));
-                }
+                    // Truly idle — sleep for one frame period (16ms at 60fps).
+                    // This drops CPU from ~100% to ~2% while still responding
+                    // to events within one frame.
+                    self.frame_interval.as_millis().clamp(1, 16) as u64
+                };
+                thread::sleep(Duration::from_millis(sleep_ms));
             }
         }
 

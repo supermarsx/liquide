@@ -1200,31 +1200,36 @@ impl PlatformBackend for Win32Platform {
     }
 
     fn wait_event(&mut self) -> PlatformEvent {
-        // If we already have queued events, return immediately.
-        if let Some(ev) = self.event_queue.pop_front() {
-            return ev;
+        // Block until a real platform event is available.
+        // Some Win32 messages (WM_TIMER, WM_SETFOCUS, internal painting
+        // messages, etc.) don't produce a PlatformEvent, so we loop until
+        // GetMessageW delivers one that does — matching the Wayland
+        // backend's looping behaviour.
+        loop {
+            // Drain any already-queued events first.
+            if let Some(ev) = self.event_queue.pop_front() {
+                return ev;
+            }
+
+            // Block until a message arrives.
+            let mut msg = ffi::MSG::default();
+            // Safety: GetMessageW blocks until a message is available.
+            // Return value 0 = WM_QUIT, -1 = error.
+            let ret = unsafe { ffi::GetMessageW(&mut msg, ptr::null_mut(), 0, 0) };
+
+            if ret <= 0 {
+                return PlatformEvent::Quit;
+            }
+
+            unsafe {
+                ffi::TranslateMessage(&msg);
+                ffi::DispatchMessageW(&msg);
+            }
+
+            // Drain any additional pending messages.
+            self.pump_messages();
+            // Loop back to check if any PlatformEvents were produced.
         }
-
-        // Block until a message arrives.
-        let mut msg = ffi::MSG::default();
-        // Safety: GetMessageW blocks until a message is available. A return
-        // value of 0 means WM_QUIT, and -1 is an error (treated as Quit).
-        let ret = unsafe { ffi::GetMessageW(&mut msg, ptr::null_mut(), 0, 0) };
-
-        if ret <= 0 {
-            return PlatformEvent::Quit;
-        }
-
-        unsafe {
-            ffi::TranslateMessage(&msg);
-            ffi::DispatchMessageW(&msg);
-        }
-
-        // Drain any additional pending messages.
-        self.pump_messages();
-
-        // Return the first queued event, or Quit as fallback.
-        self.event_queue.pop_front().unwrap_or(PlatformEvent::Quit)
     }
 
     // ── Frame presentation ───────────────────────────────────────────

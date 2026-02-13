@@ -1506,8 +1506,16 @@ impl Shell {
                             let ctx_item_h = 36.0_f32;
                             let ctx_w = 260.0_f32;
                             let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
-                            let ctx_x = self.context_menu_pos.x.min(self.screen_rect.width - ctx_w - 4.0).max(0.0);
-                            let ctx_y = self.context_menu_pos.y.min(self.screen_rect.height - ctx_h - 4.0).max(0.0);
+                            let ctx_x = self
+                                .context_menu_pos
+                                .x
+                                .min(self.screen_rect.width - ctx_w - 4.0)
+                                .max(0.0);
+                            let ctx_y = self
+                                .context_menu_pos
+                                .y
+                                .min(self.screen_rect.height - ctx_h - 4.0)
+                                .max(0.0);
                             let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
                             let prev_hover = self.context_menu_hover_index;
                             if ctx_bounds.contains(pt) {
@@ -1593,15 +1601,11 @@ impl Shell {
 
                             // Right-click on a window's title bar → show window context menu
                             let tbh = self.decoration_style.title_bar_height;
-                            let on_titlebar = self
-                                .visible_windows()
-                                .iter()
-                                .rev()
-                                .any(|w| {
-                                    let title_rect = Rect::new(w.bounds.x, w.bounds.y, w.bounds.width, tbh);
-                                    title_rect.contains(pt)
-                                        && w.flags.contains(WindowFlags::DECORATED)
-                                });
+                            let on_titlebar = self.visible_windows().iter().rev().any(|w| {
+                                let title_rect =
+                                    Rect::new(w.bounds.x, w.bounds.y, w.bounds.width, tbh);
+                                title_rect.contains(pt) && w.flags.contains(WindowFlags::DECORATED)
+                            });
                             if on_titlebar {
                                 self.context_menu_visible = !self.context_menu_visible;
                                 self.context_menu_pos = pt;
