@@ -24,6 +24,32 @@ pub struct ShellConfig {
     pub notifications: NotificationConfig,
     /// Seamless window mode settings.
     pub seamless: SeamlessConfig,
+    /// Window management settings.
+    pub window_management: WindowManagementConfig,
+}
+
+/// Window management behavior configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowManagementConfig {
+    /// Automatically repatriate windows that go off-screen.
+    pub auto_repatriate: bool,
+    /// Minimum visible pixels before forcing repatriation.
+    pub repatriation_threshold_px: f32,
+    /// Anti-flicker frame limiter (minimum ms between frames).
+    pub anti_flicker_min_frame_interval_ms: u64,
+    /// Enable double-buffered scene submission to prevent tearing.
+    pub enable_anti_flicker_insurance: bool,
+}
+
+impl Default for WindowManagementConfig {
+    fn default() -> Self {
+        Self {
+            auto_repatriate: true,
+            repatriation_threshold_px: 50.0,
+            anti_flicker_min_frame_interval_ms: 8, // ~120Hz max
+            enable_anti_flicker_insurance: true,
+        }
+    }
 }
 
 impl std::fmt::Display for ShellConfig {
