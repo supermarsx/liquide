@@ -1332,7 +1332,9 @@ impl Shell {
                                         let app_id = items[i].app_id.clone();
                                         if !app_id.is_empty() {
                                             self.open_app_window(&app_id);
-                                            return Some(ShellAction::ShowDesktop);
+                                            // Return OpenLauncher to trigger a redraw
+                                            // without minimizing all windows.
+                                            return Some(ShellAction::OpenLauncher);
                                         }
                                     }
                                     break;

@@ -631,11 +631,18 @@ impl DesktopCompositor {
                 }
             }
 
-            // If no events were processed this iteration, sleep briefly
-            // to avoid busy-spinning and burning CPU.
-            // Use the remaining frame budget if we just rendered, otherwise
-            // sleep enough to check for events at the tick rate.
-            if !had_event && !self.dirty {
+            // Sleep to avoid busy-spinning and burning CPU.
+            // Three cases:
+            //   1. Dirty but throttled — sleep until the next frame is due.
+            //   2. Idle (no events, not dirty) — sleep up to the frame budget.
+            //   3. Had events but not dirty — yield briefly.
+            if self.dirty && !self.frame_interval.is_zero() {
+                let elapsed = self.last_render.elapsed();
+                if elapsed < self.frame_interval {
+                    let remaining = self.frame_interval - elapsed;
+                    thread::sleep(remaining.min(Duration::from_millis(4)));
+                }
+            } else if !had_event && !self.dirty {
                 let sleep_ms = if !self.frame_interval.is_zero() {
                     let elapsed = self.last_render.elapsed();
                     if elapsed < self.frame_interval {
@@ -648,6 +655,8 @@ impl DesktopCompositor {
                     1
                 };
                 thread::sleep(Duration::from_millis(sleep_ms));
+            } else if had_event && !self.dirty {
+                thread::sleep(Duration::from_millis(1));
             }
         }
 

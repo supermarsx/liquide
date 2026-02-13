@@ -1,0 +1,22 @@
+[package]
+name = "liquide-fonts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Comprehensive font management, indexing, preview, and hot-reload for the LiquiDE desktop"
+
+[lib]
+name = "liquide_fonts"
+path = "src/lib.rs"
+
+[dependencies]
+liquide-common.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["full"] }
+dirs.workspace = true
