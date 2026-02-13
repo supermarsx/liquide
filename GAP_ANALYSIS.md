@@ -41,7 +41,7 @@ The system **cannot function as an actual remote desktop** today. Critical I/O l
 | `liquide-manager-frontend` | 50% | Auth state machine, navigation, data tables — but no actual web UI |
 | `liquide-mobile-core` | 50% | Gesture recognition, adaptive quality — but no actual mobile rendering |
 | `liquide-bench` | 50% | SLO validation, percentile stats — but generates synthetic data only |
-| `liquide-shell` | 40% | Window manager data structures — no windowing protocol (Wayland/X11) |
+| `liquide-shell` | **60%** | **NEW: 27 cursor shapes, window repatriation, status bar auto-hide, corner drag improvements (8px tolerance), hover validation, app menu dropdown, dock click behaviors** — Main gaps: no Wayland/X11 protocol, no native font loading (uses 8x16 bitmap), Win32 GDI layer designed but not implemented |
 | `liquide-input` | 40% | Event routing logic — no actual device reading |
 | `liquide-recording` | 35% | Container format tracking — no actual file I/O (byte counting only) |
 | `liquide-interop` | 30% | Path formatting — no XDG/D-Bus integration |
@@ -66,7 +66,7 @@ The system **cannot function as an actual remote desktop** today. Critical I/O l
 | `liquide-usb` | **10%** | VID/PID matching patterns — no libusb or USB/IP |
 | `liquide-display` | **15%** | Mode enumeration — no actual display server interaction |
 | `liquide-cursor` | **15%** | Sprite atlas — no hardware cursor plane |
-| `liquide-font` | **15%** | Font discovery paths — no FreeType/HarfBuzz/DirectWrite |
+| `liquide-fonts` | **25%** | **Comprehensive font management infrastructure (discovery, Google Fonts, collections, hot-reload, roles)** — Gap: **Not connected to renderer** (renderer uses hardcoded 8x16 bitmap font instead) |
 | `liquide-notification` | **15%** | Notification queue — no D-Bus/Windows notification API |
 | `liquide-dbus` | **10%** | Interface definitions — no actual D-Bus connection |
 
@@ -179,10 +179,86 @@ The transport crate's tests are a notable exception to the "scaffold-only" patte
 
 ---
 
-## 5. Summary — Is LiquiDE Implementable on Windows and macOS?
+## 5. Recent Implementations (February 2026)
+
+### Shell Enhancements (`liquide-shell` 40% → 60%)
+
+**Fully Implemented:**
+- ✅ **27 Cursor Shapes**: Extended from 9 to 27 variants (Wait, Progress, Help, Crosshair, Grab/Grabbing, ZoomIn/Out, ContextMenu, Alias, Copy, NoDrop, Cell, VerticalText, AllScroll, ExpandH/V) with complete CPU rendering
+- ✅ **Window Repatriation**: Automatic offscreen window recovery with 50px threshold, runs in tick() loop
+- ✅ **Status Bar Auto-Hide**: Hides when windows maximized, foundation for reveal-on-hover
+- ✅ **Resize Tolerance**: 8px configurable edge grab area (was using border_width), corner zones enlarged 2.5×
+- ✅ **Hover Bounds Validation**: Fixed out-of-bounds hover states in dock, menus
+- ✅ **App Menu Dropdown**: macOS-style menu rendering with glass effects
+- ✅ **Dock Click Behaviors**: 4 modes configured (ToggleMinimize, AlwaysNew, SmartToggle, ShowAllWindows)
+
+**Configuration Infrastructure Added:**
+```rust
+WindowManagementConfig {
+    auto_repatriate: bool,
+    repatriation_threshold_px: f32,
+    anti_flicker_min_frame_interval_ms: u64,
+    enable_anti_flicker_insurance: bool,
+}
+
+DockClickBehavior enum (4 variants)
+StatusBarConfig { show_app_menu, auto_hide_on_maximize, auto_hide_reveal_distance }
+DecorationStyle { resize_tolerance }
+```
+
+**Designed But Not Started:**
+- ⬜ Win32 GDI Compatibility Layer (complete architectural design in WIN32_COMPAT_DESIGN.md)
+- ⬜ Anti-flicker insurance thread (config exists, implementation pending)
+- ⬜ Dock click event handlers (enum exists, handlers pending)
+
+**Files Modified:** 9 files, ~750 new lines
+
+### Critical Font Loading Gap
+
+**Problem:** `liquide-fonts` has comprehensive infrastructure (25% implementation depth) including:
+- Font discovery, installation, Google Fonts integration
+- Collections, hot-reload, per-role assignments
+- But **completely disconnected from renderer**
+
+**Current Behavior:** `liquide-renderer-cpu` uses hardcoded 8×16 bitmap font exclusively
+- No TrueType/OpenType loading
+- No FreeType/HarfBuzz integration
+- No system font discovery
+
+**Fix Required:** Bridge `FontManager` to renderer's text drawing pipeline
+
+---
+
+## 6. Pending Crate Reorganization
+
+### Recommendation: Extract to Independent Crates
+
+1. **`liquide-status-bar` (new crate)**
+   - Move `status_bar.rs` from `liquide-shell`
+   - Add app menu dropdown logic
+   - Include auto-hide behavior
+   - Make reusable for other shell implementations
+
+2. **`liquide-platform-win32` (new crate)**
+   - Win32 GDI compatibility layer
+   - Window replication via hooking
+   - Icon extraction, surface bridging
+   - Full design: `WIN32_COMPAT_DESIGN.md`
+
+**Benefits:**
+- Cleaner separation of concerns
+- Windows-specific code isolated
+- Status bar reusable outside shell
+- Easier testing and maintenance
+
+---
+
+## 7. Summary — Is LiquiDE Implementable on Windows and macOS?
 
 **Yes, architecturally.** The crate separation and trait-based design make cross-platform implementation feasible. The rendering pipeline (`renderer-cpu` → `encoder` → `compositor`) is genuinely platform-agnostic and production-grade.
 
 **No, trivially.** There is no platform abstraction layer, no conditional compilation infrastructure, and the 6 critical-path crates (transport, protocol, crypto, auth, shell, client) would each need platform-specific implementations. The display server component (`liquide-shell`) specifically assumes a Wayland-style compositor model that has no direct equivalent on Windows or macOS.
 
-**Practical recommendation:** Implement the Linux version first by completing the 6 critical-path crates, then introduce a PAL crate to abstract platform-specific interfaces before porting to Windows and macOS.
+**Recent Progress:** Shell gained 20% implementation depth with cursor expansion, window management, and UI polish. Transport crate remains fully functional production-grade implementation.
+
+**Practical recommendation:** Implement the Linux version first by completing the 6 critical-path crates, then introduce a PAL crate to abstract platform-specific interfaces before porting to Windows and macOS. The new Win32 design provides a blueprint for Windows native app integration.

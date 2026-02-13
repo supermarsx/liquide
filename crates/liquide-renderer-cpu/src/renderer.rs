@@ -11,10 +11,15 @@ use liquide_compositor::scene::{CursorShape, FlatNode, NodeId, SceneNodeKind};
 
 use crate::blur_worker::BlurWorker;
 use crate::color::SrgbLut;
+use crate::dirty_rects::DirtyRectManager;
 use crate::effects::{BoxShadow, ShadowMask, ShadowParams};
 use crate::font_worker::FontWorker;
 use crate::glyph::{GlyphAtlas, GlyphKey};
+use crate::layout_cache::LayoutCacheManager;
+use crate::lod::{LodCriteria, LodLevel, LodManager, PerformanceMode};
+use crate::object_pool::ObjectPool;
 use crate::rasterizer::{self, Fill};
+use crate::texture_cache::TextureCache;
 
 /// Cached shadow mask for a specific window position/size.
 ///
@@ -64,6 +69,16 @@ pub struct SoftwareRenderer {
     shadow_cache: HashMap<NodeId, CachedShadow>,
     /// Background thread for async glyph rasterization.
     font_worker: FontWorker,
+    /// Layout cache manager for computed element layouts.
+    layout_cache: LayoutCacheManager,
+    /// Texture cache for decoded images and rendered assets.
+    texture_cache: TextureCache,
+    /// Dirty rectangle tracking for partial redraws.
+    dirty_rects: DirtyRectManager,
+    /// Level of detail manager for adaptive quality.
+    lod_manager: LodManager,
+    /// Object pool for temporary render buffers.
+    buffer_pool: ObjectPool<Vec<u8>>,
 }
 
 impl SoftwareRenderer {
@@ -82,6 +97,11 @@ impl SoftwareRenderer {
             blur_worker: BlurWorker::new(),
             shadow_cache: HashMap::new(),
             font_worker: FontWorker::new(),
+            layout_cache: LayoutCacheManager::new(),
+            texture_cache: TextureCache::new(),
+            dirty_rects: DirtyRectManager::new(1920, 1080),
+            lod_manager: LodManager::new(1920.0, 1080.0),
+            buffer_pool: ObjectPool::new(64),
         }
     }
 
@@ -171,6 +191,166 @@ impl SoftwareRenderer {
         if !self.blur_enabled && self.avg_render_ms < self.blur_budget_ms * 0.25 {
             self.blur_enabled = true;
         }
+
+        // Update LOD manager adaptive bias based on frame time
+        self.lod_manager
+            .update_adaptive_bias(render_ms, self.blur_budget_ms);
+    }
+
+    // --- Layout Cache Management ---
+
+    /// Get cached layout for an element.
+    #[must_use]
+    pub fn get_cached_layout(&self, element_id: u32) -> Option<Rect> {
+        self.layout_cache.get(element_id)
+    }
+
+    /// Cache a computed layout for an element.
+    pub fn cache_layout(&mut self, element_id: u32, bounds: Rect) {
+        self.layout_cache.insert(element_id, bounds);
+    }
+
+    /// Invalidate layout cache for a specific element.
+    pub fn invalidate_layout(&mut self, element_id: u32) {
+        self.layout_cache.invalidate(element_id);
+    }
+
+    /// Invalidate all cached layouts (e.g., on viewport resize).
+    pub fn invalidate_all_layouts(&mut self) {
+        self.layout_cache.invalidate_all();
+    }
+
+    /// Remove layout caches for elements no longer in the scene.
+    pub fn retain_layout_cache(&mut self, active_ids: &[u32]) {
+        self.layout_cache.retain(active_ids);
+    }
+
+    /// Get layout cache statistics.
+    #[must_use]
+    pub fn layout_cache_stats(&self) -> crate::layout_cache::LayoutCacheStats {
+        self.layout_cache.stats()
+    }
+
+    // --- Texture Cache Management ---
+
+    /// Get a cached texture by ID.
+    pub fn get_cached_texture(
+        &mut self,
+        texture_id: &str,
+    ) -> Option<crate::texture_cache::CachedTexture> {
+        self.texture_cache.get(texture_id)
+    }
+
+    /// Cache a decoded texture.
+    pub fn cache_texture(&mut self, texture_id: String, data: Vec<u8>, width: u32, height: u32) {
+        self.texture_cache.insert(texture_id, data, width, height);
+    }
+
+    /// Remove a texture from the cache.
+    pub fn remove_cached_texture(&mut self, texture_id: &str) -> bool {
+        self.texture_cache.remove(texture_id)
+    }
+
+    /// Clear all cached textures.
+    pub fn clear_texture_cache(&mut self) {
+        self.texture_cache.clear();
+    }
+
+    /// Get texture cache statistics.
+    #[must_use]
+    pub fn texture_cache_stats(&self) -> crate::texture_cache::TextureCacheStats {
+        self.texture_cache.stats()
+    }
+
+    // --- Dirty Rectangle Management ---
+
+    /// Mark a screen region as dirty (needs rerendering).
+    pub fn mark_dirty(&mut self, x: f32, y: f32, width: f32, height: f32) {
+        self.dirty_rects.mark_dirty(x, y, width, height);
+    }
+
+    /// Mark the entire screen as dirty.
+    pub fn mark_full_damage(&mut self) {
+        self.dirty_rects.mark_full_damage();
+    }
+
+    /// Check if a rect intersects any dirty regions.
+    #[must_use]
+    pub fn intersects_dirty(&self, rect: &Rect) -> bool {
+        self.dirty_rects.intersects_dirty(rect)
+    }
+
+    /// Clear dirty rectangles after rendering.
+    pub fn clear_dirty_rects(&mut self) {
+        self.dirty_rects.clear();
+    }
+
+    /// Update screen dimensions for dirty rect tracking.
+    pub fn resize_dirty_tracking(&mut self, width: u32, height: u32) {
+        self.dirty_rects.resize(width, height);
+        self.lod_manager.resize(width as f32, height as f32);
+        self.invalidate_all_layouts(); // Layouts need recalculation on resize
+    }
+
+    /// Get dirty rectangle statistics.
+    #[must_use]
+    pub fn dirty_rect_stats(&self) -> crate::dirty_rects::DirtyRectStats {
+        self.dirty_rects.stats()
+    }
+
+    // --- Level of Detail Management ---
+
+    /// Set LOD performance mode.
+    pub fn set_lod_performance_mode(&mut self, mode: PerformanceMode) {
+        self.lod_manager.set_performance_mode(mode);
+    }
+
+    /// Enable or disable adaptive LOD.
+    pub fn set_adaptive_lod_enabled(&mut self, enabled: bool) {
+        self.lod_manager.set_adaptive_enabled(enabled);
+    }
+
+    /// Select appropriate LOD level for a node.
+    #[must_use]
+    pub fn select_lod(&self, node: &FlatNode, viewport_center_distance: f32) -> LodLevel {
+        let criteria = LodCriteria {
+            screen_bounds: node.absolute_bounds,
+            distance: viewport_center_distance,
+            visible: node.opacity > 0.01,
+            performance_mode: PerformanceMode::Balanced,
+        };
+        self.lod_manager.select_lod(&criteria)
+    }
+
+    /// Calculate distance from viewport center.
+    #[must_use]
+    pub fn calculate_distance_from_center(&self, bounds: &Rect) -> f32 {
+        self.lod_manager.calculate_distance_from_center(bounds)
+    }
+
+    /// Get LOD manager statistics.
+    #[must_use]
+    pub fn lod_stats(&self) -> crate::lod::LodStats {
+        self.lod_manager.stats()
+    }
+
+    // --- Object Pool Management ---
+
+    /// Acquire a buffer from the pool or create a new one.
+    pub fn acquire_buffer(&mut self, size: usize) -> Vec<u8> {
+        self.buffer_pool
+            .acquire_or_create(|| Vec::with_capacity(size))
+    }
+
+    /// Release a buffer back to the pool.
+    pub fn release_buffer(&mut self, buffer: Vec<u8>) {
+        self.buffer_pool.release(buffer);
+    }
+
+    /// Get buffer pool statistics.
+    #[must_use]
+    pub fn buffer_pool_stats(&self) -> crate::object_pool::ObjectPoolStats {
+        self.buffer_pool.stats()
     }
 }
 
@@ -193,21 +373,34 @@ impl Renderer for SoftwareRenderer {
         // Drain completed glyph rasterizations into the atlas.
         let rasterized = self.font_worker.poll_results();
         for glyph in &rasterized {
-            let _ = self.glyph_atlas.insert(
-                glyph.key,
-                &glyph.bitmap,
-                &glyph.metrics,
-            );
+            let _ = self
+                .glyph_atlas
+                .insert(glyph.key, &glyph.bitmap, &glyph.metrics);
         }
 
         let classified_tiles: Vec<DamageTile> = damage.tiles.clone();
 
         // Render each node exactly once in z-order.
-        // render_node writes directly to the full framebuffer, so there is
-        // no benefit from per-tile iteration — it would only cause each
-        // node to be rendered redundantly for every tile it overlaps.
+        // Skip nodes that don't intersect dirty regions for performance.
         for node in nodes {
-            self.render_node(node, fb);
+            // Check if node intersects dirty regions
+            if !self.dirty_rects.is_full_damage() {
+                if !self.intersects_dirty(&node.absolute_bounds) {
+                    continue; // Skip rendering this node
+                }
+            }
+
+            // Calculate LOD level for this node
+            let distance = self.calculate_distance_from_center(&node.absolute_bounds);
+            let lod_level = self.select_lod(node, distance);
+
+            // Skip minimal LOD nodes (too small or far away)
+            if lod_level == LodLevel::Minimal {
+                continue;
+            }
+
+            // Render node with appropriate LOD
+            self.render_node_with_lod(node, fb, lod_level);
         }
 
         Ok(classified_tiles)
@@ -215,10 +408,13 @@ impl Renderer for SoftwareRenderer {
 }
 
 impl SoftwareRenderer {
-    /// Render a single flattened node into the frame buffer.
-    fn render_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
+    /// Render a single flattened node into the frame buffer with LOD support.
+    fn render_node_with_lod(&mut self, node: &FlatNode, fb: &mut FrameBuffer, lod_level: LodLevel) {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
+
+        // Apply LOD quality factor to certain effects
+        let quality_factor = lod_level.quality_factor();
 
         match &node.kind {
             SceneNodeKind::Background { color } => {
@@ -257,10 +453,13 @@ impl SoftwareRenderer {
 
             SceneNodeKind::Glass(params) => {
                 // Glass effect: blurred backdrop + tint overlay + optional glow.
-                if self.blur_enabled {
+                // Apply LOD quality factor to blur radius for performance.
+                if self.blur_enabled && lod_level != LodLevel::Low {
                     let radius = params.blur_radius.min(30);
-                    if radius > 0 {
-                        self.render_backdrop_blur(node.id, bounds, radius, fb);
+                    // Reduce blur radius for lower LOD levels
+                    let lod_radius = (radius as f32 * quality_factor) as u32;
+                    if lod_radius > 0 {
+                        self.render_backdrop_blur(node.id, bounds, lod_radius, fb);
                     }
                 }
 
@@ -269,13 +468,13 @@ impl SoftwareRenderer {
                 tint.a = (tint.a as f32 * opacity + 0.5) as u8;
                 rasterizer::fill_rect(fb, bounds, tint, BlendMode::SrcOver);
 
-                // Inner glow
-                if params.inner_glow {
+                // Inner glow (skip for low LOD)
+                if params.inner_glow && lod_level != LodLevel::Low {
                     crate::effects::InnerGlow::render_glow(
                         fb,
                         bounds,
-                        8.0,
-                        3.0,
+                        8.0 * quality_factor,
+                        3.0 * quality_factor,
                         Color::new(255, 255, 255, 30),
                     );
                 }
@@ -292,6 +491,11 @@ impl SoftwareRenderer {
                 blur_radius,
                 color,
             } => {
+                // Skip shadows for low detail levels (expensive)
+                if lod_level == LodLevel::Low {
+                    return;
+                }
+
                 // Cached shadow rendering: the expensive SDF + Gaussian blur
                 // is only computed when the window bounds actually change.
                 let bx = bounds.x as i32;
@@ -311,17 +515,19 @@ impl SoftwareRenderer {
                     }
                 } else {
                     // Cache miss: generate shadow mask and store for reuse.
+                    // Apply LOD quality factor to blur radius.
                     let shadow_color = Color::new(
                         color.r,
                         color.g,
                         color.b,
                         (color.a as f32 * opacity + 0.5) as u8,
                     );
+                    let lod_blur_radius = (*blur_radius as f32 * quality_factor) as u32;
                     let params = ShadowParams {
                         surface_rect: bounds,
                         corner_radius: 0.0,
                         spread: *spread,
-                        blur_radius: *blur_radius as u32,
+                        blur_radius: lod_blur_radius,
                         offset_x: 0.0,
                         offset_y: 0.0,
                         shadow_color,
@@ -675,12 +881,25 @@ impl SoftwareRenderer {
                     CursorShape::Progress => {
                         // Arrow + small hourglass
                         Self::draw_cursor_arrow(fb, cx, cy, s, outline, fill);
-                        Self::draw_cursor_wait(fb, cx + 8.0 * s, cy + 8.0 * s, s * 0.6, outline, fill);
+                        Self::draw_cursor_wait(
+                            fb,
+                            cx + 8.0 * s,
+                            cy + 8.0 * s,
+                            s * 0.6,
+                            outline,
+                            fill,
+                        );
                     }
                     CursorShape::Help => {
                         // Arrow + question mark
                         Self::draw_cursor_arrow(fb, cx, cy, s, outline, fill);
-                        Self::draw_question_mark(fb, cx + 10.0 * s, cy + 10.0 * s, s * 0.7, outline);
+                        Self::draw_question_mark(
+                            fb,
+                            cx + 10.0 * s,
+                            cy + 10.0 * s,
+                            s * 0.7,
+                            outline,
+                        );
                     }
                     CursorShape::Crosshair => {
                         Self::draw_cursor_crosshair(fb, cx, cy, s, outline);
@@ -860,7 +1079,12 @@ impl SoftwareRenderer {
         for &(row_y, row_w) in arrow_rows {
             rasterizer::fill_rect(
                 fb,
-                Rect::new(cx - s, cy + row_y * s - 0.5 * s, row_w * s + 2.0 * s, 2.0 * s),
+                Rect::new(
+                    cx - s,
+                    cy + row_y * s - 0.5 * s,
+                    row_w * s + 2.0 * s,
+                    2.0 * s,
+                ),
                 outline,
                 BlendMode::SrcOver,
             );
@@ -897,14 +1121,24 @@ impl SoftwareRenderer {
         // Vertical arm (outline)
         rasterizer::fill_rect(
             fb,
-            Rect::new(center_x - half_t - o, center_y - arm - arrow_h - o, thickness + 2.0 * o, arm * 2.0 + thickness + 2.0 * arrow_h + 2.0 * o),
+            Rect::new(
+                center_x - half_t - o,
+                center_y - arm - arrow_h - o,
+                thickness + 2.0 * o,
+                arm * 2.0 + thickness + 2.0 * arrow_h + 2.0 * o,
+            ),
             outline,
             BlendMode::SrcOver,
         );
         // Horizontal arm (outline)
         rasterizer::fill_rect(
             fb,
-            Rect::new(center_x - arm - arrow_h - o, center_y - half_t - o, arm * 2.0 + thickness + 2.0 * arrow_h + 2.0 * o, thickness + 2.0 * o),
+            Rect::new(
+                center_x - arm - arrow_h - o,
+                center_y - half_t - o,
+                arm * 2.0 + thickness + 2.0 * arrow_h + 2.0 * o,
+                thickness + 2.0 * o,
+            ),
             outline,
             BlendMode::SrcOver,
         );
@@ -990,7 +1224,12 @@ impl SoftwareRenderer {
         // Outline
         rasterizer::fill_rect(
             fb,
-            Rect::new(center_x - half_t - o, center_y - arm - 3.0 * s - o, thickness + 2.0 * o, arm * 2.0 + 6.0 * s + 2.0 * o),
+            Rect::new(
+                center_x - half_t - o,
+                center_y - arm - 3.0 * s - o,
+                thickness + 2.0 * o,
+                arm * 2.0 + 6.0 * s + 2.0 * o,
+            ),
             outline,
             BlendMode::SrcOver,
         );
@@ -1005,13 +1244,23 @@ impl SoftwareRenderer {
         for i in 0..3 {
             let fi = i as f32;
             let w = (6.0 * s - fi * 2.0 * s).max(s);
-            rasterizer::fill_rect(fb, Rect::new(center_x - w * 0.5, center_y - arm - fi * s, w, s), fill, BlendMode::SrcOver);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x - w * 0.5, center_y - arm - fi * s, w, s),
+                fill,
+                BlendMode::SrcOver,
+            );
         }
         // Down arrowhead
         for i in 0..3 {
             let fi = i as f32;
             let w = (6.0 * s - fi * 2.0 * s).max(s);
-            rasterizer::fill_rect(fb, Rect::new(center_x - w * 0.5, center_y + arm + fi * s, w, s), fill, BlendMode::SrcOver);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x - w * 0.5, center_y + arm + fi * s, w, s),
+                fill,
+                BlendMode::SrcOver,
+            );
         }
     }
 
@@ -1034,7 +1283,12 @@ impl SoftwareRenderer {
         // Outline
         rasterizer::fill_rect(
             fb,
-            Rect::new(center_x - arm - 3.0 * s - o, center_y - half_t - o, arm * 2.0 + 6.0 * s + 2.0 * o, thickness + 2.0 * o),
+            Rect::new(
+                center_x - arm - 3.0 * s - o,
+                center_y - half_t - o,
+                arm * 2.0 + 6.0 * s + 2.0 * o,
+                thickness + 2.0 * o,
+            ),
             outline,
             BlendMode::SrcOver,
         );
@@ -1049,13 +1303,23 @@ impl SoftwareRenderer {
         for i in 0..3 {
             let fi = i as f32;
             let h = (6.0 * s - fi * 2.0 * s).max(s);
-            rasterizer::fill_rect(fb, Rect::new(center_x - arm - fi * s, center_y - h * 0.5, s, h), fill, BlendMode::SrcOver);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x - arm - fi * s, center_y - h * 0.5, s, h),
+                fill,
+                BlendMode::SrcOver,
+            );
         }
         // Right arrowhead
         for i in 0..3 {
             let fi = i as f32;
             let h = (6.0 * s - fi * 2.0 * s).max(s);
-            rasterizer::fill_rect(fb, Rect::new(center_x + arm + fi * s, center_y - h * 0.5, s, h), fill, BlendMode::SrcOver);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x + arm + fi * s, center_y - h * 0.5, s, h),
+                fill,
+                BlendMode::SrcOver,
+            );
         }
     }
 
@@ -1076,7 +1340,12 @@ impl SoftwareRenderer {
             let fi = i as f32;
             rasterizer::fill_rect(
                 fb,
-                Rect::new(cx + fi * s - o, cy + fi * s - o, 2.0 * s + 2.0 * o, 2.0 * s + 2.0 * o),
+                Rect::new(
+                    cx + fi * s - o,
+                    cy + fi * s - o,
+                    2.0 * s + 2.0 * o,
+                    2.0 * s + 2.0 * o,
+                ),
                 outline,
                 BlendMode::SrcOver,
             );
@@ -1094,7 +1363,12 @@ impl SoftwareRenderer {
         // NW arrowhead
         for i in 0..4 {
             let fi = i as f32;
-            rasterizer::fill_rect(fb, Rect::new(cx, cy + fi * s, (4.0 - fi) * s, s), fill, BlendMode::SrcOver);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx, cy + fi * s, (4.0 - fi) * s, s),
+                fill,
+                BlendMode::SrcOver,
+            );
         }
         // SE arrowhead
         let end = (len - 1) as f32;
@@ -1102,7 +1376,12 @@ impl SoftwareRenderer {
             let fi = i as f32;
             rasterizer::fill_rect(
                 fb,
-                Rect::new(cx + (end - 3.0 + fi) * s + 2.0 * s, cy + (end - fi) * s, (4.0 - fi) * s, s),
+                Rect::new(
+                    cx + (end - 3.0 + fi) * s + 2.0 * s,
+                    cy + (end - fi) * s,
+                    (4.0 - fi) * s,
+                    s,
+                ),
                 fill,
                 BlendMode::SrcOver,
             );
@@ -1126,7 +1405,12 @@ impl SoftwareRenderer {
             let fi = i as f32;
             rasterizer::fill_rect(
                 fb,
-                Rect::new(cx + (max_i - fi) * s - o, cy + fi * s - o, 2.0 * s + 2.0 * o, 2.0 * s + 2.0 * o),
+                Rect::new(
+                    cx + (max_i - fi) * s - o,
+                    cy + fi * s - o,
+                    2.0 * s + 2.0 * o,
+                    2.0 * s + 2.0 * o,
+                ),
                 outline,
                 BlendMode::SrcOver,
             );
@@ -1175,13 +1459,13 @@ impl SoftwareRenderer {
         // Simplified pointing hand: index finger + palm
         let finger_rows: &[(f32, f32, f32)] = &[
             // (y_offset, x_offset, width)
-            (0.0, 4.0, 2.0),   // fingertip
+            (0.0, 4.0, 2.0), // fingertip
             (1.0, 4.0, 2.0),
             (2.0, 4.0, 2.0),
             (3.0, 4.0, 2.0),
             (4.0, 4.0, 2.0),
             (5.0, 4.0, 2.0),
-            (6.0, 1.0, 9.0),   // palm starts
+            (6.0, 1.0, 9.0), // palm starts
             (7.0, 0.0, 10.0),
             (8.0, 0.0, 10.0),
             (9.0, 0.0, 10.0),
@@ -1232,16 +1516,61 @@ impl SoftwareRenderer {
         let o = s;
 
         // Outline
-        rasterizer::fill_rect(fb, Rect::new(center_x - s - o, top - o, 2.0 * s + 2.0 * o, bar_h + 2.0 * o), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(center_x - serif_w * 0.5 - o, top - o, serif_w + 2.0 * o, 2.0 * s + 2.0 * o), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(center_x - serif_w * 0.5 - o, bottom - s - o, serif_w + 2.0 * o, 2.0 * s + 2.0 * o), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(
+                center_x - s - o,
+                top - o,
+                2.0 * s + 2.0 * o,
+                bar_h + 2.0 * o,
+            ),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(
+                center_x - serif_w * 0.5 - o,
+                top - o,
+                serif_w + 2.0 * o,
+                2.0 * s + 2.0 * o,
+            ),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(
+                center_x - serif_w * 0.5 - o,
+                bottom - s - o,
+                serif_w + 2.0 * o,
+                2.0 * s + 2.0 * o,
+            ),
+            outline,
+            BlendMode::SrcOver,
+        );
 
         // Fill: vertical bar
-        rasterizer::fill_rect(fb, Rect::new(center_x - s, top, 2.0 * s, bar_h), fill, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - s, top, 2.0 * s, bar_h),
+            fill,
+            BlendMode::SrcOver,
+        );
         // Top serif
-        rasterizer::fill_rect(fb, Rect::new(center_x - serif_w * 0.5, top, serif_w, s), fill, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - serif_w * 0.5, top, serif_w, s),
+            fill,
+            BlendMode::SrcOver,
+        );
         // Bottom serif
-        rasterizer::fill_rect(fb, Rect::new(center_x - serif_w * 0.5, bottom - s, serif_w, s), fill, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - serif_w * 0.5, bottom - s, serif_w, s),
+            fill,
+            BlendMode::SrcOver,
+        );
     }
 
     /// Not-allowed / forbidden cursor: circle with diagonal line.
@@ -1261,23 +1590,28 @@ impl SoftwareRenderer {
         // Approximate circle outline with rect segments
         let segments: &[(f32, f32, f32, f32)] = &[
             // (x_off, y_off, w, h) relative to center
-            (-2.0, -6.0, 4.0, 1.0),  // top
+            (-2.0, -6.0, 4.0, 1.0), // top
             (-4.0, -5.0, 8.0, 1.0),
             (-5.0, -4.0, 2.0, 1.0),
             (3.0, -4.0, 2.0, 1.0),
-            (-6.0, -2.0, 1.0, 4.0),  // left
-            (5.0, -2.0, 1.0, 4.0),   // right
+            (-6.0, -2.0, 1.0, 4.0), // left
+            (5.0, -2.0, 1.0, 4.0),  // right
             (-5.0, 3.0, 2.0, 1.0),
             (3.0, 3.0, 2.0, 1.0),
             (-4.0, 4.0, 8.0, 1.0),
-            (-2.0, 5.0, 4.0, 1.0),   // bottom
+            (-2.0, 5.0, 4.0, 1.0), // bottom
         ];
 
         // Outline
         for &(xo, yo, w, h) in segments {
             rasterizer::fill_rect(
                 fb,
-                Rect::new(center_x + xo * s - s, center_y + yo * s - s, w * s + 2.0 * s, h * s + 2.0 * s),
+                Rect::new(
+                    center_x + xo * s - s,
+                    center_y + yo * s - s,
+                    w * s + 2.0 * s,
+                    h * s + 2.0 * s,
+                ),
                 outline,
                 BlendMode::SrcOver,
             );
@@ -1296,7 +1630,12 @@ impl SoftwareRenderer {
             let fi = i as f32;
             rasterizer::fill_rect(
                 fb,
-                Rect::new(center_x + (-4.0 + fi) * s - s, center_y + (-4.0 + fi) * s - s, 2.0 * s + 2.0 * s, 2.0 * s + 2.0 * s),
+                Rect::new(
+                    center_x + (-4.0 + fi) * s - s,
+                    center_y + (-4.0 + fi) * s - s,
+                    2.0 * s + 2.0 * s,
+                    2.0 * s + 2.0 * s,
+                ),
                 outline,
                 BlendMode::SrcOver,
             );
@@ -1305,7 +1644,12 @@ impl SoftwareRenderer {
             let fi = i as f32;
             rasterizer::fill_rect(
                 fb,
-                Rect::new(center_x + (-4.0 + fi) * s, center_y + (-4.0 + fi) * s, 2.0 * s, 2.0 * s),
+                Rect::new(
+                    center_x + (-4.0 + fi) * s,
+                    center_y + (-4.0 + fi) * s,
+                    2.0 * s,
+                    2.0 * s,
+                ),
                 fill,
                 BlendMode::SrcOver,
             );
@@ -1323,47 +1667,90 @@ impl SoftwareRenderer {
         // Hourglass shape
         let center_x = cx + 7.0 * s;
         let center_y = cy + 7.0 * s;
-        
+
         // Top half
-        rasterizer::fill_rect(fb, Rect::new(center_x - 4.0 * s, center_y - 6.0 * s, 8.0 * s, 2.0 * s), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s, center_y - 5.0 * s, 6.0 * s, 1.5 * s), fill, BlendMode::SrcOver);
-        
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 4.0 * s, center_y - 6.0 * s, 8.0 * s, 2.0 * s),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 3.0 * s, center_y - 5.0 * s, 6.0 * s, 1.5 * s),
+            fill,
+            BlendMode::SrcOver,
+        );
+
         // Neck
-        rasterizer::fill_rect(fb, Rect::new(center_x - 1.0 * s, center_y - 1.0 * s, 2.0 * s, 2.0 * s), outline, BlendMode::SrcOver);
-        
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 1.0 * s, center_y - 1.0 * s, 2.0 * s, 2.0 * s),
+            outline,
+            BlendMode::SrcOver,
+        );
+
         // Bottom half
-        rasterizer::fill_rect(fb, Rect::new(center_x - 4.0 * s, center_y + 4.0 * s, 8.0 * s, 2.0 * s), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s, center_y + 3.5 * s, 6.0 * s, 1.5 * s), fill, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 4.0 * s, center_y + 4.0 * s, 8.0 * s, 2.0 * s),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 3.0 * s, center_y + 3.5 * s, 6.0 * s, 1.5 * s),
+            fill,
+            BlendMode::SrcOver,
+        );
     }
 
-    fn draw_question_mark(
-        fb: &mut FrameBuffer,
-        cx: f32,
-        cy: f32,
-        s: f32,
-        color: Color,
-    ) {
+    fn draw_question_mark(fb: &mut FrameBuffer, cx: f32, cy: f32, s: f32, color: Color) {
         // Simple question mark shape
-        rasterizer::fill_rect(fb, Rect::new(cx, cy, 3.0 * s, 1.0 * s), color, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(cx + 2.0 * s, cy + 1.0 * s, 1.0 * s, 2.0 * s), color, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(cx + 1.0 * s, cy + 3.0 * s, 1.0 * s, 1.0 * s), color, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(cx + 1.0 * s, cy + 5.0 * s, 1.0 * s, 1.0 * s), color, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(cx, cy, 3.0 * s, 1.0 * s),
+            color,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(cx + 2.0 * s, cy + 1.0 * s, 1.0 * s, 2.0 * s),
+            color,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(cx + 1.0 * s, cy + 3.0 * s, 1.0 * s, 1.0 * s),
+            color,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(cx + 1.0 * s, cy + 5.0 * s, 1.0 * s, 1.0 * s),
+            color,
+            BlendMode::SrcOver,
+        );
     }
 
-    fn draw_cursor_crosshair(
-        fb: &mut FrameBuffer,
-        cx: f32,
-        cy: f32,
-        s: f32,
-        color: Color,
-    ) {
+    fn draw_cursor_crosshair(fb: &mut FrameBuffer, cx: f32, cy: f32, s: f32, color: Color) {
         let center_x = cx + 8.0 * s;
         let center_y = cy + 8.0 * s;
-        
+
         // Vertical line
-        rasterizer::fill_rect(fb, Rect::new(center_x - 0.5 * s, center_y - 6.0 * s, 1.0 * s, 12.0 * s), color, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 0.5 * s, center_y - 6.0 * s, 1.0 * s, 12.0 * s),
+            color,
+            BlendMode::SrcOver,
+        );
         // Horizontal line
-        rasterizer::fill_rect(fb, Rect::new(center_x - 6.0 * s, center_y - 0.5 * s, 12.0 * s, 1.0 * s), color, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 6.0 * s, center_y - 0.5 * s, 12.0 * s, 1.0 * s),
+            color,
+            BlendMode::SrcOver,
+        );
     }
 
     fn draw_cursor_hand(
@@ -1376,15 +1763,35 @@ impl SoftwareRenderer {
         closed: bool,
     ) {
         let offset_x = if closed { 2.0 * s } else { 0.0 };
-        
+
         // Palm
-        rasterizer::fill_rect(fb, Rect::new(cx + 4.0 * s + offset_x, cy + 8.0 * s, 5.0 * s, 6.0 * s), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(cx + 4.5 * s + offset_x, cy + 8.5 * s, 4.0 * s, 5.0 * s), fill, BlendMode::SrcOver);
-        
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(cx + 4.0 * s + offset_x, cy + 8.0 * s, 5.0 * s, 6.0 * s),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(cx + 4.5 * s + offset_x, cy + 8.5 * s, 4.0 * s, 5.0 * s),
+            fill,
+            BlendMode::SrcOver,
+        );
+
         // Fingers (simplified)
         for i in 0..4 {
             let fi = i as f32;
-            rasterizer::fill_rect(fb, Rect::new(cx + (5.0 + fi * 1.2) * s + offset_x, cy + 4.0 * s, 1.0 * s, 5.0 * s), outline, BlendMode::SrcOver);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(
+                    cx + (5.0 + fi * 1.2) * s + offset_x,
+                    cy + 4.0 * s,
+                    1.0 * s,
+                    5.0 * s,
+                ),
+                outline,
+                BlendMode::SrcOver,
+            );
         }
     }
 
@@ -1399,7 +1806,7 @@ impl SoftwareRenderer {
     ) {
         let center_x = cx + 6.0 * s;
         let center_y = cy + 6.0 * s;
-        
+
         // Circle (lens)
         let segments: &[(f32, f32, f32, f32)] = &[
             (-2.0, -4.0, 4.0, 1.0),
@@ -1408,21 +1815,51 @@ impl SoftwareRenderer {
             (-3.0, 2.0, 6.0, 1.0),
             (-2.0, 3.0, 4.0, 1.0),
         ];
-        
+
         for &(xo, yo, w, h) in segments {
-            rasterizer::fill_rect(fb, Rect::new(center_x + xo * s, center_y + yo * s, w * s, h * s), outline, BlendMode::SrcOver);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x + xo * s, center_y + yo * s, w * s, h * s),
+                outline,
+                BlendMode::SrcOver,
+            );
         }
-        
+
         // Handle
-        rasterizer::fill_rect(fb, Rect::new(center_x + 3.0 * s, center_y + 3.0 * s, 4.0 * s, 1.0 * s), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(center_x + 4.0 * s, center_y + 4.0 * s, 3.0 * s, 1.0 * s), outline, BlendMode::SrcOver);
-        
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x + 3.0 * s, center_y + 3.0 * s, 4.0 * s, 1.0 * s),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x + 4.0 * s, center_y + 4.0 * s, 3.0 * s, 1.0 * s),
+            outline,
+            BlendMode::SrcOver,
+        );
+
         // Plus or minus symbol
         if plus {
-            rasterizer::fill_rect(fb, Rect::new(center_x - 1.0 * s, center_y - 0.5 * s, 2.0 * s, 1.0 * s), fill, BlendMode::SrcOver);
-            rasterizer::fill_rect(fb, Rect::new(center_x - 0.5 * s, center_y - 1.0 * s, 1.0 * s, 2.0 * s), fill, BlendMode::SrcOver);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x - 1.0 * s, center_y - 0.5 * s, 2.0 * s, 1.0 * s),
+                fill,
+                BlendMode::SrcOver,
+            );
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x - 0.5 * s, center_y - 1.0 * s, 1.0 * s, 2.0 * s),
+                fill,
+                BlendMode::SrcOver,
+            );
         } else {
-            rasterizer::fill_rect(fb, Rect::new(center_x - 1.0 * s, center_y - 0.5 * s, 2.0 * s, 1.0 * s), fill, BlendMode::SrcOver);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x - 1.0 * s, center_y - 0.5 * s, 2.0 * s, 1.0 * s),
+                fill,
+                BlendMode::SrcOver,
+            );
         }
     }
 
@@ -1436,17 +1873,62 @@ impl SoftwareRenderer {
     ) {
         let center_x = cx + 8.0 * s;
         let center_y = cy + 8.0 * s;
-        
+
         // Horizontal I-beam
-        rasterizer::fill_rect(fb, Rect::new(center_x - 0.5 * s - s, center_y - 6.0 * s - s, 1.0 * s + 2.0 * s, 12.0 * s + 2.0 * s), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(center_x - 0.5 * s, center_y - 6.0 * s, 1.0 * s, 12.0 * s), fill, BlendMode::SrcOver);
-        
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(
+                center_x - 0.5 * s - s,
+                center_y - 6.0 * s - s,
+                1.0 * s + 2.0 * s,
+                12.0 * s + 2.0 * s,
+            ),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 0.5 * s, center_y - 6.0 * s, 1.0 * s, 12.0 * s),
+            fill,
+            BlendMode::SrcOver,
+        );
+
         // Top and bottom bars (horizontal)
-        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s - s, center_y - 6.0 * s - s, 6.0 * s + 2.0 * s, 1.0 * s + 2.0 * s), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s, center_y - 6.0 * s, 6.0 * s, 1.0 * s), fill, BlendMode::SrcOver);
-        
-        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s - s, center_y + 5.0 * s - s, 6.0 * s + 2.0 * s, 1.0 * s + 2.0 * s), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s, center_y + 5.0 * s, 6.0 * s, 1.0 * s), fill, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(
+                center_x - 3.0 * s - s,
+                center_y - 6.0 * s - s,
+                6.0 * s + 2.0 * s,
+                1.0 * s + 2.0 * s,
+            ),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 3.0 * s, center_y - 6.0 * s, 6.0 * s, 1.0 * s),
+            fill,
+            BlendMode::SrcOver,
+        );
+
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(
+                center_x - 3.0 * s - s,
+                center_y + 5.0 * s - s,
+                6.0 * s + 2.0 * s,
+                1.0 * s + 2.0 * s,
+            ),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 3.0 * s, center_y + 5.0 * s, 6.0 * s, 1.0 * s),
+            fill,
+            BlendMode::SrcOver,
+        );
     }
 
     fn draw_cursor_all_scroll(
@@ -1459,7 +1941,7 @@ impl SoftwareRenderer {
     ) {
         let center_x = cx + 8.0 * s;
         let center_y = cy + 8.0 * s;
-        
+
         // Four arrows pointing outward
         // Up arrow
         Self::draw_small_arrow(fb, center_x, center_y - 4.0 * s, s, 0.0, outline, fill);
@@ -1469,9 +1951,14 @@ impl SoftwareRenderer {
         Self::draw_small_arrow(fb, center_x - 4.0 * s, center_y, s, 270.0, outline, fill);
         // Right arrow
         Self::draw_small_arrow(fb, center_x + 4.0 * s, center_y, s, 90.0, outline, fill);
-        
+
         // Center dot
-        rasterizer::fill_rect(fb, Rect::new(center_x - 1.0 * s, center_y - 1.0 * s, 2.0 * s, 2.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - 1.0 * s, center_y - 1.0 * s, 2.0 * s, 2.0 * s),
+            outline,
+            BlendMode::SrcOver,
+        );
     }
 
     fn draw_small_arrow(
@@ -1484,8 +1971,18 @@ impl SoftwareRenderer {
         _fill: Color,
     ) {
         // Simplified arrow (pointing up by default)
-        rasterizer::fill_rect(fb, Rect::new(cx - 2.0 * s, cy, 4.0 * s, 1.0 * s), outline, BlendMode::SrcOver);
-        rasterizer::fill_rect(fb, Rect::new(cx - 1.0 * s, cy - 1.0 * s, 2.0 * s, 1.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(cx - 2.0 * s, cy, 4.0 * s, 1.0 * s),
+            outline,
+            BlendMode::SrcOver,
+        );
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(cx - 1.0 * s, cy - 1.0 * s, 2.0 * s, 1.0 * s),
+            outline,
+            BlendMode::SrcOver,
+        );
     }
 
     /// Submit an async backdrop blur for a region.

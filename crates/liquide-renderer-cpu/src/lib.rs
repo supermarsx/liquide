@@ -11,13 +11,18 @@ pub mod blit;
 pub mod blur;
 pub(crate) mod blur_worker;
 pub mod color;
+pub mod dirty_rects;
 pub mod effects;
 pub(crate) mod font_worker;
 pub mod glyph;
 pub mod icons;
+pub mod layout_cache;
+pub mod lod;
+pub mod object_pool;
 pub mod path;
 pub mod rasterizer;
 pub mod renderer;
+pub mod texture_cache;
 
 pub use renderer::{Renderer, SoftwareRenderer};
 
