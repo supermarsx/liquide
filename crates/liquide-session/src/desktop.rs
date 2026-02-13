@@ -22,7 +22,7 @@ use liquide_compositor::effects::QualityProfile;
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::{Color, PixelFormat};
-use liquide_compositor::scene::{FlatNode, NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::scene::{CursorShape, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_compositor::{Compositor, CompositorContract};
 use liquide_input::InputState;
 use liquide_input::event::InputEvent;
@@ -42,7 +42,7 @@ struct RenderJob {
     scene: SceneNode,
     cursor_x: f32,
     cursor_y: f32,
-    cursor_shape: liquide_shell::CursorShape,
+    cursor_shape: CursorShape,
     width: u32,
     height: u32,
     tile_size: u32,
@@ -78,13 +78,16 @@ enum RenderMsg {
 /// Call [`DesktopCompositor::run`] to enter the blocking event loop.
 pub struct DesktopCompositor {
     shell: Shell,
-    compositor: Compositor,
+    /// Compositor moved to the render thread after loading completes.
+    compositor: Option<Compositor>,
     /// Synchronous renderer used only for the loading screen.
     /// Moved to the render thread after loading completes.
     renderer: Option<SoftwareRenderer>,
     input_state: InputState,
     width: u32,
     height: u32,
+    /// Tile size used by the compositor.
+    tile_size: u32,
     window_handle: Option<NativeWindowHandle>,
     frame_count: u64,
     running: bool,
@@ -117,13 +120,15 @@ impl DesktopCompositor {
     /// profile.  The shell is initialized with matching screen dimensions.
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
+        let tile_size = 64;
         Self {
             shell: Shell::new(width as f32, height as f32),
-            compositor: Compositor::new(width, height, 64, QualityProfile::Balanced),
+            compositor: Some(Compositor::new(width, height, tile_size, QualityProfile::Balanced)),
             renderer: Some(SoftwareRenderer::new()),
             input_state: InputState::new(),
             width,
             height,
+            tile_size,
             window_handle: None,
             frame_count: 0,
             running: true,
@@ -370,12 +375,17 @@ impl DesktopCompositor {
             ));
         }
 
-        // 3. Submit to compositor and swap buffers.
-        let _ = self.compositor.submit_scene(scene);
-        self.compositor.begin_frame();
+        // 3. Submit to compositor and swap buffers (during loading only).
+        if let Some(ref mut compositor) = self.compositor {
+            let _ = compositor.submit_scene(scene);
+            compositor.begin_frame();
+        } else {
+            // Should not happen during loading screen
+            return;
+        }
 
         // 4. Full-screen damage.
-        let tile_size = self.compositor.tile_size();
+        let tile_size = self.tile_size;
         let grid_w = self.width.div_ceil(tile_size);
         let grid_h = self.height.div_ceil(tile_size);
         let mut damage = DamageSet::new(tile_size);
@@ -384,27 +394,33 @@ impl DesktopCompositor {
         // 5. Flatten the scene.
         let flat_nodes = self
             .compositor
-            .scene()
+            .as_ref()
+            .and_then(|c| c.scene())
             .map(|s| s.flatten())
             .unwrap_or_default();
 
         // 6. Render into the back buffer.
-        let fb = self.compositor.frame_buffer_mut();
-        if let Some(ref mut renderer) = self.renderer {
+        if let (Some(renderer), Some(compositor)) = (&mut self.renderer, &mut self.compositor) {
+            let fb = compositor.frame_buffer_mut();
             let _ = renderer.render(&flat_nodes, fb, &damage);
         }
 
         // 7. Present.
         if let Some(handle) = self.window_handle {
-            let _ = platform.present_frame(
-                handle, &fb.pixels, fb.width, fb.height, fb.stride, fb.format,
-            );
+            if let Some(compositor) = self.compositor.as_ref() {
+                let fb = compositor.frame_buffer();
+                let _ = platform.present_frame(
+                    handle, &fb.pixels, fb.width, fb.height, fb.stride, fb.format,
+                );
+            }
         }
 
         self.frame_count += 1;
 
         let frame_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
-        self.compositor.report_frame_time(frame_ms);
+        if let Some(ref mut compositor) = self.compositor {
+            compositor.report_frame_time(frame_ms);
+        }
     }
 
     /// Submit a render job to the background render thread.
@@ -436,7 +452,7 @@ impl DesktopCompositor {
             cursor_shape: self.shell.cursor_shape(),
             width: self.width,
             height: self.height,
-            tile_size: self.compositor.tile_size(),
+            tile_size: self.tile_size,
             dragged_window: dragged_window.map(|wid| wid.0),
         };
 
@@ -483,8 +499,9 @@ impl DesktopCompositor {
                 }
 
                 // Report timing.
-                self.compositor
-                    .report_frame_time(frame.render_ms + present_ms);
+                if let Some(ref mut compositor) = self.compositor {
+                    compositor.report_frame_time(frame.render_ms + present_ms);
+                }
 
                 if self.debug_perf {
                     debug!(
@@ -518,12 +535,17 @@ impl DesktopCompositor {
 
     /// Spawn the background render thread.
     ///
-    /// Moves the `SoftwareRenderer` to a dedicated thread that processes
-    /// render jobs asynchronously. This allows the main thread to keep
-    /// processing input events while rendering happens in parallel.
+    /// Moves the `SoftwareRenderer` and `Compositor` to a dedicated thread
+    /// that processes render jobs asynchronously. This allows the main thread
+    /// to keep processing input events while rendering happens in parallel.
     fn spawn_render_thread(&mut self) {
         let renderer = match self.renderer.take() {
             Some(r) => r,
+            None => return, // already spawned
+        };
+
+        let compositor = match self.compositor.take() {
+            Some(c) => c,
             None => return, // already spawned
         };
 
@@ -534,7 +556,7 @@ impl DesktopCompositor {
         let handle = thread::Builder::new()
             .name("render-worker".into())
             .spawn(move || {
-                Self::render_thread_fn(renderer, job_rx, frame_tx, debug_perf);
+                Self::render_thread_fn(renderer, compositor, job_rx, frame_tx, debug_perf);
             })
             .expect("failed to spawn render thread");
 
@@ -546,8 +568,10 @@ impl DesktopCompositor {
     }
 
     /// The render thread's main loop.
+    /// Handles scene flattening, skeleton filtering, and rendering.
     fn render_thread_fn(
         mut renderer: SoftwareRenderer,
+        mut compositor: Compositor,
         rx: mpsc::Receiver<RenderMsg>,
         tx: mpsc::Sender<RenderedFrame>,
         _debug_perf: bool,
@@ -558,6 +582,7 @@ impl DesktopCompositor {
             match msg {
                 RenderMsg::Shutdown => break,
                 RenderMsg::Resize { width, height } => {
+                    let _ = compositor.resize(width, height);
                     // Recreate framebuffer on next render.
                     if fb
                         .as_ref()
@@ -572,7 +597,8 @@ impl DesktopCompositor {
                     while let Ok(msg) = rx.try_recv() {
                         match msg {
                             RenderMsg::Shutdown => return,
-                            RenderMsg::Resize { .. } => {
+                            RenderMsg::Resize { width, height } => {
+                                let _ = compositor.resize(width, height);
                                 fb = None;
                             }
                             RenderMsg::Job(j) => {
@@ -581,7 +607,56 @@ impl DesktopCompositor {
                         }
                     }
 
-                    // Ensure framebuffer matches requested dimensions.
+                    let t_total = Instant::now();
+
+                    // 1. Add cursor to scene.
+                    let mut scene = latest_job.scene;
+                    let cursor_size = 24.0_f32;
+                    let cursor_bounds = Rect::new(
+                        latest_job.cursor_x,
+                        latest_job.cursor_y,
+                        cursor_size,
+                        cursor_size,
+                    );
+                    scene.add_child(SceneNode::new(
+                        999_999,
+                        SceneNodeKind::Cursor {
+                            shape: latest_job.cursor_shape,
+                        },
+                        NodeProperties::new(cursor_bounds).with_z_order(9999),
+                    ));
+
+                    // 2. Submit to compositor and flatten.
+                    let _ = compositor.submit_scene(scene);
+                    compositor.begin_frame();
+
+                    let mut flat_nodes = compositor
+                        .scene()
+                        .map(|s| s.flatten())
+                        .unwrap_or_default();
+
+                    // 3. Skeleton mode filtering during drag.
+                    if let Some(window_id) = latest_job.dragged_window {
+                        const NODE_WINDOW_BASE: u64 = 10_000;
+                        const NODE_WINDOW_STRIDE: u64 = 10;
+                        let win_base = NODE_WINDOW_BASE + window_id * NODE_WINDOW_STRIDE;
+                        let win_end = win_base + NODE_WINDOW_STRIDE;
+
+                        flat_nodes.retain(|node| {
+                            let node_id = node.id;
+                            let is_dragged_window_node = node_id >= win_base && node_id < win_end;
+
+                            if is_dragged_window_node {
+                                // For dragged window: only keep basic decoration border
+                                matches!(node.kind, SceneNodeKind::Decoration { .. })
+                            } else {
+                                // All other windows and UI elements: render normally
+                                true
+                            }
+                        });
+                    }
+
+                    // 4. Ensure framebuffer matches requested dimensions.
                     let needs_new = fb.as_ref().map_or(true, |f| {
                         f.width != latest_job.width || f.height != latest_job.height
                     });
@@ -594,47 +669,47 @@ impl DesktopCompositor {
                     }
                     let framebuf = fb.as_mut().unwrap();
 
-                    // Build damage set.
+                    // 5. Build damage set.
                     let mut damage = DamageSet::new(latest_job.tile_size);
                     let grid_w = latest_job.width.div_ceil(latest_job.tile_size);
                     let grid_h = latest_job.height.div_ceil(latest_job.tile_size);
                     damage.mark_all(grid_w, grid_h);
 
-                    // Render.
-                    let t = Instant::now();
+                    // 6. Render with performance optimizations for dragging.
+                    let t_render = Instant::now();
 
-                    // Suppress blur and use aggressive LOD during interactive
-                    // drag/resize for maximum snappiness. Restored immediately after.
                     let saved_blur = renderer.blur_enabled();
                     let saved_lod_mode = renderer.get_lod_performance_mode();
 
-                    if latest_job.suppress_blur && saved_blur {
+                    if latest_job.dragged_window.is_some() && saved_blur {
                         renderer.set_blur_enabled(false);
                     }
-                    if latest_job.performance_mode {
+                    if latest_job.dragged_window.is_some() {
                         renderer.set_lod_performance_mode(
                             liquide_renderer_cpu::lod::PerformanceMode::Performance,
                         );
                     }
-                    // Set skeleton window for simplified drag visualization
-                    renderer.set_skeleton_window(latest_job.skeleton_window);
+                    renderer.set_skeleton_window(latest_job.dragged_window);
 
-                    let _ = renderer.render(&latest_job.flat_nodes, framebuf, &damage);
+                    let _ = renderer.render(&flat_nodes, framebuf, &damage);
 
-                    // Restore rendering quality so it re-engages on the next
-                    // non-drag frame.
+                    // Restore rendering quality.
                     renderer.set_skeleton_window(None);
-                    if latest_job.suppress_blur && saved_blur {
+                    if latest_job.dragged_window.is_some() && saved_blur {
                         renderer.set_blur_enabled(true);
                     }
-                    if latest_job.performance_mode {
+                    if latest_job.dragged_window.is_some() {
                         renderer.set_lod_performance_mode(saved_lod_mode);
                     }
 
-                    let render_ms = t.elapsed().as_secs_f64() * 1000.0;
+                    let render_ms = t_render.elapsed().as_secs_f64() * 1000.0;
+                    let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;
 
                     // Report render time for adaptive blur.
                     renderer.report_render_time(render_ms);
+
+                    // Report frame time to compositor.
+                    compositor.report_frame_time(total_ms);
 
                     // Send completed frame back.
                     let result = RenderedFrame {
@@ -643,7 +718,7 @@ impl DesktopCompositor {
                         height: framebuf.height,
                         stride: framebuf.stride,
                         format: framebuf.format,
-                        render_ms,
+                        render_ms: total_ms,
                         blur_enabled: renderer.blur_enabled(),
                     };
 
@@ -665,7 +740,18 @@ impl DesktopCompositor {
             PlatformEvent::WindowResized { width, height, .. } => {
                 self.width = *width;
                 self.height = *height;
-                let _ = self.compositor.resize(*width, *height);
+                
+                // During loading, resize compositor directly
+                if let Some(ref mut compositor) = self.compositor {
+                    let _ = compositor.resize(*width, *height);
+                } else if let Some(ref tx) = self.render_tx {
+                    // After loading, notify render thread
+                    let _ = tx.send(RenderMsg::Resize {
+                        width: *width,
+                        height: *height,
+                    });
+                }
+                
                 self.shell.resize_screen(*width as f32, *height as f32);
                 needs_redraw = true;
             }
@@ -760,7 +846,9 @@ impl DesktopCompositor {
             );
             self.width = screen_w;
             self.height = screen_h;
-            let _ = self.compositor.resize(screen_w, screen_h);
+            if let Some(ref mut compositor) = self.compositor {
+                let _ = compositor.resize(screen_w, screen_h);
+            }
             self.shell.resize_screen(screen_w as f32, screen_h as f32);
             self.cursor_x = screen_w as f32 / 2.0;
             self.cursor_y = screen_h as f32 / 2.0;

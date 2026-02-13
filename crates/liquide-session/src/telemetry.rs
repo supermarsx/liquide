@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Maximum number of historical samples to retain per metric.
 const MAX_HISTORY: usize = 120; // ~2 seconds at 60fps
