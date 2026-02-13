@@ -221,6 +221,30 @@ impl DesktopCompositor {
             .unwrap_or_default();
         let flatten_ms = t2.elapsed().as_secs_f64() * 1000.0;
 
+        // 5b. Dump flattened nodes on the first few frames or when debug_perf
+        //     is enabled.  This shows exactly what's being rendered and where.
+        if self.debug_perf || self.frame_count < 3 {
+            debug!(count = flat_nodes.len(), "flattened nodes");
+            for (i, node) in flat_nodes.iter().enumerate() {
+                let kind_name = scene_node_kind_name(&node.kind);
+                let b = &node.absolute_bounds;
+                let color_str = scene_node_color_str(&node.kind);
+                debug!(
+                    idx = i,
+                    id = node.id,
+                    kind = kind_name,
+                    x = format!("{:.0}", b.x),
+                    y = format!("{:.0}", b.y),
+                    w = format!("{:.0}", b.width),
+                    h = format!("{:.0}", b.height),
+                    z = node.z_order,
+                    opacity = format!("{:.2}", node.opacity),
+                    color = color_str,
+                    "  node"
+                );
+            }
+        }
+
         // 6. Render into the back buffer.
         let t3 = Instant::now();
         let fb = self.compositor.frame_buffer_mut();
@@ -503,5 +527,57 @@ impl DesktopCompositor {
     /// Mutable access to the shell.
     pub fn shell_mut(&mut self) -> &mut Shell {
         &mut self.shell
+    }
+}
+
+/// Short human-readable name for a scene node kind (for debug logging).
+fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
+    match kind {
+        SceneNodeKind::Root => "Root",
+        SceneNodeKind::Background { .. } => "Background",
+        SceneNodeKind::Surface { .. } => "Surface",
+        SceneNodeKind::ChildSurface { .. } => "ChildSurface",
+        SceneNodeKind::Glass(_) => "Glass",
+        SceneNodeKind::Tint { .. } => "Tint",
+        SceneNodeKind::Shadow { .. } => "Shadow",
+        SceneNodeKind::Decoration { .. } => "Decoration",
+        SceneNodeKind::BlurBackdrop => "BlurBackdrop",
+        SceneNodeKind::BlurCache => "BlurCache",
+        SceneNodeKind::Content => "Content",
+        SceneNodeKind::Overlay => "Overlay",
+        SceneNodeKind::ShellLayer => "ShellLayer",
+        SceneNodeKind::Cursor => "Cursor",
+        SceneNodeKind::LockScreen => "LockScreen",
+        SceneNodeKind::CrashScreen => "CrashScreen",
+        SceneNodeKind::Workspace { .. } => "Workspace",
+    }
+}
+
+/// Extract color info from a scene node kind for debug logging.
+fn scene_node_color_str(kind: &SceneNodeKind) -> String {
+    match kind {
+        SceneNodeKind::Background { color } => {
+            format!("rgba({},{},{},{})", color.r, color.g, color.b, color.a)
+        }
+        SceneNodeKind::Glass(params) => {
+            let c = &params.tint_color;
+            format!(
+                "tint({},{},{},{}) blur={}",
+                c.r, c.g, c.b, c.a, params.blur_radius
+            )
+        }
+        SceneNodeKind::Tint { color } => {
+            format!("rgba({},{},{},{})", color.r, color.g, color.b, color.a)
+        }
+        SceneNodeKind::Shadow { color, .. } => {
+            format!("rgba({},{},{},{})", color.r, color.g, color.b, color.a)
+        }
+        SceneNodeKind::Decoration { background, .. } => {
+            format!(
+                "bg({},{},{},{})",
+                background.r, background.g, background.b, background.a
+            )
+        }
+        _ => "-".to_string(),
     }
 }

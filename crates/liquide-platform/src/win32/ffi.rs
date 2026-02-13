@@ -229,6 +229,7 @@ pub const WM_PAINT: UINT = 0x000F;
 pub const WM_CLOSE: UINT = 0x0010;
 pub const WM_QUIT: UINT = 0x0012;
 pub const WM_ERASEBKGND: UINT = 0x0014;
+pub const WM_SETCURSOR: UINT = 0x0020;
 pub const WM_SIZING: UINT = 0x0214;
 pub const WM_KEYDOWN: UINT = 0x0100;
 pub const WM_KEYUP: UINT = 0x0101;
@@ -268,6 +269,8 @@ pub const SW_HIDE: i32 = 0;
 pub const SW_MAXIMIZE: i32 = 3;
 pub const SW_MINIMIZE: i32 = 6;
 pub const SW_RESTORE: i32 = 9;
+
+pub const HTCLIENT: i32 = 1;
 
 pub const PM_REMOVE: UINT = 0x0001;
 pub const PM_NOREMOVE: UINT = 0x0000;
@@ -567,6 +570,7 @@ unsafe extern "system" {
     pub fn InvalidateRect(hWnd: HWND, lpRect: *const RECT, bErase: BOOL) -> BOOL;
 
     pub fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: LPCWSTR) -> HCURSOR;
+    pub fn SetCursor(hCursor: HCURSOR) -> HCURSOR;
 
     pub fn SetWindowTextW(hWnd: HWND, lpString: LPCWSTR) -> BOOL;
     pub fn SetForegroundWindow(hWnd: HWND) -> BOOL;

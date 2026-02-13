@@ -8,6 +8,7 @@
 pub mod blend;
 pub mod blit;
 pub mod blur;
+pub(crate) mod blur_worker;
 pub mod color;
 pub mod effects;
 pub mod glyph;

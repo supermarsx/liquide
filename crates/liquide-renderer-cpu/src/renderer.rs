@@ -1,7 +1,5 @@
 //! Main renderer trait and software renderer implementation.
 
-use std::collections::HashMap;
-
 use liquide_compositor::damage::{DamageSet, DamageTile};
 use liquide_compositor::effects::EffectParams;
 use liquide_compositor::framebuffer::FrameBuffer;
@@ -9,9 +7,9 @@ use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::{BlendMode, Color};
 use liquide_compositor::scene::{FlatNode, NodeId, SceneNodeKind};
 
-use crate::blur;
+use crate::blur_worker::BlurWorker;
 use crate::color::SrgbLut;
-use crate::effects::{BackdropBlur, BoxShadow, ShadowParams};
+use crate::effects::{BoxShadow, ShadowParams};
 use crate::glyph::GlyphAtlas;
 use crate::rasterizer::{self, Fill};
 
@@ -33,8 +31,6 @@ pub trait Renderer {
 pub struct SoftwareRenderer {
     srgb_lut: SrgbLut,
     glyph_atlas: GlyphAtlas,
-    /// Cached blurred bitmaps keyed by node ID.
-    blur_cache: HashMap<NodeId, Vec<u8>>,
     /// Effect params derived from current degradation level.
     effect_params: EffectParams,
     /// Whether real Gaussian blur is enabled for Glass nodes.
@@ -45,6 +41,8 @@ pub struct SoftwareRenderer {
     avg_render_ms: f64,
     /// Frame render time threshold (ms) above which blur is auto-disabled.
     blur_budget_ms: f64,
+    /// Background thread for async Gaussian blur computation.
+    blur_worker: BlurWorker,
 }
 
 impl SoftwareRenderer {
@@ -54,13 +52,13 @@ impl SoftwareRenderer {
         Self {
             srgb_lut: SrgbLut::new(),
             glyph_atlas: GlyphAtlas::new(1024, 1024),
-            blur_cache: HashMap::new(),
             effect_params: EffectParams::for_profile(
                 liquide_compositor::effects::QualityProfile::Balanced,
             ),
             blur_enabled: true,
             avg_render_ms: 0.0,
             blur_budget_ms: 16.0, // Target ~60fps render budget
+            blur_worker: BlurWorker::new(),
         }
     }
 
@@ -88,12 +86,12 @@ impl SoftwareRenderer {
 
     /// Invalidate blur cache entries that are no longer in the scene.
     pub fn invalidate_blur_cache(&mut self, active_ids: &[NodeId]) {
-        self.blur_cache.retain(|id, _| active_ids.contains(id));
+        self.blur_worker.retain_nodes(active_ids);
     }
 
     /// Clear the entire blur cache.
     pub fn clear_blur_cache(&mut self) {
-        self.blur_cache.clear();
+        self.blur_worker.clear_cache();
     }
 
     /// Whether real Gaussian blur is currently active.
@@ -106,7 +104,7 @@ impl SoftwareRenderer {
     pub fn set_blur_enabled(&mut self, enabled: bool) {
         self.blur_enabled = enabled;
         if !enabled {
-            self.blur_cache.clear();
+            self.blur_worker.clear_cache();
         }
     }
 
@@ -131,7 +129,7 @@ impl SoftwareRenderer {
         // Auto-disable blur when average render time exceeds budget.
         if self.blur_enabled && self.avg_render_ms > self.blur_budget_ms {
             self.blur_enabled = false;
-            self.blur_cache.clear();
+            self.blur_worker.clear_cache();
         }
         // Re-enable when average drops to half the budget (hysteresis).
         if !self.blur_enabled && self.avg_render_ms < self.blur_budget_ms * 0.5 {
@@ -153,6 +151,9 @@ impl Renderer for SoftwareRenderer {
         fb: &mut FrameBuffer,
         damage: &DamageSet,
     ) -> crate::Result<Vec<DamageTile>> {
+        // Drain any completed async blur results before rendering.
+        self.blur_worker.poll_results();
+
         let tile_size = damage.tile_size;
         let classified_tiles: Vec<DamageTile> = damage.tiles.clone();
 
@@ -228,16 +229,49 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::Glass(params) => {
-                // Real glass effect: blur the backdrop, then tint overlay.
-                // When blur is disabled (adaptive quality or manual override),
-                // skip the expensive Gaussian pass and just apply the tint.
+                // Glass effect: blurred backdrop + tint overlay + optional glow.
+                // Blur is computed asynchronously by the blur worker thread.
+                // On the first frame (no cached result yet) we fall through
+                // to tint-only.  Subsequent frames use the worker's result
+                // (at most one frame old).
                 if self.blur_enabled {
                     let radius = params.blur_radius.min(30);
                     if radius > 0 {
-                        if radius >= 8 {
-                            blur::blur_fast(fb, bounds, radius);
-                        } else {
-                            blur::blur_region(fb, bounds, radius);
+                        let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
+                        let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
+                        let x1 = (bounds.right().ceil() as u32).min(fb.width);
+                        let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                        let w = x1.saturating_sub(x0);
+                        let h = y1.saturating_sub(y0);
+
+                        if w > 0 && h > 0 {
+                            // Try the async cache first.
+                            if let Some(cached) = self.blur_worker.get_cached(node.id, w, h) {
+                                // Blit the pre-blurred pixels into the framebuffer.
+                                for row in 0..h {
+                                    let src_off = (row * w * 4) as usize;
+                                    let dst_off = fb.pixel_offset(x0, y0 + row);
+                                    let bytes = (w * 4) as usize;
+                                    if src_off + bytes <= cached.pixels.len() {
+                                        fb.pixels[dst_off..dst_off + bytes]
+                                            .copy_from_slice(&cached.pixels[src_off..src_off + bytes]);
+                                    }
+                                }
+                            }
+
+                            // Always submit a fresh blur request so the cache
+                            // stays current as the backdrop changes.
+                            let mut snapshot = vec![0u8; (w * h * 4) as usize];
+                            for row in 0..h {
+                                let src_off = fb.pixel_offset(x0, y0 + row);
+                                let dst_off = (row * w * 4) as usize;
+                                let bytes = (w * 4) as usize;
+                                snapshot[dst_off..dst_off + bytes]
+                                    .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                            }
+                            self.blur_worker.request_blur(
+                                node.id, snapshot, w, h, radius,
+                            );
                         }
                     }
                 }
@@ -329,63 +363,81 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::BlurBackdrop => {
-                // Apply backdrop blur to the region behind a glass surface
+                // Backdrop blur — offloaded to the async blur worker.
                 if self.blur_enabled {
-                    let params = self.effect_params.clone();
-                    BackdropBlur::render_with_tint(fb, bounds, &params, Color::TRANSPARENT);
-                }
-            }
-
-            SceneNodeKind::BlurCache => {
-                // Extract region, blur it, cache by node ID
-                if !self.blur_enabled {
-                    // Skip blur caching when adaptive quality has disabled blur.
-                } else {
-                let radius = self.effect_params.blur_radius;
-                if radius > 0 {
-                    if let std::collections::hash_map::Entry::Vacant(e) =
-                        self.blur_cache.entry(node.id)
-                    {
-                        // Extract and blur
+                    let radius = self.effect_params.blur_radius;
+                    if radius > 0 {
                         let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
                         let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
                         let x1 = (bounds.right().ceil() as u32).min(fb.width);
                         let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
                         let w = x1.saturating_sub(x0);
                         let h = y1.saturating_sub(y0);
+
                         if w > 0 && h > 0 {
-                            let mut buf = vec![0u8; (w * h * 4) as usize];
+                            if let Some(cached) = self.blur_worker.get_cached(node.id, w, h) {
+                                for row in 0..h {
+                                    let src_off = (row * w * 4) as usize;
+                                    let dst_off = fb.pixel_offset(x0, y0 + row);
+                                    let bytes = (w * 4) as usize;
+                                    if src_off + bytes <= cached.pixels.len() {
+                                        fb.pixels[dst_off..dst_off + bytes]
+                                            .copy_from_slice(&cached.pixels[src_off..src_off + bytes]);
+                                    }
+                                }
+                            }
+
+                            let mut snapshot = vec![0u8; (w * h * 4) as usize];
                             for row in 0..h {
                                 let src_off = fb.pixel_offset(x0, y0 + row);
                                 let dst_off = (row * w * 4) as usize;
                                 let bytes = (w * 4) as usize;
-                                buf[dst_off..dst_off + bytes]
+                                snapshot[dst_off..dst_off + bytes]
                                     .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
                             }
-                            blur::blur_buffer(&mut buf, w, h, radius);
-                            e.insert(buf);
+                            self.blur_worker.request_blur(node.id, snapshot, w, h, radius);
                         }
                     }
-                    // Blit cached blur back
-                    if let Some(cached) = self.blur_cache.get(&node.id) {
+                }
+            }
+
+            SceneNodeKind::BlurCache => {
+                // Cached blur region — offloaded to the async blur worker.
+                if self.blur_enabled {
+                    let radius = self.effect_params.blur_radius;
+                    if radius > 0 {
                         let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
                         let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
                         let x1 = (bounds.right().ceil() as u32).min(fb.width);
                         let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
                         let w = x1.saturating_sub(x0);
                         let h = y1.saturating_sub(y0);
-                        for row in 0..h {
-                            let src_off = (row * w * 4) as usize;
-                            let dst_off = fb.pixel_offset(x0, y0 + row);
-                            let bytes = (w * 4) as usize;
-                            if src_off + bytes <= cached.len() {
-                                fb.pixels[dst_off..dst_off + bytes]
-                                    .copy_from_slice(&cached[src_off..src_off + bytes]);
+
+                        if w > 0 && h > 0 {
+                            if let Some(cached) = self.blur_worker.get_cached(node.id, w, h) {
+                                for row in 0..h {
+                                    let src_off = (row * w * 4) as usize;
+                                    let dst_off = fb.pixel_offset(x0, y0 + row);
+                                    let bytes = (w * 4) as usize;
+                                    if src_off + bytes <= cached.pixels.len() {
+                                        fb.pixels[dst_off..dst_off + bytes]
+                                            .copy_from_slice(&cached.pixels[src_off..src_off + bytes]);
+                                    }
+                                }
                             }
+
+                            let mut snapshot = vec![0u8; (w * h * 4) as usize];
+                            for row in 0..h {
+                                let src_off = fb.pixel_offset(x0, y0 + row);
+                                let dst_off = (row * w * 4) as usize;
+                                let bytes = (w * 4) as usize;
+                                snapshot[dst_off..dst_off + bytes]
+                                    .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                            }
+                            self.blur_worker.request_blur(node.id, snapshot, w, h, radius);
                         }
                     }
                 }
-                } // else blur_enabled
             }
 
             SceneNodeKind::Content | SceneNodeKind::Overlay | SceneNodeKind::ShellLayer => {
@@ -399,31 +451,104 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::Cursor => {
-                // Cursor is typically rendered on a hardware plane or separate
-                // overlay. Here we draw a simple white arrow indicator.
-                let cursor_color = Color::WHITE;
-                rasterizer::fill_rect(
-                    fb,
-                    Rect::new(bounds.x, bounds.y, 2.0, 16.0),
-                    cursor_color,
-                    BlendMode::SrcOver,
-                );
-                rasterizer::fill_rect(
-                    fb,
-                    Rect::new(bounds.x, bounds.y, 12.0, 2.0),
-                    cursor_color,
-                    BlendMode::SrcOver,
-                );
+                // Software cursor: white arrow with black outline for
+                // visibility on any background.
+                let cx = bounds.x;
+                let cy = bounds.y;
+
+                // Arrow shape (outline first, then fill).
+                // Each row: (y_offset, x_start, width)
+                let outline = Color::new(0, 0, 0, 255);
+                let fill = Color::WHITE;
+
+                // Arrow body rows: a triangular pointer shape
+                // Row 0:  X
+                // Row 1:  XX
+                // Row 2:  XXX
+                // ...
+                // Row 11: XXXXXXXXXXXX
+                // Row 12: XXXXXXX
+                // Row 13: XX  XX
+                // Row 14: X    XX
+                // Row 15:       XX
+                // Row 16:        X
+                let arrow_rows: &[(f32, f32)] = &[
+                    (0.0, 1.0),
+                    (1.0, 2.0),
+                    (2.0, 3.0),
+                    (3.0, 4.0),
+                    (4.0, 5.0),
+                    (5.0, 6.0),
+                    (6.0, 7.0),
+                    (7.0, 8.0),
+                    (8.0, 9.0),
+                    (9.0, 10.0),
+                    (10.0, 11.0),
+                    (11.0, 12.0),
+                    (12.0, 7.0),
+                    (13.0, 5.0),
+                ];
+
+                // Outline: 1px black border around the arrow
+                for &(row_y, row_w) in arrow_rows {
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - 1.0, cy + row_y - 0.5, row_w + 2.0, 2.0),
+                        outline,
+                        BlendMode::SrcOver,
+                    );
+                }
+
+                // Fill: white interior
+                for &(row_y, row_w) in arrow_rows {
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx, cy + row_y, row_w, 1.0),
+                        fill,
+                        BlendMode::SrcOver,
+                    );
+                }
             }
 
             SceneNodeKind::LockScreen => {
-                // Full-screen dark overlay with backdrop blur (when enabled)
+                // Full-screen dark overlay with backdrop blur (async).
                 if self.blur_enabled {
-                    let params = self.effect_params.clone();
-                    BackdropBlur::render_with_tint(fb, bounds, &params, Color::new(0, 0, 0, 180));
-                } else {
-                    rasterizer::fill_rect(fb, bounds, Color::new(0, 0, 0, 180), BlendMode::SrcOver);
+                    let radius = self.effect_params.blur_radius;
+                    if radius > 0 {
+                        let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
+                        let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
+                        let x1 = (bounds.right().ceil() as u32).min(fb.width);
+                        let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                        let w = x1.saturating_sub(x0);
+                        let h = y1.saturating_sub(y0);
+
+                        if w > 0 && h > 0 {
+                            if let Some(cached) = self.blur_worker.get_cached(node.id, w, h) {
+                                for row in 0..h {
+                                    let src_off = (row * w * 4) as usize;
+                                    let dst_off = fb.pixel_offset(x0, y0 + row);
+                                    let bytes = (w * 4) as usize;
+                                    if src_off + bytes <= cached.pixels.len() {
+                                        fb.pixels[dst_off..dst_off + bytes]
+                                            .copy_from_slice(&cached.pixels[src_off..src_off + bytes]);
+                                    }
+                                }
+                            }
+
+                            let mut snapshot = vec![0u8; (w * h * 4) as usize];
+                            for row in 0..h {
+                                let src_off = fb.pixel_offset(x0, y0 + row);
+                                let dst_off = (row * w * 4) as usize;
+                                let bytes = (w * 4) as usize;
+                                snapshot[dst_off..dst_off + bytes]
+                                    .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                            }
+                            self.blur_worker.request_blur(node.id, snapshot, w, h, radius);
+                        }
+                    }
                 }
+                // Always apply the dark overlay tint.
+                rasterizer::fill_rect(fb, bounds, Color::new(0, 0, 0, 180), BlendMode::SrcOver);
             }
 
             SceneNodeKind::CrashScreen => {

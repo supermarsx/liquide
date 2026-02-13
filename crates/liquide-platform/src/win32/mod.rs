@@ -156,6 +156,17 @@ unsafe extern "system" fn wndproc(
             return 1;
         }
 
+        ffi::WM_SETCURSOR => {
+            // Hide the hardware cursor over the client area — we render
+            // a software cursor into the framebuffer instead.
+            if (lp & 0xFFFF) as i32 == ffi::HTCLIENT {
+                unsafe {
+                    ffi::SetCursor(std::ptr::null_mut());
+                }
+                return 1; // Handled
+            }
+        }
+
         ffi::WM_SETFOCUS => {
             queue.push_back(PlatformEvent::FocusGained { handle });
         }

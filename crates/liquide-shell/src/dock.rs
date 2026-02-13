@@ -319,26 +319,27 @@ impl Dock {
     pub fn compute_bounds(&self, screen: Rect) -> Rect {
         let icon = self.config.icon_size as f32;
         let count = self.items.len().max(1) as f32;
+        let pad = 12.0_f32; // horizontal/vertical padding around items
         match self.config.position {
             DockPosition::Bottom => {
-                let w = count * icon;
+                let w = count * icon + pad * 2.0;
                 let x = screen.x + (screen.width - w) / 2.0;
-                Rect::new(x, screen.y + screen.height - icon, w, icon)
+                Rect::new(x, screen.y + screen.height - icon - pad, w, icon + pad)
             }
             DockPosition::Top => {
-                let w = count * icon;
+                let w = count * icon + pad * 2.0;
                 let x = screen.x + (screen.width - w) / 2.0;
-                Rect::new(x, screen.y, w, icon)
+                Rect::new(x, screen.y, w, icon + pad)
             }
             DockPosition::Left => {
-                let h = count * icon;
+                let h = count * icon + pad * 2.0;
                 let y = screen.y + (screen.height - h) / 2.0;
-                Rect::new(screen.x, y, icon, h)
+                Rect::new(screen.x, y, icon + pad, h)
             }
             DockPosition::Right => {
-                let h = count * icon;
+                let h = count * icon + pad * 2.0;
                 let y = screen.y + (screen.height - h) / 2.0;
-                Rect::new(screen.x + screen.width - icon, y, icon, h)
+                Rect::new(screen.x + screen.width - icon - pad, y, icon + pad, h)
             }
         }
     }
@@ -347,15 +348,16 @@ impl Dock {
     #[must_use]
     pub fn compute_item_rects(&self, screen: Rect) -> Vec<(usize, Rect)> {
         let icon = self.config.icon_size as f32;
+        let pad = 12.0_f32;
         let bounds = self.compute_bounds(screen);
         let mut rects = Vec::new();
         for (i, _item) in self.items.iter().enumerate() {
             let rect = match self.config.position {
                 DockPosition::Bottom | DockPosition::Top => {
-                    Rect::new(bounds.x + i as f32 * icon, bounds.y, icon, icon)
+                    Rect::new(bounds.x + pad + i as f32 * icon, bounds.y + (bounds.height - icon) / 2.0, icon, icon)
                 }
                 DockPosition::Left | DockPosition::Right => {
-                    Rect::new(bounds.x, bounds.y + i as f32 * icon, icon, icon)
+                    Rect::new(bounds.x + (bounds.width - icon) / 2.0, bounds.y + pad + i as f32 * icon, icon, icon)
                 }
             };
             rects.push((i, rect));
@@ -439,7 +441,14 @@ impl Dock {
             NodeProperties::new(dock_bounds).with_z_order(900),
         );
 
+        // Item rects are in screen coords; convert to parent-relative
+        // so that walk_inner's translation doesn't double-offset them.
         let item_rects = self.compute_item_rects(screen);
+
+        // 1px accent border at the top edge of the dock (parent-relative).
+        let border_rect = Rect::new(0.0, 0.0, dock_bounds.width, 1.0);
+        dock_node.add_child(solid_rect(NODE_DOCK + 1, theme.dock_border, border_rect, 903));
+
         for (i, (_idx, item_rect)) in item_rects.iter().enumerate() {
             let item_id = NODE_DOCK_ITEM_BASE + i as u64;
             let color = if i < self.items.len() && self.items[i].running_window_count > 0 {
@@ -447,16 +456,28 @@ impl Dock {
             } else {
                 theme.dock_item_inactive
             };
-            dock_node.add_child(solid_rect(item_id, color, *item_rect, 901));
+            let local_rect = Rect::new(
+                item_rect.x - dock_bounds.x,
+                item_rect.y - dock_bounds.y,
+                item_rect.width,
+                item_rect.height,
+            );
+            dock_node.add_child(solid_rect(item_id, color, local_rect, 901));
         }
 
         if let Some(hover_idx) = self.hover_index {
             if hover_idx < item_rects.len() {
                 let (_, hover_rect) = &item_rects[hover_idx];
+                let local_hover = Rect::new(
+                    hover_rect.x - dock_bounds.x,
+                    hover_rect.y - dock_bounds.y,
+                    hover_rect.width,
+                    hover_rect.height,
+                );
                 dock_node.add_child(tint_overlay(
                     NODE_DOCK_ITEM_BASE + 500,
                     theme.dock_hover_highlight,
-                    *hover_rect,
+                    local_hover,
                     902,
                 ));
             }

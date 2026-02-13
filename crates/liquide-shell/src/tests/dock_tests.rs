@@ -234,11 +234,12 @@ fn dock_compute_bounds_bottom() {
     dock.add_pinned("app2", "App 2", "icon.png");
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
     let bounds = dock.compute_bounds(screen);
-    // Width = 2 * 48 = 96, centered horizontally
-    assert_eq!(bounds.width, 96.0);
-    assert_eq!(bounds.x, (1920.0 - 96.0) / 2.0);
-    assert_eq!(bounds.y, 1080.0 - 48.0);
-    assert_eq!(bounds.height, 48.0);
+    // Width = 2 * 48 + 2 * 12 = 120, centered horizontally
+    // Height = 48 + 12 = 60
+    assert_eq!(bounds.width, 120.0);
+    assert_eq!(bounds.x, (1920.0 - 120.0) / 2.0);
+    assert_eq!(bounds.y, 1080.0 - 60.0);
+    assert_eq!(bounds.height, 60.0);
 }
 
 #[test]
@@ -252,10 +253,10 @@ fn dock_compute_bounds_top() {
     dock.add_pinned("app2", "App 2", "icon.png");
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
     let bounds = dock.compute_bounds(screen);
-    assert_eq!(bounds.width, 96.0);
-    assert_eq!(bounds.x, (1920.0 - 96.0) / 2.0);
+    assert_eq!(bounds.width, 120.0);
+    assert_eq!(bounds.x, (1920.0 - 120.0) / 2.0);
     assert_eq!(bounds.y, 0.0);
-    assert_eq!(bounds.height, 48.0);
+    assert_eq!(bounds.height, 60.0);
 }
 
 #[test]
@@ -269,11 +270,12 @@ fn dock_compute_bounds_left() {
     dock.add_pinned("app2", "App 2", "icon.png");
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
     let bounds = dock.compute_bounds(screen);
-    // Height = 2 * 48 = 96, centered vertically
-    assert_eq!(bounds.height, 96.0);
-    assert_eq!(bounds.y, (1080.0 - 96.0) / 2.0);
+    // Height = 2 * 48 + 2 * 12 = 120, centered vertically
+    // Width = 48 + 12 = 60
+    assert_eq!(bounds.height, 120.0);
+    assert_eq!(bounds.y, (1080.0 - 120.0) / 2.0);
     assert_eq!(bounds.x, 0.0);
-    assert_eq!(bounds.width, 48.0);
+    assert_eq!(bounds.width, 60.0);
 }
 
 #[test]
@@ -287,10 +289,10 @@ fn dock_compute_bounds_right() {
     dock.add_pinned("app2", "App 2", "icon.png");
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
     let bounds = dock.compute_bounds(screen);
-    assert_eq!(bounds.height, 96.0);
-    assert_eq!(bounds.y, (1080.0 - 96.0) / 2.0);
-    assert_eq!(bounds.x, 1920.0 - 48.0);
-    assert_eq!(bounds.width, 48.0);
+    assert_eq!(bounds.height, 120.0);
+    assert_eq!(bounds.y, (1080.0 - 120.0) / 2.0);
+    assert_eq!(bounds.x, 1920.0 - 60.0);
+    assert_eq!(bounds.width, 60.0);
 }
 
 // ========== compute_item_rects ==========
@@ -309,10 +311,11 @@ fn dock_compute_item_rects_correct_per_item() {
     let rects = dock.compute_item_rects(screen);
     assert_eq!(rects.len(), 3);
     let bounds = dock.compute_bounds(screen);
+    let pad = 12.0_f32;
     for (i, (idx, rect)) in rects.iter().enumerate() {
         assert_eq!(*idx, i);
-        assert_eq!(rect.x, bounds.x + i as f32 * 48.0);
-        assert_eq!(rect.y, bounds.y);
+        assert_eq!(rect.x, bounds.x + pad + i as f32 * 48.0);
+        assert_eq!(rect.y, bounds.y + (bounds.height - 48.0) / 2.0);
         assert_eq!(rect.width, 48.0);
         assert_eq!(rect.height, 48.0);
     }

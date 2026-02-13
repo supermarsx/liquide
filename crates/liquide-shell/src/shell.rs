@@ -69,6 +69,12 @@ impl Shell {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
+        let mut dock = Dock::new(config.dock.clone());
+        // Add default pinned apps so the dock is visible at startup.
+        dock.add_pinned("com.liquide.files", "Files", "folder");
+        dock.add_pinned("com.liquide.terminal", "Terminal", "terminal");
+        dock.add_pinned("com.liquide.browser", "Browser", "web-browser");
+        dock.add_pinned("com.liquide.settings", "Settings", "preferences-system");
         Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
@@ -81,7 +87,7 @@ impl Shell {
             app_history: AppHistory::new(100),
             screen_time: ScreenTimeTracker::new(now_us, 1),
             next_event_timestamp: 1,
-            dock: Dock::new(config.dock.clone()),
+            dock,
             status_bar: ShellStatusBar::new(config.status_bar.clone()),
             launcher: Launcher::new(config.launcher.clone()),
             tiling: TilingEngine::new(config.tiling.clone()),
@@ -106,6 +112,11 @@ impl Shell {
             .unwrap_or_default()
             .as_micros() as u64;
         let config = ShellConfig::default();
+        let mut dock = Dock::new(config.dock.clone());
+        dock.add_pinned("com.liquide.files", "Files", "folder");
+        dock.add_pinned("com.liquide.terminal", "Terminal", "terminal");
+        dock.add_pinned("com.liquide.browser", "Browser", "web-browser");
+        dock.add_pinned("com.liquide.settings", "Settings", "preferences-system");
         Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
@@ -118,7 +129,7 @@ impl Shell {
             app_history: AppHistory::new(app_history_capacity),
             screen_time: ScreenTimeTracker::new(now_us, 1),
             next_event_timestamp: 1,
-            dock: Dock::new(config.dock.clone()),
+            dock,
             status_bar: ShellStatusBar::new(config.status_bar.clone()),
             launcher: Launcher::new(config.launcher.clone()),
             tiling: TilingEngine::new(config.tiling.clone()),

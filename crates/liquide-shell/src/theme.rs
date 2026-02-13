@@ -29,6 +29,8 @@ pub struct ShellTheme {
     // Dock
     /// Glass tint color for the dock panel.
     pub dock_glass_tint: Color,
+    /// 1px accent border at the top edge of the dock.
+    pub dock_border: Color,
     /// Color for a dock item whose application is running.
     pub dock_item_active: Color,
     /// Color for a dock item whose application is not running.
@@ -39,6 +41,8 @@ pub struct ShellTheme {
     // Status bar
     /// Glass tint color for the status bar.
     pub status_bar_glass_tint: Color,
+    /// 1px accent border at the bottom edge of the status bar.
+    pub status_bar_border: Color,
     /// Text color for the status bar clock and custom items.
     pub status_bar_text: Color,
     /// Color for a good connection quality indicator.
@@ -124,19 +128,31 @@ impl ShellTheme {
             window_border_unfocused: Color::new(c.border.r, c.border.g, c.border.b, 150),
             window_shadow: Color::new(0, 0, 0, 80),
             dock_glass_tint: Color::new(
-                c.surface.r.saturating_add(7),
-                c.surface.g.saturating_add(7),
-                c.surface.b.saturating_add(7),
-                180,
+                c.surface.r.saturating_add(22),
+                c.surface.g.saturating_add(25),
+                c.surface.b.saturating_add(35),
+                225,
             ),
-            dock_item_active: Color::new(c.primary.r, c.primary.g, c.primary.b, 200),
-            dock_item_inactive: Color::new(120, 120, 120, 160),
-            dock_hover_highlight: Color::new(255, 255, 255, 40),
+            dock_border: Color::new(
+                c.primary.r.min(120),
+                c.primary.g.min(180),
+                c.primary.b.min(240),
+                100,
+            ),
+            dock_item_active: Color::new(c.primary.r, c.primary.g, c.primary.b, 220),
+            dock_item_inactive: Color::new(140, 140, 150, 180),
+            dock_hover_highlight: Color::new(255, 255, 255, 50),
             status_bar_glass_tint: Color::new(
-                c.background.r.saturating_add(12),
-                c.background.g.saturating_add(12),
-                c.background.b.saturating_add(12),
-                200,
+                c.background.r.saturating_add(20),
+                c.background.g.saturating_add(22),
+                c.background.b.saturating_add(35),
+                235,
+            ),
+            status_bar_border: Color::new(
+                c.primary.r.min(100),
+                c.primary.g.min(160),
+                c.primary.b.min(220),
+                80,
             ),
             status_bar_text: Color::new(c.foreground.r, c.foreground.g, c.foreground.b, 255),
             status_bar_connected: Color::new(c.success.r, c.success.g, c.success.b, 255),
@@ -204,10 +220,12 @@ impl ShellTheme {
             window_border_unfocused: Color::new(c.border.r, c.border.g, c.border.b, 150),
             window_shadow: Color::new(0, 0, 0, 40),
             dock_glass_tint: Color::new(240, 240, 240, 200),
+            dock_border: Color::new(200, 200, 205, 120),
             dock_item_active: Color::new(c.primary.r, c.primary.g, c.primary.b, 200),
             dock_item_inactive: Color::new(160, 160, 160, 160),
             dock_hover_highlight: Color::new(0, 0, 0, 25),
             status_bar_glass_tint: Color::new(245, 245, 245, 220),
+            status_bar_border: Color::new(200, 200, 210, 100),
             status_bar_text: Color::new(c.foreground.r, c.foreground.g, c.foreground.b, 255),
             status_bar_connected: Color::new(c.success.r, c.success.g, c.success.b, 255),
             status_bar_degraded: Color::new(c.warning.r, c.warning.g, c.warning.b, 255),
@@ -246,13 +264,15 @@ impl ShellTheme {
             window_shadow: Color::new(0, 0, 0, 80),
 
             // Dock
-            dock_glass_tint: Color::new(40, 40, 40, 180),
-            dock_item_active: Color::new(80, 140, 220, 200),
-            dock_item_inactive: Color::new(120, 120, 120, 160),
-            dock_hover_highlight: Color::new(255, 255, 255, 40),
+            dock_glass_tint: Color::new(55, 58, 68, 225),
+            dock_border: Color::new(80, 140, 220, 100),
+            dock_item_active: Color::new(80, 150, 235, 220),
+            dock_item_inactive: Color::new(140, 140, 150, 180),
+            dock_hover_highlight: Color::new(255, 255, 255, 50),
 
             // Status bar
-            status_bar_glass_tint: Color::new(30, 30, 30, 200),
+            status_bar_glass_tint: Color::new(38, 42, 55, 235),
+            status_bar_border: Color::new(80, 140, 220, 80),
             status_bar_text: Color::new(220, 220, 220, 255),
             status_bar_connected: Color::new(60, 200, 60, 255),
             status_bar_degraded: Color::new(220, 180, 40, 255),
@@ -300,12 +320,14 @@ impl ShellTheme {
 
             // Dock
             dock_glass_tint: Color::new(240, 240, 240, 200),
+            dock_border: Color::new(200, 200, 205, 120),
             dock_item_active: Color::new(60, 130, 210, 200),
             dock_item_inactive: Color::new(160, 160, 160, 160),
             dock_hover_highlight: Color::new(0, 0, 0, 25),
 
             // Status bar
             status_bar_glass_tint: Color::new(245, 245, 245, 220),
+            status_bar_border: Color::new(200, 200, 210, 100),
             status_bar_text: Color::new(40, 40, 40, 255),
             status_bar_connected: Color::new(50, 180, 50, 255),
             status_bar_degraded: Color::new(210, 170, 30, 255),
