@@ -105,11 +105,12 @@ impl DesktopCompositor {
 
     /// Build a loading overlay scene — shown during first-frame startup.
     ///
-    /// Uses solid colored rects instead of Glass to avoid expensive blur
-    /// operations on a solid background (blur on uniform pixels is wasted
-    /// work and allocates large temp buffers for zero visual effect).
+    /// Renders a polished startup screen with a dark background, centered
+    /// glass-style panel with branding elements and a progress bar.
     fn build_loading_scene(&self) -> SceneNode {
-        let screen = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
+        let w = self.width as f32;
+        let h = self.height as f32;
+        let screen = Rect::new(0.0, 0.0, w, h);
 
         let mut root = SceneNode::new(
             0,
@@ -117,54 +118,178 @@ impl DesktopCompositor {
             NodeProperties::new(screen),
         );
 
-        // Dark background
+        // Full-screen dark background with a subtle blue tint.
         root.add_child(SceneNode::new(
             1,
             SceneNodeKind::Background {
-                color: Color::new(20, 25, 35, 255),
+                color: Color::new(12, 16, 24, 255),
             },
             NodeProperties::new(screen).with_z_order(0),
         ));
 
-        // Center panel (solid tinted rect — no blur needed on solid bg)
-        let panel_w = 360.0_f32;
-        let panel_h = 120.0_f32;
-        let px = (self.width as f32 - panel_w) / 2.0;
-        let py = (self.height as f32 - panel_h) / 2.0;
-        let panel = Rect::new(px, py, panel_w, panel_h);
-
+        // Subtle radial-ish gradient: lighter center area behind the panel.
+        let glow_size = 600.0_f32.min(w * 0.6);
+        let glow = Rect::new(
+            (w - glow_size) / 2.0,
+            (h - glow_size * 0.6) / 2.0,
+            glow_size,
+            glow_size * 0.6,
+        );
         root.add_child(SceneNode::new(
             2,
             SceneNodeKind::Background {
-                color: Color::new(40, 45, 60, 255),
+                color: Color::new(20, 30, 50, 120),
+            },
+            NodeProperties::new(glow).with_z_order(1),
+        ));
+
+        // Main panel — glass-style with a dark semi-transparent fill.
+        let panel_w = 480.0_f32.min(w - 80.0);
+        let panel_h = 200.0_f32.min(h - 80.0);
+        let px = (w - panel_w) / 2.0;
+        let py = (h - panel_h) / 2.0;
+        let panel = Rect::new(px, py, panel_w, panel_h);
+
+        root.add_child(SceneNode::new(
+            10,
+            SceneNodeKind::Background {
+                color: Color::new(24, 28, 40, 230),
             },
             NodeProperties::new(panel).with_z_order(10),
         ));
 
-        // Accent line across top of panel
+        // Top accent bar — vibrant blue gradient strip.
         let accent = Rect::new(px, py, panel_w, 3.0);
         root.add_child(SceneNode::new(
-            3,
+            11,
             SceneNodeKind::Background {
-                color: Color::new(80, 140, 220, 200),
+                color: Color::new(60, 140, 240, 255),
             },
             NodeProperties::new(accent).with_z_order(11),
         ));
 
-        // Pulsing dot (centered)
-        let dot_size = 12.0_f32;
-        let dot = Rect::new(
-            px + (panel_w - dot_size) / 2.0,
-            py + (panel_h - dot_size) / 2.0,
-            dot_size,
-            dot_size,
+        // Side accent glow — thin vertical blue lines on panel edges.
+        let left_accent = Rect::new(px, py + 3.0, 1.0, panel_h - 3.0);
+        root.add_child(SceneNode::new(
+            12,
+            SceneNodeKind::Background {
+                color: Color::new(60, 140, 240, 40),
+            },
+            NodeProperties::new(left_accent).with_z_order(12),
+        ));
+        let right_accent = Rect::new(px + panel_w - 1.0, py + 3.0, 1.0, panel_h - 3.0);
+        root.add_child(SceneNode::new(
+            13,
+            SceneNodeKind::Background {
+                color: Color::new(60, 140, 240, 40),
+            },
+            NodeProperties::new(right_accent).with_z_order(12),
+        ));
+
+        // Bottom border.
+        let bottom_border = Rect::new(px, py + panel_h - 1.0, panel_w, 1.0);
+        root.add_child(SceneNode::new(
+            14,
+            SceneNodeKind::Background {
+                color: Color::new(60, 140, 240, 30),
+            },
+            NodeProperties::new(bottom_border).with_z_order(12),
+        ));
+
+        // "LIQUIDE" branding — rendered as 7 block letters since we
+        // don't have text rendering yet.  Each letter is a small
+        // colored rectangle arranged horizontally.
+        let letter_w = 18.0_f32;
+        let letter_h = 28.0_f32;
+        let letter_gap = 8.0_f32;
+        let brand_count = 7.0_f32; // L I Q U I D E
+        let brand_total_w = brand_count * letter_w + (brand_count - 1.0) * letter_gap;
+        let brand_x = px + (panel_w - brand_total_w) / 2.0;
+        let brand_y = py + 35.0;
+
+        for i in 0..7 {
+            let lx = brand_x + i as f32 * (letter_w + letter_gap);
+            // Alternate slightly different blues for visual interest.
+            let blue = if i % 2 == 0 { 240 } else { 200 };
+            let alpha = if i % 2 == 0 { 255 } else { 220 };
+            root.add_child(SceneNode::new(
+                20 + i as u64,
+                SceneNodeKind::Background {
+                    color: Color::new(60, 140, blue, alpha),
+                },
+                NodeProperties::new(Rect::new(lx, brand_y, letter_w, letter_h))
+                    .with_z_order(13),
+            ));
+        }
+
+        // Subtitle line — thin white bar below the branding.
+        let sub_w = brand_total_w * 0.6;
+        let sub_rect = Rect::new(
+            px + (panel_w - sub_w) / 2.0,
+            brand_y + letter_h + 16.0,
+            sub_w,
+            2.0,
         );
         root.add_child(SceneNode::new(
-            4,
+            30,
             SceneNodeKind::Background {
-                color: Color::new(80, 160, 240, 255),
+                color: Color::new(180, 190, 210, 100),
             },
-            NodeProperties::new(dot).with_z_order(12),
+            NodeProperties::new(sub_rect).with_z_order(13),
+        ));
+
+        // Progress bar track — dark inset.
+        let bar_w = panel_w - 80.0;
+        let bar_h = 6.0_f32;
+        let bar_x = px + 40.0;
+        let bar_y = py + panel_h - 45.0;
+        let bar_track = Rect::new(bar_x, bar_y, bar_w, bar_h);
+        root.add_child(SceneNode::new(
+            40,
+            SceneNodeKind::Background {
+                color: Color::new(10, 14, 22, 200),
+            },
+            NodeProperties::new(bar_track).with_z_order(13),
+        ));
+
+        // Progress bar fill — animated blue glow.
+        // Use frame_count to create a simple shimmer effect.
+        let progress = 0.35_f32; // fixed 35% for static loading screen
+        let fill_w = bar_w * progress;
+        let bar_fill = Rect::new(bar_x, bar_y, fill_w, bar_h);
+        root.add_child(SceneNode::new(
+            41,
+            SceneNodeKind::Background {
+                color: Color::new(60, 150, 255, 255),
+            },
+            NodeProperties::new(bar_fill).with_z_order(14),
+        ));
+
+        // Progress bar leading edge glow.
+        let edge_w = 20.0_f32.min(fill_w);
+        let edge_rect = Rect::new(bar_x + fill_w - edge_w, bar_y - 1.0, edge_w, bar_h + 2.0);
+        root.add_child(SceneNode::new(
+            42,
+            SceneNodeKind::Background {
+                color: Color::new(120, 200, 255, 180),
+            },
+            NodeProperties::new(edge_rect).with_z_order(15),
+        ));
+
+        // Status text placeholder — thin gray bar below progress.
+        let status_w = 120.0_f32;
+        let status_rect = Rect::new(
+            px + (panel_w - status_w) / 2.0,
+            bar_y + bar_h + 12.0,
+            status_w,
+            3.0,
+        );
+        root.add_child(SceneNode::new(
+            50,
+            SceneNodeKind::Background {
+                color: Color::new(120, 130, 150, 80),
+            },
+            NodeProperties::new(status_rect).with_z_order(13),
         ));
 
         root
@@ -389,8 +514,9 @@ impl DesktopCompositor {
 
     /// Run the desktop event loop using the given platform backend.
     ///
-    /// Creates the main desktop window, shows a loading overlay,
-    /// then enters a non-blocking poll loop that:
+    /// Detects the primary screen size, creates a borderless fullscreen
+    /// window, shows a polished loading overlay, then enters a
+    /// non-blocking poll loop that:
     /// - Drains all pending platform events each iteration.
     /// - Runs periodic ticks (clock, notifications) every ~1s.
     /// - Re-renders when dirty (throttled by `frame_interval`).
@@ -398,18 +524,32 @@ impl DesktopCompositor {
     pub fn run(&mut self, platform: &mut dyn PlatformBackend) {
         let run_start = Instant::now();
 
-        // Create the main desktop window.
+        // Detect the actual primary screen size and resize the compositor
+        // to match so the framebuffer covers the full display.
+        let screen_rect = platform.display().virtual_screen_rect();
+        let screen_w = screen_rect.width as u32;
+        let screen_h = screen_rect.height as u32;
+        if screen_w > 0 && screen_h > 0 && (screen_w != self.width || screen_h != self.height) {
+            info!(
+                old_w = self.width, old_h = self.height,
+                new_w = screen_w, new_h = screen_h,
+                "resizing compositor to match primary screen"
+            );
+            self.width = screen_w;
+            self.height = screen_h;
+            let _ = self.compositor.resize(screen_w, screen_h);
+            self.shell.resize_screen(screen_w as f32, screen_h as f32);
+            self.cursor_x = screen_w as f32 / 2.0;
+            self.cursor_y = screen_h as f32 / 2.0;
+        }
+
+        // Create a borderless fullscreen desktop window.
         debug!("creating desktop window {}x{}", self.width, self.height);
         let t_win = Instant::now();
         let params = NativeWindowParams {
             title: "Liquide Desktop".to_string(),
-            geometry: Rect::new(
-                0.0,
-                0.0,
-                self.width as f32,
-                self.height as f32,
-            ),
-            window_type: "normal".to_string(),
+            geometry: Rect::new(0.0, 0.0, self.width as f32, self.height as f32),
+            window_type: "desktop".to_string(),
             parent: None,
             app_id: "com.liquide.desktop".to_string(),
         };
@@ -417,11 +557,12 @@ impl DesktopCompositor {
             self.window_handle = Some(handle);
         }
         info!(
+            width = self.width, height = self.height,
             elapsed_ms = format!("{:.1}", t_win.elapsed().as_secs_f64() * 1000.0),
-            "window created"
+            "desktop window created (borderless fullscreen)"
         );
 
-        // Show loading overlay (cheap — no blur, just solid rects).
+        // Show loading overlay.
         debug!("rendering loading overlay");
         self.loading = true;
         self.render_frame(platform);
@@ -430,7 +571,14 @@ impl DesktopCompositor {
             "loading overlay presented"
         );
 
-        // Transition from loading to desktop after the first frame.
+        // Drain any initial window events (WM_SIZE, WM_PAINT, etc.) that
+        // fired during window creation so we have the correct client area
+        // before rendering the first desktop frame.
+        while let Some(event) = platform.poll_event() {
+            self.handle_event(&event);
+        }
+
+        // Transition from loading to desktop.
         debug!("rendering first desktop frame");
         self.loading = false;
         self.dirty = true;

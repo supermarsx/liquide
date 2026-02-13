@@ -528,25 +528,44 @@ impl NativeWindowHost for Win32WindowHost {
 
         let title = to_wide(&params.title);
 
-        let x = if params.geometry.x == 0.0 && params.geometry.y == 0.0 {
-            ffi::CW_USEDEFAULT
+        // Choose window style based on window_type:
+        //   "desktop" → borderless popup covering the full screen
+        //   anything else → normal overlapped window
+        let is_desktop = params.window_type == "desktop";
+
+        let (style, ex_style) = if is_desktop {
+            (ffi::WS_POPUP | ffi::WS_VISIBLE, ffi::WS_EX_APPWINDOW)
         } else {
-            params.geometry.x as i32
+            (ffi::WS_OVERLAPPEDWINDOW, ffi::WS_EX_APPWINDOW)
         };
-        let y = if params.geometry.x == 0.0 && params.geometry.y == 0.0 {
-            ffi::CW_USEDEFAULT
+
+        let (x, y, w, h) = if is_desktop {
+            // Full primary screen dimensions.
+            let sw = unsafe { ffi::GetSystemMetrics(ffi::SM_CXSCREEN) };
+            let sh = unsafe { ffi::GetSystemMetrics(ffi::SM_CYSCREEN) };
+            (0, 0, sw, sh)
         } else {
-            params.geometry.y as i32
-        };
-        let w = if params.geometry.width > 0.0 {
-            params.geometry.width as i32
-        } else {
-            ffi::CW_USEDEFAULT
-        };
-        let h = if params.geometry.height > 0.0 {
-            params.geometry.height as i32
-        } else {
-            ffi::CW_USEDEFAULT
+            let x = if params.geometry.x == 0.0 && params.geometry.y == 0.0 {
+                ffi::CW_USEDEFAULT
+            } else {
+                params.geometry.x as i32
+            };
+            let y = if params.geometry.x == 0.0 && params.geometry.y == 0.0 {
+                ffi::CW_USEDEFAULT
+            } else {
+                params.geometry.y as i32
+            };
+            let w = if params.geometry.width > 0.0 {
+                params.geometry.width as i32
+            } else {
+                ffi::CW_USEDEFAULT
+            };
+            let h = if params.geometry.height > 0.0 {
+                params.geometry.height as i32
+            } else {
+                ffi::CW_USEDEFAULT
+            };
+            (x, y, w, h)
         };
 
         let parent = match params.parent {
@@ -572,10 +591,10 @@ impl NativeWindowHost for Win32WindowHost {
         // null-terminated wide string.
         let hwnd = unsafe {
             ffi::CreateWindowExW(
-                ffi::WS_EX_APPWINDOW,
+                ex_style,
                 self.class_name.as_ptr(),
                 title.as_ptr(),
-                ffi::WS_OVERLAPPEDWINDOW,
+                style,
                 x,
                 y,
                 w,
