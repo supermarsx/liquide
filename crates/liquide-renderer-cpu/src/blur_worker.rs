@@ -9,7 +9,7 @@
 //! the renderer falls through to a tint-only fill until the worker delivers
 //! the blurred pixels.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle};
 
@@ -64,6 +64,8 @@ pub(crate) struct BlurWorker {
     handle: Option<JoinHandle<()>>,
     /// Most recent blur result per node, used for compositing.
     cache: HashMap<NodeId, CachedBlur>,
+    /// Node IDs with pending blur requests (submitted since last poll).
+    pending: HashSet<NodeId>,
     /// Monotonically increasing frame counter for staleness tracking.
     frame: u64,
 }
@@ -84,6 +86,7 @@ impl BlurWorker {
             result_rx: res_rx,
             handle: Some(handle),
             cache: HashMap::new(),
+            pending: HashSet::new(),
             frame: 0,
         }
     }
@@ -173,8 +176,17 @@ impl BlurWorker {
     pub fn poll_results(&mut self) {
         self.frame += 1;
         while let Ok((node_id, result)) = self.result_rx.try_recv() {
+            self.pending.remove(&node_id);
             self.cache.insert(node_id, result);
         }
+    }
+
+    /// Check whether a blur request is already pending for this node.
+    ///
+    /// Used to avoid redundant snapshot allocations when the worker
+    /// already has a request in-flight.
+    pub fn has_pending(&self, node_id: NodeId) -> bool {
+        self.pending.contains(&node_id)
     }
 
     /// Look up a cached blur result for a node.
@@ -190,13 +202,14 @@ impl BlurWorker {
     /// Submit a blur request.  The result will be available on a subsequent
     /// frame via [`get_cached`].
     pub fn request_blur(
-        &self,
+        &mut self,
         node_id: NodeId,
         pixels: Vec<u8>,
         width: u32,
         height: u32,
         radius: u32,
     ) {
+        self.pending.insert(node_id);
         let _ = self.request_tx.send(WorkerMsg::Blur(BlurRequest {
             node_id,
             pixels,

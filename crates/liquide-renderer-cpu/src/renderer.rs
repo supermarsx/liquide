@@ -226,9 +226,10 @@ impl SoftwareRenderer {
                         let h = y1.saturating_sub(y0);
 
                         if w > 0 && h > 0 {
-                            // Try the async cache first.
+                            let has_cache = self.blur_worker.get_cached(node.id, w, h).is_some();
+
+                            // Blit cached blur result if available.
                             if let Some(cached) = self.blur_worker.get_cached(node.id, w, h) {
-                                // Blit the pre-blurred pixels into the framebuffer.
                                 for row in 0..h {
                                     let src_off = (row * w * 4) as usize;
                                     let dst_off = fb.pixel_offset(x0, y0 + row);
@@ -240,19 +241,22 @@ impl SoftwareRenderer {
                                 }
                             }
 
-                            // Always submit a fresh blur request so the cache
-                            // stays current as the backdrop changes.
-                            let mut snapshot = vec![0u8; (w * h * 4) as usize];
-                            for row in 0..h {
-                                let src_off = fb.pixel_offset(x0, y0 + row);
-                                let dst_off = (row * w * 4) as usize;
-                                let bytes = (w * 4) as usize;
-                                snapshot[dst_off..dst_off + bytes]
-                                    .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                            // Only submit a new blur request if the worker
+                            // doesn't already have a pending request for this
+                            // node, reducing per-frame allocations.
+                            if !has_cache || !self.blur_worker.has_pending(node.id) {
+                                let mut snapshot = vec![0u8; (w * h * 4) as usize];
+                                for row in 0..h {
+                                    let src_off = fb.pixel_offset(x0, y0 + row);
+                                    let dst_off = (row * w * 4) as usize;
+                                    let bytes = (w * 4) as usize;
+                                    snapshot[dst_off..dst_off + bytes]
+                                        .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                                }
+                                self.blur_worker.request_blur(
+                                    node.id, snapshot, w, h, radius,
+                                );
                             }
-                            self.blur_worker.request_blur(
-                                node.id, snapshot, w, h, radius,
-                            );
                         }
                     }
                 }
@@ -446,6 +450,8 @@ impl SoftwareRenderer {
                         let h = y1.saturating_sub(y0);
 
                         if w > 0 && h > 0 {
+                            let has_cache = self.blur_worker.get_cached(node.id, w, h).is_some();
+
                             if let Some(cached) = self.blur_worker.get_cached(node.id, w, h) {
                                 for row in 0..h {
                                     let src_off = (row * w * 4) as usize;
@@ -458,15 +464,17 @@ impl SoftwareRenderer {
                                 }
                             }
 
-                            let mut snapshot = vec![0u8; (w * h * 4) as usize];
-                            for row in 0..h {
-                                let src_off = fb.pixel_offset(x0, y0 + row);
-                                let dst_off = (row * w * 4) as usize;
-                                let bytes = (w * 4) as usize;
-                                snapshot[dst_off..dst_off + bytes]
-                                    .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                            if !has_cache || !self.blur_worker.has_pending(node.id) {
+                                let mut snapshot = vec![0u8; (w * h * 4) as usize];
+                                for row in 0..h {
+                                    let src_off = fb.pixel_offset(x0, y0 + row);
+                                    let dst_off = (row * w * 4) as usize;
+                                    let bytes = (w * 4) as usize;
+                                    snapshot[dst_off..dst_off + bytes]
+                                        .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                                }
+                                self.blur_worker.request_blur(node.id, snapshot, w, h, radius);
                             }
-                            self.blur_worker.request_blur(node.id, snapshot, w, h, radius);
                         }
                     }
                 }
@@ -485,6 +493,8 @@ impl SoftwareRenderer {
                         let h = y1.saturating_sub(y0);
 
                         if w > 0 && h > 0 {
+                            let has_cache = self.blur_worker.get_cached(node.id, w, h).is_some();
+
                             if let Some(cached) = self.blur_worker.get_cached(node.id, w, h) {
                                 for row in 0..h {
                                     let src_off = (row * w * 4) as usize;
@@ -497,15 +507,17 @@ impl SoftwareRenderer {
                                 }
                             }
 
-                            let mut snapshot = vec![0u8; (w * h * 4) as usize];
-                            for row in 0..h {
-                                let src_off = fb.pixel_offset(x0, y0 + row);
-                                let dst_off = (row * w * 4) as usize;
-                                let bytes = (w * 4) as usize;
-                                snapshot[dst_off..dst_off + bytes]
-                                    .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                            if !has_cache || !self.blur_worker.has_pending(node.id) {
+                                let mut snapshot = vec![0u8; (w * h * 4) as usize];
+                                for row in 0..h {
+                                    let src_off = fb.pixel_offset(x0, y0 + row);
+                                    let dst_off = (row * w * 4) as usize;
+                                    let bytes = (w * 4) as usize;
+                                    snapshot[dst_off..dst_off + bytes]
+                                        .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                                }
+                                self.blur_worker.request_blur(node.id, snapshot, w, h, radius);
                             }
-                            self.blur_worker.request_blur(node.id, snapshot, w, h, radius);
                         }
                     }
                 }
@@ -584,6 +596,8 @@ impl SoftwareRenderer {
                         let h = y1.saturating_sub(y0);
 
                         if w > 0 && h > 0 {
+                            let has_cache = self.blur_worker.get_cached(node.id, w, h).is_some();
+
                             if let Some(cached) = self.blur_worker.get_cached(node.id, w, h) {
                                 for row in 0..h {
                                     let src_off = (row * w * 4) as usize;
@@ -596,15 +610,17 @@ impl SoftwareRenderer {
                                 }
                             }
 
-                            let mut snapshot = vec![0u8; (w * h * 4) as usize];
-                            for row in 0..h {
-                                let src_off = fb.pixel_offset(x0, y0 + row);
-                                let dst_off = (row * w * 4) as usize;
-                                let bytes = (w * 4) as usize;
-                                snapshot[dst_off..dst_off + bytes]
-                                    .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                            if !has_cache || !self.blur_worker.has_pending(node.id) {
+                                let mut snapshot = vec![0u8; (w * h * 4) as usize];
+                                for row in 0..h {
+                                    let src_off = fb.pixel_offset(x0, y0 + row);
+                                    let dst_off = (row * w * 4) as usize;
+                                    let bytes = (w * 4) as usize;
+                                    snapshot[dst_off..dst_off + bytes]
+                                        .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                                }
+                                self.blur_worker.request_blur(node.id, snapshot, w, h, radius);
                             }
-                            self.blur_worker.request_blur(node.id, snapshot, w, h, radius);
                         }
                     }
                 }
