@@ -431,6 +431,7 @@ impl DesktopCompositor {
                 frame = self.frame_count,
                 total_ms = format!("{:.1}", frame_ms),
                 render_ms = format!("{:.1}", render_ms),
+                present_ms = format!("{:.1}", present_ms),
                 nodes = flat_nodes.len(),
                 "slow frame detected"
             );
@@ -632,8 +633,21 @@ impl DesktopCompositor {
 
             // If no events were processed this iteration, sleep briefly
             // to avoid busy-spinning and burning CPU.
-            if !had_event {
-                thread::sleep(Duration::from_millis(8));
+            // Use the remaining frame budget if we just rendered, otherwise
+            // sleep enough to check for events at the tick rate.
+            if !had_event && !self.dirty {
+                let sleep_ms = if !self.frame_interval.is_zero() {
+                    let elapsed = self.last_render.elapsed();
+                    if elapsed < self.frame_interval {
+                        let remaining = self.frame_interval - elapsed;
+                        remaining.as_millis().min(16) as u64
+                    } else {
+                        1
+                    }
+                } else {
+                    1
+                };
+                thread::sleep(Duration::from_millis(sleep_ms));
             }
         }
 

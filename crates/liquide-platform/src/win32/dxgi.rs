@@ -1,12 +1,12 @@
 //! DXGI / D3D11 swap chain presenter.
 //!
 //! Creates a D3D11 device and DXGI swap chain for a given HWND, then
-//! presents CPU-rendered BGRA8 frames via a staging texture upload
-//! instead of GDI's `SetDIBitsToDevice`.
+//! presents CPU-rendered BGRA8 frames via `UpdateSubresource` on the
+//! swap-chain back buffer.
 //!
 //! Benefits over GDI:
 //! - DXGI flip-model swap effect for lower latency
-//! - VSync support via `Present(1, 0)`
+//! - Optional tearing support for immediate presentation
 //! - Foundation for eventual GPU-accelerated rendering
 //!
 //! Falls back gracefully if D3D11/DXGI is unavailable (returns `Err`
@@ -65,9 +65,6 @@ const DXGI_SWAP_EFFECT_DISCARD: u32 = 0;
 const D3D_DRIVER_TYPE_HARDWARE: u32 = 1;
 const D3D_FEATURE_LEVEL_11_0: u32 = 0xb000;
 const D3D11_SDK_VERSION: u32 = 7;
-const D3D11_USAGE_STAGING: u32 = 3;
-const D3D11_CPU_ACCESS_WRITE: u32 = 0x10000;
-const D3D11_MAP_WRITE_DISCARD: u32 = 4;
 const D3D11_CREATE_DEVICE_BGRA_SUPPORT: u32 = 0x20;
 const DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING: u32 = 0x00000080;
 const DXGI_PRESENT_ALLOW_TEARING: u32 = 0x00000200;
@@ -106,27 +103,6 @@ struct DXGI_SWAP_CHAIN_DESC {
     windowed: ffi::BOOL,
     swap_effect: u32,
     flags: u32,
-}
-
-#[repr(C)]
-struct D3D11_TEXTURE2D_DESC {
-    width: u32,
-    height: u32,
-    mip_levels: u32,
-    array_size: u32,
-    format: u32,
-    sample_desc: DXGI_SAMPLE_DESC,
-    usage: u32,
-    bind_flags: u32,
-    cpu_access_flags: u32,
-    misc_flags: u32,
-}
-
-#[repr(C)]
-struct D3D11_MAPPED_SUBRESOURCE {
-    data: *mut c_void,
-    row_pitch: u32,
-    depth_pitch: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -175,19 +151,11 @@ struct IUnknownVtbl {
 //                         12  GetDesc
 //                         13  ResizeBuffers
 
-// ID3D11Device vtable: we only need CreateTexture2D (slot 5 after IUnknown)
-//   IUnknown:   0-2
-//   ID3D11Device: 3  CreateBuffer
-//                 4  CreateTexture1D
-//                 5  CreateTexture2D
-
 // ID3D11DeviceContext vtable:
 //   IUnknown: 0-2
-//            ... many methods ...
-//   Map      = slot 14
-//   Unmap    = slot 15
+//   ID3D11DeviceChild: 3-6
 //   ...
-//   CopyResource = slot 47
+//   UpdateSubresource = slot 48
 
 // ---------------------------------------------------------------------------
 // Helper: call a vtable slot with a given signature
@@ -235,13 +203,14 @@ unsafe extern "system" {
 
 /// Owns a DXGI swap chain and D3D11 device/context for frame presentation.
 ///
-/// On each frame, the caller's BGRA8 pixel buffer is uploaded to a
-/// staging texture, copied to the swap chain back buffer, and presented.
+/// On each frame the caller's BGRA8 pixel buffer is uploaded directly
+/// to the swap chain back buffer via `UpdateSubresource` and then
+/// presented.  No staging texture is needed.
 pub struct DxgiPresenter {
+    #[allow(dead_code)]
     device: *mut c_void,        // ID3D11Device
     context: *mut c_void,       // ID3D11DeviceContext
     swap_chain: *mut c_void,    // IDXGISwapChain
-    staging: *mut c_void,       // ID3D11Texture2D (staging, CPU-writable)
     width: u32,
     height: u32,
     tearing: bool,              // swap chain supports ALLOW_TEARING
@@ -283,7 +252,7 @@ impl DxgiPresenter {
             )
         };
         if hr != S_OK || device.is_null() {
-            return Err(format!("D3D11CreateDevice failed: 0x{:08X}", hr));
+            return Err(format!("D3D11CreateDevice failed: 0x{hr:08X}"));
         }
 
         // 2. Create DXGI factory.
@@ -291,10 +260,12 @@ impl DxgiPresenter {
         let hr = unsafe { CreateDXGIFactory1(&IID_IDXGI_FACTORY1, &mut factory) };
         if hr != S_OK || factory.is_null() {
             unsafe { Self::release(device); Self::release(context); }
-            return Err(format!("CreateDXGIFactory1 failed: 0x{:08X}", hr));
+            return Err(format!("CreateDXGIFactory1 failed: 0x{hr:08X}"));
         }
 
-        // 3. Create swap chain with tearing support for immediate present.
+        // 3. Create swap chain.
+        //    Triple-buffer with FLIP_DISCARD and tearing support for
+        //    immediate, non-blocking presentation.
         let sc_desc = DXGI_SWAP_CHAIN_DESC {
             buffer_desc: DXGI_MODE_DESC {
                 width,
@@ -310,7 +281,7 @@ impl DxgiPresenter {
                 quality: 0,
             },
             buffer_usage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-            buffer_count: 2,
+            buffer_count: 3,  // triple-buffer to avoid Present blocking on DWM
             output_window: hwnd,
             windowed: ffi::TRUE,
             swap_effect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
@@ -349,26 +320,23 @@ impl DxgiPresenter {
                         Self::release(device);
                         Self::release(context);
                     }
-                    return Err(format!("CreateSwapChain failed: 0x{:08X} / 0x{:08X} / 0x{:08X}", hr, hr2, hr3));
+                    return Err(format!(
+                        "CreateSwapChain failed: 0x{hr:08X} / 0x{hr2:08X} / 0x{hr3:08X}"
+                    ));
                 }
             }
         }
 
         // Determine whether the swap chain was created with tearing support.
-        // We set tearing=true only if the first attempt (with ALLOW_TEARING flag) succeeded.
         let tearing = hr == S_OK && !swap_chain.is_null();
 
         // Release factory (no longer needed).
         unsafe { Self::release(factory); }
 
-        // 4. Create a staging texture for CPU → GPU uploads.
-        let staging = unsafe { Self::create_staging_texture(device, width, height)? };
-
         Ok(Self {
             device,
             context,
             swap_chain,
-            staging,
             width,
             height,
             tearing,
@@ -377,75 +345,16 @@ impl DxgiPresenter {
 
     /// Present a BGRA8 pixel buffer to the swap chain.
     ///
-    /// Uploads `pixels` into the staging texture, copies to the back
-    /// buffer, and calls `IDXGISwapChain::Present(0, 0)` (immediate, no
-    /// vsync wait — the caller is responsible for frame rate limiting).
+    /// Uploads `pixels` directly into the swap-chain back buffer via
+    /// `UpdateSubresource`, then calls `Present(0, flags)` for immediate
+    /// presentation (no vsync — the caller handles frame pacing).
     pub fn present(&mut self, pixels: &[u8], width: u32, height: u32, stride: u32) -> Result<(), String> {
         if width != self.width || height != self.height {
             self.resize(width, height)?;
         }
 
         unsafe {
-            // Map the staging texture for writing.
-            let mut mapped = D3D11_MAPPED_SUBRESOURCE {
-                data: ptr::null_mut(),
-                row_pitch: 0,
-                depth_pitch: 0,
-            };
-
-            // ID3D11DeviceContext::Map = vtable slot 14
-            type MapFn = unsafe extern "system" fn(
-                this: *mut c_void,
-                resource: *mut c_void,
-                subresource: u32,
-                map_type: u32,
-                map_flags: u32,
-                mapped: *mut D3D11_MAPPED_SUBRESOURCE,
-            ) -> HRESULT;
-            let map_fn: MapFn = std::mem::transmute(vtable_fn(self.context, 14));
-            let hr = map_fn(self.context, self.staging, 0, D3D11_MAP_WRITE_DISCARD, 0, &mut mapped);
-            if hr != S_OK {
-                return Err(format!("Map staging texture failed: 0x{:08X}", hr));
-            }
-
-            // Copy pixels into the staging texture.
-            let src_stride = stride as usize;
-            let dst_stride = mapped.row_pitch as usize;
-            let row_bytes = (width as usize) * 4;
-            let dst = mapped.data as *mut u8;
-            let total_bytes = row_bytes * height as usize;
-
-            if src_stride == dst_stride && src_stride == row_bytes {
-                // Strides match and are tightly packed — single bulk copy.
-                ptr::copy_nonoverlapping(
-                    pixels.as_ptr(),
-                    dst,
-                    total_bytes,
-                );
-            } else {
-                // Stride mismatch — copy row by row.
-                for y in 0..height as usize {
-                    let src_off = y * src_stride;
-                    let dst_off = y * dst_stride;
-                    ptr::copy_nonoverlapping(
-                        pixels.as_ptr().add(src_off),
-                        dst.add(dst_off),
-                        row_bytes,
-                    );
-                }
-            }
-
-            // Unmap.
-            // ID3D11DeviceContext::Unmap = vtable slot 15
-            type UnmapFn = unsafe extern "system" fn(
-                this: *mut c_void,
-                resource: *mut c_void,
-                subresource: u32,
-            );
-            let unmap_fn: UnmapFn = std::mem::transmute(vtable_fn(self.context, 15));
-            unmap_fn(self.context, self.staging, 0);
-
-            // Get the back buffer.
+            // 1. Acquire the current back buffer.
             let mut back_buffer: *mut c_void = ptr::null_mut();
             // IDXGISwapChain::GetBuffer = vtable slot 9
             type GetBufferFn = unsafe extern "system" fn(
@@ -457,27 +366,41 @@ impl DxgiPresenter {
             let get_buffer: GetBufferFn = std::mem::transmute(vtable_fn(self.swap_chain, 9));
             let hr = get_buffer(self.swap_chain, 0, &IID_ID3D11_TEXTURE2D, &mut back_buffer);
             if hr != S_OK || back_buffer.is_null() {
-                return Err(format!("GetBuffer failed: 0x{:08X}", hr));
+                return Err(format!("GetBuffer failed: 0x{hr:08X}"));
             }
 
-            // CopyResource from staging to back buffer.
-            // ID3D11DeviceContext::CopyResource = vtable slot 47
-            type CopyResourceFn = unsafe extern "system" fn(
+            // 2. Upload CPU pixels into the back buffer.
+            //    UpdateSubresource copies from system memory to GPU memory
+            //    in a single call — no staging texture needed.
+            // ID3D11DeviceContext::UpdateSubresource = vtable slot 48
+            type UpdateSubresourceFn = unsafe extern "system" fn(
                 this: *mut c_void,
-                dst: *mut c_void,
-                src: *mut c_void,
+                dst_resource: *mut c_void,
+                dst_subresource: u32,
+                dst_box: *const c_void,    // NULL = entire resource
+                src_data: *const c_void,
+                src_row_pitch: u32,
+                src_depth_pitch: u32,
             );
-            let copy_fn: CopyResourceFn = std::mem::transmute(vtable_fn(self.context, 47));
-            copy_fn(self.context, back_buffer, self.staging);
+            let update: UpdateSubresourceFn =
+                std::mem::transmute(vtable_fn(self.context, 48));
+            update(
+                self.context,
+                back_buffer,
+                0,
+                ptr::null(),
+                pixels.as_ptr() as *const c_void,
+                stride,
+                0,
+            );
 
-            // Release back buffer reference.
+            // 3. Release back buffer reference before presenting.
             Self::release(back_buffer);
 
-            // Present immediately (no vsync wait).
-            // The desktop event loop already throttles to the target frame
-            // rate, so blocking on vsync here just adds latency.
-            // When tearing is supported, use DXGI_PRESENT_ALLOW_TEARING for
-            // truly immediate presentation.
+            // 4. Present immediately (no vsync wait).
+            //    With tearing support, use DXGI_PRESENT_ALLOW_TEARING for
+            //    truly immediate presentation; otherwise present with
+            //    sync_interval = 0 which still skips vsync.
             // IDXGISwapChain::Present = vtable slot 8
             type PresentFn = unsafe extern "system" fn(
                 this: *mut c_void,
@@ -488,20 +411,16 @@ impl DxgiPresenter {
             let present_flags = if self.tearing { DXGI_PRESENT_ALLOW_TEARING } else { 0 };
             let hr = present(self.swap_chain, 0, present_flags);
             if hr != S_OK {
-                return Err(format!("Present failed: 0x{:08X}", hr));
+                return Err(format!("Present failed: 0x{hr:08X}"));
             }
         }
 
         Ok(())
     }
 
-    /// Resize the swap chain and staging texture.
+    /// Resize the swap chain buffers.
     fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
         unsafe {
-            // Release old staging texture.
-            Self::release(self.staging);
-            self.staging = ptr::null_mut();
-
             // IDXGISwapChain::ResizeBuffers = vtable slot 13
             type ResizeBuffersFn = unsafe extern "system" fn(
                 this: *mut c_void,
@@ -512,52 +431,16 @@ impl DxgiPresenter {
                 flags: u32,
             ) -> HRESULT;
             let resize: ResizeBuffersFn = std::mem::transmute(vtable_fn(self.swap_chain, 13));
-            let hr = resize(self.swap_chain, 0, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, 0);
+            let flags = if self.tearing { DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING } else { 0 };
+            let hr = resize(self.swap_chain, 0, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, flags);
             if hr != S_OK {
-                return Err(format!("ResizeBuffers failed: 0x{:08X}", hr));
+                return Err(format!("ResizeBuffers failed: 0x{hr:08X}"));
             }
 
-            // Create new staging texture.
-            self.staging = Self::create_staging_texture(self.device, width, height)?;
             self.width = width;
             self.height = height;
         }
         Ok(())
-    }
-
-    unsafe fn create_staging_texture(
-        device: *mut c_void,
-        width: u32,
-        height: u32,
-    ) -> Result<*mut c_void, String> {
-        let desc = D3D11_TEXTURE2D_DESC {
-            width,
-            height,
-            mip_levels: 1,
-            array_size: 1,
-            format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            sample_desc: DXGI_SAMPLE_DESC { count: 1, quality: 0 },
-            usage: D3D11_USAGE_STAGING,
-            bind_flags: 0,
-            cpu_access_flags: D3D11_CPU_ACCESS_WRITE,
-            misc_flags: 0,
-        };
-
-        let mut texture: *mut c_void = ptr::null_mut();
-
-        // ID3D11Device::CreateTexture2D = vtable slot 5
-        type CreateTexture2DFn = unsafe extern "system" fn(
-            this: *mut c_void,
-            desc: *const D3D11_TEXTURE2D_DESC,
-            initial_data: *const c_void,
-            texture: *mut *mut c_void,
-        ) -> HRESULT;
-        let create: CreateTexture2DFn = unsafe { std::mem::transmute(vtable_fn(device, 5)) };
-        let hr = unsafe { create(device, &desc, ptr::null(), &mut texture) };
-        if hr != S_OK || texture.is_null() {
-            return Err(format!("CreateTexture2D (staging) failed: 0x{:08X}", hr));
-        }
-        Ok(texture)
     }
 
     /// Release a COM object.
@@ -576,7 +459,6 @@ impl DxgiPresenter {
 impl Drop for DxgiPresenter {
     fn drop(&mut self) {
         unsafe {
-            Self::release(self.staging);
             Self::release(self.swap_chain);
             Self::release(self.context);
             Self::release(self.device);
