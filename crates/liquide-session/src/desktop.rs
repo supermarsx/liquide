@@ -31,24 +31,23 @@ use liquide_renderer_cpu::{Renderer, SoftwareRenderer};
 use liquide_shell::Shell;
 use tracing::{debug, info, warn};
 
+use crate::telemetry::{create_telemetry, TelemetryHandle};
+
 // ---------------------------------------------------------------------------
 // Render thread types
 // ---------------------------------------------------------------------------
 
 /// A render job sent from the main thread to the render thread.
 struct RenderJob {
-    flat_nodes: Vec<FlatNode>,
+    scene: SceneNode,
+    cursor_x: f32,
+    cursor_y: f32,
+    cursor_shape: liquide_shell::CursorShape,
     width: u32,
     height: u32,
     tile_size: u32,
-    /// When true, blur is temporarily suppressed for interactive
-    /// responsiveness (e.g., during window drag/resize).
-    suppress_blur: bool,
-    /// When true, use aggressive performance optimizations (LOD Performance mode).
-    /// Enabled during drag/resize for maximum snappiness.
-    performance_mode: bool,
     /// Window ID being dragged (for skeleton rendering - outline only).
-    skeleton_window: Option<u64>,
+    dragged_window: Option<u64>,
 }
 
 /// A completed rendered frame sent back from the render thread.
@@ -107,6 +106,8 @@ pub struct DesktopCompositor {
     render_thread: Option<thread::JoinHandle<()>>,
     /// Whether a render job is currently in flight (avoid double-submit).
     render_in_flight: bool,
+    /// Telemetry system for performance monitoring.
+    telemetry: TelemetryHandle,
 }
 
 impl DesktopCompositor {
@@ -138,6 +139,7 @@ impl DesktopCompositor {
             frame_rx: None,
             render_thread: None,
             render_in_flight: false,
+            telemetry: create_telemetry(60), // 60fps target
         }
     }
 
@@ -407,103 +409,41 @@ impl DesktopCompositor {
 
     /// Submit a render job to the background render thread.
     ///
-    /// Builds the scene, flattens it, and sends the flat nodes to the
-    /// render thread for asynchronous CPU rendering. The main thread
-    /// remains free to process input events during rendering.
+    /// Builds lightweight scene graph and sends to render thread.
+    /// Flattening and rendering happen asynchronously off the main thread.
     fn submit_render(&mut self) {
         if self.render_in_flight || self.render_tx.is_none() {
             return;
         }
 
-        let frame_start = Instant::now();
+        // Build the scene graph (lightweight tree construction).
+        let scene = self.shell.build_scene();
 
-        // 1. Build the scene graph.
-        let mut scene = self.shell.build_scene();
-
-        // 2. Add software cursor.
-        let cursor_size = 24.0_f32;
-        let cursor_bounds = Rect::new(self.cursor_x, self.cursor_y, cursor_size, cursor_size);
-        scene.add_child(SceneNode::new(
-            999_999,
-            SceneNodeKind::Cursor {
-                shape: self.shell.cursor_shape(),
-            },
-            NodeProperties::new(cursor_bounds).with_z_order(9999),
-        ));
-
-        // 3. Submit to compositor.
-        let _ = self.compositor.submit_scene(scene);
-        self.compositor.begin_frame();
-
-        // 4. Flatten.
-        let mut flat_nodes = self
-            .compositor
-            .scene()
-            .map(|s| s.flatten())
-            .unwrap_or_default();
-
-        let scene_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
-
-        // 5. Send to render thread.
-        let tile_size = self.compositor.tile_size();
+        // Get current state for telemetry.
         let dragged_window = self.shell.dragged_window();
 
-        // Skeleton mode during drag: only render window frames/decorations for
-        // the dragged window, skip expensive surface content for that window only.
-        // Other windows continue rendering normally.
-        if let Some(window_id) = dragged_window {
-            use liquide_compositor::scene::SceneNodeKind;
-
-            // Calculate node ID range for the dragged window
-            // From scene_builder.rs: NODE_WINDOW_BASE=10_000, NODE_WINDOW_STRIDE=10
-            const NODE_WINDOW_BASE: u64 = 10_000;
-            const NODE_WINDOW_STRIDE: u64 = 10;
-            let win_base = NODE_WINDOW_BASE + window_id.0 * NODE_WINDOW_STRIDE;
-            let win_end = win_base + NODE_WINDOW_STRIDE;
-
-            let original_count = flat_nodes.len();
-            flat_nodes.retain(|node| {
-                let node_id = node.id;
-                let is_dragged_window_node = node_id >= win_base && node_id < win_end;
-
-                if is_dragged_window_node {
-                    // For dragged window: only keep basic decoration border, no shadows, no content
-                    matches!(node.kind, SceneNodeKind::Decoration { .. })
-                } else {
-                    // All other windows and UI elements: render normally
-                    true
-                }
-            });
-            if self.debug_perf {
-                debug!(
-                    window_id = window_id.0,
-                    original_nodes = original_count,
-                    skeleton_nodes = flat_nodes.len(),
-                    "skeleton mode active for dragged window"
-                );
+        // Update telemetry for interactive window.
+        if let Some(wid) = dragged_window {
+            if let Ok(mut telemetry) = self.telemetry.write() {
+                telemetry.set_window_interactive(wid.0, true);
             }
         }
+
         let job = RenderJob {
-            flat_nodes,
+            scene,
+            cursor_x: self.cursor_x,
+            cursor_y: self.cursor_y,
+            cursor_shape: self.shell.cursor_shape(),
             width: self.width,
             height: self.height,
-            tile_size,
-            suppress_blur: dragged_window.is_some(),
-            performance_mode: dragged_window.is_some(),
-            skeleton_window: dragged_window.map(|wid| wid.0),
+            tile_size: self.compositor.tile_size(),
+            dragged_window: dragged_window.map(|wid| wid.0),
         };
 
         if let Some(ref tx) = self.render_tx {
             if tx.send(RenderMsg::Job(job)).is_ok() {
                 self.render_in_flight = true;
             }
-        }
-
-        if self.debug_perf {
-            debug!(
-                scene_ms = format!("{:.2}", scene_ms),
-                "render job submitted"
-            );
         }
     }
 
@@ -535,6 +475,12 @@ impl DesktopCompositor {
                 let present_ms = t4.elapsed().as_secs_f64() * 1000.0;
 
                 self.frame_count += 1;
+
+                // Record telemetry.
+                let total_frame_ms = frame.render_ms + present_ms;
+                if let Ok(mut telemetry) = self.telemetry.write() {
+                    telemetry.record_frame(total_frame_ms);
+                }
 
                 // Report timing.
                 self.compositor
@@ -886,6 +832,9 @@ impl DesktopCompositor {
             "entering threaded event loop"
         );
 
+        let mut last_telemetry_report = Instant::now();
+        let telemetry_report_interval = Duration::from_secs(10);
+
         while self.running {
             // Drain all pending events.
             let mut had_event = false;
@@ -913,6 +862,12 @@ impl DesktopCompositor {
                     self.dirty = true;
                 }
                 self.last_tick = Instant::now();
+            }
+
+            // Periodic telemetry report every 10 seconds.
+            if last_telemetry_report.elapsed() >= telemetry_report_interval {
+                self.print_telemetry_report();
+                last_telemetry_report = Instant::now();
             }
 
             // Submit a render job if dirty and render thread is free.
@@ -1057,5 +1012,20 @@ fn scene_node_color_str(kind: &SceneNodeKind) -> String {
             )
         }
         _ => "-".to_string(),
+    }
+}
+
+impl DesktopCompositor {
+    /// Get a clone of the telemetry handle for monitoring.
+    pub fn telemetry(&self) -> TelemetryHandle {
+        self.telemetry.clone()
+    }
+
+    /// Print comprehensive telemetry status report to log.
+    pub fn print_telemetry_report(&self) {
+        if let Ok(telemetry) = self.telemetry.read() {
+            let report = telemetry.status_report();
+            info!("\n{}", report);
+        }
     }
 }

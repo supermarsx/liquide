@@ -14,6 +14,7 @@ pub mod resume;
 pub mod runtime;
 pub mod sandbox;
 pub mod state;
+pub mod telemetry;
 pub mod worker;
 
 #[cfg(test)]
