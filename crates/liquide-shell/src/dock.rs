@@ -79,6 +79,21 @@ pub struct DockConfig {
     pub monitor_mode: DockMonitorMode,
     /// Maximum recent items to keep.
     pub max_recent_items: usize,
+    /// Behavior when clicking a running app: minimize, restore, or new instance.
+    pub click_running_behavior: DockClickBehavior,
+}
+
+/// Behavior when clicking a running app icon in the dock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DockClickBehavior {
+    /// Toggle minimize/restore.
+    ToggleMinimize,
+    /// Always launch new instance.
+    AlwaysNew,
+    /// Bring to front if minimized, minimize if already front.
+    SmartToggle,
+    /// Show all windows for that app.
+    ShowAllWindows,
 }
 
 impl Default for DockConfig {
@@ -93,6 +108,7 @@ impl Default for DockConfig {
             show_running_indicators: true,
             monitor_mode: DockMonitorMode::PrimaryOnly,
             max_recent_items: 10,
+            click_running_behavior: DockClickBehavior::SmartToggle,
         }
     }
 }

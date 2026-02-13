@@ -53,6 +53,12 @@ pub struct StatusBarConfig {
     pub show_notification_indicator: bool,
     /// Show the connection quality badge.
     pub show_connection_quality: bool,
+    /// macOS-style app menu on the left.
+    pub show_app_menu: bool,
+    /// Auto-hide when a window is maximized.
+    pub auto_hide_on_maximize: bool,
+    /// Hover reveal distance from top edge (pixels).
+    pub auto_hide_reveal_distance: f32,
 }
 
 impl Default for StatusBarConfig {
@@ -65,6 +71,9 @@ impl Default for StatusBarConfig {
             show_tray: true,
             show_notification_indicator: true,
             show_connection_quality: true,
+            show_app_menu: true,
+            auto_hide_on_maximize: true,
+            auto_hide_reveal_distance: 5.0,
         }
     }
 }

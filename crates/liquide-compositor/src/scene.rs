@@ -177,6 +177,40 @@ pub enum CursorShape {
     Text,
     /// Not-allowed / forbidden.
     NotAllowed,
+    /// Busy / waiting (spinning wheel).
+    Wait,
+    /// Progress (arrow + wait).
+    Progress,
+    /// Help (arrow + question mark).
+    Help,
+    /// Crosshair / precise selection.
+    Crosshair,
+    /// Open hand (pan/grab).
+    Grab,
+    /// Closed hand (grabbing/panning).
+    Grabbing,
+    /// Zoom in (magnifying glass +).
+    ZoomIn,
+    /// Zoom out (magnifying glass -).
+    ZoomOut,
+    /// Context menu available.
+    ContextMenu,
+    /// Alias / shortcut.
+    Alias,
+    /// Copy operation.
+    Copy,
+    /// No drop zone.
+    NoDrop,
+    /// Cell selection.
+    Cell,
+    /// Vertical text I-beam.
+    VerticalText,
+    /// All-scroll (4-way pan).
+    AllScroll,
+    /// Expand horizontally.
+    ExpandH,
+    /// Expand vertically.
+    ExpandV,
 }
 
 impl Default for CursorShape {

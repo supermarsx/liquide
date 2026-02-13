@@ -10,6 +10,8 @@ pub struct DecorationStyle {
     pub border_width: f32,
     pub corner_radius: f32,
     pub button_size: f32,
+    /// Resize edge tolerance in pixels (larger = easier to grab).
+    pub resize_tolerance: f32,
 }
 
 impl Default for DecorationStyle {
@@ -19,6 +21,7 @@ impl Default for DecorationStyle {
             border_width: 1.0,
             corner_radius: 8.0,
             button_size: 16.0,
+            resize_tolerance: 8.0, // 8px hit zone for edges
         }
     }
 }
@@ -60,7 +63,7 @@ pub fn hit_test_decoration(
     x: f32,
     y: f32,
 ) -> HitZone {
-    let bw = style.border_width;
+    let bw = style.resize_tolerance; // Use larger tolerance for easier resizing
     let tbh = style.title_bar_height;
     let btn = style.button_size;
 
@@ -80,19 +83,19 @@ pub fn hit_test_decoration(
     let right = window_bounds.x + window_bounds.width;
     let top = window_bounds.y - tbh;
     let bottom = window_bounds.y + window_bounds.height;
-    let corner_size = bw * 8.0;
+    let corner_size = bw * 2.5; // Larger corner zones
 
-    // Resize corners
-    if x < left && y < top + corner_size {
+    // Resize corners (prioritize corners over edges)
+    if x < left + corner_size && y < top + corner_size {
         return HitZone::ResizeTopLeft;
     }
-    if x >= right && y < top + corner_size {
+    if x >= right - corner_size && y < top + corner_size {
         return HitZone::ResizeTopRight;
     }
-    if x < left && y >= bottom - corner_size {
+    if x < left + corner_size && y >= bottom - corner_size {
         return HitZone::ResizeBottomLeft;
     }
-    if x >= right && y >= bottom - corner_size {
+    if x >= right - corner_size && y >= bottom - corner_size {
         return HitZone::ResizeBottomRight;
     }
 
