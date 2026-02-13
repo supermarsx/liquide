@@ -99,6 +99,10 @@
 //! Instead of redrawing the entire screen every frame, dirty rectangles identify
 //! regions that actually changed.
 //!
+//! **Note:** Dirty rectangle culling is **opt-in**. By default, all nodes are rendered
+//! every frame. To use dirty rect culling, the compositor must explicitly mark changed
+//! regions using `mark_dirty()` and check `intersects_dirty()` before rendering nodes.
+//!
 //! ### Usage Example
 //!
 //! ```rust
@@ -109,11 +113,11 @@
 //! // Initialize screen size
 //! renderer.resize_dirty_tracking(1920, 1080);
 //!
-//! // Mark regions that changed
+//! // Mark regions that changed (compositor's responsibility)
 //! renderer.mark_dirty(100.0, 100.0, 200.0, 150.0);  // Window moved
 //! renderer.mark_dirty(500.0, 300.0, 50.0, 50.0);    // Button pressed
 //!
-//! // During rendering, skip unchanged areas
+//! // During rendering, manually check and skip unchanged areas
 //! // for node in nodes {
 //! //     if !renderer.intersects_dirty(&node.bounds) {
 //! //         continue; // Skip this node
@@ -198,10 +202,10 @@
 //! //     let lod = renderer.select_lod(node, distance);
 //! //
 //! //     match lod {
-//! //         LodLevel::High => /* full detail */,
+//! //         LodLevel::High => /* full detail: all effects enabled */,
 //! //         LodLevel::Medium => /* reduced blur radius, simpler effects */,
-//! //         LodLevel::Low => /* skip shadows, minimal effects */,
-//! //         LodLevel::Minimal => /* skip rendering entirely */,
+//! //         LodLevel::Low => /* minimal shadows, basic effects only */,
+//! //         LodLevel::Minimal => /* flat rendering, no effects */,
 //! //     }
 //! // }
 //!

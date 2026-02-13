@@ -14,7 +14,7 @@ pub enum LodLevel {
     Medium,
     /// Low detail (highly simplified).
     Low,
-    /// Minimal detail (placeholder or culled).
+    /// Minimal detail (flat rendering, no effects).
     Minimal,
 }
 
@@ -36,8 +36,8 @@ impl LodLevel {
         match self {
             Self::High => 256.0,      // > 256px on screen
             Self::Medium => 128.0,    // > 128px on screen
-            Self::Low => 64.0,        // > 64px on screen
-            Self::Minimal => 0.0,     // < 64px on screen
+            Self::Low => 32.0,        // > 32px on screen
+            Self::Minimal => 0.0,     // < 32px on screen
         }
     }
 }
@@ -160,7 +160,7 @@ impl LodManager {
         let bias_factor = 1.0 / (1.0 + total_bias);
         let high_threshold = 256.0 * bias_factor;
         let medium_threshold = 128.0 * bias_factor;
-        let low_threshold = 64.0 * bias_factor;
+        let low_threshold = 32.0 * bias_factor; // Lowered from 64 to ensure small UI elements render
 
         // Select LOD based on screen size and distance
         if screen_size >= high_threshold && criteria.distance < 0.3 {

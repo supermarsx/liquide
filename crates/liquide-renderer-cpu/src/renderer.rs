@@ -381,25 +381,14 @@ impl Renderer for SoftwareRenderer {
         let classified_tiles: Vec<DamageTile> = damage.tiles.clone();
 
         // Render each node exactly once in z-order.
-        // Skip nodes that don't intersect dirty regions for performance.
+        // Note: Dirty rect culling is disabled by default - it requires explicit
+        // dirty tracking from the compositor. Enable by manually calling mark_dirty().
         for node in nodes {
-            // Check if node intersects dirty regions
-            if !self.dirty_rects.is_full_damage() {
-                if !self.intersects_dirty(&node.absolute_bounds) {
-                    continue; // Skip rendering this node
-                }
-            }
-
             // Calculate LOD level for this node
             let distance = self.calculate_distance_from_center(&node.absolute_bounds);
             let lod_level = self.select_lod(node, distance);
 
-            // Skip minimal LOD nodes (too small or far away)
-            if lod_level == LodLevel::Minimal {
-                continue;
-            }
-
-            // Render node with appropriate LOD
+            // Render node with appropriate LOD (even Minimal nodes are rendered)
             self.render_node_with_lod(node, fb, lod_level);
         }
 
