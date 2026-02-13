@@ -255,12 +255,32 @@ impl SceneNode {
 
         visitor(self, &absolute);
 
-        // Sort children by z-order before walking
-        let mut sorted_indices: Vec<usize> = (0..self.children.len()).collect();
-        sorted_indices.sort_by_key(|&i| self.children[i].properties.z_order);
-
-        for &i in &sorted_indices {
-            self.children[i].walk_inner(&absolute, visitor);
+        // Sort children by z-order before walking.
+        // Use a stack-allocated array for small child counts to avoid
+        // heap allocation on every node traversal.
+        let n = self.children.len();
+        if n <= 1 {
+            // 0 or 1 children — no sorting needed
+            for child in &self.children {
+                child.walk_inner(&absolute, visitor);
+            }
+        } else if n <= 16 {
+            // Small child count — use stack array
+            let mut indices = [0u16; 16];
+            for i in 0..n {
+                indices[i] = i as u16;
+            }
+            indices[..n].sort_by_key(|&i| self.children[i as usize].properties.z_order);
+            for &i in &indices[..n] {
+                self.children[i as usize].walk_inner(&absolute, visitor);
+            }
+        } else {
+            // Fallback to heap-allocated sort for large child counts
+            let mut sorted_indices: Vec<usize> = (0..n).collect();
+            sorted_indices.sort_by_key(|&i| self.children[i].properties.z_order);
+            for &i in &sorted_indices {
+                self.children[i].walk_inner(&absolute, visitor);
+            }
         }
     }
 
@@ -379,11 +399,27 @@ impl SceneNode {
             return;
         }
         visitor(self);
-        // Sort children indices by z-order before walking
-        let mut sorted_indices: Vec<usize> = (0..self.children.len()).collect();
-        sorted_indices.sort_by_key(|&i| self.children[i].properties.z_order);
-        for &i in &sorted_indices {
-            self.children[i].walk_mut(visitor);
+        // Sort children indices by z-order before walking.
+        let n = self.children.len();
+        if n <= 1 {
+            for child in &mut self.children {
+                child.walk_mut(visitor);
+            }
+        } else if n <= 16 {
+            let mut indices = [0u16; 16];
+            for i in 0..n {
+                indices[i] = i as u16;
+            }
+            indices[..n].sort_by_key(|&i| self.children[i as usize].properties.z_order);
+            for &i in &indices[..n] {
+                self.children[i as usize].walk_mut(visitor);
+            }
+        } else {
+            let mut sorted_indices: Vec<usize> = (0..n).collect();
+            sorted_indices.sort_by_key(|&i| self.children[i].properties.z_order);
+            for &i in &sorted_indices {
+                self.children[i].walk_mut(visitor);
+            }
         }
     }
 
