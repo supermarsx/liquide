@@ -79,6 +79,8 @@ pub struct SoftwareRenderer {
     lod_manager: LodManager,
     /// Object pool for temporary render buffers.
     buffer_pool: ObjectPool<Vec<u8>>,
+    /// Window ID to render in skeleton mode (outline only during drag).
+    skeleton_window: Option<u64>,
 }
 
 impl SoftwareRenderer {
@@ -102,6 +104,7 @@ impl SoftwareRenderer {
             dirty_rects: DirtyRectManager::new(1920, 1080),
             lod_manager: LodManager::new(1920.0, 1080.0),
             buffer_pool: ObjectPool::new(64),
+            skeleton_window: None,
         }
     }
 
@@ -314,6 +317,26 @@ impl SoftwareRenderer {
     /// Enable or disable adaptive LOD.
     pub fn set_adaptive_lod_enabled(&mut self, enabled: bool) {
         self.lod_manager.set_adaptive_enabled(enabled);
+    }
+
+    // --- Skeleton Mode (for window drag visualization) ---
+
+    /// Set skeleton window for simplified rendering during drag.
+    pub fn set_skeleton_window(&mut self, window_id: Option<u64>) {
+        self.skeleton_window = window_id;
+    }
+
+    /// Check if a node belongs to the skeleton window.
+    fn is_skeleton_node(&self, node_id: u64) -> bool {
+        if let Some(skeleton_wid) = self.skeleton_window {
+            const NODE_WINDOW_BASE: u64 = 10_000;
+            const NODE_WINDOW_STRIDE: u64 = 10;
+            let win_base = NODE_WINDOW_BASE + skeleton_wid * NODE_WINDOW_STRIDE;
+            let win_end = win_base + NODE_WINDOW_STRIDE;
+            node_id >= win_base && node_id < win_end
+        } else {
+            false
+        }
     }
 
     /// Select appropriate LOD level for a node.
@@ -554,38 +577,62 @@ impl SoftwareRenderer {
                 corner_radius,
                 button_state,
             } => {
-                // Title bar background as a rounded rect (top corners only)
-                let mut bg = *background;
-                if opacity < 1.0 {
-                    bg.a = (bg.a as f32 * opacity + 0.5) as u8;
-                }
-                rasterizer::fill_rounded_rect(
-                    fb,
-                    bounds,
-                    *corner_radius,
-                    &Fill::Solid(bg),
-                    BlendMode::SrcOver,
-                    &self.srgb_lut,
-                );
+                // Check if this is a skeleton node (window being dragged)
+                let is_skeleton = self.is_skeleton_node(node.id);
 
-                // Border stroke around the window bounds
-                if *border_width > 0.0 {
-                    let mut bc = *border_color;
-                    if opacity < 1.0 {
-                        bc.a = (bc.a as f32 * opacity + 0.5) as u8;
+                if is_skeleton {
+                    // Skeleton mode: Only render a simple border outline
+                    if *border_width > 0.0 {
+                        let mut bc = *border_color;
+                        if opacity < 1.0 {
+                            bc.a = (bc.a as f32 * opacity + 0.5) as u8;
+                        }
+                        // Make border more visible during drag
+                        bc.a = bc.a.saturating_add(40);
+                        rasterizer::stroke_rounded_rect(
+                            fb,
+                            bounds,
+                            *corner_radius,
+                            *border_width * 1.5,
+                            bc,
+                            BlendMode::SrcOver,
+                            &self.srgb_lut,
+                        );
                     }
-                    rasterizer::stroke_rounded_rect(
+                } else {
+                    // Normal mode: Full decoration with title bar, buttons, etc.
+                    // Title bar background as a rounded rect (top corners only)
+                    let mut bg = *background;
+                    if opacity < 1.0 {
+                        bg.a = (bg.a as f32 * opacity + 0.5) as u8;
+                    }
+                    rasterizer::fill_rounded_rect(
                         fb,
                         bounds,
                         *corner_radius,
-                        *border_width,
-                        bc,
+                        &Fill::Solid(bg),
                         BlendMode::SrcOver,
                         &self.srgb_lut,
                     );
-                }
 
-                // --- Window control buttons ---
+                    // Border stroke around the window bounds
+                    if *border_width > 0.0 {
+                        let mut bc = *border_color;
+                        if opacity < 1.0 {
+                            bc.a = (bc.a as f32 * opacity + 0.5) as u8;
+                        }
+                        rasterizer::stroke_rounded_rect(
+                            fb,
+                            bounds,
+                            *corner_radius,
+                            *border_width,
+                            bc,
+                            BlendMode::SrcOver,
+                            &self.srgb_lut,
+                        );
+                    }
+
+                    // --- Window control buttons ---
                 // Modern style: subtle rounded-rect backgrounds with
                 // crisp icon glyphs (×, □, ─, 📌).
                 // Layout: right-aligned in the title bar.
@@ -801,6 +848,7 @@ impl SoftwareRenderer {
                         crate::bitmap_font::draw_text(fb, title_text, text_x, text_y, tc, 1);
                     }
                 }
+                } // end else (normal decoration rendering)
             }
 
             SceneNodeKind::BlurBackdrop => {

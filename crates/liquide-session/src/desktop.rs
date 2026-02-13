@@ -47,6 +47,8 @@ struct RenderJob {
     /// When true, use aggressive performance optimizations (LOD Performance mode).
     /// Enabled during drag/resize for maximum snappiness.
     performance_mode: bool,
+    /// Window ID being dragged (for skeleton rendering - outline only).
+    skeleton_window: Option<u64>,
 }
 
 /// A completed rendered frame sent back from the render thread.
@@ -491,6 +493,7 @@ impl DesktopCompositor {
             tile_size,
             suppress_blur: dragged_window.is_some(),
             performance_mode: dragged_window.is_some(),
+            skeleton_window: dragged_window.map(|wid| wid.0),
         };
 
         if let Some(ref tx) = self.render_tx {
@@ -670,11 +673,14 @@ impl DesktopCompositor {
                             liquide_renderer_cpu::lod::PerformanceMode::Performance,
                         );
                     }
+                    // Set skeleton window for simplified drag visualization
+                    renderer.set_skeleton_window(latest_job.skeleton_window);
 
                     let _ = renderer.render(&latest_job.flat_nodes, framebuf, &damage);
 
                     // Restore rendering quality so it re-engages on the next
                     // non-drag frame.
+                    renderer.set_skeleton_window(None);
                     if latest_job.suppress_blur && saved_blur {
                         renderer.set_blur_enabled(true);
                     }
