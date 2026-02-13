@@ -423,9 +423,8 @@ impl Dock {
     }
 
     /// Build the scene graph for the dock.
-    pub fn build_scene(&self, screen: Rect) -> SceneNode {
+    pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
         use crate::scene_builder::*;
-        use liquide_compositor::pixel::Color;
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
         let dock_bounds = self.compute_bounds(screen);
@@ -433,7 +432,7 @@ impl Dock {
             NODE_DOCK,
             SceneNodeKind::Glass(GlassParams {
                 blur_radius: 20,
-                tint_color: Color::new(40, 40, 40, 180),
+                tint_color: theme.dock_glass_tint,
                 inner_glow: true,
                 parallax: false,
             }),
@@ -444,9 +443,9 @@ impl Dock {
         for (i, (_idx, item_rect)) in item_rects.iter().enumerate() {
             let item_id = NODE_DOCK_ITEM_BASE + i as u64;
             let color = if i < self.items.len() && self.items[i].running_window_count > 0 {
-                Color::new(80, 140, 220, 200)
+                theme.dock_item_active
             } else {
-                Color::new(120, 120, 120, 160)
+                theme.dock_item_inactive
             };
             dock_node.add_child(solid_rect(item_id, color, *item_rect, 901));
         }
@@ -456,7 +455,7 @@ impl Dock {
                 let (_, hover_rect) = &item_rects[hover_idx];
                 dock_node.add_child(tint_overlay(
                     NODE_DOCK_ITEM_BASE + 500,
-                    Color::new(255, 255, 255, 40),
+                    theme.dock_hover_highlight,
                     *hover_rect,
                     902,
                 ));

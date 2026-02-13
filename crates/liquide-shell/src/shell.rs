@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 
 use liquide_compositor::geometry::{Point, Rect};
-use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{DecorationButtons, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_input::KeyEvent;
 use liquide_platform::PlatformEvent;
@@ -24,6 +23,7 @@ use crate::seamless::SeamlessManager;
 use crate::shortcuts::{ShellAction, ShortcutManager};
 use crate::stats::StatsCollector;
 use crate::status_bar::ShellStatusBar;
+use crate::theme::ShellTheme;
 use crate::tiling::TilingEngine;
 use crate::window::{Window, WindowId, WindowState};
 use crate::workspace::WorkspaceManager;
@@ -51,6 +51,7 @@ pub struct Shell {
     notifications: NotificationManager,
     seamless: SeamlessManager,
     config: ShellConfig,
+    theme: ShellTheme,
 }
 
 impl Shell {
@@ -88,6 +89,7 @@ impl Shell {
             notifications: NotificationManager::new(config.notifications.clone()),
             seamless: SeamlessManager::new(config.seamless.clone()),
             config,
+            theme: ShellTheme::default_dark(),
         }
     }
 
@@ -124,6 +126,7 @@ impl Shell {
             notifications: NotificationManager::new(config.notifications.clone()),
             seamless: SeamlessManager::new(config.seamless.clone()),
             config,
+            theme: ShellTheme::default_dark(),
         }
     }
 
@@ -685,6 +688,17 @@ impl Shell {
         &self.config
     }
 
+    /// Get the current shell theme.
+    #[must_use]
+    pub fn theme(&self) -> &ShellTheme {
+        &self.theme
+    }
+
+    /// Set the shell theme.
+    pub fn set_theme(&mut self, theme: ShellTheme) {
+        self.theme = theme;
+    }
+
     /// Handle a key event, returning the matching shell action if any.
     #[must_use]
     pub fn handle_key_event(&self, event: &KeyEvent) -> Option<&ShellAction> {
@@ -704,6 +718,7 @@ impl Shell {
         use crate::window::WindowFlags;
 
         let screen = self.screen_rect;
+        let theme = &self.theme;
 
         let mut root = SceneNode::new(
             NODE_ROOT,
@@ -714,7 +729,7 @@ impl Shell {
         // Background
         root.add_child(solid_rect(
             NODE_BACKGROUND,
-            Color::new(30, 60, 90, 255),
+            theme.desktop_background,
             screen,
             0,
         ));
@@ -744,7 +759,7 @@ impl Shell {
                 SceneNodeKind::Shadow {
                     spread: 4.0,
                     blur_radius: 12.0,
-                    color: Color::new(0, 0, 0, 80),
+                    color: theme.window_shadow,
                 },
                 NodeProperties::new(shadow_bounds)
                     .with_z_order(window.z_order as u32 * 10),
@@ -754,20 +769,20 @@ impl Shell {
             if window.flags.contains(WindowFlags::DECORATED) {
                 let is_focused = self.focus.focused() == Some(window.id);
                 let title_bg = if is_focused {
-                    Color::new(60, 60, 70, 240)
+                    theme.window_title_bar_focused
                 } else {
-                    Color::new(45, 45, 50, 220)
+                    theme.window_title_bar_unfocused
                 };
                 ws_node.add_child(SceneNode::new(
                     win_base + 1,
                     SceneNodeKind::Decoration {
                         title: Some(window.title.clone()),
-                        title_color: Color::new(220, 220, 220, 255),
+                        title_color: theme.window_title_text,
                         background: title_bg,
                         border_color: if is_focused {
-                            Color::new(80, 140, 220, 200)
+                            theme.window_border_focused
                         } else {
-                            Color::new(60, 60, 60, 150)
+                            theme.window_border_unfocused
                         },
                         border_width: self.decoration_style.border_width,
                         corner_radius: self.decoration_style.corner_radius,
@@ -808,19 +823,19 @@ impl Shell {
         root.add_child(ws_node);
 
         // Status bar
-        root.add_child(self.status_bar.build_scene(screen));
+        root.add_child(self.status_bar.build_scene(screen, theme));
 
         // Dock
         if self.dock.is_visible() || !self.dock.config().auto_hide {
-            root.add_child(self.dock.build_scene(screen));
+            root.add_child(self.dock.build_scene(screen, theme));
         }
 
         // Notifications
-        root.add_child(self.notifications.build_scene(screen));
+        root.add_child(self.notifications.build_scene(screen, theme));
 
         // Launcher (on top of everything)
         if self.launcher.is_visible() {
-            root.add_child(self.launcher.build_scene(screen));
+            root.add_child(self.launcher.build_scene(screen, theme));
         }
 
         root
@@ -897,11 +912,19 @@ impl Shell {
     }
 
     /// Periodic tick — update clock, expire notifications.
-    pub fn tick(&mut self, now_us: u64) {
+    ///
+    /// Returns `true` if something visually changed (notification expired,
+    /// status bar updated, etc.) and a redraw is needed.
+    pub fn tick(&mut self, now_us: u64) -> bool {
         self.status_bar.update_clock(now_us);
         self.status_bar
             .update_notification_count(self.notifications.unread_count() as u32);
-        self.notifications.tick(now_us);
+        let expired = self.notifications.tick(now_us);
+        let bar_dirty = self.status_bar.is_dirty();
+        if bar_dirty {
+            self.status_bar.mark_clean();
+        }
+        bar_dirty || !expired.is_empty()
     }
 
     /// Execute a shell action, returns true if a redraw is needed.

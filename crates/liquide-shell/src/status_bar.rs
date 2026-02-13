@@ -332,10 +332,9 @@ impl ShellStatusBar {
     }
 
     /// Build the scene graph for the status bar.
-    pub fn build_scene(&self, screen: Rect) -> SceneNode {
+    pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
         use crate::scene_builder::*;
         use liquide_compositor::geometry::Rect as GRect;
-        use liquide_compositor::pixel::Color;
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
         if !self.config.enabled {
@@ -351,7 +350,7 @@ impl ShellStatusBar {
             NODE_STATUS_BAR,
             SceneNodeKind::Glass(GlassParams {
                 blur_radius: 15,
-                tint_color: Color::new(30, 30, 30, 200),
+                tint_color: theme.status_bar_glass_tint,
                 inner_glow: false,
                 parallax: false,
             }),
@@ -395,25 +394,23 @@ impl ShellStatusBar {
 
             let item_bounds = GRect::new(ix, item_y, item_width, item_height);
             let color = match &item.kind {
-                StatusBarItemKind::Clock { .. } => Color::new(220, 220, 220, 255),
+                StatusBarItemKind::Clock { .. } => theme.status_bar_text,
                 StatusBarItemKind::NotificationIndicator { unread_count, .. } => {
                     if *unread_count > 0 {
-                        Color::new(60, 140, 255, 255)
+                        theme.status_bar_notification_active
                     } else {
-                        Color::new(160, 160, 160, 200)
+                        theme.status_bar_notification_inactive
                     }
                 }
                 StatusBarItemKind::ConnectionQuality { quality_percent, .. } => {
                     if *quality_percent > 70 {
-                        Color::new(60, 200, 60, 255)
-                    } else if *quality_percent > 30 {
-                        Color::new(220, 180, 40, 255)
+                        theme.status_bar_connected
                     } else {
-                        Color::new(220, 60, 60, 255)
+                        theme.status_bar_degraded
                     }
                 }
-                StatusBarItemKind::TrayArea => Color::new(100, 100, 100, 150),
-                StatusBarItemKind::Custom { .. } => Color::new(160, 160, 160, 200),
+                StatusBarItemKind::TrayArea => theme.status_bar_tray,
+                StatusBarItemKind::Custom { .. } => theme.status_bar_notification_inactive,
             };
 
             bar_node.add_child(solid_rect(item_id, color, item_bounds, 951));

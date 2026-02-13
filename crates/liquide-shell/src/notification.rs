@@ -263,9 +263,8 @@ impl NotificationManager {
     }
 
     /// Build the scene graph for active notifications.
-    pub fn build_scene(&self, screen: Rect) -> SceneNode {
+    pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
         use crate::scene_builder::*;
-        use liquide_compositor::pixel::Color;
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
         let mut container = SceneNode::new(
@@ -309,7 +308,7 @@ impl NotificationManager {
                 NODE_NOTIFICATION_BASE + 1 + i as u64,
                 SceneNodeKind::Glass(GlassParams {
                     blur_radius: 15,
-                    tint_color: Color::new(50, 50, 60, 210),
+                    tint_color: theme.notification_glass_tint,
                     inner_glow: true,
                     parallax: false,
                 }),

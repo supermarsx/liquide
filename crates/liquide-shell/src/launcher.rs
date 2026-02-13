@@ -775,10 +775,9 @@ impl Launcher {
     }
 
     /// Build the scene graph for the launcher overlay.
-    pub fn build_scene(&self, screen: Rect) -> SceneNode {
+    pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
         use crate::scene_builder::*;
         use liquide_compositor::geometry::Rect as GRect;
-        use liquide_compositor::pixel::Color;
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
         if !self.visible {
@@ -792,7 +791,7 @@ impl Launcher {
         let mut launcher_root = SceneNode::new(
             NODE_LAUNCHER,
             SceneNodeKind::Tint {
-                color: Color::new(0, 0, 0, 140),
+                color: theme.launcher_overlay,
             },
             NodeProperties::new(screen).with_z_order(980),
         );
@@ -807,7 +806,7 @@ impl Launcher {
             NODE_LAUNCHER + 1,
             SceneNodeKind::Glass(GlassParams {
                 blur_radius: 25,
-                tint_color: Color::new(30, 30, 40, 220),
+                tint_color: theme.launcher_glass_tint,
                 inner_glow: true,
                 parallax: false,
             }),
@@ -817,7 +816,7 @@ impl Launcher {
         let search_bounds = GRect::new(panel_x + 20.0, panel_y + 15.0, panel_w - 40.0, 36.0);
         launcher_root.add_child(solid_rect(
             NODE_LAUNCHER + 2,
-            Color::new(50, 50, 60, 200),
+            theme.launcher_search_bar,
             search_bounds,
             982,
         ));
@@ -836,9 +835,9 @@ impl Launcher {
             let iy = item_start_y + i as f32 * (item_height + item_gap);
             let item_bounds = GRect::new(panel_x + 20.0, iy, panel_w - 40.0, item_height);
             let color = if i == self.selected_index {
-                Color::new(60, 120, 200, 180)
+                theme.launcher_item_selected
             } else {
-                Color::new(60, 60, 70, 140)
+                theme.launcher_item_normal
             };
             launcher_root.add_child(solid_rect(NODE_LAUNCHER + 10 + i as u64, color, item_bounds, 983));
         }

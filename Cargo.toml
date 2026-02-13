@@ -160,6 +160,13 @@ liquide-conformance = { path = "crates/liquide-conformance" }
 opt-level = 0
 debug = true
 
+# Render-critical crates get optimised even in debug builds so that
+# fill_rect, blur, and scene flattening are usable at interactive rates.
+[profile.dev.package.liquide-renderer-cpu]
+opt-level = 2
+[profile.dev.package.liquide-compositor]
+opt-level = 2
+
 [profile.release]
 opt-level = 3
 lto = "thin"

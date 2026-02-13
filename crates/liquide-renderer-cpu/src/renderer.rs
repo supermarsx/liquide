@@ -37,6 +37,14 @@ pub struct SoftwareRenderer {
     blur_cache: HashMap<NodeId, Vec<u8>>,
     /// Effect params derived from current degradation level.
     effect_params: EffectParams,
+    /// Whether real Gaussian blur is enabled for Glass nodes.
+    /// When `false`, Glass falls back to a tinted fill (much faster).
+    blur_enabled: bool,
+    /// Exponential moving average of recent frame render times (ms).
+    /// Used to adaptively disable blur when performance is poor.
+    avg_render_ms: f64,
+    /// Frame render time threshold (ms) above which blur is auto-disabled.
+    blur_budget_ms: f64,
 }
 
 impl SoftwareRenderer {
@@ -50,6 +58,9 @@ impl SoftwareRenderer {
             effect_params: EffectParams::for_profile(
                 liquide_compositor::effects::QualityProfile::Balanced,
             ),
+            blur_enabled: true,
+            avg_render_ms: 0.0,
+            blur_budget_ms: 16.0, // Target ~60fps render budget
         }
     }
 
@@ -83,6 +94,49 @@ impl SoftwareRenderer {
     /// Clear the entire blur cache.
     pub fn clear_blur_cache(&mut self) {
         self.blur_cache.clear();
+    }
+
+    /// Whether real Gaussian blur is currently active.
+    #[must_use]
+    pub fn blur_enabled(&self) -> bool {
+        self.blur_enabled
+    }
+
+    /// Manually enable or disable Gaussian blur for Glass nodes.
+    pub fn set_blur_enabled(&mut self, enabled: bool) {
+        self.blur_enabled = enabled;
+        if !enabled {
+            self.blur_cache.clear();
+        }
+    }
+
+    /// Set the per-frame render budget (in ms).  When the exponential average
+    /// frame render time exceeds this threshold, blur is auto-disabled.
+    /// When it drops below half the threshold, blur is re-enabled.
+    pub fn set_blur_budget_ms(&mut self, budget: f64) {
+        self.blur_budget_ms = budget;
+    }
+
+    /// Report the most recent frame's render time so the renderer can
+    /// adaptively toggle blur.  Call this after each `render()`.
+    pub fn report_render_time(&mut self, render_ms: f64) {
+        // Exponential moving average with α = 0.3 (responds within ~3 frames).
+        const ALPHA: f64 = 0.3;
+        if self.avg_render_ms <= 0.0 {
+            self.avg_render_ms = render_ms;
+        } else {
+            self.avg_render_ms = ALPHA * render_ms + (1.0 - ALPHA) * self.avg_render_ms;
+        }
+
+        // Auto-disable blur when average render time exceeds budget.
+        if self.blur_enabled && self.avg_render_ms > self.blur_budget_ms {
+            self.blur_enabled = false;
+            self.blur_cache.clear();
+        }
+        // Re-enable when average drops to half the budget (hysteresis).
+        if !self.blur_enabled && self.avg_render_ms < self.blur_budget_ms * 0.5 {
+            self.blur_enabled = true;
+        }
     }
 }
 
@@ -149,7 +203,8 @@ impl SoftwareRenderer {
 
             SceneNodeKind::Surface { buffer, .. } | SceneNodeKind::ChildSurface { buffer, .. } => {
                 if let Some(buf) = buffer {
-                    if opacity >= 1.0 && buf.format == liquide_compositor::pixel::PixelFormat::Bgra8 {
+                    if opacity >= 1.0 && buf.format == liquide_compositor::pixel::PixelFormat::Bgra8
+                    {
                         rasterizer::blit_opaque(
                             fb,
                             &buf.pixels,
@@ -173,9 +228,35 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::Glass(params) => {
+                // Real glass effect: blur the backdrop, then tint overlay.
+                // When blur is disabled (adaptive quality or manual override),
+                // skip the expensive Gaussian pass and just apply the tint.
+                if self.blur_enabled {
+                    let radius = params.blur_radius.min(30);
+                    if radius > 0 {
+                        if radius >= 8 {
+                            blur::blur_fast(fb, bounds, radius);
+                        } else {
+                            blur::blur_region(fb, bounds, radius);
+                        }
+                    }
+                }
+
+                // Apply tint
                 let mut tint = params.tint_color;
                 tint.a = (tint.a as f32 * opacity + 0.5) as u8;
                 rasterizer::fill_rect(fb, bounds, tint, BlendMode::SrcOver);
+
+                // Inner glow
+                if params.inner_glow {
+                    crate::effects::InnerGlow::render_glow(
+                        fb,
+                        bounds,
+                        8.0,
+                        3.0,
+                        Color::new(255, 255, 255, 30),
+                    );
+                }
             }
 
             SceneNodeKind::Tint { color } => {
@@ -184,7 +265,11 @@ impl SoftwareRenderer {
                 rasterizer::fill_rect(fb, bounds, c, BlendMode::Multiply);
             }
 
-            SceneNodeKind::Shadow { spread, blur_radius, color } => {
+            SceneNodeKind::Shadow {
+                spread,
+                blur_radius,
+                color,
+            } => {
                 BoxShadow::render_shadow(
                     fb,
                     &ShadowParams {
@@ -194,7 +279,12 @@ impl SoftwareRenderer {
                         blur_radius: *blur_radius as u32,
                         offset_x: 0.0,
                         offset_y: 0.0,
-                        shadow_color: Color::new(color.r, color.g, color.b, (color.a as f32 * opacity + 0.5) as u8),
+                        shadow_color: Color::new(
+                            color.r,
+                            color.g,
+                            color.b,
+                            (color.a as f32 * opacity + 0.5) as u8,
+                        ),
                     },
                 );
             }
@@ -240,20 +330,22 @@ impl SoftwareRenderer {
 
             SceneNodeKind::BlurBackdrop => {
                 // Apply backdrop blur to the region behind a glass surface
-                let params = self.effect_params.clone();
-                BackdropBlur::render_with_tint(
-                    fb,
-                    bounds,
-                    &params,
-                    Color::TRANSPARENT,
-                );
+                if self.blur_enabled {
+                    let params = self.effect_params.clone();
+                    BackdropBlur::render_with_tint(fb, bounds, &params, Color::TRANSPARENT);
+                }
             }
 
             SceneNodeKind::BlurCache => {
                 // Extract region, blur it, cache by node ID
+                if !self.blur_enabled {
+                    // Skip blur caching when adaptive quality has disabled blur.
+                } else {
                 let radius = self.effect_params.blur_radius;
                 if radius > 0 {
-                    if let std::collections::hash_map::Entry::Vacant(e) = self.blur_cache.entry(node.id) {
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        self.blur_cache.entry(node.id)
+                    {
                         // Extract and blur
                         let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
                         let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
@@ -293,6 +385,7 @@ impl SoftwareRenderer {
                         }
                     }
                 }
+                } // else blur_enabled
             }
 
             SceneNodeKind::Content | SceneNodeKind::Overlay | SceneNodeKind::ShellLayer => {
@@ -324,14 +417,13 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::LockScreen => {
-                // Full-screen dark overlay with backdrop blur
-                let params = self.effect_params.clone();
-                BackdropBlur::render_with_tint(
-                    fb,
-                    bounds,
-                    &params,
-                    Color::new(0, 0, 0, 180),
-                );
+                // Full-screen dark overlay with backdrop blur (when enabled)
+                if self.blur_enabled {
+                    let params = self.effect_params.clone();
+                    BackdropBlur::render_with_tint(fb, bounds, &params, Color::new(0, 0, 0, 180));
+                } else {
+                    rasterizer::fill_rect(fb, bounds, Color::new(0, 0, 0, 180), BlendMode::SrcOver);
+                }
             }
 
             SceneNodeKind::CrashScreen => {

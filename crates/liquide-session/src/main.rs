@@ -44,6 +44,14 @@ struct Cli {
     /// Run in headless mode without creating a window.
     #[arg(long)]
     headless: bool,
+
+    /// Maximum frames per second (0 = unlimited).
+    #[arg(long, default_value = "60")]
+    fps_cap: u32,
+
+    /// Enable per-frame performance timing in the logs (use RUST_LOG=debug).
+    #[arg(long)]
+    debug_perf: bool,
 }
 
 #[tokio::main]
@@ -120,9 +128,11 @@ async fn run(cli: Cli) -> Result<()> {
         info!(
             width = cli.width,
             height = cli.height,
+            fps_cap = cli.fps_cap,
+            debug_perf = cli.debug_perf,
             "Launching desktop compositor"
         );
-        run_desktop(cli.width, cli.height)
+        run_desktop(cli.width, cli.height, cli.fps_cap, cli.debug_perf)
     }
 }
 
@@ -131,7 +141,7 @@ async fn run(cli: Cli) -> Result<()> {
 /// This creates the platform backend (Win32, X11, Wayland, or macOS),
 /// instantiates the desktop compositor with the shell, and enters the
 /// blocking event loop.
-fn run_desktop(width: u32, height: u32) -> Result<()> {
+fn run_desktop(width: u32, height: u32, fps_cap: u32, debug_perf: bool) -> Result<()> {
     let mut platform = liquide_platform::create_platform()
         .context("Failed to create platform backend")?;
 
@@ -141,6 +151,8 @@ fn run_desktop(width: u32, height: u32) -> Result<()> {
     );
 
     let mut desktop = DesktopCompositor::new(width, height);
+    desktop.set_fps_cap(fps_cap);
+    desktop.set_debug_perf(debug_perf);
 
     info!("Entering desktop event loop");
     desktop.run(platform.as_mut());

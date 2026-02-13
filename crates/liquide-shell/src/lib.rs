@@ -22,6 +22,7 @@ pub mod launcher;
 pub mod notification;
 pub mod seamless;
 pub mod status_bar;
+pub mod theme;
 pub mod tiling;
 pub mod scene_builder;
 
@@ -106,6 +107,7 @@ pub use launcher::{AppCategory, ContextAction, Launcher, LauncherApp, LauncherCo
 pub use notification::{NotificationConfig, NotificationManager, NotificationPosition, ShellNotification};
 pub use seamless::{SeamlessConfig, SeamlessManager, SeamlessMessage, SeamlessMode, SeamlessWindow, SeamlessWindowType};
 pub use status_bar::{ShellStatusBar, StatusBarConfig, StatusBarItem, StatusBarItemKind, StatusBarSlot};
+pub use theme::ShellTheme;
 pub use tiling::{SnapZone, TilingConfig, TilingEngine, TilingLayoutKind, TilingMode};
 
 #[cfg(test)]
