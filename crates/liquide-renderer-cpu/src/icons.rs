@@ -754,6 +754,149 @@ static ICON_TRASH: IconDef = IconDef {
 };
 
 // ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
+/// Map a numeric icon ID (used in scene nodes) to an [`IconId`].
+#[must_use]
+pub fn icon_id_from_u32(id: u32) -> Option<IconId> {
+    match id {
+        1 => Some(IconId::FileManager),
+        2 => Some(IconId::Terminal),
+        3 => Some(IconId::Browser),
+        4 => Some(IconId::Settings),
+        5 => Some(IconId::Calculator),
+        6 => Some(IconId::TextEditor),
+        7 => Some(IconId::Music),
+        8 => Some(IconId::Camera),
+        9 => Some(IconId::Mail),
+        10 => Some(IconId::Calendar),
+        11 => Some(IconId::Clock),
+        12 => Some(IconId::Wifi),
+        13 => Some(IconId::Battery),
+        14 => Some(IconId::Notification),
+        15 => Some(IconId::Search),
+        16 => Some(IconId::Power),
+        17 => Some(IconId::Volume),
+        18 => Some(IconId::Trash),
+        _ => None,
+    }
+}
+
+/// Draw a built-in icon into the framebuffer.
+///
+/// The icon is scaled to fill `bounds` and drawn with the given `color`.
+/// The first shape uses `color`; subsequent detail shapes use a contrasting
+/// colour (darker or lighter) to create visual depth.
+pub fn draw_icon(
+    fb: &mut liquide_compositor::framebuffer::FrameBuffer,
+    icon_id: u32,
+    bounds: liquide_compositor::geometry::Rect,
+    color: liquide_compositor::pixel::Color,
+) {
+    let Some(id) = icon_id_from_u32(icon_id) else {
+        // Unknown icon: draw a simple filled rect
+        crate::rasterizer::fill_rect(
+            fb,
+            bounds,
+            color,
+            liquide_compositor::pixel::BlendMode::SrcOver,
+        );
+        return;
+    };
+
+    let def = get_icon(id);
+    for (i, shape) in def.shapes.iter().enumerate() {
+        // First shape = primary color, subsequent = detail color
+        let c = if i == 0 {
+            color
+        } else {
+            detail_color(color)
+        };
+
+        match *shape {
+            IconShape::FilledRect { x, y, w, h } => {
+                let r = scale_rect(bounds, x, y, w, h);
+                crate::rasterizer::fill_rect(
+                    fb, r, c,
+                    liquide_compositor::pixel::BlendMode::SrcOver,
+                );
+            }
+            IconShape::FilledCircle { cx, cy, r } => {
+                let px = bounds.x + cx * bounds.width;
+                let py = bounds.y + cy * bounds.height;
+                let pr = r * bounds.width.min(bounds.height);
+                let r_rect = liquide_compositor::geometry::Rect::new(
+                    px - pr, py - pr, pr * 2.0, pr * 2.0,
+                );
+                crate::rasterizer::fill_rect(
+                    fb, r_rect, c,
+                    liquide_compositor::pixel::BlendMode::SrcOver,
+                );
+            }
+            IconShape::Line { x1, y1, x2, y2, width } => {
+                let px1 = bounds.x + x1 * bounds.width;
+                let py1 = bounds.y + y1 * bounds.height;
+                let px2 = bounds.x + x2 * bounds.width;
+                let py2 = bounds.y + y2 * bounds.height;
+                let pw = width * bounds.width.min(bounds.height);
+                // Approximate line as a filled rect along the major axis
+                let lx = px1.min(px2);
+                let ly = py1.min(py2);
+                let lw = (px2 - px1).abs().max(pw);
+                let lh = (py2 - py1).abs().max(pw);
+                let r = liquide_compositor::geometry::Rect::new(lx, ly, lw, lh);
+                crate::rasterizer::fill_rect(
+                    fb, r, c,
+                    liquide_compositor::pixel::BlendMode::SrcOver,
+                );
+            }
+            IconShape::RoundedRect { x, y, w, h, .. } => {
+                let r = scale_rect(bounds, x, y, w, h);
+                crate::rasterizer::fill_rect(
+                    fb, r, c,
+                    liquide_compositor::pixel::BlendMode::SrcOver,
+                );
+            }
+        }
+    }
+}
+
+/// Scale a normalized rect to pixel coordinates within `bounds`.
+fn scale_rect(
+    bounds: liquide_compositor::geometry::Rect,
+    nx: f32, ny: f32, nw: f32, nh: f32,
+) -> liquide_compositor::geometry::Rect {
+    liquide_compositor::geometry::Rect::new(
+        bounds.x + nx * bounds.width,
+        bounds.y + ny * bounds.height,
+        nw * bounds.width,
+        nh * bounds.height,
+    )
+}
+
+/// Produce a contrasting detail colour from the primary icon colour.
+fn detail_color(c: liquide_compositor::pixel::Color) -> liquide_compositor::pixel::Color {
+    // If the colour is dark, lighten; if light, darken.
+    let luma = (c.r as u16 + c.g as u16 + c.b as u16) / 3;
+    if luma > 128 {
+        liquide_compositor::pixel::Color::new(
+            c.r.saturating_sub(60),
+            c.g.saturating_sub(60),
+            c.b.saturating_sub(60),
+            c.a,
+        )
+    } else {
+        liquide_compositor::pixel::Color::new(
+            c.r.saturating_add(60),
+            c.g.saturating_add(60),
+            c.b.saturating_add(60),
+            c.a,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

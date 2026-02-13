@@ -530,6 +530,29 @@ impl SoftwareRenderer {
 
             // Root and Workspace are structural, not visual
             SceneNodeKind::Root | SceneNodeKind::Workspace { .. } => {}
+
+            SceneNodeKind::Text { ref text, ref color, scale } => {
+                let mut c = *color;
+                if opacity < 1.0 {
+                    c.a = (c.a as f32 * opacity + 0.5) as u8;
+                }
+                crate::bitmap_font::draw_text(
+                    fb,
+                    text,
+                    bounds.x as i32,
+                    bounds.y as i32,
+                    c,
+                    scale,
+                );
+            }
+
+            SceneNodeKind::Icon { icon_id, ref color } => {
+                let mut c = *color;
+                if opacity < 1.0 {
+                    c.a = (c.a as f32 * opacity + 0.5) as u8;
+                }
+                crate::icons::draw_icon(fb, *icon_id, bounds, c);
+            }
         }
     }
 }
