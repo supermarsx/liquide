@@ -110,6 +110,12 @@ impl LodManager {
         self.performance_mode = mode;
     }
 
+    /// Get the current performance mode.
+    #[must_use]
+    pub fn get_performance_mode(&self) -> PerformanceMode {
+        self.performance_mode
+    }
+
     /// Update viewport dimensions.
     pub fn resize(&mut self, width: f32, height: f32) {
         self.viewport_width = width;

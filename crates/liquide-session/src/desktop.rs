@@ -44,6 +44,9 @@ struct RenderJob {
     /// When true, blur is temporarily suppressed for interactive
     /// responsiveness (e.g., during window drag/resize).
     suppress_blur: bool,
+    /// When true, use aggressive performance optimizations (LOD Performance mode).
+    /// Enabled during drag/resize for maximum snappiness.
+    performance_mode: bool,
 }
 
 /// A completed rendered frame sent back from the render thread.
@@ -441,12 +444,14 @@ impl DesktopCompositor {
 
         // 5. Send to render thread.
         let tile_size = self.compositor.tile_size();
+        let is_dragging = self.shell.is_dragging();
         let job = RenderJob {
             flat_nodes,
             width: self.width,
             height: self.height,
             tile_size,
-            suppress_blur: self.shell.is_dragging(),
+            suppress_blur: is_dragging,
+            performance_mode: is_dragging,
         };
 
         if let Some(ref tx) = self.render_tx {
@@ -613,19 +618,27 @@ impl DesktopCompositor {
                     // Render.
                     let t = Instant::now();
 
-                    // Suppress blur during interactive drag/resize for
-                    // snappy feedback. Restored immediately after.
+                    // Suppress blur and use aggressive LOD during interactive
+                    // drag/resize for maximum snappiness. Restored immediately after.
                     let saved_blur = renderer.blur_enabled();
+                    let saved_lod_mode = renderer.get_lod_performance_mode();
+                    
                     if latest_job.suppress_blur && saved_blur {
                         renderer.set_blur_enabled(false);
+                    }
+                    if latest_job.performance_mode {
+                        renderer.set_lod_performance_mode(liquide_renderer_cpu::lod::PerformanceMode::Performance);
                     }
 
                     let _ = renderer.render(&latest_job.flat_nodes, framebuf, &damage);
 
-                    // Restore blur state so it re-engages on the next
+                    // Restore rendering quality so it re-engages on the next
                     // non-drag frame.
                     if latest_job.suppress_blur && saved_blur {
                         renderer.set_blur_enabled(true);
+                    }
+                    if latest_job.performance_mode {
+                        renderer.set_lod_performance_mode(saved_lod_mode);
                     }
 
                     let render_ms = t.elapsed().as_secs_f64() * 1000.0;

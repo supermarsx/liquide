@@ -305,6 +305,12 @@ impl SoftwareRenderer {
         self.lod_manager.set_performance_mode(mode);
     }
 
+    /// Get the current LOD performance mode.
+    #[must_use]
+    pub fn get_lod_performance_mode(&self) -> PerformanceMode {
+        self.lod_manager.get_performance_mode()
+    }
+
     /// Enable or disable adaptive LOD.
     pub fn set_adaptive_lod_enabled(&mut self, enabled: bool) {
         self.lod_manager.set_adaptive_enabled(enabled);
