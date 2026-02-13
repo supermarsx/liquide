@@ -551,7 +551,7 @@ impl SoftwareRenderer {
                 if opacity < 1.0 {
                     c.a = (c.a as f32 * opacity + 0.5) as u8;
                 }
-                crate::icons::draw_icon(fb, *icon_id, bounds, c);
+                crate::icons::draw_icon(fb, *icon_id, bounds, c, &self.srgb_lut);
             }
         }
     }
