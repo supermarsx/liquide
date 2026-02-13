@@ -663,6 +663,16 @@ impl Shell {
         self.drag_state.is_some()
     }
 
+    /// Get the ID of the window currently being dragged, if any.
+    #[must_use]
+    pub fn dragged_window(&self) -> Option<WindowId> {
+        match self.drag_state {
+            Some(DragState::Moving { window_id, .. }) => Some(window_id),
+            Some(DragState::Resizing { window_id, .. }) => Some(window_id),
+            None => None,
+        }
+    }
+
     /// Map a decoration hit zone to the appropriate cursor shape.
     fn cursor_for_hit_zone(zone: HitZone) -> CursorShape {
         match zone {

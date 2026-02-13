@@ -83,6 +83,29 @@ pub fn hit_test_decoration(
     let right = window_bounds.x + window_bounds.width;
     let top = window_bounds.y - tbh;
     let bottom = window_bounds.y + window_bounds.height;
+
+    // Title bar buttons (check first for priority over resize corners)
+    if y >= top && y < window_bounds.y {
+        let close_x = right - btn - 4.0;
+        let max_x = close_x - btn - 4.0;
+        let min_x = max_x - btn - 4.0;
+        let aot_x = min_x - btn - 4.0;
+        let btn_y_center = top + tbh / 2.0;
+
+        if x >= close_x && x < close_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
+            return HitZone::CloseButton;
+        }
+        if x >= max_x && x < max_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
+            return HitZone::MaximizeButton;
+        }
+        if x >= min_x && x < min_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
+            return HitZone::MinimizeButton;
+        }
+        if x >= aot_x && x < aot_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
+            return HitZone::AlwaysOnTopButton;
+        }
+    }
+
     let corner_size = bw * 2.5; // Larger corner zones
 
     // Resize corners (prioritize corners over edges)
@@ -113,27 +136,8 @@ pub fn hit_test_decoration(
         return HitZone::ResizeBottom;
     }
 
-    // Title bar area
+    // Title bar area (if not a button)
     if y < window_bounds.y {
-        let close_x = right - btn - 4.0;
-        let max_x = close_x - btn - 4.0;
-        let min_x = max_x - btn - 4.0;
-        let aot_x = min_x - btn - 4.0;
-        let btn_y_center = top + tbh / 2.0;
-
-        if x >= close_x && x < close_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
-            return HitZone::CloseButton;
-        }
-        if x >= max_x && x < max_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
-            return HitZone::MaximizeButton;
-        }
-        if x >= min_x && x < min_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
-            return HitZone::MinimizeButton;
-        }
-        if x >= aot_x && x < aot_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
-            return HitZone::AlwaysOnTopButton;
-        }
-
         return HitZone::TitleBar;
     }
 

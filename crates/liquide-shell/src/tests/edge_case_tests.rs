@@ -306,9 +306,15 @@ fn decoration_exact_boundary_top_left() {
 fn decoration_exact_boundary_bottom_right() {
     let bounds = Rect::new(100.0, 130.0, 400.0, 300.0);
     let style = DecorationStyle::default();
-    // Just inside bottom-right
+    // Point near bottom-right corner is now a resize zone due to resize_tolerance
+    // corner_size = resize_tolerance * 2.5 = 8.0 * 2.5 = 20px
+    // Corner starts at (right-20, bottom-20) = (480, 410)
     let zone = hit_test_decoration(bounds, &style, 499.9, 429.9);
-    assert_eq!(zone, HitZone::Client);
+    assert_eq!(zone, HitZone::ResizeBottomRight);
+    
+    // Test a point well inside the client area
+    let zone_client = hit_test_decoration(bounds, &style, 450.0, 400.0);
+    assert_eq!(zone_client, HitZone::Client);
 }
 
 #[test]

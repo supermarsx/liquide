@@ -434,7 +434,7 @@ impl DesktopCompositor {
         self.compositor.begin_frame();
 
         // 4. Flatten.
-        let flat_nodes = self
+        let mut flat_nodes = self
             .compositor
             .scene()
             .map(|s| s.flatten())
@@ -444,14 +444,53 @@ impl DesktopCompositor {
 
         // 5. Send to render thread.
         let tile_size = self.compositor.tile_size();
-        let is_dragging = self.shell.is_dragging();
+        let dragged_window = self.shell.dragged_window();
+
+        // Skeleton mode during drag: only render window frames/decorations for
+        // the dragged window, skip expensive surface content for that window only.
+        // Other windows continue rendering normally.
+        if let Some(window_id) = dragged_window {
+            use liquide_compositor::scene::SceneNodeKind;
+            
+            // Calculate node ID range for the dragged window
+            // From scene_builder.rs: NODE_WINDOW_BASE=10_000, NODE_WINDOW_STRIDE=10
+            const NODE_WINDOW_BASE: u64 = 10_000;
+            const NODE_WINDOW_STRIDE: u64 = 10;
+            let win_base = NODE_WINDOW_BASE + window_id.0 * NODE_WINDOW_STRIDE;
+            let win_end = win_base + NODE_WINDOW_STRIDE;
+            
+            let original_count = flat_nodes.len();
+            flat_nodes.retain(|node| {
+                let node_id = node.id;
+                let is_dragged_window_node = node_id >= win_base && node_id < win_end;
+                
+                if is_dragged_window_node {
+                    // For dragged window: only keep basic decoration border, no shadows, no content
+                    matches!(
+                        node.kind,
+                        SceneNodeKind::Decoration { .. }
+                    )
+                } else {
+                    // All other windows and UI elements: render normally
+                    true
+                }
+            });
+            if self.debug_perf {
+                debug!(
+                    window_id = window_id.0,
+                    original_nodes = original_count,
+                    skeleton_nodes = flat_nodes.len(),
+                    "skeleton mode active for dragged window"
+                );
+            }
+        }
         let job = RenderJob {
             flat_nodes,
             width: self.width,
             height: self.height,
             tile_size,
-            suppress_blur: is_dragging,
-            performance_mode: is_dragging,
+            suppress_blur: dragged_window.is_some(),
+            performance_mode: dragged_window.is_some(),
         };
 
         if let Some(ref tx) = self.render_tx {
@@ -622,12 +661,14 @@ impl DesktopCompositor {
                     // drag/resize for maximum snappiness. Restored immediately after.
                     let saved_blur = renderer.blur_enabled();
                     let saved_lod_mode = renderer.get_lod_performance_mode();
-                    
+
                     if latest_job.suppress_blur && saved_blur {
                         renderer.set_blur_enabled(false);
                     }
                     if latest_job.performance_mode {
-                        renderer.set_lod_performance_mode(liquide_renderer_cpu::lod::PerformanceMode::Performance);
+                        renderer.set_lod_performance_mode(
+                            liquide_renderer_cpu::lod::PerformanceMode::Performance,
+                        );
                     }
 
                     let _ = renderer.render(&latest_job.flat_nodes, framebuf, &damage);
