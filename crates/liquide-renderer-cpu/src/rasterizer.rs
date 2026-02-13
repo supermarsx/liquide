@@ -50,21 +50,25 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
     }
 
     if mode == BlendMode::Src || pm.is_opaque() {
-        // Fast path: build one row of repeated BGRA pixels, then
-        // memcpy it into every scanline.
+        // Fast path: stamp a 4-byte BGRA pattern across every scanline.
+        // First row is filled by writing the pattern in-place, then
+        // subsequent rows are memcpy'd from the first row (no heap alloc).
         let bgra = pm.to_bgra_bytes();
         let row_bytes = w * 4;
+        let stride = fb.stride as usize;
 
-        // Build template row (one allocation, reused for all rows).
-        let mut template = vec![0u8; row_bytes];
-        for chunk in template.chunks_exact_mut(4) {
+        // Fill the first row in-place.
+        let first_start = y0 as usize * stride + x0 as usize * 4;
+        for chunk in fb.pixels[first_start..first_start + row_bytes].chunks_exact_mut(4) {
             chunk.copy_from_slice(&bgra);
         }
 
-        let stride = fb.stride as usize;
-        for y in y0..y1 {
+        // Copy the first row to all remaining rows.
+        for y in (y0 + 1)..y1 {
             let row_start = y as usize * stride + x0 as usize * 4;
-            fb.pixels[row_start..row_start + row_bytes].copy_from_slice(&template);
+            // Safety: source and destination don't overlap because they
+            // are on different scanlines (y0 != y).
+            fb.pixels.copy_within(first_start..first_start + row_bytes, row_start);
         }
     } else if mode == BlendMode::SrcOver {
         // Semi-transparent fill: blend inline using direct slice access

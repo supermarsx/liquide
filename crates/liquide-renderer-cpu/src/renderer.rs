@@ -154,33 +154,14 @@ impl Renderer for SoftwareRenderer {
         // Drain any completed async blur results before rendering.
         self.blur_worker.poll_results();
 
-        let tile_size = damage.tile_size;
         let classified_tiles: Vec<DamageTile> = damage.tiles.clone();
 
-        // For each damaged tile, determine which nodes overlap it and render them.
-        for tile in &damage.tiles {
-            let tile_rect = Rect::new(
-                (tile.x * tile_size) as f32,
-                (tile.y * tile_size) as f32,
-                tile_size as f32,
-                tile_size as f32,
-            );
-
-            // Render each node that intersects this tile, in z-order
-            for node in nodes {
-                if !node.absolute_bounds.intersects(&tile_rect) {
-                    continue;
-                }
-
-                // Apply clip if present
-                if let Some(clip) = &node.clip {
-                    if !clip.intersects(&tile_rect) {
-                        continue;
-                    }
-                }
-
-                self.render_node(node, fb);
-            }
+        // Render each node exactly once in z-order.
+        // render_node writes directly to the full framebuffer, so there is
+        // no benefit from per-tile iteration — it would only cause each
+        // node to be rendered redundantly for every tile it overlaps.
+        for node in nodes {
+            self.render_node(node, fb);
         }
 
         Ok(classified_tiles)

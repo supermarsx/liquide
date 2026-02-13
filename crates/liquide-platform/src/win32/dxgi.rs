@@ -359,7 +359,8 @@ impl DxgiPresenter {
     /// Present a BGRA8 pixel buffer to the swap chain.
     ///
     /// Uploads `pixels` into the staging texture, copies to the back
-    /// buffer, and calls `IDXGISwapChain::Present(1, 0)` for vsync.
+    /// buffer, and calls `IDXGISwapChain::Present(0, 0)` (immediate, no
+    /// vsync wait — the caller is responsible for frame rate limiting).
     pub fn present(&mut self, pixels: &[u8], width: u32, height: u32, stride: u32) -> Result<(), String> {
         if width != self.width || height != self.height {
             self.resize(width, height)?;
@@ -388,20 +389,31 @@ impl DxgiPresenter {
                 return Err(format!("Map staging texture failed: 0x{:08X}", hr));
             }
 
-            // Copy pixel rows (handle stride mismatch between CPU and GPU).
+            // Copy pixels into the staging texture.
             let src_stride = stride as usize;
             let dst_stride = mapped.row_pitch as usize;
             let row_bytes = (width as usize) * 4;
             let dst = mapped.data as *mut u8;
+            let total_bytes = row_bytes * height as usize;
 
-            for y in 0..height as usize {
-                let src_off = y * src_stride;
-                let dst_off = y * dst_stride;
+            if src_stride == dst_stride && src_stride == row_bytes {
+                // Strides match and are tightly packed — single bulk copy.
                 ptr::copy_nonoverlapping(
-                    pixels.as_ptr().add(src_off),
-                    dst.add(dst_off),
-                    row_bytes,
+                    pixels.as_ptr(),
+                    dst,
+                    total_bytes,
                 );
+            } else {
+                // Stride mismatch — copy row by row.
+                for y in 0..height as usize {
+                    let src_off = y * src_stride;
+                    let dst_off = y * dst_stride;
+                    ptr::copy_nonoverlapping(
+                        pixels.as_ptr().add(src_off),
+                        dst.add(dst_off),
+                        row_bytes,
+                    );
+                }
             }
 
             // Unmap.
@@ -442,7 +454,9 @@ impl DxgiPresenter {
             // Release back buffer reference.
             Self::release(back_buffer);
 
-            // Present with vsync.
+            // Present immediately (no vsync wait).
+            // The desktop event loop already throttles to the target frame
+            // rate, so blocking on vsync here just adds latency.
             // IDXGISwapChain::Present = vtable slot 8
             type PresentFn = unsafe extern "system" fn(
                 this: *mut c_void,
@@ -450,7 +464,7 @@ impl DxgiPresenter {
                 flags: u32,
             ) -> HRESULT;
             let present: PresentFn = std::mem::transmute(vtable_fn(self.swap_chain, 8));
-            let hr = present(self.swap_chain, 1, 0);
+            let hr = present(self.swap_chain, 0, 0);
             if hr != S_OK {
                 return Err(format!("Present failed: 0x{:08X}", hr));
             }
