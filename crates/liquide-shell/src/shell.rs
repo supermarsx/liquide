@@ -1044,7 +1044,8 @@ impl Shell {
         // Session menu (anchored below the session button on the status bar)
         if self.session_menu_visible {
             let menu_w = 180.0_f32;
-            let menu_h = 160.0_f32;
+            let item_h = 36.0_f32;
+            let menu_h = 16.0 + self.session_menu_items.len() as f32 * item_h;
             let bar_h = self.status_bar.config().height as f32;
             let menu_x = screen.width - menu_w - 8.0;
             let menu_y = bar_h + 4.0;
@@ -1062,31 +1063,67 @@ impl Shell {
                 NodeProperties::new(menu_bounds).with_z_order(990),
             ));
 
-            let items_data = [
-                (16_u32, "Lock"),
-                (16, "Log Out"),
-                (16, "Restart"),
-                (16, "Shut Down"),
-            ];
-            for (i, (icon_id, label)) in items_data.iter().enumerate() {
-                let iy = menu_y + 8.0 + i as f32 * 36.0;
-                let item_rect = Rect::new(menu_x + 8.0, iy, menu_w - 16.0, 32.0);
+            for (i, item) in self.session_menu_items.iter().enumerate() {
+                let iy = menu_y + 8.0 + i as f32 * item_h;
+                let icon_id = icon_id_for_name(&item.icon);
                 root.add_child(icon_node(
                     NODE_SESSION_MENU + 10 + i as u64 * 2,
-                    *icon_id,
+                    icon_id,
                     theme.status_bar_text,
                     Rect::new(menu_x + 14.0, iy + 4.0, 24.0, 24.0),
                     991,
                 ));
                 root.add_child(text_node(
                     NODE_SESSION_MENU + 11 + i as u64 * 2,
-                    label.to_string(),
+                    item.label.clone(),
                     theme.status_bar_text,
                     Rect::new(menu_x + 44.0, iy + 6.0, menu_w - 60.0, 20.0),
                     991,
                     1,
                 ));
-                let _ = item_rect; // used for hit testing in handle_platform_event
+            }
+        }
+
+        // Desktop right-click context menu
+        if self.context_menu_visible {
+            let ctx_items = ContextMenuItem::defaults();
+            let ctx_item_h = 36.0_f32;
+            let ctx_w = 260.0_f32;
+            let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
+            // Clamp position so menu stays on-screen.
+            let ctx_x = self.context_menu_pos.x.min(screen.width - ctx_w - 4.0).max(0.0);
+            let ctx_y = self.context_menu_pos.y.min(screen.height - ctx_h - 4.0).max(0.0);
+            let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
+
+            root.add_child(SceneNode::new(
+                NODE_CONTEXT_MENU,
+                SceneNodeKind::Glass(GlassParams {
+                    blur_radius: 20,
+                    tint_color: theme.dock_glass_tint,
+                    inner_glow: true,
+                    parallax: false,
+                }),
+                NodeProperties::new(ctx_bounds).with_z_order(995),
+            ));
+
+            for (i, item) in ctx_items.iter().enumerate() {
+                let iy = ctx_y + 8.0 + i as f32 * ctx_item_h;
+                let icon_id = icon_id_for_name(&item.icon);
+                root.add_child(icon_node(
+                    NODE_CONTEXT_MENU + 10 + i as u64 * 2,
+                    icon_id,
+                    theme.status_bar_text,
+                    Rect::new(ctx_x + 12.0, iy + 4.0, 24.0, 24.0),
+                    996,
+                ));
+                root.add_child(text_node(
+                    NODE_CONTEXT_MENU + 11 + i as u64 * 2,
+                    item.label.clone(),
+                    theme.status_bar_text,
+                    Rect::new(ctx_x + 44.0, iy + 6.0, ctx_w - 60.0, 20.0),
+                    996,
+                    1,
+                ));
             }
         }
 
@@ -1280,10 +1317,16 @@ impl Shell {
                     }
                 }
 
+                // When the context menu is visible, Escape closes it.
+                if self.context_menu_visible && ke.key == KeyCode::Escape {
+                    self.context_menu_visible = false;
+                    return Some(ShellAction::OpenLauncher); // triggers redraw
+                }
+
                 // When the session menu is visible, Escape closes it.
                 if self.session_menu_visible && ke.key == KeyCode::Escape {
                     self.session_menu_visible = false;
-                    return Some(ShellAction::ShowDesktop); // triggers redraw
+                    return Some(ShellAction::OpenLauncher); // triggers redraw
                 }
 
                 // Normal shortcut dispatch.
@@ -1319,33 +1362,75 @@ impl Shell {
                         x,
                         y,
                     } => {
-                        if *button != MouseButton::Left || *state != ButtonState::Pressed {
+                        if *state != ButtonState::Pressed {
                             return None;
                         }
                         let pt = Point::new(*x, *y);
 
+                        // --- Right-click: desktop context menu ---
+                        if *button == MouseButton::Right {
+                            // Close any open menus first.
+                            self.session_menu_visible = false;
+
+                            // Only show context menu when clicking empty desktop
+                            // (not on dock, status bar, or window).
+                            let bar_bounds = self.status_bar.compute_bounds(self.screen_rect);
+                            let dock_bounds = self.dock.compute_bounds(self.screen_rect);
+                            let on_window = self.visible_windows().iter().rev().any(|w| w.bounds.contains(pt));
+                            if !bar_bounds.contains(pt) && !dock_bounds.contains(pt) && !on_window {
+                                self.context_menu_visible = !self.context_menu_visible;
+                                self.context_menu_pos = pt;
+                                return Some(ShellAction::OpenLauncher); // trigger redraw
+                            }
+                            return None;
+                        }
+
+                        if *button != MouseButton::Left {
+                            return None;
+                        }
+
+                        // --- Context menu interaction (left click) ---
+                        if self.context_menu_visible {
+                            let ctx_items = ContextMenuItem::defaults();
+                            let ctx_item_h = 36.0_f32;
+                            let ctx_w = 260.0_f32;
+                            let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
+                            let ctx_x = self.context_menu_pos.x.min(self.screen_rect.width - ctx_w - 4.0).max(0.0);
+                            let ctx_y = self.context_menu_pos.y.min(self.screen_rect.height - ctx_h - 4.0).max(0.0);
+                            let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
+
+                            if ctx_bounds.contains(pt) {
+                                let rel_y = *y - ctx_y - 8.0;
+                                let idx = (rel_y / ctx_item_h) as usize;
+                                self.context_menu_visible = false;
+                                if idx < ctx_items.len() {
+                                    return Some(ctx_items[idx].action.clone());
+                                }
+                                return None;
+                            }
+                            // Click outside context menu → close it.
+                            self.context_menu_visible = false;
+                            // Fall through to normal click handling.
+                        }
+
                         // --- Session menu interaction ---
                         if self.session_menu_visible {
                             let menu_w = 180.0_f32;
-                            let menu_h = 160.0_f32;
+                            let item_h = 36.0_f32;
+                            let menu_h = 16.0 + self.session_menu_items.len() as f32 * item_h;
                             let bar_h = self.status_bar.config().height as f32;
                             let menu_x = self.screen_rect.width - menu_w - 8.0;
                             let menu_y = bar_h + 4.0;
                             let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
 
                             if menu_bounds.contains(pt) {
-                                // Determine which item was clicked.
                                 let rel_y = *y - menu_y - 8.0;
-                                let idx = (rel_y / 36.0) as usize;
+                                let idx = (rel_y / item_h) as usize;
                                 self.session_menu_visible = false;
-                                return match idx {
-                                    0 => Some(ShellAction::LockSession),
-                                    3 => {
-                                        // Shut Down → no-op for now, just close menu
-                                        None
-                                    }
-                                    _ => None,
-                                };
+                                if idx < self.session_menu_items.len() {
+                                    return Some(self.session_menu_items[idx].action.clone());
+                                }
+                                return None;
                             }
                             // Click outside menu → close it.
                             self.session_menu_visible = false;

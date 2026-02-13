@@ -17,6 +17,7 @@ pub const NODE_WINDOW_STRIDE: u64 = 10;
 pub const NODE_NOTIFICATION_BASE: u64 = 100_000;
 pub const NODE_LAUNCHER: u64 = 200_000;
 pub const NODE_SESSION_MENU: u64 = 300_000;
+pub const NODE_CONTEXT_MENU: u64 = 400_000;
 pub const NODE_CURSOR: u64 = 999_999;
 
 /// Helper to create a simple solid-color rectangle node.
