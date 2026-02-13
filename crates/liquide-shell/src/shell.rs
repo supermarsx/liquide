@@ -1195,6 +1195,60 @@ impl Shell {
             root.add_child(self.status_bar.build_scene(screen, theme));
         }
 
+        // App menu dropdown (macOS-style, anchored below app title in status bar)
+        if let Some(ref app_id) = self.app_menu_open {
+            let menu_w = 200.0_f32;
+            let item_h = 32.0_f32;
+            let menu_items = vec![
+                "Minimize",
+                "Maximize",
+                "Close",
+                "---",
+                "System Settings",
+                "About Liquide",
+            ];
+            let menu_h = 16.0 + menu_items.len() as f32 * item_h;
+            let bar_h = self.status_bar.config().height as f32;
+            let menu_x = 80.0; // Position below app title area
+            let menu_y = bar_h + 4.0;
+            let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
+
+            root.add_child(SceneNode::new(
+                NODE_APP_MENU,
+                SceneNodeKind::Glass(GlassParams {
+                    blur_radius: 20,
+                    tint_color: theme.dock_glass_tint,
+                    inner_glow: true,
+                    parallax: false,
+                }),
+                NodeProperties::new(menu_bounds).with_z_order(995),
+            ));
+
+            for (i, item_text) in menu_items.iter().enumerate() {
+                let iy = menu_y + 8.0 + i as f32 * item_h;
+
+                if *item_text == "---" {
+                    // Separator
+                    root.add_child(scene_builder::solid_rect(
+                        NODE_APP_MENU + 100 + i as u64,
+                        Color::new(255, 255, 255, 40),
+                        Rect::new(menu_x + 8.0, iy + item_h / 2.0, menu_w - 16.0, 1.0),
+                        996,
+                    ));
+                } else {
+                    // Menu item
+                    root.add_child(scene_builder::text_node(
+                        NODE_APP_MENU + 200 + i as u64,
+                        item_text.to_string(),
+                        theme.status_bar_text,
+                        Rect::new(menu_x + 16.0, iy + 4.0, menu_w - 32.0, item_h - 8.0),
+                        996,
+                        1,
+                    ));
+                }
+            }
+        }
+
         // Dock
         if self.dock.is_visible() || !self.dock.config().auto_hide {
             root.add_child(self.dock.build_scene(screen, theme));
