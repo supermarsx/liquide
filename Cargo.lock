@@ -1026,6 +1026,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-fonts"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "liquide-common",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-gateway"
 version = "0.1.0"
 dependencies = [

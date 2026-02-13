@@ -93,21 +93,14 @@ pub fn draw_text(
 ) {
     let font = BitmapFont::new();
     let s = scale.max(1) as i32;
-    let cache = greyscale_cache();
     let mut cx = x;
 
     for ch in text.chars() {
         if ch == '\n' {
             continue;
         }
-        let code = ch as u32;
-        let cache_idx = if code >= 32 && code <= 126 {
-            Some((code - 32) as usize)
-        } else {
-            None
-        };
         let glyph = font.glyph(ch);
-        draw_glyph(fb, glyph, cache_idx, cache, cx, y, color, s);
+        draw_glyph(fb, glyph, cx, y, color, s);
         cx += BitmapFont::GLYPH_WIDTH as i32 * s;
     }
 }

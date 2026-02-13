@@ -18,6 +18,7 @@ members = [
     "crates/liquide-encoder",
     "crates/liquide-encoder-hw",
     "crates/liquide-css",
+    "crates/liquide-fonts",
     "crates/liquide-shell",
 
     # Plugins & extensions
@@ -131,6 +132,7 @@ liquide-renderer-gpu = { path = "crates/liquide-renderer-gpu" }
 liquide-encoder = { path = "crates/liquide-encoder" }
 liquide-encoder-hw = { path = "crates/liquide-encoder-hw" }
 liquide-css = { path = "crates/liquide-css" }
+liquide-fonts = { path = "crates/liquide-fonts" }
 liquide-shell = { path = "crates/liquide-shell" }
 liquide-plugin-host = { path = "crates/liquide-plugin-host" }
 liquide-plugin-abi = { path = "crates/liquide-plugin-abi" }

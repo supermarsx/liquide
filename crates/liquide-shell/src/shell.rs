@@ -909,6 +909,7 @@ impl Shell {
     /// status bar, dock, notifications, and launcher overlay.
     pub fn build_scene(&self) -> SceneNode {
         use crate::scene_builder::*;
+        use liquide_compositor::scene::GlassParams;
 
         let screen = self.screen_rect;
         let theme = &self.theme;
@@ -1051,7 +1052,6 @@ impl Shell {
             let menu_y = bar_h + 4.0;
             let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
 
-            use liquide_compositor::scene::GlassParams;
             root.add_child(SceneNode::new(
                 NODE_SESSION_MENU,
                 SceneNodeKind::Glass(GlassParams {
