@@ -10,6 +10,7 @@ rust-version.workspace = true
 liquide-compositor.workspace = true
 liquide-input.workspace = true
 liquide-interop.workspace = true
+liquide-platform.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

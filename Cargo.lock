@@ -1233,6 +1233,7 @@ dependencies = [
  "liquide-compositor",
  "liquide-input",
  "liquide-interop",
+ "liquide-platform",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

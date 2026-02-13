@@ -1060,3 +1060,106 @@ mod macos_impl {
 
 #[cfg(target_os = "macos")]
 pub use macos_impl::MacOSInputDevice;
+
+// ── DeviceManager ───────────────────────────────────────────────────────
+
+use crate::event::{EventSource, InputPacket};
+
+/// Manages multiple input devices, polls them for events, and bundles
+/// events into [`InputPacket`]s with sequence numbers.
+pub struct DeviceManager {
+    devices: Vec<Box<dyn InputDevice>>,
+    sequence: u64,
+}
+
+impl DeviceManager {
+    /// Create a new device manager with no devices.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            devices: Vec::new(),
+            sequence: 0,
+        }
+    }
+
+    /// Create a device manager pre-populated with the platform-default
+    /// input device (Win32, evdev, or macOS depending on target OS).
+    #[must_use]
+    pub fn with_platform_default() -> Self {
+        let mut mgr = Self::new();
+        mgr.add_platform_default();
+        mgr
+    }
+
+    /// Add the default input device for the current platform.
+    pub fn add_platform_default(&mut self) {
+        // On Windows, add a Win32InputDevice
+        #[cfg(target_os = "windows")]
+        {
+            let dev = Win32InputDevice::new();
+            self.add_device(Box::new(dev));
+        }
+        // On Linux, we could try to open /dev/input/event* but that
+        // requires root; add a stub that returns no events.
+        #[cfg(target_os = "linux")]
+        {
+            // evdev requires specific device paths; caller should add
+            // devices manually via add_device(). Add nothing by default.
+        }
+        // On macOS, add a MacOSInputDevice
+        #[cfg(target_os = "macos")]
+        {
+            let dev = MacOSInputDevice::new();
+            self.add_device(Box::new(dev));
+        }
+    }
+
+    /// Add an input device to the manager.
+    pub fn add_device(&mut self, device: Box<dyn InputDevice>) {
+        self.devices.push(device);
+    }
+
+    /// Remove all devices.
+    pub fn clear_devices(&mut self) {
+        self.devices.clear();
+    }
+
+    /// Number of managed devices.
+    #[must_use]
+    pub fn device_count(&self) -> usize {
+        self.devices.len()
+    }
+
+    /// Poll all devices and return any pending input events as packets.
+    ///
+    /// Each event gets a monotonically increasing sequence number.
+    pub fn poll_all(&mut self) -> Vec<InputPacket> {
+        let mut packets = Vec::new();
+        for device in &mut self.devices {
+            while let Some(event) = device.poll() {
+                self.sequence += 1;
+                packets.push(InputPacket {
+                    event,
+                    source: EventSource {
+                        surface_id: 0,
+                        device_id: device.device_id(),
+                    },
+                    sequence: self.sequence,
+                });
+            }
+        }
+        packets
+    }
+
+    /// Current sequence counter.
+    #[must_use]
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+impl Default for DeviceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
