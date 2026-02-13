@@ -118,8 +118,9 @@ impl SoftwareRenderer {
     /// Report the most recent frame's render time so the renderer can
     /// adaptively toggle blur.  Call this after each `render()`.
     pub fn report_render_time(&mut self, render_ms: f64) {
-        // Exponential moving average with α = 0.3 (responds within ~3 frames).
-        const ALPHA: f64 = 0.3;
+        // Exponential moving average with α = 0.2 (responds within ~5 frames,
+        // smoother than α=0.3 to prevent flip-flopping).
+        const ALPHA: f64 = 0.2;
         if self.avg_render_ms <= 0.0 {
             self.avg_render_ms = render_ms;
         } else {
@@ -127,12 +128,14 @@ impl SoftwareRenderer {
         }
 
         // Auto-disable blur when average render time exceeds budget.
+        // Use wider hysteresis to prevent oscillation:
+        //   disable when > budget (16ms)
+        //   re-enable when < budget * 0.25 (4ms) — well below threshold
         if self.blur_enabled && self.avg_render_ms > self.blur_budget_ms {
             self.blur_enabled = false;
             self.blur_worker.clear_cache();
         }
-        // Re-enable when average drops to half the budget (hysteresis).
-        if !self.blur_enabled && self.avg_render_ms < self.blur_budget_ms * 0.5 {
+        if !self.blur_enabled && self.avg_render_ms < self.blur_budget_ms * 0.25 {
             self.blur_enabled = true;
         }
     }
