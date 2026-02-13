@@ -8,6 +8,8 @@ rust-version.workspace = true
 
 [dependencies]
 liquide-compositor.workspace = true
+liquide-context-menu.workspace = true
+liquide-dock.workspace = true
 liquide-input.workspace = true
 liquide-interop.workspace = true
 liquide-platform.workspace = true

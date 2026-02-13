@@ -1567,21 +1567,52 @@ impl Shell {
                         }
                         let pt = Point::new(*x, *y);
 
-                        // --- Right-click: desktop context menu ---
+                        // --- Right-click: context menus for various surfaces ---
                         if *button == MouseButton::Right {
                             // Close any open menus first.
                             self.session_menu_visible = false;
 
-                            // Only show context menu when clicking empty desktop
-                            // (not on dock, status bar, or window).
                             let bar_bounds = self.status_bar.compute_bounds(self.screen_rect);
                             let dock_bounds = self.dock.compute_bounds(self.screen_rect);
+
+                            // Right-click on status bar → show status bar context menu
+                            if bar_bounds.contains(pt) {
+                                self.context_menu_visible = !self.context_menu_visible;
+                                self.context_menu_pos = pt;
+                                return Some(ShellAction::Redraw);
+                            }
+
+                            // Right-click on dock item → show dock item context menu
+                            if dock_bounds.contains(pt) {
+                                self.context_menu_visible = !self.context_menu_visible;
+                                self.context_menu_pos = pt;
+                                return Some(ShellAction::Redraw);
+                            }
+
+                            // Right-click on a window's title bar → show window context menu
+                            let tbh = self.decoration_style.title_bar_height;
+                            let on_titlebar = self
+                                .visible_windows()
+                                .iter()
+                                .rev()
+                                .any(|w| {
+                                    let title_rect = Rect::new(w.bounds.x, w.bounds.y, w.bounds.width, tbh);
+                                    title_rect.contains(pt)
+                                        && w.flags.contains(WindowFlags::DECORATED)
+                                });
+                            if on_titlebar {
+                                self.context_menu_visible = !self.context_menu_visible;
+                                self.context_menu_pos = pt;
+                                return Some(ShellAction::Redraw);
+                            }
+
+                            // Right-click on empty desktop → desktop context menu
                             let on_window = self
                                 .visible_windows()
                                 .iter()
                                 .rev()
                                 .any(|w| w.bounds.contains(pt));
-                            if !bar_bounds.contains(pt) && !dock_bounds.contains(pt) && !on_window {
+                            if !on_window {
                                 self.context_menu_visible = !self.context_menu_visible;
                                 self.context_menu_pos = pt;
                                 return Some(ShellAction::Redraw);
