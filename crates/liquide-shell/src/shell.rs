@@ -133,6 +133,10 @@ pub struct Shell {
     context_menu_pos: Point,
     /// Configurable session dialog items.
     session_menu_items: Vec<SessionMenuItem>,
+    /// Hover index for context menu items.
+    context_menu_hover_index: Option<usize>,
+    /// Hover index for session menu items.
+    session_menu_hover_index: Option<usize>,
 }
 
 impl Shell {
@@ -186,6 +190,8 @@ impl Shell {
             context_menu_visible: false,
             context_menu_pos: Point::new(0.0, 0.0),
             session_menu_items: SessionMenuItem::defaults(),
+            context_menu_hover_index: None,
+            session_menu_hover_index: None,
         }
     }
 
@@ -234,6 +240,8 @@ impl Shell {
             context_menu_visible: false,
             context_menu_pos: Point::new(0.0, 0.0),
             session_menu_items: SessionMenuItem::defaults(),
+            context_menu_hover_index: None,
+            session_menu_hover_index: None,
         }
     }
 
@@ -1376,15 +1384,15 @@ impl Shell {
                     match ke.key {
                         KeyCode::Escape => {
                             self.launcher.close();
-                            return Some(ShellAction::OpenLauncher); // toggles → redraws
+                            return Some(ShellAction::Redraw);
                         }
                         KeyCode::ArrowUp => {
                             self.launcher.select_prev();
-                            return Some(ShellAction::OpenLauncher);
+                            return Some(ShellAction::Redraw);
                         }
                         KeyCode::ArrowDown => {
                             self.launcher.select_next();
-                            return Some(ShellAction::OpenLauncher);
+                            return Some(ShellAction::Redraw);
                         }
                         KeyCode::Enter => {
                             if let Some(kind) = self.launcher.activate_selected().cloned() {
@@ -1398,7 +1406,7 @@ impl Shell {
                             } else {
                                 self.launcher.close();
                             }
-                            return Some(ShellAction::OpenLauncher);
+                            return Some(ShellAction::Redraw);
                         }
                         KeyCode::Backspace => {
                             let q = self.launcher.query().to_string();
@@ -1406,14 +1414,14 @@ impl Shell {
                                 let new_q = &q[..q.len() - 1];
                                 self.launcher.set_query(new_q);
                             }
-                            return Some(ShellAction::OpenLauncher);
+                            return Some(ShellAction::Redraw);
                         }
                         other => {
                             if let Some(ch) = Self::keycode_to_char(other) {
                                 let mut q = self.launcher.query().to_string();
                                 q.push(ch);
                                 self.launcher.set_query(&q);
-                                return Some(ShellAction::OpenLauncher);
+                                return Some(ShellAction::Redraw);
                             }
                             return None;
                         }
@@ -1423,13 +1431,13 @@ impl Shell {
                 // When the context menu is visible, Escape closes it.
                 if self.context_menu_visible && ke.key == KeyCode::Escape {
                     self.context_menu_visible = false;
-                    return Some(ShellAction::OpenLauncher); // triggers redraw
+                    return Some(ShellAction::Redraw);
                 }
 
                 // When the session menu is visible, Escape closes it.
                 if self.session_menu_visible && ke.key == KeyCode::Escape {
                     self.session_menu_visible = false;
-                    return Some(ShellAction::OpenLauncher); // triggers redraw
+                    return Some(ShellAction::Redraw);
                 }
 
                 // Normal shortcut dispatch.
@@ -1487,7 +1495,7 @@ impl Shell {
                             if !bar_bounds.contains(pt) && !dock_bounds.contains(pt) && !on_window {
                                 self.context_menu_visible = !self.context_menu_visible;
                                 self.context_menu_pos = pt;
-                                return Some(ShellAction::OpenLauncher); // trigger redraw
+                                return Some(ShellAction::Redraw);
                             }
                             return None;
                         }
@@ -1564,7 +1572,7 @@ impl Shell {
                             if !panel_bounds.contains(pt) {
                                 // Click outside launcher → close it.
                                 self.launcher.close();
-                                return Some(ShellAction::OpenLauncher);
+                                return Some(ShellAction::Redraw);
                             }
 
                             // Click inside the item area → select and activate.
@@ -1581,7 +1589,7 @@ impl Shell {
                                         self.open_app_window(app_id);
                                     }
                                 }
-                                return Some(ShellAction::OpenLauncher);
+                                return Some(ShellAction::Redraw);
                             }
 
                             return None;
@@ -1610,9 +1618,7 @@ impl Shell {
                                         let app_id = items[i].app_id.clone();
                                         if !app_id.is_empty() {
                                             self.open_app_window(&app_id);
-                                            // Return OpenLauncher to trigger a redraw
-                                            // without minimizing all windows.
-                                            return Some(ShellAction::OpenLauncher);
+                                            return Some(ShellAction::Redraw);
                                         }
                                     }
                                     break;
@@ -1816,6 +1822,10 @@ impl Shell {
             }
             ShellAction::LockSession => {
                 // Visual feedback only — no real lock in a simulated shell.
+                true
+            }
+            ShellAction::Redraw => {
+                // No-op — just triggers a redraw.
                 true
             }
             ShellAction::LaunchDockApp(n) => {

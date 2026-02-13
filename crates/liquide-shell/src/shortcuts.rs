@@ -130,6 +130,9 @@ pub enum ShellAction {
     LaunchDockApp(u32),
     NewInstanceDockApp(u32),
     DockAppJumpList(u32),
+
+    /// No-op action that simply triggers a redraw without side-effects.
+    Redraw,
 }
 
 impl fmt::Display for ShellAction {
@@ -179,6 +182,7 @@ impl fmt::Display for ShellAction {
             Self::LaunchDockApp(n) => write!(f, "Launch Dock App {n}"),
             Self::NewInstanceDockApp(n) => write!(f, "New Instance Dock App {n}"),
             Self::DockAppJumpList(n) => write!(f, "Dock App Jump List {n}"),
+            Self::Redraw => write!(f, "Redraw"),
         }
     }
 }

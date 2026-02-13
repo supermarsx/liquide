@@ -76,6 +76,10 @@ pub struct ShellTheme {
     /// Cursor fill color.
     pub cursor_color: Color,
 
+    // Context / session menus
+    /// Hover highlight color for context and session menu items.
+    pub menu_item_hover: Color,
+
     // Loading overlay
     /// Full-screen loading overlay tint.
     pub loading_overlay: Color,
@@ -187,6 +191,7 @@ impl ShellTheme {
                 210,
             ),
             cursor_color: Color::new(255, 255, 255, 255),
+            menu_item_hover: Color::new(255, 255, 255, 30),
             loading_overlay: Color::new(0, 0, 0, 180),
             loading_glass_tint: Color::new(
                 c.surface.r.saturating_add(7),
@@ -239,6 +244,7 @@ impl ShellTheme {
             launcher_item_normal: Color::new(240, 240, 245, 140),
             notification_glass_tint: Color::new(248, 248, 252, 230),
             cursor_color: Color::new(0, 0, 0, 255),
+            menu_item_hover: Color::new(0, 0, 0, 20),
             loading_overlay: Color::new(255, 255, 255, 160),
             loading_glass_tint: Color::new(245, 245, 245, 230),
             loading_text: Color::new(c.foreground.r, c.foreground.g, c.foreground.b, 255),
@@ -292,6 +298,7 @@ impl ShellTheme {
 
             // Cursor
             cursor_color: Color::new(255, 255, 255, 255),
+            menu_item_hover: Color::new(255, 255, 255, 40),
 
             // Loading overlay
             loading_overlay: Color::new(0, 0, 0, 180),
@@ -347,6 +354,7 @@ impl ShellTheme {
 
             // Cursor
             cursor_color: Color::new(0, 0, 0, 255),
+            menu_item_hover: Color::new(0, 0, 0, 20),
 
             // Loading overlay
             loading_overlay: Color::new(255, 255, 255, 160),

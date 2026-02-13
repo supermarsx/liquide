@@ -305,11 +305,13 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::Decoration {
+                title,
+                title_color,
                 background,
                 border_color,
                 border_width,
                 corner_radius,
-                ..
+                button_state,
             } => {
                 // Title bar background as a rounded rect (top corners only)
                 let mut bg = *background;
@@ -340,6 +342,94 @@ impl SoftwareRenderer {
                         BlendMode::SrcOver,
                         &self.srgb_lut,
                     );
+                }
+
+                // --- Window control buttons (macOS-style circles) ---
+                // Layout: right-aligned in the title bar.
+                // DecorationStyle defaults: title_bar_height=30, button_size=16
+                let title_bar_h = 30.0_f32;
+                let btn_size = 14.0_f32;
+                let btn_spacing = 4.0_f32;
+                let btn_y = bounds.y + (title_bar_h - btn_size) / 2.0;
+
+                // Close button (red) — rightmost
+                if button_state.close {
+                    let close_x = bounds.x + bounds.width - btn_size - 8.0;
+                    let close_color = Color::new(237, 106, 94, 255);
+                    let close_bounds = Rect::new(close_x, btn_y, btn_size, btn_size);
+                    rasterizer::fill_rounded_rect(
+                        fb,
+                        close_bounds,
+                        btn_size / 2.0,
+                        &Fill::Solid(close_color),
+                        BlendMode::SrcOver,
+                        &self.srgb_lut,
+                    );
+                    // × icon inside: two small diagonal lines approximated as a + cross
+                    let cx = close_x + btn_size / 2.0;
+                    let cy_btn = btn_y + btn_size / 2.0;
+                    let cross_color = Color::new(80, 20, 20, 220);
+                    let arm = 3.0_f32;
+                    // Horizontal bar
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - arm, cy_btn - 0.5, arm * 2.0, 1.5),
+                        cross_color,
+                        BlendMode::SrcOver,
+                    );
+                    // Vertical bar
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - 0.5, cy_btn - arm, 1.5, arm * 2.0),
+                        cross_color,
+                        BlendMode::SrcOver,
+                    );
+                }
+
+                // Maximize button (green) — second from right
+                if button_state.maximize {
+                    let max_x = bounds.x + bounds.width - btn_size * 2.0 - btn_spacing - 8.0;
+                    let max_color = Color::new(97, 197, 84, 255);
+                    let max_bounds = Rect::new(max_x, btn_y, btn_size, btn_size);
+                    rasterizer::fill_rounded_rect(
+                        fb,
+                        max_bounds,
+                        btn_size / 2.0,
+                        &Fill::Solid(max_color),
+                        BlendMode::SrcOver,
+                        &self.srgb_lut,
+                    );
+                }
+
+                // Minimize button (yellow) — third from right
+                if button_state.minimize {
+                    let min_x = bounds.x + bounds.width - btn_size * 3.0 - btn_spacing * 2.0 - 8.0;
+                    let min_color = Color::new(245, 191, 79, 255);
+                    let min_bounds = Rect::new(min_x, btn_y, btn_size, btn_size);
+                    rasterizer::fill_rounded_rect(
+                        fb,
+                        min_bounds,
+                        btn_size / 2.0,
+                        &Fill::Solid(min_color),
+                        BlendMode::SrcOver,
+                        &self.srgb_lut,
+                    );
+                }
+
+                // --- Title text (centered in title bar) ---
+                if let Some(ref title_text) = title {
+                    if !title_text.is_empty() {
+                        let mut tc = *title_color;
+                        if opacity < 1.0 {
+                            tc.a = (tc.a as f32 * opacity + 0.5) as u8;
+                        }
+                        // Approximate centering: 8×16 bitmap font chars
+                        let char_w = 8_i32;
+                        let text_w = title_text.len() as i32 * char_w;
+                        let text_x = bounds.x as i32 + (bounds.width as i32 - text_w) / 2;
+                        let text_y = bounds.y as i32 + (title_bar_h as i32 - 16) / 2;
+                        crate::bitmap_font::draw_text(fb, title_text, text_x, text_y, tc, 1);
+                    }
                 }
             }
 
