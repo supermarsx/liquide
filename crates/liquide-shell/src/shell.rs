@@ -1047,13 +1047,40 @@ impl Shell {
                 NodeProperties::new(shadow_bounds).with_z_order(window.z_order as u32 * 10),
             ));
 
-            // Decoration
+            // Decoration with liquid glass title bar
             if window.flags.contains(WindowFlags::DECORATED) {
                 let is_focused = self.focus.focused() == Some(window.id);
+                let title_h = self.decoration_style.title_bar_height;
+                let title_bar_bounds = Rect::new(
+                    window.bounds.x,
+                    window.bounds.y,
+                    window.bounds.width,
+                    title_h,
+                );
+
+                // Glass backdrop for the title bar — frosted glass effect
+                ws_node.add_child(SceneNode::new(
+                    win_base + 10,
+                    SceneNodeKind::Glass(GlassParams {
+                        blur_radius: 12,
+                        tint_color: theme.window_glass_tint,
+                        inner_glow: false,
+                        parallax: false,
+                    }),
+                    NodeProperties::new(title_bar_bounds)
+                        .with_z_order(window.z_order as u32 * 10 + 1),
+                ));
+
+                // Decoration overlay on top of glass (semi-transparent to
+                // let the blur show through)
                 let title_bg = if is_focused {
-                    theme.window_title_bar_focused
+                    let mut c = theme.window_title_bar_focused;
+                    c.a = (c.a / 2).max(60); // halve alpha for glass transparency
+                    c
                 } else {
-                    theme.window_title_bar_unfocused
+                    let mut c = theme.window_title_bar_unfocused;
+                    c.a = (c.a / 2).max(40);
+                    c
                 };
                 ws_node.add_child(SceneNode::new(
                     win_base + 1,
@@ -1084,7 +1111,8 @@ impl Shell {
                                 == Some((window.id, HitZone::AlwaysOnTopButton)),
                         },
                     },
-                    NodeProperties::new(window.bounds).with_z_order(window.z_order as u32 * 10 + 1),
+                    NodeProperties::new(window.bounds)
+                        .with_z_order(window.z_order as u32 * 10 + 2),
                 ));
             }
 
@@ -1100,7 +1128,7 @@ impl Shell {
                 window.bounds.width,
                 (window.bounds.height - title_h).max(0.0),
             );
-            let z_content = window.z_order as u32 * 10 + 2;
+            let z_content = window.z_order as u32 * 10 + 3;
 
             // Background fill for the content area.
             let content_bg = liquide_compositor::pixel::Color::new(35, 35, 40, 255);

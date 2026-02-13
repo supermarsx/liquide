@@ -115,12 +115,34 @@ pub struct ShadowParams {
     pub shadow_color: Color,
 }
 
+/// Pre-rendered shadow mask ready for compositing.
+///
+/// Generated once per unique window bounds and cached by the renderer
+/// to avoid recomputing the expensive SDF + blur every frame.
+pub struct ShadowMask {
+    /// BGRA premultiplied shadow pixels.
+    pub pixels: Vec<u8>,
+    /// Top-left X in framebuffer coordinates.
+    pub x0: u32,
+    /// Top-left Y in framebuffer coordinates.
+    pub y0: u32,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+}
+
 impl BoxShadow {
-    /// Render a box shadow with specific parameters.
-    pub fn render_shadow(
-        fb: &mut FrameBuffer,
+    /// Generate a shadow mask without compositing into the framebuffer.
+    ///
+    /// Returns `None` if the shadow has zero area (degenerate bounds).
+    /// The returned mask contains pre-blurred BGRA pixels ready for
+    /// [`Self::composite_shadow_mask`].
+    pub fn generate_shadow_mask(
+        fb_width: u32,
+        fb_height: u32,
         params: &ShadowParams,
-    ) {
+    ) -> Option<ShadowMask> {
         let ShadowParams {
             surface_rect,
             corner_radius,
@@ -132,10 +154,9 @@ impl BoxShadow {
         } = *params;
 
         if blur_radius == 0 && spread <= 0.0 {
-            return;
+            return None;
         }
 
-        // Expand bounds by spread + blur_radius to get the shadow region
         let expand = spread + blur_radius as f32;
         let shadow_rect = Rect::new(
             surface_rect.x - expand + offset_x,
@@ -144,19 +165,17 @@ impl BoxShadow {
             surface_rect.height + expand * 2.0,
         );
 
-        // Clip to framebuffer
-        let x0 = (shadow_rect.x.max(0.0) as u32).min(fb.width);
-        let y0 = (shadow_rect.y.max(0.0) as u32).min(fb.height);
-        let x1 = (shadow_rect.right().ceil() as u32).min(fb.width);
-        let y1 = (shadow_rect.bottom().ceil() as u32).min(fb.height);
+        let x0 = (shadow_rect.x.max(0.0) as u32).min(fb_width);
+        let y0 = (shadow_rect.y.max(0.0) as u32).min(fb_height);
+        let x1 = (shadow_rect.right().ceil() as u32).min(fb_width);
+        let y1 = (shadow_rect.bottom().ceil() as u32).min(fb_height);
 
         let w = x1.saturating_sub(x0);
         let h = y1.saturating_sub(y0);
         if w == 0 || h == 0 {
-            return;
+            return None;
         }
 
-        // Generate a rounded-rect alpha mask at the expanded size
         let expanded_surface = Rect::new(
             surface_rect.x - spread + offset_x,
             surface_rect.y - spread + offset_y,
@@ -168,20 +187,17 @@ impl BoxShadow {
             .min(expanded_surface.height / 2.0)
             .max(0.0);
 
-        // Create alpha mask as BGRA (alpha in channel 3)
         let mut mask = vec![0u8; (w * h * 4) as usize];
 
         for my in 0..h {
             let fy = (y0 + my) as f32 + 0.5;
             for mx in 0..w {
                 let fx = (x0 + mx) as f32 + 0.5;
-                let coverage = sdf_rounded_rect_coverage(
-                    fx, fy, &expanded_surface, r,
-                );
+                let coverage = sdf_rounded_rect_coverage(fx, fy, &expanded_surface, r);
                 if coverage > 0.0 {
-                    let alpha = (shadow_color.a as f32 * coverage).round().clamp(0.0, 255.0) as u8;
+                    let alpha =
+                        (shadow_color.a as f32 * coverage).round().clamp(0.0, 255.0) as u8;
                     let off = ((my * w + mx) * 4) as usize;
-                    // Store as premultiplied shadow color * coverage
                     mask[off] = ((shadow_color.b as u16 * alpha as u16 + 127) / 255) as u8;
                     mask[off + 1] = ((shadow_color.g as u16 * alpha as u16 + 127) / 255) as u8;
                     mask[off + 2] = ((shadow_color.r as u16 * alpha as u16 + 127) / 255) as u8;
@@ -190,27 +206,50 @@ impl BoxShadow {
             }
         }
 
-        // Blur the mask
         if blur_radius > 0 {
             blur::blur_buffer(&mut mask, w, h, blur_radius);
         }
 
-        // Composite the shadow into the framebuffer (SrcOver)
-        for my in 0..h {
-            for mx in 0..w {
-                let off = ((my * w + mx) * 4) as usize;
+        Some(ShadowMask {
+            pixels: mask,
+            x0,
+            y0,
+            width: w,
+            height: h,
+        })
+    }
+
+    /// Composite a pre-rendered shadow mask into the framebuffer.
+    pub fn composite_shadow_mask(fb: &mut FrameBuffer, mask: &ShadowMask) {
+        for my in 0..mask.height {
+            for mx in 0..mask.width {
+                let off = ((my * mask.width + mx) * 4) as usize;
                 let src = Color::from_bgra_bytes([
-                    mask[off], mask[off + 1], mask[off + 2], mask[off + 3],
+                    mask.pixels[off],
+                    mask.pixels[off + 1],
+                    mask.pixels[off + 2],
+                    mask.pixels[off + 3],
                 ]);
                 if src.a == 0 {
                     continue;
                 }
-                let dx = x0 + mx;
-                let dy = y0 + my;
+                let dx = mask.x0 + mx;
+                let dy = mask.y0 + my;
                 let dst = fb.get_pixel(dx, dy);
                 let result = blend::blend_src_over(dst, src);
                 fb.set_pixel(dx, dy, result);
             }
+        }
+    }
+
+    /// Render a box shadow with specific parameters.
+    ///
+    /// Generates the shadow mask and composites it in one step.
+    /// For cached rendering, use [`Self::generate_shadow_mask`] and
+    /// [`Self::composite_shadow_mask`] separately.
+    pub fn render_shadow(fb: &mut FrameBuffer, params: &ShadowParams) {
+        if let Some(mask) = Self::generate_shadow_mask(fb.width, fb.height, params) {
+            Self::composite_shadow_mask(fb, &mask);
         }
     }
 }

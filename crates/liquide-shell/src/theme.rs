@@ -25,6 +25,8 @@ pub struct ShellTheme {
     pub window_border_unfocused: Color,
     /// Window shadow color.
     pub window_shadow: Color,
+    /// Glass tint color for window title bars (frosted glass effect).
+    pub window_glass_tint: Color,
 
     // Dock
     /// Glass tint color for the dock panel.
@@ -131,6 +133,12 @@ impl ShellTheme {
             window_border_focused: Color::new(c.primary.r, c.primary.g, c.primary.b, 200),
             window_border_unfocused: Color::new(c.border.r, c.border.g, c.border.b, 150),
             window_shadow: Color::new(0, 0, 0, 80),
+            window_glass_tint: Color::new(
+                c.surface.r.saturating_add(17),
+                c.surface.g.saturating_add(17),
+                c.surface.b.saturating_add(27),
+                200,
+            ),
             dock_glass_tint: Color::new(
                 c.surface.r.saturating_add(22),
                 c.surface.g.saturating_add(25),
@@ -224,6 +232,12 @@ impl ShellTheme {
             window_border_focused: Color::new(c.primary.r, c.primary.g, c.primary.b, 200),
             window_border_unfocused: Color::new(c.border.r, c.border.g, c.border.b, 150),
             window_shadow: Color::new(0, 0, 0, 40),
+            window_glass_tint: Color::new(
+                c.surface.r,
+                c.surface.g,
+                c.surface.b,
+                180,
+            ),
             dock_glass_tint: Color::new(240, 240, 240, 200),
             dock_border: Color::new(200, 200, 205, 120),
             dock_item_active: Color::new(c.primary.r, c.primary.g, c.primary.b, 200),
@@ -268,6 +282,7 @@ impl ShellTheme {
             window_border_focused: Color::new(80, 140, 220, 200),
             window_border_unfocused: Color::new(60, 60, 60, 150),
             window_shadow: Color::new(0, 0, 0, 80),
+            window_glass_tint: Color::new(25, 28, 38, 200),
 
             // Dock
             dock_glass_tint: Color::new(20, 22, 30, 240),
@@ -324,6 +339,7 @@ impl ShellTheme {
             window_border_focused: Color::new(60, 130, 210, 200),
             window_border_unfocused: Color::new(190, 190, 190, 150),
             window_shadow: Color::new(0, 0, 0, 40),
+            window_glass_tint: Color::new(230, 230, 235, 180),
 
             // Dock
             dock_glass_tint: Color::new(240, 240, 240, 200),
