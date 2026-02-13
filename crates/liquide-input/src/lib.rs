@@ -9,6 +9,7 @@ pub mod touch;
 pub mod event;
 pub mod state;
 pub mod router;
+pub mod device;
 
 use thiserror::Error;
 
@@ -42,6 +43,7 @@ pub use touch::{TouchEvent, TouchPhase, TouchPoint};
 pub use event::{EventSource, InputEvent, InputPacket};
 pub use state::InputState;
 pub use router::{GrabMode, HitTestResult, InputRouter, InputTarget};
+pub use device::InputDevice;
 
 #[cfg(test)]
 mod tests;

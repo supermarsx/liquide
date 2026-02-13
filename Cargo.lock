@@ -1212,6 +1212,7 @@ dependencies = [
  "liquide-encoder",
  "liquide-input",
  "liquide-interop",
+ "liquide-platform",
  "liquide-plugin-host",
  "liquide-protocol",
  "liquide-renderer-cpu",

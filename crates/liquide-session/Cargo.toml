@@ -26,6 +26,7 @@ liquide-shell.workspace = true
 liquide-plugin-host.workspace = true
 liquide-css.workspace = true
 liquide-input.workspace = true
+liquide-platform.workspace = true
 liquide-clipboard.workspace = true
 liquide-audio.workspace = true
 liquide-interop.workspace = true

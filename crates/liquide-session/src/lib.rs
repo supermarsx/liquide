@@ -7,6 +7,7 @@
 pub mod audit;
 pub mod config;
 pub mod crash;
+pub mod desktop;
 pub mod heartbeat;
 pub mod ipc;
 pub mod resume;
