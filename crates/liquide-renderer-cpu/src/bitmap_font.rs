@@ -82,6 +82,7 @@ impl BitmapFont {
 /// Draw a text string into a framebuffer using the built-in bitmap font.
 ///
 /// `scale` controls the integer scaling factor (1 = 8x16, 2 = 16x32, etc.).
+/// Glyphs are rendered with greyscale antialiasing for smooth edges.
 pub fn draw_text(
     fb: &mut liquide_compositor::framebuffer::FrameBuffer,
     text: &str,
@@ -92,15 +93,21 @@ pub fn draw_text(
 ) {
     let font = BitmapFont::new();
     let s = scale.max(1) as i32;
+    let cache = greyscale_cache();
     let mut cx = x;
 
     for ch in text.chars() {
         if ch == '\n' {
-            // newline support not needed for single-line labels
             continue;
         }
+        let code = ch as u32;
+        let cache_idx = if code >= 32 && code <= 126 {
+            Some((code - 32) as usize)
+        } else {
+            None
+        };
         let glyph = font.glyph(ch);
-        draw_glyph(fb, glyph, cx, y, color, s);
+        draw_glyph(fb, glyph, cache_idx, cache, cx, y, color, s);
         cx += BitmapFont::GLYPH_WIDTH as i32 * s;
     }
 }
