@@ -1042,6 +1042,8 @@ impl Shell {
                             close: true,
                             maximize: true,
                             minimize: true,
+                            always_on_top: true,
+                            is_topmost: window.flags.contains(WindowFlags::ALWAYS_ON_TOP),
                         },
                     },
                     NodeProperties::new(window.bounds).with_z_order(window.z_order as u32 * 10 + 1),
@@ -1867,6 +1869,14 @@ impl Shell {
             ShellAction::FullscreenToggle => {
                 if let Some(wid) = self.focus.focused() {
                     let _ = self.toggle_fullscreen(wid);
+                }
+                true
+            }
+            ShellAction::ToggleAlwaysOnTop => {
+                if let Some(wid) = self.focus.focused() {
+                    if let Some(window) = self.windows.get_mut(&wid) {
+                        window.flags.toggle(WindowFlags::ALWAYS_ON_TOP);
+                    }
                 }
                 true
             }

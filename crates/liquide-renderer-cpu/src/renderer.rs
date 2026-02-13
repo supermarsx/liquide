@@ -351,75 +351,156 @@ impl SoftwareRenderer {
                     );
                 }
 
-                // --- Window control buttons (macOS-style circles) ---
+                // --- Window control buttons ---
+                // Modern style: subtle rounded-rect backgrounds with
+                // crisp icon glyphs (×, □, ─, 📌).
                 // Layout: right-aligned in the title bar.
-                // DecorationStyle defaults: title_bar_height=30, button_size=16
                 let title_bar_h = 30.0_f32;
-                let btn_size = 14.0_f32;
-                let btn_spacing = 4.0_f32;
-                let btn_y = bounds.y + (title_bar_h - btn_size) / 2.0;
+                let btn_w = 32.0_f32; // wider for better click targets
+                let btn_h = 22.0_f32;
+                let btn_y = bounds.y + (title_bar_h - btn_h) / 2.0;
+                let btn_right_margin = 4.0_f32;
 
-                // Close button (red) — rightmost
+                // Close button (× icon) — rightmost
                 if button_state.close {
-                    let close_x = bounds.x + bounds.width - btn_size - 8.0;
-                    let close_color = Color::new(237, 106, 94, 255);
-                    let close_bounds = Rect::new(close_x, btn_y, btn_size, btn_size);
+                    let close_x = bounds.x + bounds.width - btn_w - btn_right_margin;
+                    let close_bg = Color::new(232, 17, 35, 220); // Windows-red
+                    let close_bounds = Rect::new(close_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
                         close_bounds,
-                        btn_size / 2.0,
-                        &Fill::Solid(close_color),
+                        3.0,
+                        &Fill::Solid(close_bg),
                         BlendMode::SrcOver,
                         &self.srgb_lut,
                     );
-                    // × icon inside: two small diagonal lines approximated as a + cross
-                    let cx = close_x + btn_size / 2.0;
-                    let cy_btn = btn_y + btn_size / 2.0;
-                    let cross_color = Color::new(80, 20, 20, 220);
-                    let arm = 3.0_f32;
-                    // Horizontal bar
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - arm, cy_btn - 0.5, arm * 2.0, 1.5),
-                        cross_color,
-                        BlendMode::SrcOver,
-                    );
-                    // Vertical bar
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - 0.5, cy_btn - arm, 1.5, arm * 2.0),
-                        cross_color,
-                        BlendMode::SrcOver,
-                    );
+                    // × icon: two diagonal lines forming an X
+                    let cx = close_x + btn_w / 2.0;
+                    let cy_btn = btn_y + btn_h / 2.0;
+                    let icon_color = Color::new(255, 255, 255, 240);
+                    let arm = 4.0_f32;
+                    let thickness = 1.5_f32;
+                    // Top-left to bottom-right diagonal
+                    for i in 0..((arm * 2.0) as i32) {
+                        let t = i as f32 - arm;
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx + t - thickness / 2.0, cy_btn + t - thickness / 2.0, thickness, thickness),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                    }
+                    // Top-right to bottom-left diagonal
+                    for i in 0..((arm * 2.0) as i32) {
+                        let t = i as f32 - arm;
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx - t - thickness / 2.0, cy_btn + t - thickness / 2.0, thickness, thickness),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                    }
                 }
 
-                // Maximize button (green) — second from right
+                // Maximize button (□ outline icon) — second from right
                 if button_state.maximize {
-                    let max_x = bounds.x + bounds.width - btn_size * 2.0 - btn_spacing - 8.0;
-                    let max_color = Color::new(97, 197, 84, 255);
-                    let max_bounds = Rect::new(max_x, btn_y, btn_size, btn_size);
+                    let max_x = bounds.x + bounds.width - btn_w * 2.0 - btn_right_margin;
+                    let btn_bg = Color::new(255, 255, 255, 20);
+                    let max_bounds = Rect::new(max_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
                         max_bounds,
-                        btn_size / 2.0,
-                        &Fill::Solid(max_color),
+                        3.0,
+                        &Fill::Solid(btn_bg),
                         BlendMode::SrcOver,
                         &self.srgb_lut,
                     );
+                    // □ icon: open rectangle outline
+                    let cx = max_x + btn_w / 2.0;
+                    let cy_btn = btn_y + btn_h / 2.0;
+                    let icon_color = Color::new(220, 220, 220, 240);
+                    let half = 4.0_f32;
+                    let stroke = 1.5_f32;
+                    // Top edge
+                    rasterizer::fill_rect(fb, Rect::new(cx - half, cy_btn - half, half * 2.0, stroke), icon_color, BlendMode::SrcOver);
+                    // Bottom edge
+                    rasterizer::fill_rect(fb, Rect::new(cx - half, cy_btn + half - stroke, half * 2.0, stroke), icon_color, BlendMode::SrcOver);
+                    // Left edge
+                    rasterizer::fill_rect(fb, Rect::new(cx - half, cy_btn - half, stroke, half * 2.0), icon_color, BlendMode::SrcOver);
+                    // Right edge
+                    rasterizer::fill_rect(fb, Rect::new(cx + half - stroke, cy_btn - half, stroke, half * 2.0), icon_color, BlendMode::SrcOver);
                 }
 
-                // Minimize button (yellow) — third from right
+                // Minimize button (─ horizontal line icon) — third from right
                 if button_state.minimize {
-                    let min_x = bounds.x + bounds.width - btn_size * 3.0 - btn_spacing * 2.0 - 8.0;
-                    let min_color = Color::new(245, 191, 79, 255);
-                    let min_bounds = Rect::new(min_x, btn_y, btn_size, btn_size);
+                    let min_x = bounds.x + bounds.width - btn_w * 3.0 - btn_right_margin;
+                    let btn_bg = Color::new(255, 255, 255, 20);
+                    let min_bounds = Rect::new(min_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
                         min_bounds,
-                        btn_size / 2.0,
-                        &Fill::Solid(min_color),
+                        3.0,
+                        &Fill::Solid(btn_bg),
                         BlendMode::SrcOver,
                         &self.srgb_lut,
+                    );
+                    // ─ icon: horizontal bar
+                    let cx = min_x + btn_w / 2.0;
+                    let cy_btn = btn_y + btn_h / 2.0;
+                    let icon_color = Color::new(220, 220, 220, 240);
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - 5.0, cy_btn + 2.0, 10.0, 1.5),
+                        icon_color,
+                        BlendMode::SrcOver,
+                    );
+                }
+
+                // Always-on-top button (📌 pin icon) — fourth from right
+                if button_state.always_on_top {
+                    let aot_x = bounds.x + bounds.width - btn_w * 4.0 - btn_right_margin;
+                    let btn_bg = if button_state.is_topmost {
+                        Color::new(60, 130, 220, 180) // Blue when active
+                    } else {
+                        Color::new(255, 255, 255, 20)
+                    };
+                    let aot_bounds = Rect::new(aot_x, btn_y, btn_w, btn_h);
+                    rasterizer::fill_rounded_rect(
+                        fb,
+                        aot_bounds,
+                        3.0,
+                        &Fill::Solid(btn_bg),
+                        BlendMode::SrcOver,
+                        &self.srgb_lut,
+                    );
+                    // Pin icon: vertical line with a small circle head
+                    let cx = aot_x + btn_w / 2.0;
+                    let cy_btn = btn_y + btn_h / 2.0;
+                    let icon_color = if button_state.is_topmost {
+                        Color::new(255, 255, 255, 255)
+                    } else {
+                        Color::new(220, 220, 220, 240)
+                    };
+                    // Pin head (small filled circle-like square)
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - 3.0, cy_btn - 5.0, 6.0, 4.0),
+                        icon_color,
+                        BlendMode::SrcOver,
+                    );
+                    // Pin shaft (vertical line)
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - 0.75, cy_btn - 1.0, 1.5, 6.0),
+                        icon_color,
+                        BlendMode::SrcOver,
+                    );
+                    // Pin point (small triangle approximation)
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - 0.5, cy_btn + 5.0, 1.0, 2.0),
+                        icon_color,
+                        BlendMode::SrcOver,
                     );
                 }
 

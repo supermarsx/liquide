@@ -46,6 +46,21 @@ impl WindowFlags {
     pub fn contains(self, flag: u8) -> bool {
         self.0 & flag != 0
     }
+
+    /// Toggle a flag on or off.
+    pub fn toggle(&mut self, flag: u8) {
+        self.0 ^= flag;
+    }
+
+    /// Set a flag.
+    pub fn set(&mut self, flag: u8) {
+        self.0 |= flag;
+    }
+
+    /// Clear a flag.
+    pub fn clear(&mut self, flag: u8) {
+        self.0 &= !flag;
+    }
 }
 
 impl Default for WindowFlags {
