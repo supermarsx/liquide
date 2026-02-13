@@ -4,6 +4,7 @@
 //! calls via FFI (no external crate dependencies). Links against user32.dll,
 //! gdi32.dll, kernel32.dll, and shell32.dll at load time.
 
+pub mod dxgi;
 pub mod ffi;
 pub mod input;
 
@@ -397,6 +398,8 @@ struct WindowInfo {
     hwnd: ffi::HWND,
     handle: NativeWindowHandle,
     _data: Box<WindowData>,
+    /// DXGI swap-chain presenter (lazily initialized on first present).
+    dxgi: Option<dxgi::DxgiPresenter>,
 }
 
 // ---------------------------------------------------------------------------
@@ -632,6 +635,7 @@ impl NativeWindowHost for Win32WindowHost {
             hwnd,
             handle,
             _data: data,
+            dxgi: None,
         };
         self.windows.insert(handle.0, info);
 
@@ -1231,7 +1235,7 @@ impl PlatformBackend for Win32Platform {
         pixels: &[u8],
         width: u32,
         height: u32,
-        _stride: u32,
+        stride: u32,
         format: PixelFormat,
     ) -> PlatformResult<()> {
         // We only support BGRA8, which maps directly to Win32's 32-bit
@@ -1246,11 +1250,36 @@ impl PlatformBackend for Win32Platform {
         let info = self
             .window_host
             .windows
-            .get(&handle.0)
+            .get_mut(&handle.0)
             .ok_or_else(|| PlatformError::Presentation("unknown window handle".into()))?;
 
         let hwnd = info.hwnd;
 
+        // Try DXGI presentation first.
+        // Lazily initialize the DXGI presenter on first use.
+        if info.dxgi.is_none() {
+            match dxgi::DxgiPresenter::new(hwnd, width, height) {
+                Ok(presenter) => {
+                    info.dxgi = Some(presenter);
+                }
+                Err(_) => {
+                    // DXGI unavailable; will fall through to GDI below.
+                }
+            }
+        }
+
+        if let Some(ref mut presenter) = info.dxgi {
+            match presenter.present(pixels, width, height, stride) {
+                Ok(()) => return Ok(()),
+                Err(_) => {
+                    // DXGI present failed (device lost, etc.); drop the
+                    // presenter and fall through to GDI for this frame.
+                    info.dxgi = None;
+                }
+            }
+        }
+
+        // GDI fallback: SetDIBitsToDevice.
         let mut bmi = ffi::BITMAPINFO {
             bmiHeader: ffi::BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<ffi::BITMAPINFOHEADER>() as ffi::DWORD,
