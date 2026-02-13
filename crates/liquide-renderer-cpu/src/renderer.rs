@@ -364,7 +364,11 @@ impl SoftwareRenderer {
                 // Close button (× icon) — rightmost
                 if button_state.close {
                     let close_x = bounds.x + bounds.width - btn_w - btn_right_margin;
-                    let close_bg = Color::new(232, 17, 35, 220); // Windows-red
+                    let close_bg = if button_state.close_hovered {
+                        Color::new(241, 60, 70, 255) // Brighter red on hover
+                    } else {
+                        Color::new(232, 17, 35, 220) // Windows-red
+                    };
                     let close_bounds = Rect::new(close_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
@@ -405,7 +409,11 @@ impl SoftwareRenderer {
                 // Maximize button (□ outline icon) — second from right
                 if button_state.maximize {
                     let max_x = bounds.x + bounds.width - btn_w * 2.0 - btn_right_margin;
-                    let btn_bg = Color::new(255, 255, 255, 20);
+                    let btn_bg = if button_state.maximize_hovered {
+                        Color::new(255, 255, 255, 60) // Brighter on hover
+                    } else {
+                        Color::new(255, 255, 255, 20)
+                    };
                     let max_bounds = Rect::new(max_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
@@ -434,7 +442,11 @@ impl SoftwareRenderer {
                 // Minimize button (─ horizontal line icon) — third from right
                 if button_state.minimize {
                     let min_x = bounds.x + bounds.width - btn_w * 3.0 - btn_right_margin;
-                    let btn_bg = Color::new(255, 255, 255, 20);
+                    let btn_bg = if button_state.minimize_hovered {
+                        Color::new(255, 255, 255, 60) // Brighter on hover
+                    } else {
+                        Color::new(255, 255, 255, 20)
+                    };
                     let min_bounds = Rect::new(min_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
@@ -460,7 +472,13 @@ impl SoftwareRenderer {
                 if button_state.always_on_top {
                     let aot_x = bounds.x + bounds.width - btn_w * 4.0 - btn_right_margin;
                     let btn_bg = if button_state.is_topmost {
-                        Color::new(60, 130, 220, 180) // Blue when active
+                        if button_state.always_on_top_hovered {
+                            Color::new(80, 150, 240, 220) // Brighter blue on hover
+                        } else {
+                            Color::new(60, 130, 220, 180) // Blue when active
+                        }
+                    } else if button_state.always_on_top_hovered {
+                        Color::new(255, 255, 255, 60) // Brighter on hover
                     } else {
                         Color::new(255, 255, 255, 20)
                     };

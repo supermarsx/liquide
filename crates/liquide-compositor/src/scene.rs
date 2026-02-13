@@ -117,6 +117,14 @@ pub struct DecorationButtons {
     pub always_on_top: bool,
     /// Whether the window is currently pinned as always-on-top.
     pub is_topmost: bool,
+    /// Whether the close button is currently hovered.
+    pub close_hovered: bool,
+    /// Whether the maximize button is currently hovered.
+    pub maximize_hovered: bool,
+    /// Whether the minimize button is currently hovered.
+    pub minimize_hovered: bool,
+    /// Whether the always-on-top button is currently hovered.
+    pub always_on_top_hovered: bool,
 }
 
 impl Default for DecorationButtons {
@@ -127,6 +135,10 @@ impl Default for DecorationButtons {
             minimize: true,
             always_on_top: true,
             is_topmost: false,
+            close_hovered: false,
+            maximize_hovered: false,
+            minimize_hovered: false,
+            always_on_top_hovered: false,
         }
     }
 }

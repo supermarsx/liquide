@@ -13,14 +13,16 @@
 //! method, which translates them into `ShellAction`s that modify shell
 //! state (focus, window management, launcher toggle, etc.).
 
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use liquide_compositor::damage::DamageSet;
 use liquide_compositor::effects::QualityProfile;
+use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::pixel::Color;
-use liquide_compositor::scene::{NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::pixel::{Color, PixelFormat};
+use liquide_compositor::scene::{FlatNode, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_compositor::{Compositor, CompositorContract};
 use liquide_input::InputState;
 use liquide_input::event::InputEvent;
@@ -29,18 +31,20 @@ use liquide_renderer_cpu::{Renderer, SoftwareRenderer};
 use liquide_shell::Shell;
 use tracing::{debug, info, warn};
 
-/// The desktop compositor loop.
-///
-/// Holds the shell (window management, dock, status bar, launcher,
-/// notifications, shortcuts), the compositor (scene graph, damage
-/// tracking, double-buffering), the software renderer, input state,
-/// and the native window handle.
-///
-/// Call [`DesktopCompositor::run`] to enter the blocking event loop.
-pub struct DesktopCompositor {
-    shell: Shell,
-    compositor: Compositor,
-    renderer: SoftwareRenderer,
+// ---------------------------------------------------------------------------
+// Render thread types
+// ---------------------------------------------------------------------------
+
+/// A render job sent from the main thread to the render thread.
+struct RenderJob {
+    flat_nodes: Vec<FlatNode>,
+    width: u32,
+    height: u32,
+    tile_size: u32,
+}
+/// Synchronous renderer used only for the loading screen.
+    /// Moved to the render thread after loading completes.
+    renderer: Option<SoftwareRenderer>,
     input_state: InputState,
     width: u32,
     height: u32,
@@ -54,6 +58,48 @@ pub struct DesktopCompositor {
     cursor_y: f32,
     loading: bool,
     /// Minimum interval between frames. 0 = unlimited.
+    frame_interval: Duration,
+    /// Whether to emit per-frame performance timings at debug level.
+    debug_perf: bool,
+    /// Channel to send render jobs to the background render thread.
+    render_tx: Option<mpsc::Sender<RenderMsg>>,
+    /// Channel to receive completed frames from the render thread.
+    frame_rx: Option<mpsc::Receiver<RenderedFrame>>,
+    /// Handle to the background render thread.
+    render_thread: Option<thread::JoinHandle<()>>,
+    /// Whether a render job is currently in flight (avoid double-submit).
+    render_in_flight: bool,
+}
+
+impl DesktopCompositor {
+    /// Create a new desktop compositor with the given initial resolution.
+    ///
+    /// Uses a 64-pixel tile size and the [`QualityProfile::Balanced`]
+    /// profile.  The shell is initialized with matching screen dimensions.
+    #[must_use]
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            shell: Shell::new(width as f32, height as f32),
+            compositor: Compositor::new(width, height, 64, QualityProfile::Balanced),
+            renderer: Some(SoftwareRenderer::new()),
+            input_state: InputState::new(),
+            width,
+            height,
+            window_handle: None,
+            frame_count: 0,
+            running: true,
+            dirty: true,
+            last_tick: Instant::now(),
+            last_render: Instant::now(),
+            cursor_x: width as f32 / 2.0,
+            cursor_y: height as f32 / 2.0,
+            loading: true,
+            frame_interval: Duration::from_millis(16), // ~60fps default
+            debug_perf: false,
+            render_tx: None,
+            frame_rx: None,
+            render_thread: None,
+            render_in_flightal between frames. 0 = unlimited.
     frame_interval: Duration,
     /// Whether to emit per-frame performance timings at debug level.
     debug_perf: bool,
