@@ -81,16 +81,19 @@ pub mod error;
 pub mod stylesheet;
 pub mod property;
 pub mod watcher;
+pub mod cache;
 
 pub use parser::ThemeParser;
 pub use engine::ThemeEngine;
 pub use stylesheet::StyleSheet;
 pub use error::{ThemeError, Result};
+pub use cache::{QueryCache, CacheStats};
 
 pub mod prelude {
     pub use crate::parser::ThemeParser;
     pub use crate::engine::ThemeEngine;
     pub use crate::stylesheet::StyleSheet;
     pub use crate::error::{ThemeError, Result};
-    pub use crate::property::{PropertyValue, Color};
+    pub use crate::value::{PropertyValue, Color};
+    pub use crate::cache::{QueryCache, CacheStats};
 }

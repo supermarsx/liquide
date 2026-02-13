@@ -36,6 +36,7 @@ tracing = "0.1"
 [dev-dependencies]
 criterion = "0.5"
 
-[[bench]]
-name = "vector_rendering"
-harness = false
+# Benchmark disabled until implemented
+# [[bench]]
+# name = "vector_rendering"
+# harness = false

@@ -14,6 +14,7 @@ liquide-input.workspace = true
 liquide-interop.workspace = true
 liquide-platform.workspace = true
 liquide-ui.workspace = true
+liquide-theme-css = { path = "../liquide-theme-css" }
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

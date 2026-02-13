@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 # CSS parsing
-lightningcss = { version = "1.0", features = ["serde"] }
+lightningcss = { version = "1.0.0-alpha.70", features = ["serde"] }
 cssparser = "0.33"
 
 # Color handling
@@ -37,5 +37,6 @@ glob = "0.3"
 tokio-test = "0.4"
 tempfile = "3.14"
 
-[[example]]
-name = "parse_theme"
+# Example disabled until implemented
+# [[example]]
+# name = "parse_theme"

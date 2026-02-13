@@ -13,24 +13,27 @@
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────┐
-//! │           Render Coordinator (Main)                 │
-//! └─────────────────┬───────────────────────────────────┘
-//!                   │
-//!        ┌──────────┼──────────┬──────────┬──────────┐
-//!        │          │          │          │          │
-//!   ┌────▼────┐ ┌──▼───┐  ┌──▼───┐  ┌───▼────┐ ┌───▼────┐
-//!   │ Window  │ │ Dock │  │Status│  │ Back-  │ │ Wall-  │
-//!   │ Threads │ │Thread│  │Thread│  │ ground │ │ paper  │
-//!   │  Pool   │ │      │  │      │  │ Thread │ │ Thread │
-//!   └─────────┘ └──────┘  └──────┘  └────────┘ └────────┘
+//! │     Coordinator Thread (Message Passing)            │
+//! │  ┌───────────────────────────────────────────────┐  │
+//! │  │        Render Coordinator (Async)             │  │
+//! │  └─────────────────┬─────────────────────────────┘  │
+//! │                    │                                 │
+//! │         ┌──────────┼──────────┬──────────┬──────┐   │
+//! │         │          │          │          │      │   │
+//! │    ┌────▼────┐ ┌──▼───┐  ┌──▼───┐  ┌───▼────┐ │   │
+//! │    │ Window  │ │ Dock │  │Status│  │ Back-  │ │   │
+//! │    │ Threads │ │Thread│  │Thread│  │ ground │ │   │
+//! │    │  Pool   │ │      │  │      │  │ Thread │ │   │
+//! │    └─────────┘ └──────┘  └──────┘  └────────┘ │   │
+//! └─────────────────────────────────────────────────┘   │
 //! ```
 //!
 //! # Example
 //!
 //! ```rust
-//! use liquide_render_coordinator::{RenderCoordinator, RenderConfig};
+//! use liquide_render_coordinator::{ThreadedRenderCoordinator, RenderConfig};
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = RenderConfig::builder()
 //!     .window_threads(4)
 //!     .enable_dock(true)
@@ -38,16 +41,13 @@
 //!     .enable_wallpaper(true)
 //!     .build();
 //!
-//! let coordinator = RenderCoordinator::new(config).await?;
+//! // Coordinator runs on its own thread
+//! let coordinator = ThreadedRenderCoordinator::new(config)?;
 //!
-//! // Submit window render tasks
-//! coordinator.render_window(window_id, render_data).await?;
-//!
-//! // Update dock
-//! coordinator.render_dock(dock_data).await?;
-//!
-//! // Render status bar
-//! coordinator.render_statusbar(statusbar_data).await?;
+//! // Submit render tasks (non-blocking message passing)
+//! coordinator.render_window(window_id, is_focused)?;
+//! coordinator.render_dock()?;
+//! coordinator.render_statusbar()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -58,11 +58,13 @@ pub mod error;
 pub mod metrics;
 pub mod render_task;
 pub mod thread_pool;
+pub mod threaded;
 
 pub use config::{RenderConfig, RenderConfigBuilder};
 pub use coordinator::RenderCoordinator;
 pub use error::{RenderError, Result};
 pub use render_task::{RenderOutput, RenderPriority, RenderTask, RenderTaskKind};
+pub use threaded::ThreadedRenderCoordinator;
 
 /// Re-export commonly used types
 pub mod prelude {
@@ -70,4 +72,5 @@ pub mod prelude {
     pub use crate::coordinator::RenderCoordinator;
     pub use crate::error::{RenderError, Result};
     pub use crate::render_task::{RenderPriority, RenderTask, RenderTaskKind};
+    pub use crate::threaded::ThreadedRenderCoordinator;
 }

@@ -31,6 +31,7 @@ metrics = "0.24"
 tokio-test = "0.4"
 criterion = "0.5"
 
-[[bench]]
-name = "render_coordinator"
-harness = false
+# Benchmark disabled until implemented
+# [[bench]]
+# name = "render_coordinator"
+# harness = false

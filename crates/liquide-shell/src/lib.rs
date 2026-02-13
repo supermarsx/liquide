@@ -23,6 +23,7 @@ pub mod notification;
 pub mod seamless;
 pub mod status_bar;
 pub mod theme;
+pub mod theme_loader;
 pub mod tiling;
 pub mod scene_builder;
 

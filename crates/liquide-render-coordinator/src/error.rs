@@ -40,6 +40,10 @@ pub enum RenderError {
     #[error("Render thread panicked: {0}")]
     ThreadPanic(String),
 
+    /// Thread creation error
+    #[error("Failed to create thread: {0}")]
+    ThreadCreation(String),
+
     /// Resource exhausted
     #[error("Resource exhausted: {0}")]
     ResourceExhausted(String),

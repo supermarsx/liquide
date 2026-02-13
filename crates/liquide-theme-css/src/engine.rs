@@ -1,5 +1,6 @@
 //! Theme engine for applying CSS styles
 
+use crate::cache::QueryCache;
 use crate::error::{Result, ThemeError};
 use crate::property::PropertySet;
 use crate::stylesheet::StyleSheet;
@@ -8,27 +9,44 @@ use crate::value::PropertyValue;
 /// Theme engine for querying and applying styles
 pub struct ThemeEngine {
     stylesheet: StyleSheet,
+    /// Query result cache
+    cache: QueryCache,
 }
 
 impl ThemeEngine {
     /// Create a new theme engine with a stylesheet
     pub fn new(stylesheet: StyleSheet) -> Self {
-        Self { stylesheet }
+        Self::with_cache_size(stylesheet, 1000)
+    }
+    
+    /// Create a new theme engine with custom cache size
+    ///
+    /// # Arguments
+    /// * `stylesheet` - The CSS stylesheet
+    /// * `cache_size` - Maximum number of cached queries (0 = unlimited)
+    pub fn with_cache_size(stylesheet: StyleSheet, cache_size: usize) -> Self {
+        Self {
+            stylesheet,
+            cache: QueryCache::new(cache_size),
+        }
     }
     
     /// Query styles for an element
     ///
-    /// Returns the computed property set after applying CSS cascade rules
+    /// Returns the computed property set after applying CSS cascade rules.
+    /// Results are cached for performance.
     pub fn query(
         &self,
         element: &str,
         classes: &[String],
         pseudo_classes: &[String],
     ) -> Result<PropertySet> {
-        Ok(self.stylesheet.compute_styles(element, classes, None, pseudo_classes))
+        self.query_with_id(element, None, classes, pseudo_classes)
     }
     
     /// Query styles with ID
+    ///
+    /// Results are cached for performance.
     pub fn query_with_id(
         &self,
         element: &str,
@@ -36,7 +54,18 @@ impl ThemeEngine {
         classes: &[String],
         pseudo_classes: &[String],
     ) -> Result<PropertySet> {
-        Ok(self.stylesheet.compute_styles(element, classes, id, pseudo_classes))
+        // Check cache first
+        if let Some(properties) = self.cache.get(element, classes, id, pseudo_classes) {
+            return Ok(properties);
+        }
+        
+        // Compute styles
+        let properties = self.stylesheet.compute_styles(element, classes, id, pseudo_classes);
+        
+        // Cache the result
+        self.cache.insert(element, classes, id, pseudo_classes, properties.clone());
+        
+        Ok(properties)
     }
     
     /// Get a specific property value
@@ -77,8 +106,38 @@ impl ThemeEngine {
     }
     
     /// Replace the stylesheet (for hot-reloading)
+    ///
+    /// Clears the query cache when stylesheet changes.
     pub fn set_stylesheet(&mut self, stylesheet: StyleSheet) {
         self.stylesheet = stylesheet;
+        self.cache.clear();
+    }
+    
+    /// Get cache statistics
+    pub fn cache_stats(&self) -> crate::cache::CacheStats {
+        self.cache.stats()
+    }
+    
+    /// Clear the query cache
+    pub fn clear_cache(&self) {
+        self.cache.clear();
+    }
+    
+    /// Pre-warm cache with common queries
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let common_queries = vec![
+    ///     ("button".to_string(), vec![], None, vec![]),
+    ///     ("button".to_string(), vec!["primary".to_string()], None, vec![]),
+    ///     ("button".to_string(), vec!["primary".to_string()], None, vec!["hover".to_string()]),
+    /// ];
+    /// engine.prewarm_cache(&common_queries);
+    /// ```
+    pub fn prewarm_cache(&self, queries: &[(String, Vec<String>, Option<String>, Vec<String>)]) {
+        self.cache.prewarm(queries, |element, classes, id, pseudo_classes| {
+            self.stylesheet.compute_styles(element, classes, id, pseudo_classes)
+        });
     }
 }
 

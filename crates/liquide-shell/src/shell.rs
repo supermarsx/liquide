@@ -28,6 +28,7 @@ use crate::shortcuts::{ShellAction, ShortcutManager};
 use crate::stats::StatsCollector;
 use crate::status_bar::ShellStatusBar;
 use crate::theme::ShellTheme;
+use crate::theme_loader;
 use crate::tiling::TilingEngine;
 use crate::window::{Window, WindowFlags, WindowId, WindowState};
 use crate::workspace::WorkspaceManager;
@@ -900,6 +901,29 @@ impl Shell {
     /// Set the shell theme.
     pub fn set_theme(&mut self, theme: ShellTheme) {
         self.theme = theme;
+    }
+
+    /// Load a CSS theme from a file
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// shell.load_css_theme("themes/nord.css")?;
+    /// ```
+    pub fn load_css_theme<P: AsRef<std::path::Path>>(&mut self, path: P) {
+        match theme_loader::load_css_theme(path) {
+            Ok(theme) => self.theme = theme,
+            Err(e) => tracing::warn!("Failed to load CSS theme: {}", e),
+        }
+    }
+
+    /// Load the default Nord CSS theme
+    pub fn load_default_css_theme(&mut self) {
+        use liquide_theme_css::ThemeParser;
+        let parser = ThemeParser::new();
+        if let Ok(stylesheet) = parser.parse_str(theme_loader::default_nord_css()) {
+            let engine = liquide_theme_css::ThemeEngine::new(stylesheet);
+            self.theme = theme_loader::css_to_shell_theme(&engine);
+        }
     }
 
     /// Handle a key event, returning the matching shell action if any.

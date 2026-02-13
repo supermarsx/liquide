@@ -67,7 +67,7 @@ impl ThemeWatcher {
         let paths = self.paths.clone();
         
         // Create watcher
-        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+        let mut watcher = notify::recommended_watcher(move |res: std::result::Result<Event, notify::Error>| {
             match res {
                 Ok(event) => {
                     if let Err(e) = tx.send(event) {
