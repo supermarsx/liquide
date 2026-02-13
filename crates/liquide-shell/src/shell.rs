@@ -1190,8 +1190,10 @@ impl Shell {
         }
         root.add_child(ws_node);
 
-        // Status bar
-        root.add_child(self.status_bar.build_scene(screen, theme));
+        // Status bar (conditionally visible based on auto-hide settings)
+        if self.status_bar_visible {
+            root.add_child(self.status_bar.build_scene(screen, theme));
+        }
 
         // Dock
         if self.dock.is_visible() || !self.dock.config().auto_hide {
@@ -2189,7 +2191,120 @@ impl Shell {
         if bar_dirty {
             self.status_bar.mark_clean();
         }
-        bar_dirty || !expired.is_empty()
+        
+        // Window repatriation: ensure windows stay within screen bounds
+        let mut repatriation_dirty = false;
+        if self.config.window_management.auto_repatriate {
+            repatriation_dirty = self.repatriate_offscreen_windows();
+        }
+        
+        // Status bar auto-hide based on cursor position and maximized windows
+        let auto_hide_dirty = self.update_status_bar_visibility();
+        
+        bar_dirty || !expired.is_empty() || repatriation_dirty || auto_hide_dirty
+    }
+
+    /// Check if any windows are off-screen and repatriate them within bounds.
+    /// Returns true if any window was repositioned.
+    fn repatriate_offscreen_windows(&mut self) -> bool {
+        let threshold = self.config.window_management.repatriation_threshold_px;
+        let screen = self.screen_rect;
+        let mut dirty = false;
+
+        for window in self.windows.values_mut() {
+            let bounds = &window.bounds;
+            
+            // Calculate visible portions on each edge
+            let visible_left = bounds.x + bounds.width;
+            let visible_right = screen.width - bounds.x;
+            let visible_top = bounds.y + bounds.height;
+            let visible_bottom = screen.height - bounds.y;
+
+            // Check if window needs repositioning
+            let needs_repatriate = visible_left < threshold
+                || visible_right < threshold
+                || visible_top < threshold
+                || visible_bottom < threshold;
+
+            if needs_repatriate {
+                // Reposition to keep at least threshold pixels visible
+                let mut new_x = bounds.x;
+                let mut new_y = bounds.y;
+
+                // Too far left
+                if visible_left < threshold {
+                    new_x = threshold - bounds.width;
+                }
+                // Too far right
+                if visible_right < threshold {
+                    new_x = screen.width - threshold;
+                }
+                // Too far up
+                if visible_top < threshold {
+                    new_y = threshold - bounds.height;
+                }
+                // Too far down
+                if visible_bottom < threshold {
+                    new_y = screen.height - threshold;
+                }
+
+                window.bounds.x = new_x.max(0.0).min(screen.width - 50.0);
+                window.bounds.y = new_y.max(0.0).min(screen.height - 50.0);
+                
+                let ts = self.next_timestamp();
+                self.window_history.record_at(
+                    window.id,
+                    WindowEventKind::Moved {
+                        from: (bounds.x, bounds.y),
+                        to: (window.bounds.x, window.bounds.y),
+                    },
+                    ts,
+                );
+                
+                dirty = true;
+            }
+        }
+
+        dirty
+    }
+
+    /// Update status bar visibility based on maximized windows and cursor position.
+    /// Returns true if visibility changed.
+    fn update_status_bar_visibility(&mut self) -> bool {
+        if !self.config.status_bar.auto_hide_on_maximize {
+            // Feature disabled, always show
+            if !self.status_bar_visible {
+                self.status_bar_visible = true;
+                return true;
+            }
+            return false;
+        }
+
+        // Check if any window is maximized
+        let has_maximized = self
+            .windows
+            .values()
+            .any(|w| w.flags.contains(WindowFlags::MAXIMIZED) && !w.flags.contains(WindowFlags::MINIMIZED));
+
+        if !has_maximized {
+            // No maximized windows, always show bar
+            if !self.status_bar_visible {
+                self.status_bar_visible = true;
+                return true;
+            }
+            return false;
+        }
+
+        // Maximized window present: show bar only if cursor near top edge
+        let reveal_dist = self.config.status_bar.auto_hide_reveal_distance;
+        let should_show = self.pointer.y < reveal_dist;
+
+        if should_show != self.status_bar_visible {
+            self.status_bar_visible = should_show;
+            true
+        } else {
+            false
+        }
     }
 
     /// Execute a shell action, returns true if a redraw is needed.

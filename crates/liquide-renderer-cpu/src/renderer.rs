@@ -669,6 +669,61 @@ impl SoftwareRenderer {
                     CursorShape::NotAllowed => {
                         Self::draw_cursor_not_allowed(fb, cx, cy, s, outline, fill);
                     }
+                    CursorShape::Wait => {
+                        Self::draw_cursor_wait(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::Progress => {
+                        // Arrow + small hourglass
+                        Self::draw_cursor_arrow(fb, cx, cy, s, outline, fill);
+                        Self::draw_cursor_wait(fb, cx + 8.0 * s, cy + 8.0 * s, s * 0.6, outline, fill);
+                    }
+                    CursorShape::Help => {
+                        // Arrow + question mark
+                        Self::draw_cursor_arrow(fb, cx, cy, s, outline, fill);
+                        Self::draw_question_mark(fb, cx + 10.0 * s, cy + 10.0 * s, s * 0.7, outline);
+                    }
+                    CursorShape::Crosshair => {
+                        Self::draw_cursor_crosshair(fb, cx, cy, s, outline);
+                    }
+                    CursorShape::Grab => {
+                        Self::draw_cursor_hand(fb, cx, cy, s, outline, fill, false);
+                    }
+                    CursorShape::Grabbing => {
+                        Self::draw_cursor_hand(fb, cx, cy, s, outline, fill, true);
+                    }
+                    CursorShape::ZoomIn => {
+                        Self::draw_cursor_magnifier(fb, cx, cy, s, outline, fill, true);
+                    }
+                    CursorShape::ZoomOut => {
+                        Self::draw_cursor_magnifier(fb, cx, cy, s, outline, fill, false);
+                    }
+                    CursorShape::ContextMenu => {
+                        Self::draw_cursor_pointer(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::Alias => {
+                        Self::draw_cursor_arrow(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::Copy => {
+                        Self::draw_cursor_arrow(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::NoDrop => {
+                        Self::draw_cursor_not_allowed(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::Cell => {
+                        Self::draw_cursor_crosshair(fb, cx, cy, s, outline);
+                    }
+                    CursorShape::VerticalText => {
+                        Self::draw_cursor_text_vertical(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::AllScroll => {
+                        Self::draw_cursor_all_scroll(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::ExpandH => {
+                        Self::draw_cursor_resize_ew(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::ExpandV => {
+                        Self::draw_cursor_resize_ns(fb, cx, cy, s, outline, fill);
+                    }
                 }
             }
 
@@ -1255,6 +1310,182 @@ impl SoftwareRenderer {
                 BlendMode::SrcOver,
             );
         }
+    }
+
+    fn draw_cursor_wait(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        // Hourglass shape
+        let center_x = cx + 7.0 * s;
+        let center_y = cy + 7.0 * s;
+        
+        // Top half
+        rasterizer::fill_rect(fb, Rect::new(center_x - 4.0 * s, center_y - 6.0 * s, 8.0 * s, 2.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s, center_y - 5.0 * s, 6.0 * s, 1.5 * s), fill, BlendMode::SrcOver);
+        
+        // Neck
+        rasterizer::fill_rect(fb, Rect::new(center_x - 1.0 * s, center_y - 1.0 * s, 2.0 * s, 2.0 * s), outline, BlendMode::SrcOver);
+        
+        // Bottom half
+        rasterizer::fill_rect(fb, Rect::new(center_x - 4.0 * s, center_y + 4.0 * s, 8.0 * s, 2.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s, center_y + 3.5 * s, 6.0 * s, 1.5 * s), fill, BlendMode::SrcOver);
+    }
+
+    fn draw_question_mark(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        color: Color,
+    ) {
+        // Simple question mark shape
+        rasterizer::fill_rect(fb, Rect::new(cx, cy, 3.0 * s, 1.0 * s), color, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(cx + 2.0 * s, cy + 1.0 * s, 1.0 * s, 2.0 * s), color, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(cx + 1.0 * s, cy + 3.0 * s, 1.0 * s, 1.0 * s), color, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(cx + 1.0 * s, cy + 5.0 * s, 1.0 * s, 1.0 * s), color, BlendMode::SrcOver);
+    }
+
+    fn draw_cursor_crosshair(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        color: Color,
+    ) {
+        let center_x = cx + 8.0 * s;
+        let center_y = cy + 8.0 * s;
+        
+        // Vertical line
+        rasterizer::fill_rect(fb, Rect::new(center_x - 0.5 * s, center_y - 6.0 * s, 1.0 * s, 12.0 * s), color, BlendMode::SrcOver);
+        // Horizontal line
+        rasterizer::fill_rect(fb, Rect::new(center_x - 6.0 * s, center_y - 0.5 * s, 12.0 * s, 1.0 * s), color, BlendMode::SrcOver);
+    }
+
+    fn draw_cursor_hand(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+        closed: bool,
+    ) {
+        let offset_x = if closed { 2.0 * s } else { 0.0 };
+        
+        // Palm
+        rasterizer::fill_rect(fb, Rect::new(cx + 4.0 * s + offset_x, cy + 8.0 * s, 5.0 * s, 6.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(cx + 4.5 * s + offset_x, cy + 8.5 * s, 4.0 * s, 5.0 * s), fill, BlendMode::SrcOver);
+        
+        // Fingers (simplified)
+        for i in 0..4 {
+            let fi = i as f32;
+            rasterizer::fill_rect(fb, Rect::new(cx + (5.0 + fi * 1.2) * s + offset_x, cy + 4.0 * s, 1.0 * s, 5.0 * s), outline, BlendMode::SrcOver);
+        }
+    }
+
+    fn draw_cursor_magnifier(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+        plus: bool,
+    ) {
+        let center_x = cx + 6.0 * s;
+        let center_y = cy + 6.0 * s;
+        
+        // Circle (lens)
+        let segments: &[(f32, f32, f32, f32)] = &[
+            (-2.0, -4.0, 4.0, 1.0),
+            (-3.0, -3.0, 6.0, 1.0),
+            (-4.0, -2.0, 8.0, 4.0),
+            (-3.0, 2.0, 6.0, 1.0),
+            (-2.0, 3.0, 4.0, 1.0),
+        ];
+        
+        for &(xo, yo, w, h) in segments {
+            rasterizer::fill_rect(fb, Rect::new(center_x + xo * s, center_y + yo * s, w * s, h * s), outline, BlendMode::SrcOver);
+        }
+        
+        // Handle
+        rasterizer::fill_rect(fb, Rect::new(center_x + 3.0 * s, center_y + 3.0 * s, 4.0 * s, 1.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(center_x + 4.0 * s, center_y + 4.0 * s, 3.0 * s, 1.0 * s), outline, BlendMode::SrcOver);
+        
+        // Plus or minus symbol
+        if plus {
+            rasterizer::fill_rect(fb, Rect::new(center_x - 1.0 * s, center_y - 0.5 * s, 2.0 * s, 1.0 * s), fill, BlendMode::SrcOver);
+            rasterizer::fill_rect(fb, Rect::new(center_x - 0.5 * s, center_y - 1.0 * s, 1.0 * s, 2.0 * s), fill, BlendMode::SrcOver);
+        } else {
+            rasterizer::fill_rect(fb, Rect::new(center_x - 1.0 * s, center_y - 0.5 * s, 2.0 * s, 1.0 * s), fill, BlendMode::SrcOver);
+        }
+    }
+
+    fn draw_cursor_text_vertical(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let center_x = cx + 8.0 * s;
+        let center_y = cy + 8.0 * s;
+        
+        // Horizontal I-beam
+        rasterizer::fill_rect(fb, Rect::new(center_x - 0.5 * s - s, center_y - 6.0 * s - s, 1.0 * s + 2.0 * s, 12.0 * s + 2.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(center_x - 0.5 * s, center_y - 6.0 * s, 1.0 * s, 12.0 * s), fill, BlendMode::SrcOver);
+        
+        // Top and bottom bars (horizontal)
+        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s - s, center_y - 6.0 * s - s, 6.0 * s + 2.0 * s, 1.0 * s + 2.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s, center_y - 6.0 * s, 6.0 * s, 1.0 * s), fill, BlendMode::SrcOver);
+        
+        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s - s, center_y + 5.0 * s - s, 6.0 * s + 2.0 * s, 1.0 * s + 2.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(center_x - 3.0 * s, center_y + 5.0 * s, 6.0 * s, 1.0 * s), fill, BlendMode::SrcOver);
+    }
+
+    fn draw_cursor_all_scroll(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let center_x = cx + 8.0 * s;
+        let center_y = cy + 8.0 * s;
+        
+        // Four arrows pointing outward
+        // Up arrow
+        Self::draw_small_arrow(fb, center_x, center_y - 4.0 * s, s, 0.0, outline, fill);
+        // Down arrow
+        Self::draw_small_arrow(fb, center_x, center_y + 4.0 * s, s, 180.0, outline, fill);
+        // Left arrow
+        Self::draw_small_arrow(fb, center_x - 4.0 * s, center_y, s, 270.0, outline, fill);
+        // Right arrow
+        Self::draw_small_arrow(fb, center_x + 4.0 * s, center_y, s, 90.0, outline, fill);
+        
+        // Center dot
+        rasterizer::fill_rect(fb, Rect::new(center_x - 1.0 * s, center_y - 1.0 * s, 2.0 * s, 2.0 * s), outline, BlendMode::SrcOver);
+    }
+
+    fn draw_small_arrow(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        _rotation: f32,
+        outline: Color,
+        _fill: Color,
+    ) {
+        // Simplified arrow (pointing up by default)
+        rasterizer::fill_rect(fb, Rect::new(cx - 2.0 * s, cy, 4.0 * s, 1.0 * s), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(cx - 1.0 * s, cy - 1.0 * s, 2.0 * s, 1.0 * s), outline, BlendMode::SrcOver);
     }
 
     /// Submit an async backdrop blur for a region.
