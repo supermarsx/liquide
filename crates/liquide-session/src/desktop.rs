@@ -442,6 +442,7 @@ impl DesktopCompositor {
             width: self.width,
             height: self.height,
             tile_size,
+            suppress_blur: self.shell.is_dragging(),
         };
 
         if let Some(ref tx) = self.render_tx {
@@ -607,7 +608,22 @@ impl DesktopCompositor {
 
                     // Render.
                     let t = Instant::now();
+
+                    // Suppress blur during interactive drag/resize for
+                    // snappy feedback. Restored immediately after.
+                    let saved_blur = renderer.blur_enabled();
+                    if latest_job.suppress_blur && saved_blur {
+                        renderer.set_blur_enabled(false);
+                    }
+
                     let _ = renderer.render(&latest_job.flat_nodes, framebuf, &damage);
+
+                    // Restore blur state so it re-engages on the next
+                    // non-drag frame.
+                    if latest_job.suppress_blur && saved_blur {
+                        renderer.set_blur_enabled(true);
+                    }
+
                     let render_ms = t.elapsed().as_secs_f64() * 1000.0;
 
                     // Report render time for adaptive blur.
@@ -840,7 +856,10 @@ impl DesktopCompositor {
 
             // Submit a render job if dirty and render thread is free.
             if self.dirty && !self.render_in_flight {
-                let can_render = self.frame_interval.is_zero()
+                // During drag, bypass frame interval throttle for immediate
+                // visual feedback — the blur suppression keeps frame cost low.
+                let can_render = self.shell.is_dragging()
+                    || self.frame_interval.is_zero()
                     || self.last_render.elapsed() >= self.frame_interval;
                 if can_render {
                     self.submit_render();

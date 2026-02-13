@@ -12,6 +12,7 @@ pub mod blur;
 pub(crate) mod blur_worker;
 pub mod color;
 pub mod effects;
+pub(crate) mod font_worker;
 pub mod glyph;
 pub mod icons;
 pub mod path;

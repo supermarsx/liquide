@@ -12,7 +12,8 @@ use liquide_compositor::scene::{CursorShape, FlatNode, NodeId, SceneNodeKind};
 use crate::blur_worker::BlurWorker;
 use crate::color::SrgbLut;
 use crate::effects::{BoxShadow, ShadowMask, ShadowParams};
-use crate::glyph::GlyphAtlas;
+use crate::font_worker::FontWorker;
+use crate::glyph::{GlyphAtlas, GlyphKey};
 use crate::rasterizer::{self, Fill};
 
 /// Cached shadow mask for a specific window position/size.
@@ -61,6 +62,8 @@ pub struct SoftwareRenderer {
     /// Per-node shadow mask cache — avoids recomputing expensive SDF + blur
     /// every frame. Invalidated when window bounds change.
     shadow_cache: HashMap<NodeId, CachedShadow>,
+    /// Background thread for async glyph rasterization.
+    font_worker: FontWorker,
 }
 
 impl SoftwareRenderer {
@@ -78,6 +81,7 @@ impl SoftwareRenderer {
             blur_budget_ms: 16.0, // Target ~60fps render budget
             blur_worker: BlurWorker::new(),
             shadow_cache: HashMap::new(),
+            font_worker: FontWorker::new(),
         }
     }
 
@@ -185,6 +189,16 @@ impl Renderer for SoftwareRenderer {
     ) -> crate::Result<Vec<DamageTile>> {
         // Drain any completed async blur results before rendering.
         self.blur_worker.poll_results();
+
+        // Drain completed glyph rasterizations into the atlas.
+        let rasterized = self.font_worker.poll_results();
+        for glyph in &rasterized {
+            let _ = self.glyph_atlas.insert(
+                glyph.key,
+                &glyph.bitmap,
+                &glyph.metrics,
+            );
+        }
 
         let classified_tiles: Vec<DamageTile> = damage.tiles.clone();
 
@@ -684,14 +698,69 @@ impl SoftwareRenderer {
                 if opacity < 1.0 {
                     c.a = (c.a as f32 * opacity + 0.5) as u8;
                 }
-                crate::bitmap_font::draw_text(
-                    fb,
-                    text,
-                    bounds.x as i32,
-                    bounds.y as i32,
-                    c,
-                    *scale,
-                );
+
+                // Calculate target glyph height from scale.
+                // scale=1 → 16px (base), scale=2 → 32px, etc.
+                let glyph_height = 16 * scale.max(&1);
+
+                // Try atlas-based antialiased rendering first.
+                let font_id = 0_u32; // built-in bitmap font
+                let size_px = glyph_height as u16;
+                let mut pen_x = bounds.x;
+                let pen_y = bounds.y;
+                let mut all_in_atlas = true;
+
+                // First pass: check which glyphs are in the atlas, request
+                // missing ones from the font worker.
+                for ch in text.chars() {
+                    if ch == '\n' || ch == '\r' {
+                        continue;
+                    }
+                    let glyph_id = ch as u32;
+                    let key = GlyphKey {
+                        font_id,
+                        glyph_id,
+                        size_px,
+                        subpixel: false,
+                    };
+                    if self.glyph_atlas.get(&key).is_none() {
+                        all_in_atlas = false;
+                        self.font_worker.request_glyph(key, ch, glyph_height);
+                    }
+                }
+
+                if all_in_atlas {
+                    // Render using antialiased atlas glyphs.
+                    for ch in text.chars() {
+                        if ch == '\n' || ch == '\r' {
+                            continue;
+                        }
+                        let key = GlyphKey {
+                            font_id,
+                            glyph_id: ch as u32,
+                            size_px,
+                            subpixel: false,
+                        };
+                        if let Some(cached) = self.glyph_atlas.get(&key).cloned() {
+                            let pos = liquide_compositor::geometry::Point::new(
+                                pen_x,
+                                pen_y + glyph_height as f32,
+                            );
+                            self.glyph_atlas.blit_glyph(fb, &cached, pos, c);
+                            pen_x += cached.advance;
+                        }
+                    }
+                } else {
+                    // Fallback: use 1-bit bitmap font while atlas is being populated.
+                    crate::bitmap_font::draw_text(
+                        fb,
+                        text,
+                        bounds.x as i32,
+                        bounds.y as i32,
+                        c,
+                        *scale,
+                    );
+                }
             }
 
             SceneNodeKind::Icon { icon_id, color } => {
@@ -1131,8 +1200,8 @@ impl SoftwareRenderer {
     ) {
         let center_x = cx + 7.0 * s;
         let center_y = cy + 7.0 * s;
-        let radius = 6.0 * s;
-        let thickness = 2.0 * s;
+        let _radius = 6.0 * s;
+        let _thickness = 2.0 * s;
 
         // Approximate circle outline with rect segments
         let segments: &[(f32, f32, f32, f32)] = &[
