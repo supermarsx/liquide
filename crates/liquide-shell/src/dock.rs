@@ -2,6 +2,9 @@
 //!
 //! Supports auto-hide, magnification on hover, badge counts, and per-monitor
 //! positioning.
+//!
+//! DEPRECATED: This implementation is duplicated in `liquide-dock`.
+//! Future work should refactor this crate to consume `liquide-dock` instead.
 
 use std::fmt;
 
@@ -197,7 +200,12 @@ impl Dock {
     }
 
     /// Add a pinned application to the dock.
-    pub fn add_pinned(&mut self, app_id: impl Into<String>, label: impl Into<String>, icon: impl Into<String>) -> u32 {
+    pub fn add_pinned(
+        &mut self,
+        app_id: impl Into<String>,
+        label: impl Into<String>,
+        icon: impl Into<String>,
+    ) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         let pinned_pos = self
@@ -221,7 +229,8 @@ impl Dock {
     /// Remove a pinned item by its dock ID.
     pub fn remove_pinned(&mut self, id: u32) -> bool {
         let before = self.items.len();
-        self.items.retain(|i| !(i.id == id && i.kind == DockItemKind::Pinned));
+        self.items
+            .retain(|i| !(i.id == id && i.kind == DockItemKind::Pinned));
         let removed = self.items.len() < before;
         if removed {
             self.reindex_pinned();
@@ -353,12 +362,18 @@ impl Dock {
         let mut rects = Vec::new();
         for (i, _item) in self.items.iter().enumerate() {
             let rect = match self.config.position {
-                DockPosition::Bottom | DockPosition::Top => {
-                    Rect::new(bounds.x + pad + i as f32 * icon, bounds.y + (bounds.height - icon) / 2.0, icon, icon)
-                }
-                DockPosition::Left | DockPosition::Right => {
-                    Rect::new(bounds.x + (bounds.width - icon) / 2.0, bounds.y + pad + i as f32 * icon, icon, icon)
-                }
+                DockPosition::Bottom | DockPosition::Top => Rect::new(
+                    bounds.x + pad + i as f32 * icon,
+                    bounds.y + (bounds.height - icon) / 2.0,
+                    icon,
+                    icon,
+                ),
+                DockPosition::Left | DockPosition::Right => Rect::new(
+                    bounds.x + (bounds.width - icon) / 2.0,
+                    bounds.y + pad + i as f32 * icon,
+                    icon,
+                    icon,
+                ),
             };
             rects.push((i, rect));
         }
@@ -427,8 +442,7 @@ impl Dock {
     /// Build the scene graph for the dock.
     pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
         use crate::scene_builder::{
-            icon_id_for_name, icon_node, solid_rect, tint_overlay,
-            NODE_DOCK, NODE_DOCK_ITEM_BASE,
+            NODE_DOCK, NODE_DOCK_ITEM_BASE, icon_id_for_name, icon_node, solid_rect, tint_overlay,
         };
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
@@ -450,7 +464,12 @@ impl Dock {
 
         // 2px accent border at the top edge of the dock (parent-relative).
         let border_rect = Rect::new(0.0, 0.0, dock_bounds.width, 2.0);
-        dock_node.add_child(solid_rect(NODE_DOCK + 1, theme.dock_border, border_rect, 903));
+        dock_node.add_child(solid_rect(
+            NODE_DOCK + 1,
+            theme.dock_border,
+            border_rect,
+            903,
+        ));
 
         for (i, (_idx, item_rect)) in item_rects.iter().enumerate() {
             let item_id = NODE_DOCK_ITEM_BASE + i as u64 * 3;

@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::scene::{DecorationButtons, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_input::KeyEvent;
-use liquide_input::mouse::ButtonState;
 use liquide_platform::PlatformEvent;
 
 use crate::app_history::AppHistory;
@@ -1075,10 +1074,14 @@ impl Shell {
                             minimize: true,
                             always_on_top: true,
                             is_topmost: window.flags.contains(WindowFlags::ALWAYS_ON_TOP),
-                            close_hovered: self.hovered_button == Some((window.id, HitZone::CloseButton)),
-                            maximize_hovered: self.hovered_button == Some((window.id, HitZone::MaximizeButton)),
-                            minimize_hovered: self.hovered_button == Some((window.id, HitZone::MinimizeButton)),
-                            always_on_top_hovered: self.hovered_button == Some((window.id, HitZone::AlwaysOnTopButton)),
+                            close_hovered: self.hovered_button
+                                == Some((window.id, HitZone::CloseButton)),
+                            maximize_hovered: self.hovered_button
+                                == Some((window.id, HitZone::MaximizeButton)),
+                            minimize_hovered: self.hovered_button
+                                == Some((window.id, HitZone::MinimizeButton)),
+                            always_on_top_hovered: self.hovered_button
+                                == Some((window.id, HitZone::AlwaysOnTopButton)),
                         },
                     },
                     NodeProperties::new(window.bounds).with_z_order(window.z_order as u32 * 10 + 1),
@@ -1511,7 +1514,11 @@ impl Shell {
                         // --- Active drag handling ---
                         if let Some(drag) = self.drag_state {
                             match drag {
-                                DragState::Moving { window_id, offset_x, offset_y } => {
+                                DragState::Moving {
+                                    window_id,
+                                    offset_x,
+                                    offset_y,
+                                } => {
                                     if let Some(window) = self.windows.get_mut(&window_id) {
                                         window.bounds.x = *x - offset_x;
                                         window.bounds.y = *y - offset_y;
@@ -1522,14 +1529,24 @@ impl Shell {
                                     }
                                     return Some(ShellAction::Redraw);
                                 }
-                                DragState::Resizing { window_id, edge, start_bounds, start_x, start_y } => {
+                                DragState::Resizing {
+                                    window_id,
+                                    edge,
+                                    start_bounds,
+                                    start_x,
+                                    start_y,
+                                } => {
                                     let dx = *x - start_x;
                                     let dy = *y - start_y;
-                                    let min_w = self.windows.get(&window_id)
+                                    let min_w = self
+                                        .windows
+                                        .get(&window_id)
                                         .and_then(|w| w.min_size)
                                         .map(|(mw, _)| mw)
                                         .unwrap_or(120.0);
-                                    let min_h = self.windows.get(&window_id)
+                                    let min_h = self
+                                        .windows
+                                        .get(&window_id)
                                         .and_then(|w| w.min_size)
                                         .map(|(_, mh)| mh)
                                         .unwrap_or(80.0);
@@ -1537,44 +1554,56 @@ impl Shell {
                                     if let Some(window) = self.windows.get_mut(&window_id) {
                                         match edge {
                                             HitZone::ResizeRight => {
-                                                window.bounds.width = (start_bounds.width + dx).max(min_w);
+                                                window.bounds.width =
+                                                    (start_bounds.width + dx).max(min_w);
                                             }
                                             HitZone::ResizeBottom => {
-                                                window.bounds.height = (start_bounds.height + dy).max(min_h);
+                                                window.bounds.height =
+                                                    (start_bounds.height + dy).max(min_h);
                                             }
                                             HitZone::ResizeLeft => {
                                                 let new_w = (start_bounds.width - dx).max(min_w);
-                                                window.bounds.x = start_bounds.x + start_bounds.width - new_w;
+                                                window.bounds.x =
+                                                    start_bounds.x + start_bounds.width - new_w;
                                                 window.bounds.width = new_w;
                                             }
                                             HitZone::ResizeTop => {
                                                 let new_h = (start_bounds.height - dy).max(min_h);
-                                                window.bounds.y = start_bounds.y + start_bounds.height - new_h;
+                                                window.bounds.y =
+                                                    start_bounds.y + start_bounds.height - new_h;
                                                 window.bounds.height = new_h;
                                             }
                                             HitZone::ResizeTopLeft => {
                                                 let new_w = (start_bounds.width - dx).max(min_w);
                                                 let new_h = (start_bounds.height - dy).max(min_h);
-                                                window.bounds.x = start_bounds.x + start_bounds.width - new_w;
-                                                window.bounds.y = start_bounds.y + start_bounds.height - new_h;
+                                                window.bounds.x =
+                                                    start_bounds.x + start_bounds.width - new_w;
+                                                window.bounds.y =
+                                                    start_bounds.y + start_bounds.height - new_h;
                                                 window.bounds.width = new_w;
                                                 window.bounds.height = new_h;
                                             }
                                             HitZone::ResizeTopRight => {
                                                 let new_h = (start_bounds.height - dy).max(min_h);
-                                                window.bounds.y = start_bounds.y + start_bounds.height - new_h;
-                                                window.bounds.width = (start_bounds.width + dx).max(min_w);
+                                                window.bounds.y =
+                                                    start_bounds.y + start_bounds.height - new_h;
+                                                window.bounds.width =
+                                                    (start_bounds.width + dx).max(min_w);
                                                 window.bounds.height = new_h;
                                             }
                                             HitZone::ResizeBottomLeft => {
                                                 let new_w = (start_bounds.width - dx).max(min_w);
-                                                window.bounds.x = start_bounds.x + start_bounds.width - new_w;
+                                                window.bounds.x =
+                                                    start_bounds.x + start_bounds.width - new_w;
                                                 window.bounds.width = new_w;
-                                                window.bounds.height = (start_bounds.height + dy).max(min_h);
+                                                window.bounds.height =
+                                                    (start_bounds.height + dy).max(min_h);
                                             }
                                             HitZone::ResizeBottomRight => {
-                                                window.bounds.width = (start_bounds.width + dx).max(min_w);
-                                                window.bounds.height = (start_bounds.height + dy).max(min_h);
+                                                window.bounds.width =
+                                                    (start_bounds.width + dx).max(min_w);
+                                                window.bounds.height =
+                                                    (start_bounds.height + dy).max(min_h);
                                             }
                                             _ => {}
                                         }
@@ -1593,8 +1622,10 @@ impl Shell {
                                 continue;
                             }
                             // Title bar area check
-                            if *y >= window.bounds.y && *y < window.bounds.y + tbh
-                                && *x >= window.bounds.x && *x < window.bounds.x + window.bounds.width
+                            if *y >= window.bounds.y
+                                && *y < window.bounds.y + tbh
+                                && *x >= window.bounds.x
+                                && *x < window.bounds.x + window.bounds.width
                             {
                                 let client = Rect::new(
                                     window.bounds.x,
@@ -1602,10 +1633,13 @@ impl Shell {
                                     window.bounds.width,
                                     (window.bounds.height - tbh).max(0.0),
                                 );
-                                let zone = hit_test_decoration(client, &self.decoration_style, *x, *y);
+                                let zone =
+                                    hit_test_decoration(client, &self.decoration_style, *x, *y);
                                 match zone {
-                                    HitZone::CloseButton | HitZone::MaximizeButton |
-                                    HitZone::MinimizeButton | HitZone::AlwaysOnTopButton => {
+                                    HitZone::CloseButton
+                                    | HitZone::MaximizeButton
+                                    | HitZone::MinimizeButton
+                                    | HitZone::AlwaysOnTopButton => {
                                         self.hovered_button = Some((window.id, zone));
                                     }
                                     _ => {}
@@ -1973,10 +2007,14 @@ impl Shell {
                                         });
                                         return Some(ShellAction::Redraw);
                                     }
-                                    HitZone::ResizeTop | HitZone::ResizeBottom |
-                                    HitZone::ResizeLeft | HitZone::ResizeRight |
-                                    HitZone::ResizeTopLeft | HitZone::ResizeTopRight |
-                                    HitZone::ResizeBottomLeft | HitZone::ResizeBottomRight
+                                    HitZone::ResizeTop
+                                    | HitZone::ResizeBottom
+                                    | HitZone::ResizeLeft
+                                    | HitZone::ResizeRight
+                                    | HitZone::ResizeTopLeft
+                                    | HitZone::ResizeTopRight
+                                    | HitZone::ResizeBottomLeft
+                                    | HitZone::ResizeBottomRight
                                         if is_resizable =>
                                     {
                                         // Start window resize drag

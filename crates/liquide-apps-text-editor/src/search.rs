@@ -41,7 +41,9 @@ impl SearchReplace {
         self.matches.clear();
         self.current = 0;
 
-        if query.is_empty() { return; }
+        if query.is_empty() {
+            return;
+        }
 
         let q = if self.case_sensitive {
             query.to_string()
@@ -62,10 +64,13 @@ impl SearchReplace {
                 let end_col = start_col + query.len();
 
                 if self.whole_word {
-                    let before_ok = start_col == 0 ||
-                        !haystack.as_bytes()[start_col - 1].is_ascii_alphanumeric();
-                    let after_ok = end_col >= haystack.len() ||
-                        !haystack.as_bytes()[end_col].is_ascii_alphanumeric();
+                    // TODO: This check is not Unicode-safe. `is_ascii_alphanumeric` will treat
+                    // non-ASCII letters (e.g., 'é', 'ñ') as word boundaries.
+                    // Consider using the `unicode-segmentation` crate for proper grapheme/word boundaries.
+                    let before_ok = start_col == 0
+                        || !haystack.as_bytes()[start_col - 1].is_ascii_alphanumeric();
+                    let after_ok = end_col >= haystack.len()
+                        || !haystack.as_bytes()[end_col].is_ascii_alphanumeric();
                     if !before_ok || !after_ok {
                         col = start_col + 1;
                         continue;
@@ -124,23 +129,41 @@ impl SearchReplace {
     }
 
     #[must_use]
-    pub fn query(&self) -> &str { &self.query }
+    pub fn query(&self) -> &str {
+        &self.query
+    }
     #[must_use]
-    pub fn replacement(&self) -> &str { &self.replacement }
+    pub fn replacement(&self) -> &str {
+        &self.replacement
+    }
     #[must_use]
-    pub fn matches(&self) -> &[SearchMatch] { &self.matches }
+    pub fn matches(&self) -> &[SearchMatch] {
+        &self.matches
+    }
     #[must_use]
-    pub fn match_count(&self) -> usize { self.matches.len() }
+    pub fn match_count(&self) -> usize {
+        self.matches.len()
+    }
     #[must_use]
-    pub fn current_index(&self) -> usize { self.current }
+    pub fn current_index(&self) -> usize {
+        self.current
+    }
     #[must_use]
-    pub fn current_match(&self) -> Option<&SearchMatch> { self.matches.get(self.current) }
+    pub fn current_match(&self) -> Option<&SearchMatch> {
+        self.matches.get(self.current)
+    }
     #[must_use]
-    pub fn is_case_sensitive(&self) -> bool { self.case_sensitive }
+    pub fn is_case_sensitive(&self) -> bool {
+        self.case_sensitive
+    }
     #[must_use]
-    pub fn is_whole_word(&self) -> bool { self.whole_word }
+    pub fn is_whole_word(&self) -> bool {
+        self.whole_word
+    }
 }
 
 impl Default for SearchReplace {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

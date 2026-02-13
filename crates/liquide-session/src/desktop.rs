@@ -42,7 +42,37 @@ struct RenderJob {
     height: u32,
     tile_size: u32,
 }
-/// Synchronous renderer used only for the loading screen.
+
+/// A completed rendered frame sent back from the render thread.
+struct RenderedFrame {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    stride: u32,
+    format: PixelFormat,
+    render_ms: f64,
+    blur_enabled: bool,
+}
+
+/// Message sent to the render thread.
+enum RenderMsg {
+    Job(RenderJob),
+    Resize { width: u32, height: u32 },
+    Shutdown,
+}
+
+/// The desktop compositor loop.
+///
+/// Holds the shell (window management, dock, status bar, launcher,
+/// notifications, shortcuts), the compositor (scene graph, damage
+/// tracking, double-buffering), the software renderer, input state,
+/// and the native window handle.
+///
+/// Call [`DesktopCompositor::run`] to enter the blocking event loop.
+pub struct DesktopCompositor {
+    shell: Shell,
+    compositor: Compositor,
+    /// Synchronous renderer used only for the loading screen.
     /// Moved to the render thread after loading completes.
     renderer: Option<SoftwareRenderer>,
     input_state: InputState,
@@ -99,37 +129,7 @@ impl DesktopCompositor {
             render_tx: None,
             frame_rx: None,
             render_thread: None,
-            render_in_flightal between frames. 0 = unlimited.
-    frame_interval: Duration,
-    /// Whether to emit per-frame performance timings at debug level.
-    debug_perf: bool,
-}
-
-impl DesktopCompositor {
-    /// Create a new desktop compositor with the given initial resolution.
-    ///
-    /// Uses a 64-pixel tile size and the [`QualityProfile::Balanced`]
-    /// profile.  The shell is initialized with matching screen dimensions.
-    #[must_use]
-    pub fn new(width: u32, height: u32) -> Self {
-        Self {
-            shell: Shell::new(width as f32, height as f32),
-            compositor: Compositor::new(width, height, 64, QualityProfile::Balanced),
-            renderer: SoftwareRenderer::new(),
-            input_state: InputState::new(),
-            width,
-            height,
-            window_handle: None,
-            frame_count: 0,
-            running: true,
-            dirty: true,
-            last_tick: Instant::now(),
-            last_render: Instant::now(),
-            cursor_x: width as f32 / 2.0,
-            cursor_y: height as f32 / 2.0,
-            loading: true,
-            frame_interval: Duration::from_millis(16), // ~60fps default
-            debug_perf: false,
+            render_in_flight: false,
         }
     }
 
@@ -334,18 +334,18 @@ impl DesktopCompositor {
         root
     }
 
-    /// Run one frame: build scene from shell (or loading), render, present.
-    pub fn render_frame(&mut self, platform: &mut dyn PlatformBackend) {
+    /// Run one frame synchronously: build scene, render, present.
+    ///
+    /// Used only for the loading screen before the render thread is spawned.
+    fn render_frame_sync(&mut self, platform: &mut dyn PlatformBackend) {
         let frame_start = Instant::now();
 
         // 1. Build the scene graph.
-        let t0 = Instant::now();
         let mut scene = if self.loading {
             self.build_loading_scene()
         } else {
             self.shell.build_scene()
         };
-        let scene_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
         // 2. Add software cursor to the scene.
         if !self.loading {
@@ -359,10 +359,8 @@ impl DesktopCompositor {
         }
 
         // 3. Submit to compositor and swap buffers.
-        let t1 = Instant::now();
         let _ = self.compositor.submit_scene(scene);
         self.compositor.begin_frame();
-        let submit_ms = t1.elapsed().as_secs_f64() * 1000.0;
 
         // 4. Full-screen damage.
         let tile_size = self.compositor.tile_size();
@@ -371,99 +369,263 @@ impl DesktopCompositor {
         let mut damage = DamageSet::new(tile_size);
         damage.mark_all(grid_w, grid_h);
 
-        // 5. Flatten the scene into a z-sorted list of visible leaf nodes.
-        let t2 = Instant::now();
+        // 5. Flatten the scene.
         let flat_nodes = self
             .compositor
             .scene()
             .map(|s| s.flatten())
             .unwrap_or_default();
-        let flatten_ms = t2.elapsed().as_secs_f64() * 1000.0;
-
-        // 5b. Optional per-node dump (costly — allocates strings per node).
-        // Only emitted in debug builds when --debug-perf is set.
-        #[cfg(debug_assertions)]
-        if self.debug_perf {
-            debug!(count = flat_nodes.len(), "flattened nodes");
-            for (i, node) in flat_nodes.iter().enumerate() {
-                let kind_name = scene_node_kind_name(&node.kind);
-                let b = &node.absolute_bounds;
-                let color_str = scene_node_color_str(&node.kind);
-                debug!(
-                    idx = i,
-                    id = node.id,
-                    kind = kind_name,
-                    x = format!("{:.0}", b.x),
-                    y = format!("{:.0}", b.y),
-                    w = format!("{:.0}", b.width),
-                    h = format!("{:.0}", b.height),
-                    z = node.z_order,
-                    opacity = format!("{:.2}", node.opacity),
-                    color = color_str,
-                    "  node"
-                );
-            }
-        }
 
         // 6. Render into the back buffer.
-        let t3 = Instant::now();
         let fb = self.compositor.frame_buffer_mut();
-        let _ = self.renderer.render(&flat_nodes, fb, &damage);
-        let render_ms = t3.elapsed().as_secs_f64() * 1000.0;
+        if let Some(ref mut renderer) = self.renderer {
+            let _ = renderer.render(&flat_nodes, fb, &damage);
+        }
 
-        // 7. Present the just-rendered back buffer to the platform window.
-        let t4 = Instant::now();
+        // 7. Present.
         if let Some(handle) = self.window_handle {
             let _ = platform.present_frame(
                 handle, &fb.pixels, fb.width, fb.height, fb.stride, fb.format,
             );
         }
-        let present_ms = t4.elapsed().as_secs_f64() * 1000.0;
 
         self.frame_count += 1;
 
-        // Report frame timing to the compositor for adaptive quality.
         let frame_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
         self.compositor.report_frame_time(frame_ms);
+    }
 
-        // Feed render time to the renderer for adaptive blur toggling.
-        let blur_was_on = self.renderer.blur_enabled();
-        self.renderer.report_render_time(render_ms);
-        if blur_was_on != self.renderer.blur_enabled() {
-            info!(
-                blur = self.renderer.blur_enabled(),
-                avg_ms = format!("{:.1}", render_ms),
-                "adaptive blur toggled"
-            );
+    /// Submit a render job to the background render thread.
+    ///
+    /// Builds the scene, flattens it, and sends the flat nodes to the
+    /// render thread for asynchronous CPU rendering. The main thread
+    /// remains free to process input events during rendering.
+    fn submit_render(&mut self) {
+        if self.render_in_flight || self.render_tx.is_none() {
+            return;
         }
 
-        // Debug perf output.
+        let frame_start = Instant::now();
+
+        // 1. Build the scene graph.
+        let mut scene = self.shell.build_scene();
+
+        // 2. Add software cursor.
+        let cursor_size = 24.0_f32;
+        let cursor_bounds = Rect::new(self.cursor_x, self.cursor_y, cursor_size, cursor_size);
+        scene.add_child(SceneNode::new(
+            999_999,
+            SceneNodeKind::Cursor,
+            NodeProperties::new(cursor_bounds).with_z_order(9999),
+        ));
+
+        // 3. Submit to compositor.
+        let _ = self.compositor.submit_scene(scene);
+        self.compositor.begin_frame();
+
+        // 4. Flatten.
+        let flat_nodes = self
+            .compositor
+            .scene()
+            .map(|s| s.flatten())
+            .unwrap_or_default();
+
+        let scene_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+
+        // 5. Send to render thread.
+        let tile_size = self.compositor.tile_size();
+        let job = RenderJob {
+            flat_nodes,
+            width: self.width,
+            height: self.height,
+            tile_size,
+        };
+
+        if let Some(ref tx) = self.render_tx {
+            if tx.send(RenderMsg::Job(job)).is_ok() {
+                self.render_in_flight = true;
+            }
+        }
+
         if self.debug_perf {
             debug!(
-                frame = self.frame_count,
-                total_ms = format!("{:.2}", frame_ms),
                 scene_ms = format!("{:.2}", scene_ms),
-                submit_ms = format!("{:.2}", submit_ms),
-                flatten_ms = format!("{:.2}", flatten_ms),
-                render_ms = format!("{:.2}", render_ms),
-                present_ms = format!("{:.2}", present_ms),
-                nodes = flat_nodes.len(),
-                blur = self.renderer.blur_enabled(),
-                loading = self.loading,
-                "frame timing"
+                "render job submitted"
             );
         }
+    }
 
-        // Warn on slow frames.
-        if frame_ms > 100.0 {
-            warn!(
-                frame = self.frame_count,
-                total_ms = format!("{:.1}", frame_ms),
-                render_ms = format!("{:.1}", render_ms),
-                present_ms = format!("{:.1}", present_ms),
-                nodes = flat_nodes.len(),
-                "slow frame detected"
-            );
+    /// Check for a completed frame from the render thread and present it.
+    ///
+    /// Returns `true` if a frame was presented.
+    fn try_present(&mut self, platform: &mut dyn PlatformBackend) -> bool {
+        let rx = match &self.frame_rx {
+            Some(rx) => rx,
+            None => return false,
+        };
+
+        match rx.try_recv() {
+            Ok(frame) => {
+                self.render_in_flight = false;
+
+                // Present the rendered pixels.
+                let t4 = Instant::now();
+                if let Some(handle) = self.window_handle {
+                    let _ = platform.present_frame(
+                        handle,
+                        &frame.pixels,
+                        frame.width,
+                        frame.height,
+                        frame.stride,
+                        frame.format,
+                    );
+                }
+                let present_ms = t4.elapsed().as_secs_f64() * 1000.0;
+
+                self.frame_count += 1;
+
+                // Report timing.
+                self.compositor
+                    .report_frame_time(frame.render_ms + present_ms);
+
+                if self.debug_perf {
+                    debug!(
+                        frame = self.frame_count,
+                        render_ms = format!("{:.2}", frame.render_ms),
+                        present_ms = format!("{:.2}", present_ms),
+                        blur = frame.blur_enabled,
+                        "frame presented (threaded)"
+                    );
+                }
+
+                if frame.render_ms > 100.0 {
+                    warn!(
+                        frame = self.frame_count,
+                        render_ms = format!("{:.1}", frame.render_ms),
+                        present_ms = format!("{:.1}", present_ms),
+                        "slow frame detected"
+                    );
+                }
+
+                true
+            }
+            Err(mpsc::TryRecvError::Empty) => false,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                warn!("render thread disconnected");
+                self.render_in_flight = false;
+                false
+            }
+        }
+    }
+
+    /// Spawn the background render thread.
+    ///
+    /// Moves the `SoftwareRenderer` to a dedicated thread that processes
+    /// render jobs asynchronously. This allows the main thread to keep
+    /// processing input events while rendering happens in parallel.
+    fn spawn_render_thread(&mut self) {
+        let renderer = match self.renderer.take() {
+            Some(r) => r,
+            None => return, // already spawned
+        };
+
+        let (job_tx, job_rx) = mpsc::channel::<RenderMsg>();
+        let (frame_tx, frame_rx) = mpsc::channel::<RenderedFrame>();
+        let debug_perf = self.debug_perf;
+
+        let handle = thread::Builder::new()
+            .name("render-worker".into())
+            .spawn(move || {
+                Self::render_thread_fn(renderer, job_rx, frame_tx, debug_perf);
+            })
+            .expect("failed to spawn render thread");
+
+        self.render_tx = Some(job_tx);
+        self.frame_rx = Some(frame_rx);
+        self.render_thread = Some(handle);
+
+        info!("render thread spawned");
+    }
+
+    /// The render thread's main loop.
+    fn render_thread_fn(
+        mut renderer: SoftwareRenderer,
+        rx: mpsc::Receiver<RenderMsg>,
+        tx: mpsc::Sender<RenderedFrame>,
+        _debug_perf: bool,
+    ) {
+        let mut fb: Option<FrameBuffer> = None;
+
+        while let Ok(msg) = rx.recv() {
+            match msg {
+                RenderMsg::Shutdown => break,
+                RenderMsg::Resize { width, height } => {
+                    // Recreate framebuffer on next render.
+                    if fb
+                        .as_ref()
+                        .is_some_and(|f| f.width != width || f.height != height)
+                    {
+                        fb = None;
+                    }
+                }
+                RenderMsg::Job(job) => {
+                    // Drain any stale jobs — only render the latest.
+                    let mut latest_job = job;
+                    while let Ok(msg) = rx.try_recv() {
+                        match msg {
+                            RenderMsg::Shutdown => return,
+                            RenderMsg::Resize { .. } => {
+                                fb = None;
+                            }
+                            RenderMsg::Job(j) => {
+                                latest_job = j;
+                            }
+                        }
+                    }
+
+                    // Ensure framebuffer matches requested dimensions.
+                    let needs_new = fb.as_ref().map_or(true, |f| {
+                        f.width != latest_job.width || f.height != latest_job.height
+                    });
+                    if needs_new {
+                        fb = Some(FrameBuffer::new(
+                            latest_job.width,
+                            latest_job.height,
+                            PixelFormat::Bgra8,
+                        ));
+                    }
+                    let framebuf = fb.as_mut().unwrap();
+
+                    // Build damage set.
+                    let mut damage = DamageSet::new(latest_job.tile_size);
+                    let grid_w = latest_job.width.div_ceil(latest_job.tile_size);
+                    let grid_h = latest_job.height.div_ceil(latest_job.tile_size);
+                    damage.mark_all(grid_w, grid_h);
+
+                    // Render.
+                    let t = Instant::now();
+                    let _ = renderer.render(&latest_job.flat_nodes, framebuf, &damage);
+                    let render_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+                    // Report render time for adaptive blur.
+                    renderer.report_render_time(render_ms);
+
+                    // Send completed frame back.
+                    let result = RenderedFrame {
+                        pixels: framebuf.pixels.clone(),
+                        width: framebuf.width,
+                        height: framebuf.height,
+                        stride: framebuf.stride,
+                        format: framebuf.format,
+                        render_ms,
+                        blur_enabled: renderer.blur_enabled(),
+                    };
+
+                    if tx.send(result).is_err() {
+                        break; // main thread dropped
+                    }
+                }
+            }
         }
     }
 
@@ -598,10 +760,10 @@ impl DesktopCompositor {
             "desktop window created (borderless fullscreen)"
         );
 
-        // Show loading overlay.
+        // Show loading overlay (synchronous — render thread not spawned yet).
         debug!("rendering loading overlay");
         self.loading = true;
-        self.render_frame(platform);
+        self.render_frame_sync(platform);
         info!(
             elapsed_ms = format!("{:.1}", run_start.elapsed().as_secs_f64() * 1000.0),
             "loading overlay presented"
@@ -618,14 +780,22 @@ impl DesktopCompositor {
         debug!("rendering first desktop frame");
         self.loading = false;
         self.dirty = true;
-        self.render_frame(platform);
+        self.render_frame_sync(platform);
         self.dirty = false;
         info!(
             elapsed_ms = format!("{:.1}", run_start.elapsed().as_secs_f64() * 1000.0),
             "first desktop frame presented"
         );
 
-        // Non-blocking event loop.
+        // Spawn the background render thread now that loading is done.
+        self.spawn_render_thread();
+
+        // Non-blocking event loop with threaded rendering.
+        //
+        // The main thread handles input events and scene building.
+        // The render thread handles the expensive CPU rendering in parallel.
+        // This ensures the shell stays responsive to mouse/keyboard input
+        // even when rendering takes hundreds of milliseconds.
         info!(
             fps_cap = if self.frame_interval.is_zero() {
                 0
@@ -633,7 +803,7 @@ impl DesktopCompositor {
                 (1_000_000 / self.frame_interval.as_micros().max(1)) as u32
             },
             debug_perf = self.debug_perf,
-            "entering event loop"
+            "entering threaded event loop"
         );
 
         while self.running {
@@ -646,8 +816,18 @@ impl DesktopCompositor {
                 }
             }
 
+            // Check for completed frames from the render thread.
+            if self.try_present(platform) {
+                self.last_render = Instant::now();
+                // If still dirty (events arrived during rendering),
+                // submit a new render job immediately.
+                if self.dirty {
+                    self.submit_render();
+                    self.dirty = false;
+                }
+            }
+
             // Periodic tick every ~1s for clock / notification expiry.
-            // Only marks dirty if something actually changed visually.
             if self.last_tick.elapsed().as_millis() >= 1000 {
                 if self.tick() {
                     self.dirty = true;
@@ -655,20 +835,22 @@ impl DesktopCompositor {
                 self.last_tick = Instant::now();
             }
 
-            // Re-render if anything changed, throttled by frame_interval.
-            if self.dirty {
+            // Submit a render job if dirty and render thread is free.
+            if self.dirty && !self.render_in_flight {
                 let can_render = self.frame_interval.is_zero()
                     || self.last_render.elapsed() >= self.frame_interval;
                 if can_render {
-                    self.render_frame(platform);
+                    self.submit_render();
                     self.dirty = false;
-                    self.last_render = Instant::now();
                 }
             }
 
             // Efficient idle: sleep to avoid busy-spinning.
-            // Use longer sleep when truly idle for lower CPU usage.
-            if self.dirty && !self.frame_interval.is_zero() {
+            if self.render_in_flight {
+                // Render in progress — brief yield to check for completion
+                // and events frequently for responsive input.
+                thread::sleep(Duration::from_millis(1));
+            } else if self.dirty && !self.frame_interval.is_zero() {
                 // Dirty but throttled — sleep until next frame is due.
                 let elapsed = self.last_render.elapsed();
                 if elapsed < self.frame_interval {
@@ -676,19 +858,24 @@ impl DesktopCompositor {
                     thread::sleep(remaining.min(Duration::from_millis(4)));
                 }
             } else if !self.dirty {
-                // Nothing to render — sleep longer when no events are
-                // arriving, shorter when the user is actively interacting.
+                // Nothing to render — sleep longer when no events arriving.
                 let sleep_ms = if had_event {
-                    1 // Brief yield after event burst; next event may arrive soon.
+                    1
                 } else {
-                    // Truly idle — sleep for one frame period (16ms at 60fps).
-                    // This drops CPU from ~100% to ~2% while still responding
-                    // to events within one frame.
                     self.frame_interval.as_millis().clamp(1, 16) as u64
                 };
                 thread::sleep(Duration::from_millis(sleep_ms));
             }
         }
+
+        // Shut down render thread.
+        if let Some(ref tx) = self.render_tx {
+            let _ = tx.send(RenderMsg::Shutdown);
+        }
+        if let Some(handle) = self.render_thread.take() {
+            let _ = handle.join();
+        }
+        info!("render thread joined");
 
         // Clean up the window on exit.
         if let Some(handle) = self.window_handle.take() {
@@ -734,6 +921,7 @@ impl DesktopCompositor {
 
 /// Short human-readable name for a scene node kind (for debug logging).
 #[cfg(debug_assertions)]
+#[allow(dead_code)]
 fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
     match kind {
         SceneNodeKind::Root => "Root",
@@ -760,6 +948,7 @@ fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
 
 /// Extract color info from a scene node kind for debug logging.
 #[cfg(debug_assertions)]
+#[allow(dead_code)]
 fn scene_node_color_str(kind: &SceneNodeKind) -> String {
     match kind {
         SceneNodeKind::Background { color } => {
