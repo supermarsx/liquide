@@ -264,15 +264,15 @@ impl ShellTheme {
             window_shadow: Color::new(0, 0, 0, 80),
 
             // Dock
-            dock_glass_tint: Color::new(55, 58, 68, 225),
-            dock_border: Color::new(80, 140, 220, 100),
+            dock_glass_tint: Color::new(20, 22, 30, 240),
+            dock_border: Color::new(100, 160, 240, 180),
             dock_item_active: Color::new(80, 150, 235, 220),
-            dock_item_inactive: Color::new(140, 140, 150, 180),
+            dock_item_inactive: Color::new(160, 160, 170, 200),
             dock_hover_highlight: Color::new(255, 255, 255, 50),
 
             // Status bar
-            status_bar_glass_tint: Color::new(38, 42, 55, 235),
-            status_bar_border: Color::new(80, 140, 220, 80),
+            status_bar_glass_tint: Color::new(15, 18, 28, 245),
+            status_bar_border: Color::new(100, 160, 240, 160),
             status_bar_text: Color::new(220, 220, 220, 255),
             status_bar_connected: Color::new(60, 200, 60, 255),
             status_bar_degraded: Color::new(220, 180, 40, 255),

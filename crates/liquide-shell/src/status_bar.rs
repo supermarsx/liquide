@@ -366,9 +366,9 @@ impl ShellStatusBar {
         let center_x = bar_bounds.width / 2.0;
         let mut right_x = bar_bounds.width - padding;
 
-        // 1px accent border at the bottom edge of the status bar.
+        // 2px accent border at the bottom edge of the status bar.
         let border_rect =
-            GRect::new(0.0, bar_bounds.height - 1.0, bar_bounds.width, 1.0);
+            GRect::new(0.0, bar_bounds.height - 2.0, bar_bounds.width, 2.0);
         bar_node.add_child(solid_rect(
             NODE_STATUS_BAR + 1,
             theme.status_bar_border,

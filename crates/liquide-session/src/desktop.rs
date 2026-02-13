@@ -185,7 +185,7 @@ impl DesktopCompositor {
 
         // 2. Add software cursor to the scene.
         if !self.loading {
-            let cursor_size = 16.0_f32;
+            let cursor_size = 24.0_f32;
             let cursor_bounds = Rect::new(
                 self.cursor_x,
                 self.cursor_y,
@@ -221,9 +221,10 @@ impl DesktopCompositor {
             .unwrap_or_default();
         let flatten_ms = t2.elapsed().as_secs_f64() * 1000.0;
 
-        // 5b. Dump flattened nodes on the first few frames or when debug_perf
-        //     is enabled.  This shows exactly what's being rendered and where.
-        if self.debug_perf || self.frame_count < 3 {
+        // 5b. Optional per-node dump (costly — allocates strings per node).
+        // Only emitted in debug builds when --debug-perf is set.
+        #[cfg(debug_assertions)]
+        if self.debug_perf {
             debug!(count = flat_nodes.len(), "flattened nodes");
             for (i, node) in flat_nodes.iter().enumerate() {
                 let kind_name = scene_node_kind_name(&node.kind);
@@ -531,6 +532,7 @@ impl DesktopCompositor {
 }
 
 /// Short human-readable name for a scene node kind (for debug logging).
+#[cfg(debug_assertions)]
 fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
     match kind {
         SceneNodeKind::Root => "Root",
@@ -554,6 +556,7 @@ fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
 }
 
 /// Extract color info from a scene node kind for debug logging.
+#[cfg(debug_assertions)]
 fn scene_node_color_str(kind: &SceneNodeKind) -> String {
     match kind {
         SceneNodeKind::Background { color } => {

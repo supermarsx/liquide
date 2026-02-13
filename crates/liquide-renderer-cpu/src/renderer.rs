@@ -452,26 +452,16 @@ impl SoftwareRenderer {
 
             SceneNodeKind::Cursor => {
                 // Software cursor: white arrow with black outline for
-                // visibility on any background.
+                // visibility on any background.  Scale factor derived
+                // from the node bounds (default 24px → scale ~1.5).
                 let cx = bounds.x;
                 let cy = bounds.y;
+                let s = (bounds.width / 16.0).max(1.0); // scale relative to 16px base
 
-                // Arrow shape (outline first, then fill).
-                // Each row: (y_offset, x_start, width)
                 let outline = Color::new(0, 0, 0, 255);
                 let fill = Color::WHITE;
 
-                // Arrow body rows: a triangular pointer shape
-                // Row 0:  X
-                // Row 1:  XX
-                // Row 2:  XXX
-                // ...
-                // Row 11: XXXXXXXXXXXX
-                // Row 12: XXXXXXX
-                // Row 13: XX  XX
-                // Row 14: X    XX
-                // Row 15:       XX
-                // Row 16:        X
+                // Arrow body rows (base 16px design): (y_offset, width)
                 let arrow_rows: &[(f32, f32)] = &[
                     (0.0, 1.0),
                     (1.0, 2.0),
@@ -489,11 +479,11 @@ impl SoftwareRenderer {
                     (13.0, 5.0),
                 ];
 
-                // Outline: 1px black border around the arrow
+                // Outline: black border around the arrow
                 for &(row_y, row_w) in arrow_rows {
                     rasterizer::fill_rect(
                         fb,
-                        Rect::new(cx - 1.0, cy + row_y - 0.5, row_w + 2.0, 2.0),
+                        Rect::new(cx - s, cy + row_y * s - 0.5 * s, row_w * s + 2.0 * s, 2.0 * s),
                         outline,
                         BlendMode::SrcOver,
                     );
@@ -503,7 +493,7 @@ impl SoftwareRenderer {
                 for &(row_y, row_w) in arrow_rows {
                     rasterizer::fill_rect(
                         fb,
-                        Rect::new(cx, cy + row_y, row_w, 1.0),
+                        Rect::new(cx, cy + row_y * s, row_w * s, s),
                         fill,
                         BlendMode::SrcOver,
                     );

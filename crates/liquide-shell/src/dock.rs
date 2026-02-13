@@ -445,8 +445,8 @@ impl Dock {
         // so that walk_inner's translation doesn't double-offset them.
         let item_rects = self.compute_item_rects(screen);
 
-        // 1px accent border at the top edge of the dock (parent-relative).
-        let border_rect = Rect::new(0.0, 0.0, dock_bounds.width, 1.0);
+        // 2px accent border at the top edge of the dock (parent-relative).
+        let border_rect = Rect::new(0.0, 0.0, dock_bounds.width, 2.0);
         dock_node.add_child(solid_rect(NODE_DOCK + 1, theme.dock_border, border_rect, 903));
 
         for (i, (_idx, item_rect)) in item_rects.iter().enumerate() {
