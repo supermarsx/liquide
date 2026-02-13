@@ -156,6 +156,35 @@ pub struct SurfaceBuffer {
     pub format: PixelFormat,
 }
 
+/// Cursor shape for the software cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CursorShape {
+    /// Default arrow pointer.
+    Arrow,
+    /// Four-way move cursor (title bar drag).
+    Move,
+    /// Vertical resize (top/bottom edge).
+    ResizeNS,
+    /// Horizontal resize (left/right edge).
+    ResizeEW,
+    /// Diagonal resize (top-left / bottom-right).
+    ResizeNWSE,
+    /// Diagonal resize (top-right / bottom-left).
+    ResizeNESW,
+    /// Pointing hand (clickable items).
+    Pointer,
+    /// Text selection I-beam.
+    Text,
+    /// Not-allowed / forbidden.
+    NotAllowed,
+}
+
+impl Default for CursorShape {
+    fn default() -> Self {
+        Self::Arrow
+    }
+}
+
 /// The type-specific payload of a scene graph node.
 #[derive(Debug, Clone)]
 pub enum SceneNodeKind {
@@ -205,8 +234,8 @@ pub enum SceneNodeKind {
     Content,
     /// Shell layer (layer-shell surfaces).
     ShellLayer,
-    /// Hardware cursor (dispatched on a separate channel).
-    Cursor,
+    /// Software cursor with context-sensitive shape.
+    Cursor { shape: CursorShape },
     /// Text label rendered with the built-in bitmap font.
     Text {
         text: String,

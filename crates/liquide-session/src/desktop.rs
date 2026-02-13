@@ -41,6 +41,9 @@ struct RenderJob {
     width: u32,
     height: u32,
     tile_size: u32,
+    /// When true, blur is temporarily suppressed for interactive
+    /// responsiveness (e.g., during window drag/resize).
+    suppress_blur: bool,
 }
 
 /// A completed rendered frame sent back from the render thread.
@@ -353,7 +356,7 @@ impl DesktopCompositor {
             let cursor_bounds = Rect::new(self.cursor_x, self.cursor_y, cursor_size, cursor_size);
             scene.add_child(SceneNode::new(
                 999_999,
-                SceneNodeKind::Cursor,
+                SceneNodeKind::Cursor { shape: self.shell.cursor_shape() },
                 NodeProperties::new(cursor_bounds).with_z_order(9999),
             ));
         }
@@ -415,7 +418,7 @@ impl DesktopCompositor {
         let cursor_bounds = Rect::new(self.cursor_x, self.cursor_y, cursor_size, cursor_size);
         scene.add_child(SceneNode::new(
             999_999,
-            SceneNodeKind::Cursor,
+            SceneNodeKind::Cursor { shape: self.shell.cursor_shape() },
             NodeProperties::new(cursor_bounds).with_z_order(9999),
         ));
 
@@ -937,7 +940,7 @@ fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
         SceneNodeKind::Content => "Content",
         SceneNodeKind::Overlay => "Overlay",
         SceneNodeKind::ShellLayer => "ShellLayer",
-        SceneNodeKind::Cursor => "Cursor",
+        SceneNodeKind::Cursor { .. } => "Cursor",
         SceneNodeKind::Text { .. } => "Text",
         SceneNodeKind::Icon { .. } => "Icon",
         SceneNodeKind::LockScreen => "LockScreen",

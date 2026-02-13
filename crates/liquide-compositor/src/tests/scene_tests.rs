@@ -260,7 +260,7 @@ fn descendants_depth_first_order() {
 fn descendants_empty_for_leaf() {
     let leaf = SceneNode::new(
         10,
-        SceneNodeKind::Cursor,
+        SceneNodeKind::Cursor { shape: CursorShape::Arrow },
         NodeProperties::new(Rect::new(0.0, 0.0, 24.0, 24.0)),
     );
     assert!(leaf.descendants().is_empty());
@@ -270,7 +270,7 @@ fn descendants_empty_for_leaf() {
 fn depth_leaf_is_zero() {
     let leaf = SceneNode::new(
         10,
-        SceneNodeKind::Cursor,
+        SceneNodeKind::Cursor { shape: CursorShape::Arrow },
         NodeProperties::new(Rect::new(0.0, 0.0, 24.0, 24.0)),
     );
     assert_eq!(leaf.depth(), 0);

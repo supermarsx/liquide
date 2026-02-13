@@ -7,7 +7,7 @@ use liquide_compositor::effects::EffectParams;
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::{BlendMode, Color};
-use liquide_compositor::scene::{FlatNode, NodeId, SceneNodeKind};
+use liquide_compositor::scene::{CursorShape, FlatNode, NodeId, SceneNodeKind};
 
 use crate::blur_worker::BlurWorker;
 use crate::color::SrgbLut;
@@ -285,9 +285,10 @@ impl SoftwareRenderer {
                 let bw = bounds.width as u32;
                 let bh = bounds.height as u32;
 
-                let cache_hit = self.shadow_cache.get(&node.id).is_some_and(|c| {
-                    c.bx == bx && c.by == by && c.bw == bw && c.bh == bh
-                });
+                let cache_hit = self
+                    .shadow_cache
+                    .get(&node.id)
+                    .is_some_and(|c| c.bx == bx && c.by == by && c.bw == bw && c.bh == bh);
 
                 if cache_hit {
                     // Fast path: composite cached shadow mask (~0.5ms vs ~20ms).
@@ -407,7 +408,12 @@ impl SoftwareRenderer {
                         let t = i as f32 - arm;
                         rasterizer::fill_rect(
                             fb,
-                            Rect::new(cx + t - thickness / 2.0, cy_btn + t - thickness / 2.0, thickness, thickness),
+                            Rect::new(
+                                cx + t - thickness / 2.0,
+                                cy_btn + t - thickness / 2.0,
+                                thickness,
+                                thickness,
+                            ),
                             icon_color,
                             BlendMode::SrcOver,
                         );
@@ -417,7 +423,12 @@ impl SoftwareRenderer {
                         let t = i as f32 - arm;
                         rasterizer::fill_rect(
                             fb,
-                            Rect::new(cx - t - thickness / 2.0, cy_btn + t - thickness / 2.0, thickness, thickness),
+                            Rect::new(
+                                cx - t - thickness / 2.0,
+                                cy_btn + t - thickness / 2.0,
+                                thickness,
+                                thickness,
+                            ),
                             icon_color,
                             BlendMode::SrcOver,
                         );
@@ -448,13 +459,33 @@ impl SoftwareRenderer {
                     let half = 4.0_f32;
                     let stroke = 1.5_f32;
                     // Top edge
-                    rasterizer::fill_rect(fb, Rect::new(cx - half, cy_btn - half, half * 2.0, stroke), icon_color, BlendMode::SrcOver);
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - half, cy_btn - half, half * 2.0, stroke),
+                        icon_color,
+                        BlendMode::SrcOver,
+                    );
                     // Bottom edge
-                    rasterizer::fill_rect(fb, Rect::new(cx - half, cy_btn + half - stroke, half * 2.0, stroke), icon_color, BlendMode::SrcOver);
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - half, cy_btn + half - stroke, half * 2.0, stroke),
+                        icon_color,
+                        BlendMode::SrcOver,
+                    );
                     // Left edge
-                    rasterizer::fill_rect(fb, Rect::new(cx - half, cy_btn - half, stroke, half * 2.0), icon_color, BlendMode::SrcOver);
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx - half, cy_btn - half, stroke, half * 2.0),
+                        icon_color,
+                        BlendMode::SrcOver,
+                    );
                     // Right edge
-                    rasterizer::fill_rect(fb, Rect::new(cx + half - stroke, cy_btn - half, stroke, half * 2.0), icon_color, BlendMode::SrcOver);
+                    rasterizer::fill_rect(
+                        fb,
+                        Rect::new(cx + half - stroke, cy_btn - half, stroke, half * 2.0),
+                        icon_color,
+                        BlendMode::SrcOver,
+                    );
                 }
 
                 // Minimize button (─ horizontal line icon) — third from right
@@ -587,53 +618,43 @@ impl SoftwareRenderer {
                 }
             }
 
-            SceneNodeKind::Cursor => {
-                // Software cursor: white arrow with black outline for
-                // visibility on any background.  Scale factor derived
-                // from the node bounds (default 24px → scale ~1.5).
+            SceneNodeKind::Cursor { shape } => {
+                // Software cursor rendered in different shapes based on context.
                 let cx = bounds.x;
                 let cy = bounds.y;
-                let s = (bounds.width / 16.0).max(1.0); // scale relative to 16px base
+                let s = (bounds.width / 16.0).max(1.0);
 
                 let outline = Color::new(0, 0, 0, 255);
                 let fill = Color::WHITE;
 
-                // Arrow body rows (base 16px design): (y_offset, width)
-                let arrow_rows: &[(f32, f32)] = &[
-                    (0.0, 1.0),
-                    (1.0, 2.0),
-                    (2.0, 3.0),
-                    (3.0, 4.0),
-                    (4.0, 5.0),
-                    (5.0, 6.0),
-                    (6.0, 7.0),
-                    (7.0, 8.0),
-                    (8.0, 9.0),
-                    (9.0, 10.0),
-                    (10.0, 11.0),
-                    (11.0, 12.0),
-                    (12.0, 7.0),
-                    (13.0, 5.0),
-                ];
-
-                // Outline: black border around the arrow
-                for &(row_y, row_w) in arrow_rows {
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - s, cy + row_y * s - 0.5 * s, row_w * s + 2.0 * s, 2.0 * s),
-                        outline,
-                        BlendMode::SrcOver,
-                    );
-                }
-
-                // Fill: white interior
-                for &(row_y, row_w) in arrow_rows {
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx, cy + row_y * s, row_w * s, s),
-                        fill,
-                        BlendMode::SrcOver,
-                    );
+                match shape {
+                    CursorShape::Arrow => {
+                        Self::draw_cursor_arrow(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::Move => {
+                        Self::draw_cursor_move(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::ResizeNS => {
+                        Self::draw_cursor_resize_ns(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::ResizeEW => {
+                        Self::draw_cursor_resize_ew(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::ResizeNWSE => {
+                        Self::draw_cursor_resize_nwse(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::ResizeNESW => {
+                        Self::draw_cursor_resize_nesw(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::Pointer => {
+                        Self::draw_cursor_pointer(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::Text => {
+                        Self::draw_cursor_text(fb, cx, cy, s, outline, fill);
+                    }
+                    CursorShape::NotAllowed => {
+                        Self::draw_cursor_not_allowed(fb, cx, cy, s, outline, fill);
+                    }
                 }
             }
 
@@ -680,6 +701,490 @@ impl SoftwareRenderer {
                 }
                 crate::icons::draw_icon(fb, *icon_id, bounds, c, &self.srgb_lut);
             }
+        }
+    }
+
+    // =======================================================================
+    // Cursor shape drawing helpers
+    // =======================================================================
+
+    /// Arrow cursor: classic top-left pointer.
+    fn draw_cursor_arrow(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let arrow_rows: &[(f32, f32)] = &[
+            (0.0, 1.0),
+            (1.0, 2.0),
+            (2.0, 3.0),
+            (3.0, 4.0),
+            (4.0, 5.0),
+            (5.0, 6.0),
+            (6.0, 7.0),
+            (7.0, 8.0),
+            (8.0, 9.0),
+            (9.0, 10.0),
+            (10.0, 11.0),
+            (11.0, 12.0),
+            (12.0, 7.0),
+            (13.0, 5.0),
+        ];
+        for &(row_y, row_w) in arrow_rows {
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx - s, cy + row_y * s - 0.5 * s, row_w * s + 2.0 * s, 2.0 * s),
+                outline,
+                BlendMode::SrcOver,
+            );
+        }
+        for &(row_y, row_w) in arrow_rows {
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx, cy + row_y * s, row_w * s, s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+    }
+
+    /// Move cursor: four-way cross arrow (for window dragging).
+    fn draw_cursor_move(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let center_x = cx + 7.0 * s;
+        let center_y = cy + 7.0 * s;
+        let arm = 5.0 * s;
+        let thickness = 2.0 * s;
+        let half_t = thickness * 0.5;
+        let arrow_w = 4.0 * s;
+        let arrow_h = 3.0 * s;
+
+        // Outline (1px bigger each side)
+        let o = s;
+        // Vertical arm (outline)
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - half_t - o, center_y - arm - arrow_h - o, thickness + 2.0 * o, arm * 2.0 + thickness + 2.0 * arrow_h + 2.0 * o),
+            outline,
+            BlendMode::SrcOver,
+        );
+        // Horizontal arm (outline)
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - arm - arrow_h - o, center_y - half_t - o, arm * 2.0 + thickness + 2.0 * arrow_h + 2.0 * o, thickness + 2.0 * o),
+            outline,
+            BlendMode::SrcOver,
+        );
+
+        // Fill: vertical arm
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - half_t, center_y - arm, thickness, arm * 2.0),
+            fill,
+            BlendMode::SrcOver,
+        );
+        // Fill: horizontal arm
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - arm, center_y - half_t, arm * 2.0, thickness),
+            fill,
+            BlendMode::SrcOver,
+        );
+
+        // Arrowheads (triangles made of rects)
+        // Up arrow
+        for i in 0..3 {
+            let fi = i as f32;
+            let w = (arrow_w - fi * 2.0 * s).max(s);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x - w * 0.5, center_y - arm - fi * s, w, s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+        // Down arrow
+        for i in 0..3 {
+            let fi = i as f32;
+            let w = (arrow_w - fi * 2.0 * s).max(s);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x - w * 0.5, center_y + arm + fi * s, w, s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+        // Left arrow
+        for i in 0..3 {
+            let fi = i as f32;
+            let h = (arrow_w - fi * 2.0 * s).max(s);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x - arm - fi * s, center_y - h * 0.5, s, h),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+        // Right arrow
+        for i in 0..3 {
+            let fi = i as f32;
+            let h = (arrow_w - fi * 2.0 * s).max(s);
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x + arm + fi * s, center_y - h * 0.5, s, h),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+    }
+
+    /// Vertical resize cursor (↕): double-headed vertical arrow.
+    fn draw_cursor_resize_ns(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let center_x = cx + 6.0 * s;
+        let center_y = cy + 7.0 * s;
+        let arm = 5.0 * s;
+        let thickness = 2.0 * s;
+        let half_t = thickness * 0.5;
+        let o = s;
+
+        // Outline
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - half_t - o, center_y - arm - 3.0 * s - o, thickness + 2.0 * o, arm * 2.0 + 6.0 * s + 2.0 * o),
+            outline,
+            BlendMode::SrcOver,
+        );
+        // Fill: vertical bar
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - half_t, center_y - arm, thickness, arm * 2.0),
+            fill,
+            BlendMode::SrcOver,
+        );
+        // Up arrowhead
+        for i in 0..3 {
+            let fi = i as f32;
+            let w = (6.0 * s - fi * 2.0 * s).max(s);
+            rasterizer::fill_rect(fb, Rect::new(center_x - w * 0.5, center_y - arm - fi * s, w, s), fill, BlendMode::SrcOver);
+        }
+        // Down arrowhead
+        for i in 0..3 {
+            let fi = i as f32;
+            let w = (6.0 * s - fi * 2.0 * s).max(s);
+            rasterizer::fill_rect(fb, Rect::new(center_x - w * 0.5, center_y + arm + fi * s, w, s), fill, BlendMode::SrcOver);
+        }
+    }
+
+    /// Horizontal resize cursor (↔): double-headed horizontal arrow.
+    fn draw_cursor_resize_ew(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let center_x = cx + 7.0 * s;
+        let center_y = cy + 6.0 * s;
+        let arm = 5.0 * s;
+        let thickness = 2.0 * s;
+        let half_t = thickness * 0.5;
+        let o = s;
+
+        // Outline
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - arm - 3.0 * s - o, center_y - half_t - o, arm * 2.0 + 6.0 * s + 2.0 * o, thickness + 2.0 * o),
+            outline,
+            BlendMode::SrcOver,
+        );
+        // Fill: horizontal bar
+        rasterizer::fill_rect(
+            fb,
+            Rect::new(center_x - arm, center_y - half_t, arm * 2.0, thickness),
+            fill,
+            BlendMode::SrcOver,
+        );
+        // Left arrowhead
+        for i in 0..3 {
+            let fi = i as f32;
+            let h = (6.0 * s - fi * 2.0 * s).max(s);
+            rasterizer::fill_rect(fb, Rect::new(center_x - arm - fi * s, center_y - h * 0.5, s, h), fill, BlendMode::SrcOver);
+        }
+        // Right arrowhead
+        for i in 0..3 {
+            let fi = i as f32;
+            let h = (6.0 * s - fi * 2.0 * s).max(s);
+            rasterizer::fill_rect(fb, Rect::new(center_x + arm + fi * s, center_y - h * 0.5, s, h), fill, BlendMode::SrcOver);
+        }
+    }
+
+    /// Diagonal resize cursor (↘↖): NW-SE direction.
+    fn draw_cursor_resize_nwse(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let o = s;
+        // Diagonal line from top-left to bottom-right
+        let len = 12;
+        // Outline
+        for i in 0..len {
+            let fi = i as f32;
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx + fi * s - o, cy + fi * s - o, 2.0 * s + 2.0 * o, 2.0 * s + 2.0 * o),
+                outline,
+                BlendMode::SrcOver,
+            );
+        }
+        // Fill
+        for i in 0..len {
+            let fi = i as f32;
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx + fi * s, cy + fi * s, 2.0 * s, 2.0 * s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+        // NW arrowhead
+        for i in 0..4 {
+            let fi = i as f32;
+            rasterizer::fill_rect(fb, Rect::new(cx, cy + fi * s, (4.0 - fi) * s, s), fill, BlendMode::SrcOver);
+        }
+        // SE arrowhead
+        let end = (len - 1) as f32;
+        for i in 0..4 {
+            let fi = i as f32;
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx + (end - 3.0 + fi) * s + 2.0 * s, cy + (end - fi) * s, (4.0 - fi) * s, s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+    }
+
+    /// Diagonal resize cursor (↗↙): NE-SW direction.
+    fn draw_cursor_resize_nesw(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let o = s;
+        let len = 12;
+        let max_i = (len - 1) as f32;
+        // Outline
+        for i in 0..len {
+            let fi = i as f32;
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx + (max_i - fi) * s - o, cy + fi * s - o, 2.0 * s + 2.0 * o, 2.0 * s + 2.0 * o),
+                outline,
+                BlendMode::SrcOver,
+            );
+        }
+        // Fill
+        for i in 0..len {
+            let fi = i as f32;
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx + (max_i - fi) * s, cy + fi * s, 2.0 * s, 2.0 * s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+        // NE arrowhead
+        for i in 0..4 {
+            let fi = i as f32;
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx + (max_i - 3.0 + fi) * s, cy + fi * s, (4.0 - fi) * s, s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+        // SW arrowhead
+        for i in 0..4 {
+            let fi = i as f32;
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx, cy + (max_i - fi) * s, (4.0 - fi) * s, s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+    }
+
+    /// Pointer / hand cursor: pointing hand for clickable items.
+    fn draw_cursor_pointer(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        // Simplified pointing hand: index finger + palm
+        let finger_rows: &[(f32, f32, f32)] = &[
+            // (y_offset, x_offset, width)
+            (0.0, 4.0, 2.0),   // fingertip
+            (1.0, 4.0, 2.0),
+            (2.0, 4.0, 2.0),
+            (3.0, 4.0, 2.0),
+            (4.0, 4.0, 2.0),
+            (5.0, 4.0, 2.0),
+            (6.0, 1.0, 9.0),   // palm starts
+            (7.0, 0.0, 10.0),
+            (8.0, 0.0, 10.0),
+            (9.0, 0.0, 10.0),
+            (10.0, 0.0, 10.0),
+            (11.0, 1.0, 9.0),
+            (12.0, 1.0, 8.0),
+            (13.0, 2.0, 6.0),
+        ];
+        // Outline
+        for &(row_y, row_x, row_w) in finger_rows {
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(
+                    cx + row_x * s - s,
+                    cy + row_y * s - 0.5 * s,
+                    row_w * s + 2.0 * s,
+                    2.0 * s,
+                ),
+                outline,
+                BlendMode::SrcOver,
+            );
+        }
+        // Fill
+        for &(row_y, row_x, row_w) in finger_rows {
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(cx + row_x * s, cy + row_y * s, row_w * s, s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+    }
+
+    /// Text / I-beam cursor for text selection.
+    fn draw_cursor_text(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let center_x = cx + 6.0 * s;
+        let top = cy + 1.0 * s;
+        let bottom = cy + 13.0 * s;
+        let bar_h = bottom - top;
+        let serif_w = 4.0 * s;
+        let o = s;
+
+        // Outline
+        rasterizer::fill_rect(fb, Rect::new(center_x - s - o, top - o, 2.0 * s + 2.0 * o, bar_h + 2.0 * o), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(center_x - serif_w * 0.5 - o, top - o, serif_w + 2.0 * o, 2.0 * s + 2.0 * o), outline, BlendMode::SrcOver);
+        rasterizer::fill_rect(fb, Rect::new(center_x - serif_w * 0.5 - o, bottom - s - o, serif_w + 2.0 * o, 2.0 * s + 2.0 * o), outline, BlendMode::SrcOver);
+
+        // Fill: vertical bar
+        rasterizer::fill_rect(fb, Rect::new(center_x - s, top, 2.0 * s, bar_h), fill, BlendMode::SrcOver);
+        // Top serif
+        rasterizer::fill_rect(fb, Rect::new(center_x - serif_w * 0.5, top, serif_w, s), fill, BlendMode::SrcOver);
+        // Bottom serif
+        rasterizer::fill_rect(fb, Rect::new(center_x - serif_w * 0.5, bottom - s, serif_w, s), fill, BlendMode::SrcOver);
+    }
+
+    /// Not-allowed / forbidden cursor: circle with diagonal line.
+    fn draw_cursor_not_allowed(
+        fb: &mut FrameBuffer,
+        cx: f32,
+        cy: f32,
+        s: f32,
+        outline: Color,
+        fill: Color,
+    ) {
+        let center_x = cx + 7.0 * s;
+        let center_y = cy + 7.0 * s;
+        let radius = 6.0 * s;
+        let thickness = 2.0 * s;
+
+        // Approximate circle outline with rect segments
+        let segments: &[(f32, f32, f32, f32)] = &[
+            // (x_off, y_off, w, h) relative to center
+            (-2.0, -6.0, 4.0, 1.0),  // top
+            (-4.0, -5.0, 8.0, 1.0),
+            (-5.0, -4.0, 2.0, 1.0),
+            (3.0, -4.0, 2.0, 1.0),
+            (-6.0, -2.0, 1.0, 4.0),  // left
+            (5.0, -2.0, 1.0, 4.0),   // right
+            (-5.0, 3.0, 2.0, 1.0),
+            (3.0, 3.0, 2.0, 1.0),
+            (-4.0, 4.0, 8.0, 1.0),
+            (-2.0, 5.0, 4.0, 1.0),   // bottom
+        ];
+
+        // Outline
+        for &(xo, yo, w, h) in segments {
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x + xo * s - s, center_y + yo * s - s, w * s + 2.0 * s, h * s + 2.0 * s),
+                outline,
+                BlendMode::SrcOver,
+            );
+        }
+        // Fill ring
+        for &(xo, yo, w, h) in segments {
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x + xo * s, center_y + yo * s, w * s, h * s),
+                fill,
+                BlendMode::SrcOver,
+            );
+        }
+        // Diagonal line through the circle (outline + fill)
+        for i in 0..10 {
+            let fi = i as f32;
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x + (-4.0 + fi) * s - s, center_y + (-4.0 + fi) * s - s, 2.0 * s + 2.0 * s, 2.0 * s + 2.0 * s),
+                outline,
+                BlendMode::SrcOver,
+            );
+        }
+        for i in 0..10 {
+            let fi = i as f32;
+            rasterizer::fill_rect(
+                fb,
+                Rect::new(center_x + (-4.0 + fi) * s, center_y + (-4.0 + fi) * s, 2.0 * s, 2.0 * s),
+                fill,
+                BlendMode::SrcOver,
+            );
         }
     }
 

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use liquide_compositor::geometry::{Point, Rect};
-use liquide_compositor::scene::{DecorationButtons, NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::scene::{CursorShape, DecorationButtons, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_input::KeyEvent;
 use liquide_platform::PlatformEvent;
 
@@ -163,6 +163,8 @@ pub struct Shell {
     drag_state: Option<DragState>,
     /// Which decoration button the mouse is currently hovering over.
     hovered_button: Option<(WindowId, HitZone)>,
+    /// Current cursor shape (updated on every mouse move).
+    cursor_shape: CursorShape,
 }
 
 impl Shell {
@@ -220,6 +222,7 @@ impl Shell {
             session_menu_hover_index: None,
             drag_state: None,
             hovered_button: None,
+            cursor_shape: CursorShape::Arrow,
         }
     }
 
@@ -272,6 +275,7 @@ impl Shell {
             session_menu_hover_index: None,
             drag_state: None,
             hovered_button: None,
+            cursor_shape: CursorShape::Arrow,
         }
     }
 
@@ -633,6 +637,34 @@ impl Shell {
     #[must_use]
     pub fn screen_rect(&self) -> Rect {
         self.screen_rect
+    }
+
+    /// Get the current cursor shape.
+    #[must_use]
+    pub fn cursor_shape(&self) -> CursorShape {
+        self.cursor_shape
+    }
+
+    /// Whether the user is currently dragging a window (move or resize).
+    #[must_use]
+    pub fn is_dragging(&self) -> bool {
+        self.drag_state.is_some()
+    }
+
+    /// Map a decoration hit zone to the appropriate cursor shape.
+    fn cursor_for_hit_zone(zone: HitZone) -> CursorShape {
+        match zone {
+            HitZone::ResizeTop | HitZone::ResizeBottom => CursorShape::ResizeNS,
+            HitZone::ResizeLeft | HitZone::ResizeRight => CursorShape::ResizeEW,
+            HitZone::ResizeTopLeft | HitZone::ResizeBottomRight => CursorShape::ResizeNWSE,
+            HitZone::ResizeTopRight | HitZone::ResizeBottomLeft => CursorShape::ResizeNESW,
+            HitZone::CloseButton
+            | HitZone::MaximizeButton
+            | HitZone::MinimizeButton
+            | HitZone::AlwaysOnTopButton => CursorShape::Pointer,
+            HitZone::TitleBar => CursorShape::Arrow,
+            _ => CursorShape::Arrow,
+        }
     }
 
     /// Resize the screen.
@@ -1111,8 +1143,7 @@ impl Shell {
                                 == Some((window.id, HitZone::AlwaysOnTopButton)),
                         },
                     },
-                    NodeProperties::new(window.bounds)
-                        .with_z_order(window.z_order as u32 * 10 + 2),
+                    NodeProperties::new(window.bounds).with_z_order(window.z_order as u32 * 10 + 2),
                 ));
             }
 
@@ -1547,6 +1578,7 @@ impl Shell {
                                     offset_x,
                                     offset_y,
                                 } => {
+                                    self.cursor_shape = CursorShape::Move;
                                     if let Some(window) = self.windows.get_mut(&window_id) {
                                         window.bounds.x = *x - offset_x;
                                         window.bounds.y = *y - offset_y;
@@ -1564,6 +1596,7 @@ impl Shell {
                                     start_x,
                                     start_y,
                                 } => {
+                                    self.cursor_shape = Self::cursor_for_hit_zone(edge);
                                     let dx = *x - start_x;
                                     let dy = *y - start_y;
                                     let min_w = self
@@ -1766,6 +1799,60 @@ impl Shell {
                             }
                         }
 
+                        // --- Cursor shape determination (no active drag) ---
+                        let prev_cursor = self.cursor_shape;
+                        self.cursor_shape = CursorShape::Arrow; // default
+
+                        // Check hover over dock items → pointer hand
+                        if self.dock.hover_index().is_some() {
+                            self.cursor_shape = CursorShape::Pointer;
+                        }
+                        // Check hover over menu items → pointer hand
+                        else if self.context_menu_hover_index.is_some()
+                            || self.session_menu_hover_index.is_some()
+                        {
+                            self.cursor_shape = CursorShape::Pointer;
+                        }
+                        // Check hover over decoration buttons → pointer hand
+                        else if self.hovered_button.is_some() {
+                            self.cursor_shape = CursorShape::Pointer;
+                        } else {
+                            // Check hover over window resize zones
+                            for window in self.visible_windows().into_iter().rev() {
+                                if !window.flags.contains(WindowFlags::DECORATED) {
+                                    continue;
+                                }
+                                let client = Rect::new(
+                                    window.bounds.x,
+                                    window.bounds.y + tbh,
+                                    window.bounds.width,
+                                    (window.bounds.height - tbh).max(0.0),
+                                );
+                                let zone = hit_test_decoration(
+                                    client,
+                                    &self.decoration_style,
+                                    *x,
+                                    *y,
+                                );
+                                match zone {
+                                    HitZone::Outside => continue,
+                                    HitZone::TitleBar => {
+                                        // Title bar shows default arrow
+                                        break;
+                                    }
+                                    HitZone::Client => break,
+                                    zone => {
+                                        self.cursor_shape =
+                                            Self::cursor_for_hit_zone(zone);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if self.cursor_shape != prev_cursor {
+                            need_redraw = true;
+                        }
+
                         if need_redraw {
                             Some(ShellAction::Redraw)
                         } else {
@@ -1782,6 +1869,7 @@ impl Shell {
                         if *state == ButtonState::Released {
                             if self.drag_state.is_some() {
                                 self.drag_state = None;
+                                self.cursor_shape = CursorShape::Arrow;
                                 return Some(ShellAction::Redraw);
                             }
                             return None;
