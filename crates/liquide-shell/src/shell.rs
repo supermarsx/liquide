@@ -1797,6 +1797,7 @@ impl Shell {
                                 need_redraw = true;
                             }
                         } else {
+                            // Mouse outside dock bounds - clear hover
                             if self.dock.hover_index().is_some() {
                                 need_redraw = true;
                             }
@@ -1821,11 +1822,18 @@ impl Shell {
                                 .max(0.0);
                             let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
                             let prev_hover = self.context_menu_hover_index;
+                            
+                            // Only process hover if mouse is within menu bounds
                             if ctx_bounds.contains(pt) {
                                 let rel_y = *y - ctx_y - 8.0;
-                                let idx = (rel_y / ctx_item_h) as usize;
-                                if idx < ctx_items.len() {
-                                    self.context_menu_hover_index = Some(idx);
+                                // Validate relative position is positive before converting to index
+                                if rel_y >= 0.0 {
+                                    let idx = (rel_y / ctx_item_h) as usize;
+                                    if idx < ctx_items.len() {
+                                        self.context_menu_hover_index = Some(idx);
+                                    } else {
+                                        self.context_menu_hover_index = None;
+                                    }
                                 } else {
                                     self.context_menu_hover_index = None;
                                 }
@@ -1847,11 +1855,18 @@ impl Shell {
                             let menu_y = bar_h + 4.0;
                             let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
                             let prev_hover = self.session_menu_hover_index;
+                            
+                            // Only process hover if mouse is within menu bounds
                             if menu_bounds.contains(pt) {
                                 let rel_y = *y - menu_y - 8.0;
-                                let idx = (rel_y / item_h) as usize;
-                                if idx < self.session_menu_items.len() {
-                                    self.session_menu_hover_index = Some(idx);
+                                // Validate relative position is positive before converting to index
+                                if rel_y >= 0.0 {
+                                    let idx = (rel_y / item_h) as usize;
+                                    if idx < self.session_menu_items.len() {
+                                        self.session_menu_hover_index = Some(idx);
+                                    } else {
+                                        self.session_menu_hover_index = None;
+                                    }
                                 } else {
                                     self.session_menu_hover_index = None;
                                 }
