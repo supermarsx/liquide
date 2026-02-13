@@ -58,9 +58,9 @@ impl RenderError {
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
-            RenderError::Timeout(_) 
-            | RenderError::ChannelSend(_)
-            | RenderError::ResourceExhausted(_)
+            RenderError::Timeout(_)
+                | RenderError::ChannelSend(_)
+                | RenderError::ResourceExhausted(_)
         )
     }
 

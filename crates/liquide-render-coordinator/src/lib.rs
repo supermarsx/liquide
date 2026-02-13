@@ -55,19 +55,19 @@
 pub mod config;
 pub mod coordinator;
 pub mod error;
-pub mod thread_pool;
-pub mod render_task;
 pub mod metrics;
+pub mod render_task;
+pub mod thread_pool;
 
 pub use config::{RenderConfig, RenderConfigBuilder};
 pub use coordinator::RenderCoordinator;
 pub use error::{RenderError, Result};
-pub use render_task::{RenderTask, RenderTaskKind, RenderPriority, RenderOutput};
+pub use render_task::{RenderOutput, RenderPriority, RenderTask, RenderTaskKind};
 
 /// Re-export commonly used types
 pub mod prelude {
     pub use crate::config::{RenderConfig, RenderConfigBuilder};
     pub use crate::coordinator::RenderCoordinator;
     pub use crate::error::{RenderError, Result};
-    pub use crate::render_task::{RenderTask, RenderTaskKind, RenderPriority};
+    pub use crate::render_task::{RenderPriority, RenderTask, RenderTaskKind};
 }
