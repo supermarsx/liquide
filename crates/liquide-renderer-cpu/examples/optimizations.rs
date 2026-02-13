@@ -131,7 +131,8 @@ fn optimized_render_loop() {
 
         // Only move one element per frame (creates partial dirty region)
         if frame > 0 {
-            let element_to_move = &mut elements[frame % elements.len()];
+            let elements_len = elements.len();
+            let element_to_move = &mut elements[frame % elements_len];
             let new_x = element_to_move.bounds.x + 10.0;
             element_to_move.move_to(new_x, element_to_move.bounds.y);
 

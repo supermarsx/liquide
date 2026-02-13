@@ -477,6 +477,7 @@ fn shell_set_decoration_style() {
         border_width: 2.0,
         corner_radius: 12.0,
         button_size: 20.0,
+        resize_tolerance: 8.0,
     };
     shell.set_decoration_style(style);
     assert_eq!(shell.decoration_style().title_bar_height, 40.0);
