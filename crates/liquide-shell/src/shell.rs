@@ -1122,20 +1122,31 @@ impl Shell {
 
             for (i, item) in self.session_menu_items.iter().enumerate() {
                 let iy = menu_y + 8.0 + i as f32 * item_h;
+
+                // Hover highlight
+                if self.session_menu_hover_index == Some(i) {
+                    root.add_child(tint_overlay(
+                        NODE_SESSION_MENU + 5 + i as u64,
+                        theme.menu_item_hover,
+                        Rect::new(menu_x + 4.0, iy, menu_w - 8.0, item_h),
+                        991,
+                    ));
+                }
+
                 let icon_id = icon_id_for_name(&item.icon);
                 root.add_child(icon_node(
                     NODE_SESSION_MENU + 10 + i as u64 * 2,
                     icon_id,
                     theme.status_bar_text,
                     Rect::new(menu_x + 14.0, iy + 4.0, 24.0, 24.0),
-                    991,
+                    992,
                 ));
                 root.add_child(text_node(
                     NODE_SESSION_MENU + 11 + i as u64 * 2,
                     item.label.clone(),
                     theme.status_bar_text,
                     Rect::new(menu_x + 44.0, iy + 6.0, menu_w - 60.0, 20.0),
-                    991,
+                    992,
                     1,
                 ));
             }
@@ -1173,20 +1184,31 @@ impl Shell {
 
             for (i, item) in ctx_items.iter().enumerate() {
                 let iy = ctx_y + 8.0 + i as f32 * ctx_item_h;
+
+                // Hover highlight
+                if self.context_menu_hover_index == Some(i) {
+                    root.add_child(tint_overlay(
+                        NODE_CONTEXT_MENU + 5 + i as u64,
+                        theme.menu_item_hover,
+                        Rect::new(ctx_x + 4.0, iy, ctx_w - 8.0, ctx_item_h),
+                        996,
+                    ));
+                }
+
                 let icon_id = icon_id_for_name(&item.icon);
                 root.add_child(icon_node(
                     NODE_CONTEXT_MENU + 10 + i as u64 * 2,
                     icon_id,
                     theme.status_bar_text,
                     Rect::new(ctx_x + 12.0, iy + 4.0, 24.0, 24.0),
-                    996,
+                    997,
                 ));
                 root.add_child(text_node(
                     NODE_CONTEXT_MENU + 11 + i as u64 * 2,
                     item.label.clone(),
                     theme.status_bar_text,
                     Rect::new(ctx_x + 44.0, iy + 6.0, ctx_w - 60.0, 20.0),
-                    996,
+                    997,
                     1,
                 ));
             }
@@ -1446,26 +1468,93 @@ impl Shell {
             PlatformEvent::MouseInput { event: me, .. } => {
                 match me {
                     MouseEvent::Move { x, y } => {
+                        let pt = Point::new(*x, *y);
+                        let mut need_redraw = false;
+
                         // Update dock hover
                         let dock_bounds = self.dock.compute_bounds(self.screen_rect);
-                        if dock_bounds.contains(Point::new(*x, *y)) {
+                        if dock_bounds.contains(pt) {
                             let item_rects = self.dock.compute_item_rects(self.screen_rect);
                             let mut found = None;
                             for (i, (_, rect)) in item_rects.iter().enumerate() {
-                                if rect.contains(Point::new(*x, *y)) {
+                                if rect.contains(pt) {
                                     found = Some(i);
                                     break;
                                 }
                             }
+                            let prev = self.dock.hover_index();
                             if let Some(idx) = found {
                                 self.dock.on_hover(idx);
                             } else {
                                 self.dock.on_hover_leave();
                             }
+                            if self.dock.hover_index() != prev {
+                                need_redraw = true;
+                            }
                         } else {
+                            if self.dock.hover_index().is_some() {
+                                need_redraw = true;
+                            }
                             self.dock.on_hover_leave();
                         }
-                        None
+
+                        // Update context menu hover
+                        if self.context_menu_visible {
+                            let ctx_items = ContextMenuItem::defaults();
+                            let ctx_item_h = 36.0_f32;
+                            let ctx_w = 260.0_f32;
+                            let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
+                            let ctx_x = self.context_menu_pos.x.min(self.screen_rect.width - ctx_w - 4.0).max(0.0);
+                            let ctx_y = self.context_menu_pos.y.min(self.screen_rect.height - ctx_h - 4.0).max(0.0);
+                            let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
+                            let prev_hover = self.context_menu_hover_index;
+                            if ctx_bounds.contains(pt) {
+                                let rel_y = *y - ctx_y - 8.0;
+                                let idx = (rel_y / ctx_item_h) as usize;
+                                if idx < ctx_items.len() {
+                                    self.context_menu_hover_index = Some(idx);
+                                } else {
+                                    self.context_menu_hover_index = None;
+                                }
+                            } else {
+                                self.context_menu_hover_index = None;
+                            }
+                            if self.context_menu_hover_index != prev_hover {
+                                need_redraw = true;
+                            }
+                        }
+
+                        // Update session menu hover
+                        if self.session_menu_visible {
+                            let item_h = 36.0_f32;
+                            let menu_w = 180.0_f32;
+                            let menu_h = 16.0 + self.session_menu_items.len() as f32 * item_h;
+                            let bar_h = self.status_bar.config().height as f32;
+                            let menu_x = self.screen_rect.width - menu_w - 8.0;
+                            let menu_y = bar_h + 4.0;
+                            let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
+                            let prev_hover = self.session_menu_hover_index;
+                            if menu_bounds.contains(pt) {
+                                let rel_y = *y - menu_y - 8.0;
+                                let idx = (rel_y / item_h) as usize;
+                                if idx < self.session_menu_items.len() {
+                                    self.session_menu_hover_index = Some(idx);
+                                } else {
+                                    self.session_menu_hover_index = None;
+                                }
+                            } else {
+                                self.session_menu_hover_index = None;
+                            }
+                            if self.session_menu_hover_index != prev_hover {
+                                need_redraw = true;
+                            }
+                        }
+
+                        if need_redraw {
+                            Some(ShellAction::Redraw)
+                        } else {
+                            None
+                        }
                     }
                     MouseEvent::Button {
                         button,

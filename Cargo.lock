@@ -957,6 +957,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-context-menu"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "serde",
+]
+
+[[package]]
 name = "liquide-crypto"
 version = "0.1.0"
 dependencies = [
@@ -994,6 +1002,14 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "liquide-dock"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "serde",
 ]
 
 [[package]]
@@ -1245,6 +1261,8 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "liquide-compositor",
+ "liquide-context-menu",
+ "liquide-dock",
  "liquide-input",
  "liquide-interop",
  "liquide-platform",

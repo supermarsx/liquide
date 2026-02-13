@@ -1,0 +1,12 @@
+[package]
+name = "liquide-context-menu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Reusable context menu system for the Liquide desktop shell"
+
+[dependencies]
+liquide-compositor = { workspace = true }
+serde = { workspace = true }
