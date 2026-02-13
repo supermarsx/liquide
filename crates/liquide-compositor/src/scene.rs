@@ -4,6 +4,8 @@
 //! element on the desktop. The compositor walks the tree, flattens it into a
 //! z-sorted list of visible leaf nodes, and hands that list to the renderer.
 
+use std::sync::Arc;
+
 use crate::geometry::{Affine2D, Rect};
 use crate::pixel::{Color, PixelFormat};
 use serde::{Deserialize, Serialize};
@@ -126,8 +128,9 @@ impl Default for DecorationButtons {
 /// A reference to pixel data from a Wayland client surface.
 #[derive(Debug, Clone)]
 pub struct SurfaceBuffer {
-    /// Raw pixel data.
-    pub pixels: Vec<u8>,
+    /// Raw pixel data (shared via `Arc` to avoid cloning megabytes during
+    /// scene flattening — cloning an `Arc` is just an atomic increment).
+    pub pixels: Arc<Vec<u8>>,
     pub width: u32,
     pub height: u32,
     /// Bytes per row (may include padding).
