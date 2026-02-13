@@ -417,7 +417,7 @@ impl SoftwareRenderer {
                 }
 
                 // --- Title text (centered in title bar) ---
-                if let Some(ref title_text) = title {
+                if let Some(title_text) = title {
                     if !title_text.is_empty() {
                         let mut tc = *title_color;
                         if opacity < 1.0 {

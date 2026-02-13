@@ -449,9 +449,17 @@ impl DesktopCompositor {
                 use liquide_input::mouse::MouseEvent;
                 match me {
                     MouseEvent::Move { x, y } => {
-                        self.cursor_x = *x;
-                        self.cursor_y = *y;
-                        needs_redraw = true;
+                        // Only redraw if cursor position actually changed
+                        // (avoid redundant full redraws on minor sub-pixel jitter).
+                        let new_x = *x;
+                        let new_y = *y;
+                        if (new_x - self.cursor_x).abs() > 0.1
+                            || (new_y - self.cursor_y).abs() > 0.1
+                        {
+                            self.cursor_x = new_x;
+                            self.cursor_y = new_y;
+                            needs_redraw = true;
+                        }
                     }
                     MouseEvent::Button { x, y, .. } => {
                         self.cursor_x = *x;
