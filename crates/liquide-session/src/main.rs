@@ -5,6 +5,7 @@ use tracing::{info, warn, error};
 use liquide_session::config::{
     JailConfig, ResumeConfig, ResourceLimits, SessionConfig, SupervisorConfig,
 };
+use liquide_session::desktop::DesktopCompositor;
 use liquide_session::runtime::SessionRuntime;
 use liquide_session::state::SessionState;
 
@@ -31,6 +32,18 @@ struct Cli {
     /// Path to a TOML configuration file.
     #[arg(long)]
     config: Option<String>,
+
+    /// Initial window width in pixels.
+    #[arg(long, default_value = "1280")]
+    width: u32,
+
+    /// Initial window height in pixels.
+    #[arg(long, default_value = "720")]
+    height: u32,
+
+    /// Run in headless mode without creating a window.
+    #[arg(long)]
+    headless: bool,
 }
 
 #[tokio::main]
@@ -61,7 +74,7 @@ async fn run(cli: Cli) -> Result<()> {
         warn!("Developer mode is enabled — security checks are relaxed");
     }
 
-    // Load configuration (a real implementation would read from the TOML file).
+    // Load configuration.
     let session_config = SessionConfig::default();
     let supervisor_config = SupervisorConfig::default();
     let resource_limits = ResourceLimits::default();
@@ -88,7 +101,7 @@ async fn run(cli: Cli) -> Result<()> {
     info!(
         state = %runtime.state(),
         safe_mode = runtime.is_safe_mode(),
-        "Session initialized — entering event loop"
+        "Session initialized"
     );
 
     // Drain and log any initialization audit events.
@@ -96,9 +109,52 @@ async fn run(cli: Cli) -> Result<()> {
         info!(event = event.event_name(), "audit: {:?}", event);
     }
 
-    // Enter the main event loop.
-    let heartbeat_interval =
-        tokio::time::Duration::from_secs(5);
+    if cli.headless {
+        // Headless mode: run the session runtime event loop without
+        // creating a window (useful for testing / CI).
+        info!("Running in headless mode — no window will be created");
+        run_headless(&mut runtime).await
+    } else {
+        // Desktop mode: create a platform backend, a desktop compositor
+        // with full shell integration, and run the blocking event loop.
+        info!(
+            width = cli.width,
+            height = cli.height,
+            "Launching desktop compositor"
+        );
+        run_desktop(cli.width, cli.height)
+    }
+}
+
+/// Run the desktop compositor with a real platform backend.
+///
+/// This creates the platform backend (Win32, X11, Wayland, or macOS),
+/// instantiates the desktop compositor with the shell, and enters the
+/// blocking event loop.
+fn run_desktop(width: u32, height: u32) -> Result<()> {
+    let mut platform = liquide_platform::create_platform()
+        .context("Failed to create platform backend")?;
+
+    info!(
+        platform = platform.platform_name(),
+        "Platform backend created"
+    );
+
+    let mut desktop = DesktopCompositor::new(width, height);
+
+    info!("Entering desktop event loop");
+    desktop.run(platform.as_mut());
+
+    info!(
+        frames = desktop.frame_count(),
+        "Desktop compositor shut down"
+    );
+    Ok(())
+}
+
+/// Run in headless mode with just the session runtime heartbeat loop.
+async fn run_headless(runtime: &mut SessionRuntime) -> Result<()> {
+    let heartbeat_interval = tokio::time::Duration::from_secs(5);
     let mut heartbeat_tick = tokio::time::interval(heartbeat_interval);
 
     loop {

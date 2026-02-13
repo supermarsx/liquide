@@ -1,30 +1,42 @@
-//! Desktop compositor loop — wires the compositor scene graph to actual
-//! rendering and display output.
+//! Desktop compositor loop — wires the shell, compositor, renderer, input,
+//! and platform backend into a running desktop environment.
 //!
-//! [`DesktopCompositor`] owns a [`Compositor`], [`SoftwareRenderer`], and
-//! [`InputState`], builds a minimal scene graph each frame, renders it into
-//! the compositor's back buffer, and presents the result to the platform
-//! window.
+//! [`DesktopCompositor`] owns a [`Shell`], [`Compositor`],
+//! [`SoftwareRenderer`], and [`InputState`].  Each frame it:
+//!
+//! 1. Asks the shell for the current scene graph (`shell.build_scene()`).
+//! 2. Submits the scene to the compositor's double-buffered pipeline.
+//! 3. Flattens + renders into the back buffer via the software renderer.
+//! 4. Presents the rendered frame to the platform window.
+//!
+//! Platform events are routed through the shell's `handle_platform_event`
+//! method, which translates them into `ShellAction`s that modify shell
+//! state (focus, window management, launcher toggle, etc.).
+
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use liquide_compositor::{Compositor, CompositorContract};
 use liquide_compositor::damage::DamageSet;
 use liquide_compositor::effects::QualityProfile;
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::pixel::Color;
-use liquide_compositor::scene::{NodeProperties, SceneNode, SceneNodeKind};
 use liquide_input::InputState;
 use liquide_input::event::InputEvent;
 use liquide_platform::{
     NativeWindowHandle, NativeWindowParams, PlatformBackend, PlatformEvent,
 };
 use liquide_renderer_cpu::{Renderer, SoftwareRenderer};
+use liquide_shell::Shell;
 
 /// The desktop compositor loop.
 ///
-/// Holds the compositor state, software renderer, input state, and the
-/// handle to the main platform window.  Call [`DesktopCompositor::run`]
-/// to enter the blocking event loop.
+/// Holds the shell (window management, dock, status bar, launcher,
+/// notifications, shortcuts), the compositor (scene graph, damage
+/// tracking, double-buffering), the software renderer, input state,
+/// and the native window handle.
+///
+/// Call [`DesktopCompositor::run`] to enter the blocking event loop.
 pub struct DesktopCompositor {
+    shell: Shell,
     compositor: Compositor,
     renderer: SoftwareRenderer,
     input_state: InputState,
@@ -33,16 +45,18 @@ pub struct DesktopCompositor {
     window_handle: Option<NativeWindowHandle>,
     frame_count: u64,
     running: bool,
+    last_tick: Instant,
 }
 
 impl DesktopCompositor {
     /// Create a new desktop compositor with the given initial resolution.
     ///
     /// Uses a 64-pixel tile size and the [`QualityProfile::Balanced`]
-    /// profile.
+    /// profile.  The shell is initialized with matching screen dimensions.
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
         Self {
+            shell: Shell::new(width as f32, height as f32),
             compositor: Compositor::new(width, height, 64, QualityProfile::Balanced),
             renderer: SoftwareRenderer::new(),
             input_state: InputState::new(),
@@ -51,89 +65,53 @@ impl DesktopCompositor {
             window_handle: None,
             frame_count: 0,
             running: true,
+            last_tick: Instant::now(),
         }
     }
 
-    /// Build the initial scene graph with a desktop background.
-    ///
-    /// The tree is: Root -> Background (solid blue) -> Workspace (index 0).
-    pub fn build_scene(&self) -> SceneNode {
-        let full = Rect::new(0.0, 0.0, self.width as f32, self.height as f32);
-
-        let mut root = SceneNode::new(
-            0,
-            SceneNodeKind::Root,
-            NodeProperties::new(full),
-        );
-
-        let bg = SceneNode::new(
-            1,
-            SceneNodeKind::Background {
-                color: Color::new(30, 60, 90, 255),
-            },
-            NodeProperties::new(full).with_z_order(0),
-        );
-
-        let workspace = SceneNode::new(
-            2,
-            SceneNodeKind::Workspace { index: 0 },
-            NodeProperties::new(full).with_z_order(1),
-        );
-
-        root.add_child(bg);
-        root.add_child(workspace);
-        root
-    }
-
-    /// Run one frame: build scene, render, present.
+    /// Run one frame: build scene from shell, render, present.
     ///
     /// The method carefully sequences borrows so that the compositor is
     /// never borrowed immutably and mutably at the same time:
     ///
-    /// 1. Build scene (owned) and submit to compositor.
-    /// 2. Begin frame (swap double-buffer).
+    /// 1. Build scene from shell state (owned `SceneNode`).
+    /// 2. Submit to compositor and swap double-buffer.
     /// 3. Flatten scene to owned `Vec<FlatNode>` — immutable borrow ends.
-    /// 4. Render into back buffer — mutable borrow of compositor +
-    ///    mutable borrow of renderer (disjoint fields).
+    /// 4. Render into back buffer — mutable borrows of disjoint fields.
     /// 5. Present the just-rendered back buffer to the platform window.
     pub fn render_frame(&mut self, platform: &mut dyn PlatformBackend) {
-        // 1. Build the scene graph.
-        let scene = self.build_scene();
+        let frame_start = Instant::now();
+
+        // 1. Build the scene graph from the shell's full state.
+        let scene = self.shell.build_scene();
 
         // 2. Submit to compositor and swap buffers.
         let _ = self.compositor.submit_scene(scene);
         self.compositor.begin_frame();
 
-        // 3. Full-screen damage (simple — the damage tracker inside the
-        //    compositor will also work, but for the desktop loop a full
-        //    redraw every frame is the safest default).
+        // 3. Full-screen damage — the damage tracker inside the compositor
+        //    can also compute incremental damage, but for the desktop loop
+        //    a full redraw every frame is the safest default.
         let tile_size = self.compositor.tile_size();
         let grid_w = self.width.div_ceil(tile_size);
         let grid_h = self.height.div_ceil(tile_size);
         let mut damage = DamageSet::new(tile_size);
         damage.mark_all(grid_w, grid_h);
 
-        // 4. Flatten the scene into a z-sorted list of visible leaf
-        //    nodes.  The temporary immutable borrow of
-        //    `self.compositor.scene()` is released once `flatten()`
-        //    returns the owned `Vec<FlatNode>`.
+        // 4. Flatten the scene into a z-sorted list of visible leaf nodes.
+        //    The temporary immutable borrow of `self.compositor.scene()` is
+        //    released once `flatten()` returns the owned `Vec<FlatNode>`.
         let flat_nodes = self
             .compositor
             .scene()
             .map(|s| s.flatten())
             .unwrap_or_default();
 
-        // 5. Render into the back buffer.  `frame_buffer_mut()` borrows
-        //    `self.compositor` mutably, and `self.renderer.render()`
-        //    borrows `self.renderer` mutably — these are disjoint struct
-        //    fields, so the borrow checker allows it.
+        // 5. Render into the back buffer.
         let fb = self.compositor.frame_buffer_mut();
         let _ = self.renderer.render(&flat_nodes, fb, &damage);
 
-        // 6. Present the just-rendered back buffer.  We read pixels from
-        //    the same `fb` reference (reborrowed read-only) and pass them
-        //    to the platform.  `platform` is a separate `&mut` parameter,
-        //    so there is no conflict.
+        // 6. Present the just-rendered back buffer to the platform window.
         if let Some(handle) = self.window_handle {
             let _ = platform.present_frame(
                 handle,
@@ -146,10 +124,18 @@ impl DesktopCompositor {
         }
 
         self.frame_count += 1;
+
+        // Report frame timing to the compositor for adaptive quality.
+        let frame_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+        self.compositor.report_frame_time(frame_ms);
     }
 
-    /// Handle a platform event.
-    pub fn handle_event(&mut self, event: &PlatformEvent) {
+    /// Handle a platform event: route through shell and input state.
+    ///
+    /// Returns `true` if the event requires a redraw.
+    pub fn handle_event(&mut self, event: &PlatformEvent) -> bool {
+        let mut needs_redraw = false;
+
         match event {
             PlatformEvent::WindowResized {
                 width, height, ..
@@ -157,9 +143,14 @@ impl DesktopCompositor {
                 self.width = *width;
                 self.height = *height;
                 let _ = self.compositor.resize(*width, *height);
+                self.shell.resize_screen(*width as f32, *height as f32);
+                needs_redraw = true;
             }
             PlatformEvent::WindowCloseRequested { .. } | PlatformEvent::Quit => {
                 self.running = false;
+            }
+            PlatformEvent::WindowRedraw { .. } => {
+                needs_redraw = true;
             }
             PlatformEvent::KeyInput { event: ke, .. } => {
                 self.input_state
@@ -175,15 +166,36 @@ impl DesktopCompositor {
             }
             _ => {}
         }
+
+        // Route the event through the shell for higher-level actions
+        // (keyboard shortcuts, mouse-click focus, dock hover, etc.).
+        if let Some(action) = self.shell.handle_platform_event(event) {
+            if self.shell.execute_action(&action) {
+                needs_redraw = true;
+            }
+        }
+
+        needs_redraw
+    }
+
+    /// Perform periodic updates (clock, notification expiry, etc.).
+    fn tick(&mut self) {
+        let now_us = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+        self.shell.tick(now_us);
     }
 
     /// Run the desktop event loop using the given platform backend.
     ///
-    /// Creates a main window, performs an initial render, and then enters
-    /// a blocking event loop that re-renders whenever the window needs a
-    /// repaint or is resized.
+    /// Creates the main desktop window, performs an initial render,
+    /// and then enters a blocking event loop that:
+    /// - Routes platform events through the shell.
+    /// - Runs periodic ticks (clock, notifications) every 100ms.
+    /// - Re-renders whenever the shell state has changed.
     pub fn run(&mut self, platform: &mut dyn PlatformBackend) {
-        // Create main window.
+        // Create the main desktop window.
         let params = NativeWindowParams {
             title: "Liquide Desktop".to_string(),
             geometry: Rect::new(
@@ -206,15 +218,22 @@ impl DesktopCompositor {
         // Event loop.
         while self.running {
             let event = platform.wait_event();
-            let needs_redraw = matches!(
-                event,
-                PlatformEvent::WindowRedraw { .. }
-                    | PlatformEvent::WindowResized { .. }
-            );
-            self.handle_event(&event);
+            let needs_redraw = self.handle_event(&event);
+
+            // Periodic tick every ~100ms for clock / notification expiry.
+            if self.last_tick.elapsed().as_millis() >= 100 {
+                self.tick();
+                self.last_tick = Instant::now();
+            }
+
             if needs_redraw {
                 self.render_frame(platform);
             }
+        }
+
+        // Clean up the window on exit.
+        if let Some(handle) = self.window_handle.take() {
+            let _ = platform.window_host().destroy_window(handle);
         }
     }
 
@@ -234,5 +253,16 @@ impl DesktopCompositor {
     #[must_use]
     pub fn input_state(&self) -> &InputState {
         &self.input_state
+    }
+
+    /// Read-only access to the shell.
+    #[must_use]
+    pub fn shell(&self) -> &Shell {
+        &self.shell
+    }
+
+    /// Mutable access to the shell.
+    pub fn shell_mut(&mut self) -> &mut Shell {
+        &mut self.shell
     }
 }

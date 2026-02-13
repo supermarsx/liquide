@@ -56,10 +56,7 @@ impl EventDispatcher {
     /// `surfaces` is the list of input targets (windows/surfaces) used
     /// for hit-testing mouse and touch events. The list should be in
     /// back-to-front z-order (topmost surface last).
-    pub fn poll_and_dispatch(
-        &mut self,
-        surfaces: &[&dyn InputTarget],
-    ) -> Vec<DispatchedEvent> {
+    pub fn poll_and_dispatch(&mut self, surfaces: &[&dyn InputTarget]) -> Vec<DispatchedEvent> {
         let packets = self.device_manager.poll_all();
         let mut dispatched = Vec::with_capacity(packets.len());
 

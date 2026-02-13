@@ -6,6 +6,7 @@
 use std::fmt;
 
 use liquide_compositor::geometry::Rect;
+use liquide_compositor::scene::SceneNode;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -419,6 +420,50 @@ impl Dock {
     #[must_use]
     pub fn config(&self) -> &DockConfig {
         &self.config
+    }
+
+    /// Build the scene graph for the dock.
+    pub fn build_scene(&self, screen: Rect) -> SceneNode {
+        use crate::scene_builder::*;
+        use liquide_compositor::pixel::Color;
+        use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
+
+        let dock_bounds = self.compute_bounds(screen);
+        let mut dock_node = SceneNode::new(
+            NODE_DOCK,
+            SceneNodeKind::Glass(GlassParams {
+                blur_radius: 20,
+                tint_color: Color::new(40, 40, 40, 180),
+                inner_glow: true,
+                parallax: false,
+            }),
+            NodeProperties::new(dock_bounds).with_z_order(900),
+        );
+
+        let item_rects = self.compute_item_rects(screen);
+        for (i, (_idx, item_rect)) in item_rects.iter().enumerate() {
+            let item_id = NODE_DOCK_ITEM_BASE + i as u64;
+            let color = if i < self.items.len() && self.items[i].running_window_count > 0 {
+                Color::new(80, 140, 220, 200)
+            } else {
+                Color::new(120, 120, 120, 160)
+            };
+            dock_node.add_child(solid_rect(item_id, color, *item_rect, 901));
+        }
+
+        if let Some(hover_idx) = self.hover_index {
+            if hover_idx < item_rects.len() {
+                let (_, hover_rect) = &item_rects[hover_idx];
+                dock_node.add_child(tint_overlay(
+                    NODE_DOCK_ITEM_BASE + 500,
+                    Color::new(255, 255, 255, 40),
+                    *hover_rect,
+                    902,
+                ));
+            }
+        }
+
+        dock_node
     }
 
     // -----------------------------------------------------------------------

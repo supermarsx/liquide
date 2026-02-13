@@ -7,6 +7,7 @@
 use std::fmt;
 
 use liquide_compositor::geometry::Rect;
+use liquide_compositor::scene::SceneNode;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -328,6 +329,97 @@ impl ShellStatusBar {
     #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
+    }
+
+    /// Build the scene graph for the status bar.
+    pub fn build_scene(&self, screen: Rect) -> SceneNode {
+        use crate::scene_builder::*;
+        use liquide_compositor::geometry::Rect as GRect;
+        use liquide_compositor::pixel::Color;
+        use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
+
+        if !self.config.enabled {
+            return SceneNode::new(
+                NODE_STATUS_BAR,
+                SceneNodeKind::Overlay,
+                NodeProperties::new(GRect::ZERO).with_visible(false),
+            );
+        }
+
+        let bar_bounds = self.compute_bounds(screen);
+        let mut bar_node = SceneNode::new(
+            NODE_STATUS_BAR,
+            SceneNodeKind::Glass(GlassParams {
+                blur_radius: 15,
+                tint_color: Color::new(30, 30, 30, 200),
+                inner_glow: false,
+                parallax: false,
+            }),
+            NodeProperties::new(bar_bounds).with_z_order(950),
+        );
+
+        let padding = 8.0_f32;
+        let item_height = bar_bounds.height - 4.0;
+        let item_y = bar_bounds.y + 2.0;
+        let mut left_x = bar_bounds.x + padding;
+        let center_x = bar_bounds.x + bar_bounds.width / 2.0;
+        let mut right_x = bar_bounds.x + bar_bounds.width - padding;
+
+        for (i, item) in self.items.iter().enumerate() {
+            if !item.visible {
+                continue;
+            }
+            let item_id = NODE_STATUS_BAR_ITEM_BASE + i as u64;
+            let item_width = match &item.kind {
+                StatusBarItemKind::Clock { .. } => 120.0_f32,
+                StatusBarItemKind::NotificationIndicator { .. } => 30.0,
+                StatusBarItemKind::ConnectionQuality { .. } => 40.0,
+                StatusBarItemKind::TrayArea => 80.0,
+                StatusBarItemKind::Custom { .. } => 60.0,
+            };
+
+            let ix = match item.slot {
+                StatusBarSlot::Left => {
+                    let x = left_x;
+                    left_x += item_width + padding;
+                    x
+                }
+                StatusBarSlot::Center => center_x - item_width / 2.0,
+                StatusBarSlot::Right => {
+                    right_x -= item_width;
+                    let x = right_x;
+                    right_x -= padding;
+                    x
+                }
+            };
+
+            let item_bounds = GRect::new(ix, item_y, item_width, item_height);
+            let color = match &item.kind {
+                StatusBarItemKind::Clock { .. } => Color::new(220, 220, 220, 255),
+                StatusBarItemKind::NotificationIndicator { unread_count, .. } => {
+                    if *unread_count > 0 {
+                        Color::new(60, 140, 255, 255)
+                    } else {
+                        Color::new(160, 160, 160, 200)
+                    }
+                }
+                StatusBarItemKind::ConnectionQuality { quality_percent, .. } => {
+                    if *quality_percent > 70 {
+                        Color::new(60, 200, 60, 255)
+                    } else if *quality_percent > 30 {
+                        Color::new(220, 180, 40, 255)
+                    } else {
+                        Color::new(220, 60, 60, 255)
+                    }
+                }
+                StatusBarItemKind::TrayArea => Color::new(100, 100, 100, 150),
+                StatusBarItemKind::Custom { .. } => Color::new(160, 160, 160, 200),
+            };
+
+            bar_node.add_child(solid_rect(item_id, color, item_bounds, 951));
+        }
+
+        bar_node
     }
 }
 

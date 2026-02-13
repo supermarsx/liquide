@@ -9,6 +9,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use liquide_compositor::geometry::Rect;
+use liquide_compositor::scene::SceneNode;
+
 use crate::calculator::{self, CalcResult};
 
 // ---------------------------------------------------------------------------
@@ -769,6 +772,78 @@ impl Launcher {
     #[must_use]
     pub fn config(&self) -> &LauncherConfig {
         &self.config
+    }
+
+    /// Build the scene graph for the launcher overlay.
+    pub fn build_scene(&self, screen: Rect) -> SceneNode {
+        use crate::scene_builder::*;
+        use liquide_compositor::geometry::Rect as GRect;
+        use liquide_compositor::pixel::Color;
+        use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
+
+        if !self.visible {
+            return SceneNode::new(
+                NODE_LAUNCHER,
+                SceneNodeKind::Overlay,
+                NodeProperties::new(GRect::ZERO).with_visible(false),
+            );
+        }
+
+        let mut launcher_root = SceneNode::new(
+            NODE_LAUNCHER,
+            SceneNodeKind::Tint {
+                color: Color::new(0, 0, 0, 140),
+            },
+            NodeProperties::new(screen).with_z_order(980),
+        );
+
+        let panel_w = screen.width * 0.6;
+        let panel_h = screen.height * 0.7;
+        let panel_x = screen.x + (screen.width - panel_w) / 2.0;
+        let panel_y = screen.y + (screen.height - panel_h) / 2.0;
+        let panel_bounds = GRect::new(panel_x, panel_y, panel_w, panel_h);
+
+        launcher_root.add_child(SceneNode::new(
+            NODE_LAUNCHER + 1,
+            SceneNodeKind::Glass(GlassParams {
+                blur_radius: 25,
+                tint_color: Color::new(30, 30, 40, 220),
+                inner_glow: true,
+                parallax: false,
+            }),
+            NodeProperties::new(panel_bounds).with_z_order(981),
+        ));
+
+        let search_bounds = GRect::new(panel_x + 20.0, panel_y + 15.0, panel_w - 40.0, 36.0);
+        launcher_root.add_child(solid_rect(
+            NODE_LAUNCHER + 2,
+            Color::new(50, 50, 60, 200),
+            search_bounds,
+            982,
+        ));
+
+        let item_start_y = panel_y + 65.0;
+        let item_height = 40.0_f32;
+        let item_gap = 4.0_f32;
+        let max_visible = ((panel_h - 80.0) / (item_height + item_gap)) as usize;
+        let items_to_show = if self.results.is_empty() {
+            self.favorites.len().min(max_visible)
+        } else {
+            self.results.len().min(max_visible)
+        };
+
+        for i in 0..items_to_show {
+            let iy = item_start_y + i as f32 * (item_height + item_gap);
+            let item_bounds = GRect::new(panel_x + 20.0, iy, panel_w - 40.0, item_height);
+            let color = if i == self.selected_index {
+                Color::new(60, 120, 200, 180)
+            } else {
+                Color::new(60, 60, 70, 140)
+            };
+            launcher_root.add_child(solid_rect(NODE_LAUNCHER + 10 + i as u64, color, item_bounds, 983));
+        }
+
+        launcher_root
     }
 }
 
