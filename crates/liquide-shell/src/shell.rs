@@ -29,6 +29,72 @@ use crate::window::{Window, WindowFlags, WindowId, WindowState};
 use crate::workspace::WorkspaceManager;
 use crate::{ShellError, Result};
 
+/// A configurable item for the session / end-session dialog.
+#[derive(Debug, Clone)]
+pub struct SessionMenuItem {
+    /// Display label shown in the menu.
+    pub label: String,
+    /// Icon name (resolved via `icon_id_for_name`).
+    pub icon: String,
+    /// Action to execute when clicked.
+    pub action: ShellAction,
+}
+
+impl SessionMenuItem {
+    /// Create a new session menu item.
+    #[must_use]
+    pub fn new(label: impl Into<String>, icon: impl Into<String>, action: ShellAction) -> Self {
+        Self {
+            label: label.into(),
+            icon: icon.into(),
+            action,
+        }
+    }
+
+    /// Default session menu items: Lock, Log Out, Restart, Shut Down.
+    #[must_use]
+    pub fn defaults() -> Vec<Self> {
+        vec![
+            Self::new("Lock", "power", ShellAction::LockSession),
+            Self::new("Log Out", "power", ShellAction::ShowDesktop),
+            Self::new("Restart", "power", ShellAction::ShowDesktop),
+            Self::new("Shut Down", "power", ShellAction::ShowDesktop),
+        ]
+    }
+}
+
+/// A configurable item for the desktop right-click context menu.
+#[derive(Debug, Clone)]
+pub struct ContextMenuItem {
+    /// Display label shown in the menu.
+    pub label: String,
+    /// Icon name (resolved via `icon_id_for_name`).
+    pub icon: String,
+    /// Action to execute when clicked.
+    pub action: ShellAction,
+}
+
+impl ContextMenuItem {
+    /// Create a new context menu item.
+    #[must_use]
+    pub fn new(label: impl Into<String>, icon: impl Into<String>, action: ShellAction) -> Self {
+        Self {
+            label: label.into(),
+            icon: icon.into(),
+            action,
+        }
+    }
+
+    /// Default context menu items for the desktop surface.
+    #[must_use]
+    pub fn defaults() -> Vec<Self> {
+        vec![
+            Self::new("Configure Desktop & Wallpaper", "preferences-system", ShellAction::OpenSettings),
+            Self::new("Display Settings", "preferences-system", ShellAction::OpenSettings),
+        ]
+    }
+}
+
 /// The top-level shell managing all windows and workspaces.
 pub struct Shell {
     windows: HashMap<WindowId, Window>,
@@ -157,6 +223,9 @@ impl Shell {
             config,
             theme: ShellTheme::default_dark(),
             session_menu_visible: false,
+            context_menu_visible: false,
+            context_menu_pos: Point::new(0.0, 0.0),
+            session_menu_items: SessionMenuItem::defaults(),
         }
     }
 
