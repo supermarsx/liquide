@@ -25,7 +25,7 @@
 //! results into the glyph atlas.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 
 use liquide_font_rasterizer::database::FontDatabase;
@@ -234,7 +234,9 @@ impl FontWorker {
         if !req.font_family.is_empty() {
             if let Some(face_id) = db.resolve(&req.font_family, req.font_weight, false) {
                 let size_px = req.target_height as f32;
-                if let Ok(glyph_bitmap) = rasterizer.rasterize(face_id, req.codepoint, size_px, config) {
+                if let Ok(glyph_bitmap) =
+                    rasterizer.rasterize(face_id, req.codepoint, size_px, config)
+                {
                     return RasterizedGlyph {
                         key: req.key,
                         bitmap: glyph_bitmap.pixels,

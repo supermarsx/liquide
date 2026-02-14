@@ -1044,7 +1044,16 @@ impl SoftwareRenderer {
             // Root and Workspace are structural, not visual
             SceneNodeKind::Root | SceneNodeKind::Workspace { .. } => {}
 
-            SceneNodeKind::Text { text, color, scale, font_family, font_size, font_weight, letter_spacing, line_height: _line_height } => {
+            SceneNodeKind::Text {
+                text,
+                color,
+                scale,
+                font_family,
+                font_size,
+                font_weight,
+                letter_spacing,
+                line_height: _line_height,
+            } => {
                 let mut c = *color;
                 if opacity < 1.0 {
                     c.a = (c.a as f32 * opacity + 0.5) as u8;

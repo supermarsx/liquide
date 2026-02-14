@@ -9,11 +9,11 @@ use liquide_theme_css::{
 };
 
 use crate::{
+    Result, StyleError,
     glass::GlassStyle,
     shadow::ShadowStyle,
     style::{BorderLineStyle, BorderStyle, Margin, Padding, RenderStyle},
     transform::TransformStyle,
-    Result, StyleError,
 };
 
 /// CSS-to-RenderStyle resolver.
@@ -54,7 +54,8 @@ impl StyleResolver {
     ) -> Result<RenderStyle> {
         // Query CSS properties
         let props = if let Some(ref id_str) = id {
-            self.engine.query_with_id(element, Some(id_str.as_str()), classes, pseudo_classes)?
+            self.engine
+                .query_with_id(element, Some(id_str.as_str()), classes, pseudo_classes)?
         } else {
             self.engine.query(element, classes, pseudo_classes)?
         };
@@ -63,7 +64,8 @@ impl StyleResolver {
         let mut style = RenderStyle::new();
 
         // Colors
-        if let Some(color) = self.get_color(&props, "background")
+        if let Some(color) = self
+            .get_color(&props, "background")
             .or_else(|| self.get_color(&props, "background-color"))
         {
             style.background_color = Some(color);
@@ -214,11 +216,14 @@ impl StyleResolver {
 
     /// Resolve border from CSS properties.
     fn resolve_border(&self, props: &liquide_theme_css::property::PropertySet) -> BorderStyle {
-        let width = self.get_length(props, "border-width")
+        let width = self
+            .get_length(props, "border-width")
             .or_else(|| self.get_length(props, "border"))
             .unwrap_or(0.0);
 
-        let color = self.get_color(props, "border-color").unwrap_or(Color::new(0, 0, 0, 255));
+        let color = self
+            .get_color(props, "border-color")
+            .unwrap_or(Color::new(0, 0, 0, 255));
 
         let style = if let Some(style_val) = props.get("border-style") {
             match style_val.as_string() {
@@ -242,12 +247,17 @@ impl StyleResolver {
     }
 
     /// Resolve box-shadow from CSS properties.
-    fn resolve_shadow(&self, props: &liquide_theme_css::property::PropertySet) -> Option<ShadowStyle> {
+    fn resolve_shadow(
+        &self,
+        props: &liquide_theme_css::property::PropertySet,
+    ) -> Option<ShadowStyle> {
         // For now, use custom properties: shadow-offset-x, shadow-offset-y, shadow-blur, shadow-color
         let offset_x = self.get_length(props, "shadow-offset-x").unwrap_or(0.0);
         let offset_y = self.get_length(props, "shadow-offset-y").unwrap_or(4.0);
         let blur = self.get_length(props, "shadow-blur").unwrap_or(8.0);
-        let color = self.get_color(props, "shadow-color").unwrap_or(Color::new(0, 0, 0, 80));
+        let color = self
+            .get_color(props, "shadow-color")
+            .unwrap_or(Color::new(0, 0, 0, 80));
 
         if blur > 0.0 || offset_x != 0.0 || offset_y != 0.0 {
             Some(ShadowStyle::new(offset_x, offset_y, blur, color))
@@ -257,7 +267,10 @@ impl StyleResolver {
     }
 
     /// Resolve CSS transforms to TransformStyle.
-    fn resolve_transform(&self, props: &liquide_theme_css::property::PropertySet) -> TransformStyle {
+    fn resolve_transform(
+        &self,
+        props: &liquide_theme_css::property::PropertySet,
+    ) -> TransformStyle {
         let mut transform = TransformStyle::default();
 
         // Translate
@@ -312,9 +325,9 @@ impl StyleResolver {
         props.get(name).and_then(|v| match v.as_length() {
             Some(LengthUnit::Px(px)) => Some(px),
             Some(LengthUnit::Pt(pt)) => Some(pt * 1.333), // 1pt = 1.333px
-            Some(LengthUnit::Em(em)) => Some(em * 16.0), // Assume 16px base
+            Some(LengthUnit::Em(em)) => Some(em * 16.0),  // Assume 16px base
             Some(LengthUnit::Rem(rem)) => Some(rem * 16.0), // Assume 16px base
-            Some(LengthUnit::Percent(pct)) => Some(pct), // Return as-is, caller handles
+            Some(LengthUnit::Percent(pct)) => Some(pct),  // Return as-is, caller handles
             None => None,
         })
     }

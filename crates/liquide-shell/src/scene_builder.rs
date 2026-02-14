@@ -54,7 +54,14 @@ pub fn tint_overlay(id: u64, color: Color, bounds: Rect, z: u32) -> SceneNode {
 }
 
 /// Helper to create a text label node (bitmap fallback).
-pub fn text_node(id: u64, text: String, color: Color, bounds: Rect, z: u32, scale: u32) -> SceneNode {
+pub fn text_node(
+    id: u64,
+    text: String,
+    color: Color,
+    bounds: Rect,
+    z: u32,
+    scale: u32,
+) -> SceneNode {
     SceneNode::new(
         id,
         SceneNodeKind::Text {
