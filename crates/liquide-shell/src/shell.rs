@@ -921,11 +921,11 @@ impl Shell {
         self.style_resolver = None;
     }
 
-    /// Build the default Nord CSS theme and its style resolver.
+    /// Build the default Liquid Glass CSS theme and its style resolver.
     fn build_default_theme() -> (ShellTheme, StyleResolver) {
         use liquide_theme_css::ThemeParser;
         let parser = ThemeParser::new();
-        match parser.parse_str(theme_loader::default_nord_css()) {
+        match parser.parse_str(theme_loader::default_liquid_glass_css()) {
             Ok(stylesheet) => {
                 let engine = Arc::new(liquide_theme_css::ThemeEngine::new(stylesheet));
                 let theme = theme_loader::css_to_shell_theme(&engine);
