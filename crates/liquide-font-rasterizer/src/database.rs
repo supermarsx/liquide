@@ -108,11 +108,9 @@ impl FontDatabase {
             source: e,
         })?;
 
-        let font = FontArc::try_from_vec(data).map_err(|_| {
-            FontRasterizerError::InvalidFont {
-                path: path.display().to_string(),
-                reason: "failed to parse TrueType/OpenType data".into(),
-            }
+        let font = FontArc::try_from_vec(data).map_err(|_| FontRasterizerError::InvalidFont {
+            path: path.display().to_string(),
+            reason: "failed to parse TrueType/OpenType data".into(),
         })?;
 
         let id = FontFaceId(self.next_id);
@@ -154,11 +152,9 @@ impl FontDatabase {
     ) -> Result<FontFaceId> {
         let family = family.into();
 
-        let font = FontArc::try_from_vec(data).map_err(|_| {
-            FontRasterizerError::InvalidFont {
-                path: "<memory>".into(),
-                reason: "failed to parse TrueType/OpenType data".into(),
-            }
+        let font = FontArc::try_from_vec(data).map_err(|_| FontRasterizerError::InvalidFont {
+            path: "<memory>".into(),
+            reason: "failed to parse TrueType/OpenType data".into(),
         })?;
 
         let id = FontFaceId(self.next_id);
@@ -348,7 +344,10 @@ impl FontDatabase {
                 }
                 let p_italic = jb_dir.join(format!("JetBrainsMono-{suffix}Italic.ttf"));
                 if p_italic.exists() {
-                    if self.load_file(&p_italic, "JetBrains Mono", *w, true).is_ok() {
+                    if self
+                        .load_file(&p_italic, "JetBrains Mono", *w, true)
+                        .is_ok()
+                    {
                         loaded += 1;
                     }
                 }
@@ -433,14 +432,23 @@ mod tests {
 
     #[test]
     fn test_weight_inference() {
-        assert_eq!(FontDatabase::infer_weight_from_filename("Manrope-Bold"), 700);
+        assert_eq!(
+            FontDatabase::infer_weight_from_filename("Manrope-Bold"),
+            700
+        );
         assert_eq!(FontDatabase::infer_weight_from_filename("Inter-Light"), 300);
-        assert_eq!(FontDatabase::infer_weight_from_filename("Noto-Regular"), 400);
+        assert_eq!(
+            FontDatabase::infer_weight_from_filename("Noto-Regular"),
+            400
+        );
         assert_eq!(
             FontDatabase::infer_weight_from_filename("JetBrainsMono-SemiBold"),
             600
         );
-        assert_eq!(FontDatabase::infer_weight_from_filename("font-unknown"), 400);
+        assert_eq!(
+            FontDatabase::infer_weight_from_filename("font-unknown"),
+            400
+        );
     }
 
     #[test]

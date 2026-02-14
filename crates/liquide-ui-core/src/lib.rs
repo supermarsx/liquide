@@ -37,9 +37,8 @@ pub use style::{BorderStyle, BoxShadow, StyleSheet};
 pub use text::{FontMetrics, TextMeasure};
 pub use text_service::TextService;
 pub use theme::{
-    EasingCurve, ElementStateStyle, ElementTheme, ElevationToken, FontToken,
-    InteractionState, ThemeColors, ThemeElevation, ThemeFonts, ThemeMode,
-    ThemeMotion, UiTheme, WidgetThemes,
+    EasingCurve, ElementStateStyle, ElementTheme, ElevationToken, FontToken, InteractionState,
+    ThemeColors, ThemeElevation, ThemeFonts, ThemeMode, ThemeMotion, UiTheme, WidgetThemes,
 };
 pub use theme_manager::{ThemeConfig, ThemeManager, ThemePreset};
 pub use widget::{EventResult, Widget, WidgetLifecycle, WidgetState};

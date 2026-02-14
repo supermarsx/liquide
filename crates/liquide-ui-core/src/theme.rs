@@ -275,7 +275,11 @@ impl Default for ThemeFonts {
             },
             terminal: FontToken {
                 family: "JetBrains Mono".into(),
-                fallbacks: vec!["Fira Code".into(), "Cascadia Code".into(), "monospace".into()],
+                fallbacks: vec![
+                    "Fira Code".into(),
+                    "Cascadia Code".into(),
+                    "monospace".into(),
+                ],
                 size: 13.0,
                 weight: 400,
                 letter_spacing: 0.0,
@@ -870,12 +874,42 @@ pub struct ThemeElevation {
 impl Default for ThemeElevation {
     fn default() -> Self {
         Self {
-            level_0: ElevationToken { shadow_blur: 0.0, shadow_y: 0.0, shadow_color: UiColor::transparent(), glass_blur: 0 },
-            level_1: ElevationToken { shadow_blur: 4.0, shadow_y: 2.0, shadow_color: UiColor::new(0, 0, 0, 40), glass_blur: 0 },
-            level_2: ElevationToken { shadow_blur: 8.0, shadow_y: 4.0, shadow_color: UiColor::new(0, 0, 0, 60), glass_blur: 12 },
-            level_3: ElevationToken { shadow_blur: 16.0, shadow_y: 8.0, shadow_color: UiColor::new(0, 0, 0, 80), glass_blur: 20 },
-            level_4: ElevationToken { shadow_blur: 24.0, shadow_y: 12.0, shadow_color: UiColor::new(0, 0, 0, 100), glass_blur: 24 },
-            level_5: ElevationToken { shadow_blur: 32.0, shadow_y: 16.0, shadow_color: UiColor::new(0, 0, 0, 120), glass_blur: 30 },
+            level_0: ElevationToken {
+                shadow_blur: 0.0,
+                shadow_y: 0.0,
+                shadow_color: UiColor::transparent(),
+                glass_blur: 0,
+            },
+            level_1: ElevationToken {
+                shadow_blur: 4.0,
+                shadow_y: 2.0,
+                shadow_color: UiColor::new(0, 0, 0, 40),
+                glass_blur: 0,
+            },
+            level_2: ElevationToken {
+                shadow_blur: 8.0,
+                shadow_y: 4.0,
+                shadow_color: UiColor::new(0, 0, 0, 60),
+                glass_blur: 12,
+            },
+            level_3: ElevationToken {
+                shadow_blur: 16.0,
+                shadow_y: 8.0,
+                shadow_color: UiColor::new(0, 0, 0, 80),
+                glass_blur: 20,
+            },
+            level_4: ElevationToken {
+                shadow_blur: 24.0,
+                shadow_y: 12.0,
+                shadow_color: UiColor::new(0, 0, 0, 100),
+                glass_blur: 24,
+            },
+            level_5: ElevationToken {
+                shadow_blur: 32.0,
+                shadow_y: 16.0,
+                shadow_color: UiColor::new(0, 0, 0, 120),
+                glass_blur: 30,
+            },
         }
     }
 }

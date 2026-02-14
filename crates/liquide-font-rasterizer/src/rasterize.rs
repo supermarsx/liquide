@@ -182,8 +182,7 @@ impl<'a> GlyphRasterizer<'a> {
                     y: size_px,
                 };
                 let scaled3 = face.font.as_scaled(scale3);
-                let glyph3 =
-                    glyph_id.with_scale_and_position(scale3, point(0.0, scaled3.ascent()));
+                let glyph3 = glyph_id.with_scale_and_position(scale3, point(0.0, scaled3.ascent()));
 
                 if let Some(outlined3) = face.font.outline_glyph(glyph3) {
                     outlined3.draw(|x, y, cov| {
@@ -211,10 +210,8 @@ impl<'a> GlyphRasterizer<'a> {
 
                         if src_idx + 2 < coverage.len() && dst_idx + 2 < pixels.len() {
                             pixels[dst_idx] = (coverage[src_idx + r_off] * 255.0 + 0.5) as u8;
-                            pixels[dst_idx + 1] =
-                                (coverage[src_idx + g_off] * 255.0 + 0.5) as u8;
-                            pixels[dst_idx + 2] =
-                                (coverage[src_idx + b_off] * 255.0 + 0.5) as u8;
+                            pixels[dst_idx + 1] = (coverage[src_idx + g_off] * 255.0 + 0.5) as u8;
+                            pixels[dst_idx + 2] = (coverage[src_idx + b_off] * 255.0 + 0.5) as u8;
                         }
                     }
                 }
