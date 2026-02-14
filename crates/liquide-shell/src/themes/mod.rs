@@ -7,7 +7,7 @@ pub mod midday;
 
 /// Available theme preset IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThemePreset {
+pub(crate) enum ThemePreset {
     /// Standard Liquid Glass dark theme (default).
     LiquidGlass,
     /// OLED-optimized dark theme with true black backgrounds.

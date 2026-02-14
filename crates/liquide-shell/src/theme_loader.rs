@@ -14,9 +14,7 @@ use std::path::Path;
 use tracing::{info, warn};
 
 use crate::theme::ShellTheme;
-use crate::themes::{self, ThemePreset};
-
-pub use ThemePreset;
+use crate::themes;
 
 /// Load a CSS theme and convert it to ShellTheme
 pub fn load_css_theme<P: AsRef<Path>>(path: P) -> CssResult<ShellTheme> {
@@ -372,6 +370,8 @@ mod tests {
 
     #[test]
     fn test_theme_preset_from_id() {
+        use crate::themes::ThemePreset;
+        
         assert!(ThemePreset::from_id("liquid-glass").is_some());
         assert!(ThemePreset::from_id("night").is_some());
         assert!(ThemePreset::from_id("sunset").is_some());
