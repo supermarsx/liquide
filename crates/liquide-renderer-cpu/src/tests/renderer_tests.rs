@@ -107,6 +107,8 @@ fn render_decoration_node() {
             border_width: 1.0,
             corner_radius: 8.0,
             button_state: liquide_compositor::scene::DecorationButtons::default(),
+            button_colors: liquide_compositor::scene::DecorationColors::default(),
+            button_layout: liquide_compositor::scene::DecorationLayout::default(),
         },
         absolute_bounds: Rect::new(0.0, 0.0, 64.0, 32.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),

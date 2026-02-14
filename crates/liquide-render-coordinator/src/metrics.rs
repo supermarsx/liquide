@@ -85,7 +85,8 @@ impl MetricsCollector {
             
             // Keep only last 1000 samples
             if times.len() > 1000 {
-                times.drain(0..times.len() - 1000);
+                let drain_to = times.len() - 1000;
+                times.drain(0..drain_to);
             }
         }
     }

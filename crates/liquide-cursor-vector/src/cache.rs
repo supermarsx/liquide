@@ -45,19 +45,19 @@ pub struct CachedCursor {
 }
 
 /// Thread-safe cache for rendered vector cursors
-pub struct VectorCursorCache {
-    renderer: VectorCursorRenderer,
+pub struct VectorCursorCache<'a> {
+    renderer: VectorCursorRenderer<'a>,
     cache: RwLock<HashMap<CacheKey, Arc<CachedCursor>>>,
     max_entries: usize,
 }
 
-impl Default for VectorCursorCache {
+impl Default for VectorCursorCache<'_> {
     fn default() -> Self {
         Self::new(100)
     }
 }
 
-impl VectorCursorCache {
+impl VectorCursorCache<'_> {
     /// Create a new cache with specified capacity
     pub fn new(max_entries: usize) -> Self {
         Self {

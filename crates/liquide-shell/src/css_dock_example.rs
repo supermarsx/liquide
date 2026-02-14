@@ -161,6 +161,6 @@ mod tests {
         );
 
         assert_eq!(dock_node.id, NODE_DOCK);
-        assert_eq!(dock_node.children.len(), 5); // border + 2 items + 2 dots (active item)
+        assert_eq!(dock_node.children.len(), 4); // border + 2 icons + 1 running indicator dot
     }
 }

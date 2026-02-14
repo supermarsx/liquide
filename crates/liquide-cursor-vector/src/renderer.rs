@@ -6,17 +6,17 @@ use tiny_skia::{Pixmap, Transform};
 use usvg::{Options, Tree};
 
 /// High-definition vector cursor renderer
-pub struct VectorCursorRenderer {
-    options: Options,
+pub struct VectorCursorRenderer<'a> {
+    options: Options<'a>,
 }
 
-impl Default for VectorCursorRenderer {
+impl Default for VectorCursorRenderer<'_> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VectorCursorRenderer {
+impl VectorCursorRenderer<'_> {
     /// Create a new vector cursor renderer
     pub fn new() -> Self {
         let mut options = Options::default();

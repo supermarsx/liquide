@@ -1,7 +1,8 @@
 //! Theme engine for applying CSS styles
 
 use crate::cache::QueryCache;
-use crate::error::{Result, ThemeError};
+use crate::error::Result;
+use crate::parser::ThemeParser;
 use crate::property::PropertySet;
 use crate::stylesheet::StyleSheet;
 use crate::value::PropertyValue;
@@ -17,6 +18,13 @@ impl ThemeEngine {
     /// Create a new theme engine with a stylesheet
     pub fn new(stylesheet: StyleSheet) -> Self {
         Self::with_cache_size(stylesheet, 1000)
+    }
+
+    /// Create a theme engine by parsing a CSS string
+    pub fn from_css(css: &str) -> Result<Self> {
+        let parser = ThemeParser::new();
+        let stylesheet = parser.parse_str(css)?;
+        Ok(Self::new(stylesheet))
     }
     
     /// Create a new theme engine with custom cache size

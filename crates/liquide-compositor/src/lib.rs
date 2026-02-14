@@ -23,7 +23,7 @@ pub use effects::{DegradationController, DegradationLevel, EffectBudget, EffectP
 pub use framebuffer::{DoubleBuffer, FrameBuffer};
 pub use geometry::{Affine2D, Point, Rect, Size};
 pub use pixel::{BlendMode, Color, PixelFormat};
-pub use scene::{DecorationButtons, FlatNode, NodeId, NodeProperties, SceneNode, SceneNodeKind};
+pub use scene::{DecorationButtons, DecorationColors, DecorationLayout, FlatNode, NodeId, NodeProperties, SceneNode, SceneNodeKind};
 
 use thiserror::Error;
 

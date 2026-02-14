@@ -576,6 +576,8 @@ impl SoftwareRenderer {
                 border_width,
                 corner_radius,
                 button_state,
+                button_colors,
+                button_layout,
             } => {
                 // Check if this is a skeleton node (window being dragged)
                 let is_skeleton = self.is_skeleton_node(node.id);
@@ -636,25 +638,25 @@ impl SoftwareRenderer {
                     // Modern style: subtle rounded-rect backgrounds with
                     // crisp icon glyphs (×, □, ─, 📌).
                     // Layout: right-aligned in the title bar.
-                    let title_bar_h = 30.0_f32;
-                    let btn_w = 32.0_f32; // wider for better click targets
-                    let btn_h = 22.0_f32;
+                    let title_bar_h = button_layout.title_bar_height;
+                    let btn_w = button_layout.button_width;
+                    let btn_h = button_layout.button_height;
                     let btn_y = bounds.y + (title_bar_h - btn_h) / 2.0;
-                    let btn_right_margin = 4.0_f32;
+                    let btn_right_margin = button_layout.button_right_margin;
 
                     // Close button (× icon) — rightmost
                     if button_state.close {
                         let close_x = bounds.x + bounds.width - btn_w - btn_right_margin;
                         let close_bg = if button_state.close_hovered {
-                            Color::new(241, 60, 70, 255) // Brighter red on hover
+                            button_colors.close_bg_hover
                         } else {
-                            Color::new(232, 17, 35, 220) // Windows-red
+                            button_colors.close_bg
                         };
                         let close_bounds = Rect::new(close_x, btn_y, btn_w, btn_h);
                         rasterizer::fill_rounded_rect(
                             fb,
                             close_bounds,
-                            3.0,
+                            button_layout.button_corner_radius,
                             &Fill::Solid(close_bg),
                             BlendMode::SrcOver,
                             &self.srgb_lut,
@@ -662,7 +664,7 @@ impl SoftwareRenderer {
                         // × icon: two diagonal lines forming an X
                         let cx = close_x + btn_w / 2.0;
                         let cy_btn = btn_y + btn_h / 2.0;
-                        let icon_color = Color::new(255, 255, 255, 240);
+                        let icon_color = button_colors.close_icon;
                         let arm = 4.0_f32;
                         let thickness = 1.5_f32;
                         // Top-left to bottom-right diagonal
@@ -701,15 +703,15 @@ impl SoftwareRenderer {
                     if button_state.maximize {
                         let max_x = bounds.x + bounds.width - btn_w * 2.0 - btn_right_margin;
                         let btn_bg = if button_state.maximize_hovered {
-                            Color::new(255, 255, 255, 60) // Brighter on hover
+                            button_colors.maximize_bg_hover
                         } else {
-                            Color::new(255, 255, 255, 20)
+                            button_colors.maximize_bg
                         };
                         let max_bounds = Rect::new(max_x, btn_y, btn_w, btn_h);
                         rasterizer::fill_rounded_rect(
                             fb,
                             max_bounds,
-                            3.0,
+                            button_layout.button_corner_radius,
                             &Fill::Solid(btn_bg),
                             BlendMode::SrcOver,
                             &self.srgb_lut,
@@ -717,7 +719,7 @@ impl SoftwareRenderer {
                         // □ icon: open rectangle outline
                         let cx = max_x + btn_w / 2.0;
                         let cy_btn = btn_y + btn_h / 2.0;
-                        let icon_color = Color::new(220, 220, 220, 240);
+                        let icon_color = button_colors.maximize_icon;
                         let half = 4.0_f32;
                         let stroke = 1.5_f32;
                         // Top edge
@@ -754,15 +756,15 @@ impl SoftwareRenderer {
                     if button_state.minimize {
                         let min_x = bounds.x + bounds.width - btn_w * 3.0 - btn_right_margin;
                         let btn_bg = if button_state.minimize_hovered {
-                            Color::new(255, 255, 255, 60) // Brighter on hover
+                            button_colors.minimize_bg_hover
                         } else {
-                            Color::new(255, 255, 255, 20)
+                            button_colors.minimize_bg
                         };
                         let min_bounds = Rect::new(min_x, btn_y, btn_w, btn_h);
                         rasterizer::fill_rounded_rect(
                             fb,
                             min_bounds,
-                            3.0,
+                            button_layout.button_corner_radius,
                             &Fill::Solid(btn_bg),
                             BlendMode::SrcOver,
                             &self.srgb_lut,
@@ -770,7 +772,7 @@ impl SoftwareRenderer {
                         // ─ icon: horizontal bar
                         let cx = min_x + btn_w / 2.0;
                         let cy_btn = btn_y + btn_h / 2.0;
-                        let icon_color = Color::new(220, 220, 220, 240);
+                        let icon_color = button_colors.minimize_icon;
                         rasterizer::fill_rect(
                             fb,
                             Rect::new(cx - 5.0, cy_btn + 2.0, 10.0, 1.5),
@@ -784,20 +786,20 @@ impl SoftwareRenderer {
                         let aot_x = bounds.x + bounds.width - btn_w * 4.0 - btn_right_margin;
                         let btn_bg = if button_state.is_topmost {
                             if button_state.always_on_top_hovered {
-                                Color::new(80, 150, 240, 220) // Brighter blue on hover
+                                button_colors.pin_bg_active_hover
                             } else {
-                                Color::new(60, 130, 220, 180) // Blue when active
+                                button_colors.pin_bg_active
                             }
                         } else if button_state.always_on_top_hovered {
-                            Color::new(255, 255, 255, 60) // Brighter on hover
+                            button_colors.pin_bg_hover
                         } else {
-                            Color::new(255, 255, 255, 20)
+                            button_colors.pin_bg
                         };
                         let aot_bounds = Rect::new(aot_x, btn_y, btn_w, btn_h);
                         rasterizer::fill_rounded_rect(
                             fb,
                             aot_bounds,
-                            3.0,
+                            button_layout.button_corner_radius,
                             &Fill::Solid(btn_bg),
                             BlendMode::SrcOver,
                             &self.srgb_lut,
@@ -806,9 +808,9 @@ impl SoftwareRenderer {
                         let cx = aot_x + btn_w / 2.0;
                         let cy_btn = btn_y + btn_h / 2.0;
                         let icon_color = if button_state.is_topmost {
-                            Color::new(255, 255, 255, 255)
+                            button_colors.pin_icon_active
                         } else {
-                            Color::new(220, 220, 220, 240)
+                            button_colors.pin_icon
                         };
                         // Pin head (small filled circle-like square)
                         rasterizer::fill_rect(

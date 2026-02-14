@@ -13,6 +13,7 @@ use lightningcss::rules::CssRule;
 use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet as LightningStyleSheet};
 use lightningcss::traits::ToCss;
 use lightningcss::values::color::CssColor;
+use lightningcss::values::length::LengthPercentageOrAuto;
 
 /// CSS theme parser using lightningcss for full CSS3 support
 pub struct ThemeParser {}
@@ -118,59 +119,384 @@ impl ThemeParser {
     ) -> Result<PropertySet> {
         let mut properties = PropertySet::new();
 
+        // Process normal declarations
         for decl in &decls.declarations {
-            if let Some((name, value)) = self.convert_property(decl) {
-                properties.insert(name, value);
-            }
+            self.insert_property(decl, &mut properties);
+        }
+
+        // Process !important declarations (these override normal ones)
+        for decl in &decls.important_declarations {
+            self.insert_property(decl, &mut properties);
         }
 
         Ok(properties)
     }
 
-    /// Convert a single property
-    fn convert_property(&self, prop: &Property) -> Option<(String, PropertyValue)> {
+    /// Insert converted properties from a single declaration into the property set.
+    /// A single declaration can expand into multiple properties (e.g. shorthand `background`
+    /// produces both "background" and "background-color").
+    fn insert_property(&self, prop: &Property, properties: &mut PropertySet) {
         match prop {
+            // ── Background ──────────────────────────────────────────────
             Property::BackgroundColor(color) => {
-                Some(("background".to_string(), self.convert_color(color)?))
+                if let Some(v) = self.convert_color(color) {
+                    properties.insert("background-color".into(), v.clone());
+                    properties.insert("background".into(), v);
+                }
             }
-            Property::Color(color) => Some(("color".to_string(), self.convert_color(color)?)),
-            Property::BorderTopColor(color)
-            | Property::BorderRightColor(color)
-            | Property::BorderBottomColor(color)
-            | Property::BorderLeftColor(color) => {
-                Some(("border-color".to_string(), self.convert_color(color)?))
-            }
-            // Width/Height are Size types, just serialize them as strings for now
-            Property::Width(size) | Property::Height(size) => {
-                let mut size_str = String::new();
-                let mut printer = Printer::new(&mut size_str, PrinterOptions::default());
-                if size.to_css(&mut printer).is_ok() {
-                    if let Some(px_value) = size_str.strip_suffix("px") {
-                        if let Ok(num) = px_value.trim().parse::<f32>() {
-                            let prop_name = if matches!(prop, Property::Width(_)) {
-                                "width"
-                            } else {
-                                "height"
-                            };
-                            return Some((
-                                prop_name.to_string(),
-                                PropertyValue::Length(LengthUnit::Px(num)),
-                            ));
-                        }
+            Property::Background(backgrounds) => {
+                // Extract color from first background layer
+                if let Some(bg) = backgrounds.first() {
+                    if let Some(v) = self.convert_color(&bg.color) {
+                        properties.insert("background".into(), v.clone());
+                        properties.insert("background-color".into(), v);
                     }
                 }
-                None
             }
-            Property::BorderTopWidth(width)
-            | Property::BorderRightWidth(width)
-            | Property::BorderBottomWidth(width)
-            | Property::BorderLeftWidth(width) => Some((
-                "border-width".to_string(),
-                self.convert_border_width(width)?,
-            )),
-            // For now, skip unparsed properties
-            // TODO: Handle more property types as needed
-            _ => None,
+
+            // ── Foreground color ────────────────────────────────────────
+            Property::Color(color) => {
+                if let Some(v) = self.convert_color(color) {
+                    properties.insert("color".into(), v);
+                }
+            }
+
+            // ── Border colors (longhand) ────────────────────────────────
+            Property::BorderTopColor(color) => {
+                if let Some(v) = self.convert_color(color) {
+                    properties.insert("border-top-color".into(), v.clone());
+                    // Also set generic border-color if not set yet
+                    if !properties.has("border-color") {
+                        properties.insert("border-color".into(), v);
+                    }
+                }
+            }
+            Property::BorderRightColor(color) => {
+                if let Some(v) = self.convert_color(color) {
+                    properties.insert("border-right-color".into(), v);
+                }
+            }
+            Property::BorderBottomColor(color) => {
+                if let Some(v) = self.convert_color(color) {
+                    properties.insert("border-bottom-color".into(), v.clone());
+                    if !properties.has("border-color") {
+                        properties.insert("border-color".into(), v);
+                    }
+                }
+            }
+            Property::BorderLeftColor(color) => {
+                if let Some(v) = self.convert_color(color) {
+                    properties.insert("border-left-color".into(), v);
+                }
+            }
+
+            // ── Border color shorthand ──────────────────────────────────
+            Property::BorderColor(bc) => {
+                if let Some(v) = self.convert_color(&bc.top) {
+                    properties.insert("border-color".into(), v.clone());
+                    properties.insert("border-top-color".into(), v);
+                }
+                if let Some(v) = self.convert_color(&bc.right) {
+                    properties.insert("border-right-color".into(), v);
+                }
+                if let Some(v) = self.convert_color(&bc.bottom) {
+                    properties.insert("border-bottom-color".into(), v);
+                }
+                if let Some(v) = self.convert_color(&bc.left) {
+                    properties.insert("border-left-color".into(), v);
+                }
+            }
+
+            // ── Border shorthand (border: 1px solid red) ────────────────
+            Property::Border(border) => {
+                if let Some(v) = self.convert_color(&border.color) {
+                    properties.insert("border-color".into(), v);
+                }
+                if let Some(v) = self.convert_border_width(&border.width) {
+                    properties.insert("border-width".into(), v);
+                }
+                properties.insert(
+                    "border-style".into(),
+                    self.convert_line_style(&border.style),
+                );
+            }
+            Property::BorderTop(border) => {
+                if let Some(v) = self.convert_color(&border.color) {
+                    properties.insert("border-top-color".into(), v);
+                }
+                if let Some(v) = self.convert_border_width(&border.width) {
+                    properties.insert("border-top-width".into(), v);
+                }
+            }
+            Property::BorderRight(border) => {
+                if let Some(v) = self.convert_color(&border.color) {
+                    properties.insert("border-right-color".into(), v);
+                }
+                if let Some(v) = self.convert_border_width(&border.width) {
+                    properties.insert("border-right-width".into(), v);
+                }
+            }
+            Property::BorderBottom(border) => {
+                if let Some(v) = self.convert_color(&border.color) {
+                    properties.insert("border-bottom-color".into(), v);
+                }
+                if let Some(v) = self.convert_border_width(&border.width) {
+                    properties.insert("border-bottom-width".into(), v);
+                }
+            }
+            Property::BorderLeft(border) => {
+                if let Some(v) = self.convert_color(&border.color) {
+                    properties.insert("border-left-color".into(), v);
+                }
+                if let Some(v) = self.convert_border_width(&border.width) {
+                    properties.insert("border-left-width".into(), v);
+                }
+            }
+
+            // ── Border widths ───────────────────────────────────────────
+            Property::BorderTopWidth(width) => {
+                if let Some(v) = self.convert_border_width(width) {
+                    properties.insert("border-top-width".into(), v.clone());
+                    if !properties.has("border-width") {
+                        properties.insert("border-width".into(), v);
+                    }
+                }
+            }
+            Property::BorderRightWidth(width) => {
+                if let Some(v) = self.convert_border_width(width) {
+                    properties.insert("border-right-width".into(), v);
+                }
+            }
+            Property::BorderBottomWidth(width) => {
+                if let Some(v) = self.convert_border_width(width) {
+                    properties.insert("border-bottom-width".into(), v.clone());
+                    if !properties.has("border-width") {
+                        properties.insert("border-width".into(), v);
+                    }
+                }
+            }
+            Property::BorderLeftWidth(width) => {
+                if let Some(v) = self.convert_border_width(width) {
+                    properties.insert("border-left-width".into(), v);
+                }
+            }
+
+            // ── Border radius ───────────────────────────────────────────
+            Property::BorderRadius(radius, _prefix) => {
+                let css_str = self.to_css_string(radius);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("border-radius".into(), v);
+                }
+            }
+
+            // ── Dimensions ──────────────────────────────────────────────
+            Property::Width(size) => {
+                let css_str = self.to_css_string(size);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("width".into(), v);
+                }
+            }
+            Property::Height(size) => {
+                let css_str = self.to_css_string(size);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("height".into(), v);
+                }
+            }
+
+            // ── Padding ─────────────────────────────────────────────────
+            Property::PaddingTop(val) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(val) {
+                    properties.insert("padding-top".into(), v);
+                }
+            }
+            Property::PaddingRight(val) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(val) {
+                    properties.insert("padding-right".into(), v);
+                }
+            }
+            Property::PaddingBottom(val) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(val) {
+                    properties.insert("padding-bottom".into(), v);
+                }
+            }
+            Property::PaddingLeft(val) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(val) {
+                    properties.insert("padding-left".into(), v);
+                }
+            }
+            Property::Padding(padding) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(&padding.top) {
+                    properties.insert("padding-top".into(), v);
+                }
+                if let Some(v) = self.convert_length_percentage_or_auto(&padding.right) {
+                    properties.insert("padding-right".into(), v);
+                }
+                if let Some(v) = self.convert_length_percentage_or_auto(&padding.bottom) {
+                    properties.insert("padding-bottom".into(), v);
+                }
+                if let Some(v) = self.convert_length_percentage_or_auto(&padding.left) {
+                    properties.insert("padding-left".into(), v);
+                }
+                // Also set shorthand "padding" to top value for simple cases
+                if let Some(v) = self.convert_length_percentage_or_auto(&padding.top) {
+                    properties.insert("padding".into(), v);
+                }
+            }
+
+            // ── Margin ──────────────────────────────────────────────────
+            Property::MarginTop(val) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(val) {
+                    properties.insert("margin-top".into(), v);
+                }
+            }
+            Property::MarginRight(val) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(val) {
+                    properties.insert("margin-right".into(), v);
+                }
+            }
+            Property::MarginBottom(val) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(val) {
+                    properties.insert("margin-bottom".into(), v);
+                }
+            }
+            Property::MarginLeft(val) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(val) {
+                    properties.insert("margin-left".into(), v);
+                }
+            }
+            Property::Margin(margin) => {
+                if let Some(v) = self.convert_length_percentage_or_auto(&margin.top) {
+                    properties.insert("margin-top".into(), v);
+                }
+                if let Some(v) = self.convert_length_percentage_or_auto(&margin.right) {
+                    properties.insert("margin-right".into(), v);
+                }
+                if let Some(v) = self.convert_length_percentage_or_auto(&margin.bottom) {
+                    properties.insert("margin-bottom".into(), v);
+                }
+                if let Some(v) = self.convert_length_percentage_or_auto(&margin.left) {
+                    properties.insert("margin-left".into(), v);
+                }
+                if let Some(v) = self.convert_length_percentage_or_auto(&margin.top) {
+                    properties.insert("margin".into(), v);
+                }
+            }
+
+            // ── Opacity ─────────────────────────────────────────────────
+            Property::Opacity(alpha) => {
+                let css_str = self.to_css_string(alpha);
+                if let Ok(n) = css_str.trim().parse::<f32>() {
+                    properties.insert("opacity".into(), PropertyValue::Number(n));
+                }
+            }
+
+            // ── Font properties ─────────────────────────────────────────
+            Property::FontSize(size) => {
+                let css_str = self.to_css_string(size);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("font-size".into(), v);
+                }
+            }
+            Property::FontWeight(weight) => {
+                let css_str = self.to_css_string(weight);
+                if let Ok(n) = css_str.trim().parse::<f32>() {
+                    properties.insert("font-weight".into(), PropertyValue::Number(n));
+                }
+            }
+            Property::LineHeight(lh) => {
+                let css_str = self.to_css_string(lh);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("line-height".into(), v);
+                } else if let Ok(n) = css_str.trim().parse::<f32>() {
+                    properties.insert("line-height".into(), PropertyValue::Number(n));
+                }
+            }
+            Property::FontFamily(families) => {
+                let css_str = self.to_css_string(families);
+                properties.insert("font-family".into(), PropertyValue::String(css_str));
+            }
+
+            // ── Box shadow ──────────────────────────────────────────────
+            Property::BoxShadow(shadows, _prefix) => {
+                let mut shadow_values = Vec::new();
+                for shadow in shadows.iter() {
+                    let offset_x = self.length_to_px(&self.to_css_string(&shadow.x_offset));
+                    let offset_y = self.length_to_px(&self.to_css_string(&shadow.y_offset));
+                    let blur = self.length_to_px(&self.to_css_string(&shadow.blur));
+                    let spread = self.length_to_px(&self.to_css_string(&shadow.spread));
+                    let color = self.convert_color(&shadow.color)
+                        .and_then(|v| if let PropertyValue::Color(c) = v { Some(c) } else { None })
+                        .unwrap_or(Color::new(0, 0, 0, 255));
+                    shadow_values.push(crate::value::BoxShadow {
+                        offset_x,
+                        offset_y,
+                        blur_radius: blur,
+                        spread_radius: spread,
+                        color,
+                        inset: shadow.inset,
+                    });
+                    // Also set individual shadow properties for easy querying
+                    properties.insert("shadow-offset-x".into(), PropertyValue::Length(LengthUnit::Px(offset_x)));
+                    properties.insert("shadow-offset-y".into(), PropertyValue::Length(LengthUnit::Px(offset_y)));
+                    properties.insert("shadow-blur".into(), PropertyValue::Length(LengthUnit::Px(blur)));
+                    properties.insert("shadow-color".into(), PropertyValue::Color(color));
+                    properties.insert("box-shadow-color".into(), PropertyValue::Color(color));
+                }
+                if !shadow_values.is_empty() {
+                    properties.insert("box-shadow".into(), PropertyValue::BoxShadow(shadow_values));
+                }
+            }
+
+            // ── Z-index ─────────────────────────────────────────────────
+            Property::ZIndex(z) => {
+                let css_str = self.to_css_string(z);
+                if let Ok(n) = css_str.trim().parse::<f32>() {
+                    properties.insert("z-index".into(), PropertyValue::Number(n));
+                }
+            }
+
+            // ── Visibility ──────────────────────────────────────────────
+            Property::Visibility(vis) => {
+                let css_str = self.to_css_string(vis);
+                properties.insert("visibility".into(), PropertyValue::Keyword(css_str));
+            }
+
+            // ── Display ─────────────────────────────────────────────────
+            Property::Display(display) => {
+                let css_str = self.to_css_string(display);
+                properties.insert("display".into(), PropertyValue::Keyword(css_str));
+            }
+
+            // ── Custom properties (--var-name: value) ───────────────────
+            Property::Custom(custom) => {
+                let name = self.to_css_string(&custom.name);
+                let value_str = self.to_css_string_from_token_list(&custom.value);
+                // Parse value as color, length, or string
+                let pv = self.parse_value_string(&value_str);
+                properties.insert(name, pv);
+            }
+
+            // ── Unparsed properties (non-standard names like glass-tint) ─
+            Property::Unparsed(unparsed) => {
+                let name = self.to_css_string(&unparsed.property_id);
+                let value_str = self.to_css_string_from_token_list(&unparsed.value);
+                let pv = self.parse_value_string(&value_str);
+                properties.insert(name, pv);
+            }
+
+            // ── Catch-all: store property name so we know it was declared ──
+            _ => {
+                // We can serialize the property_id but not the Property itself.
+                // Record the property name with a debug representation.
+                let prop_id = prop.property_id();
+                let name = self.to_css_string(&prop_id);
+                if !name.is_empty() {
+                    // Use Debug format as best-effort value
+                    let debug_val = format!("{:?}", prop);
+                    let pv = self.parse_value_string(&debug_val);
+                    properties.insert(name, pv);
+                }
+            }
         }
     }
 
@@ -182,40 +508,33 @@ impl ThemeParser {
             ))),
             _ => {
                 // For other color types, try to serialize and parse
-                let mut color_str = String::new();
-                let mut printer = Printer::new(&mut color_str, PrinterOptions::default());
-                if css_color.to_css(&mut printer).is_ok() {
-                    if let Ok(color) = Color::from_hex(&color_str) {
-                        return Some(PropertyValue::Color(color));
-                    }
+                let css_str = self.to_css_string(css_color);
+                if let Ok(color) = Color::from_hex(&css_str) {
+                    return Some(PropertyValue::Color(color));
                 }
                 None
             }
         }
     }
 
-    /// Convert lightningcss length value wrapper
-    fn convert_length_value(
+    /// Convert LengthPercentageOrAuto to PropertyValue
+    fn convert_length_percentage_or_auto(
         &self,
-        length: &lightningcss::values::length::Length,
+        val: &LengthPercentageOrAuto,
     ) -> Option<PropertyValue> {
-        // Try to serialize and parse
-        let mut length_str = String::new();
-        let mut printer = Printer::new(&mut length_str, PrinterOptions::default());
-        if length.to_css(&mut printer).is_ok() {
-            // Try to parse as px, em, etc.
-            if let Some(px_value) = length_str.strip_suffix("px") {
-                if let Ok(num) = px_value.trim().parse::<f32>() {
-                    return Some(PropertyValue::Length(LengthUnit::Px(num)));
-                }
-            }
-            if let Some(em_value) = length_str.strip_suffix("em") {
-                if let Ok(num) = em_value.trim().parse::<f32>() {
-                    return Some(PropertyValue::Length(LengthUnit::Em(num)));
-                }
+        match val {
+            LengthPercentageOrAuto::Auto => None,
+            LengthPercentageOrAuto::LengthPercentage(lp) => {
+                let css_str = self.to_css_string(lp);
+                self.parse_length_value(&css_str)
             }
         }
-        None
+    }
+
+    /// Convert a CSS line style to PropertyValue
+    fn convert_line_style<S: ToCss>(&self, style: &S) -> PropertyValue {
+        let css_str = self.to_css_string(style);
+        PropertyValue::Keyword(css_str)
     }
 
     /// Convert border width
@@ -223,25 +542,118 @@ impl ThemeParser {
         &self,
         width: &lightningcss::properties::border::BorderSideWidth,
     ) -> Option<PropertyValue> {
-        // Serialize and parse
-        let mut width_str = String::new();
-        let mut printer = Printer::new(&mut width_str, PrinterOptions::default());
-        if width.to_css(&mut printer).is_ok() {
-            match width_str.as_str() {
-                "thin" => return Some(PropertyValue::Length(LengthUnit::Px(1.0))),
-                "medium" => return Some(PropertyValue::Length(LengthUnit::Px(3.0))),
-                "thick" => return Some(PropertyValue::Length(LengthUnit::Px(5.0))),
+        let width_str = self.to_css_string(width);
+        match width_str.as_str() {
+            "thin" => Some(PropertyValue::Length(LengthUnit::Px(1.0))),
+            "medium" => Some(PropertyValue::Length(LengthUnit::Px(3.0))),
+            "thick" => Some(PropertyValue::Length(LengthUnit::Px(5.0))),
+            _ => self.parse_length_value(&width_str),
+        }
+    }
+
+    /// Serialize any ToCss value to string
+    fn to_css_string<T: ToCss>(&self, value: &T) -> String {
+        let mut s = String::new();
+        let mut printer = Printer::new(&mut s, PrinterOptions::default());
+        let _ = value.to_css(&mut printer);
+        s
+    }
+
+    /// Serialize a TokenList to string by iterating its public token vector.
+    fn to_css_string_from_token_list(
+        &self,
+        tokens: &lightningcss::properties::custom::TokenList,
+    ) -> String {
+        use lightningcss::properties::custom::TokenOrValue;
+        let mut result = String::new();
+        for token_or_value in &tokens.0 {
+            match token_or_value {
+                TokenOrValue::Color(color) => {
+                    result.push_str(&self.to_css_string(color));
+                }
+                TokenOrValue::Length(length) => {
+                    result.push_str(&self.to_css_string(length));
+                }
+                TokenOrValue::Angle(angle) => {
+                    result.push_str(&self.to_css_string(angle));
+                }
+                TokenOrValue::Time(time) => {
+                    result.push_str(&self.to_css_string(time));
+                }
+                TokenOrValue::Resolution(res) => {
+                    result.push_str(&self.to_css_string(res));
+                }
+                TokenOrValue::Token(token) => {
+                    result.push_str(&self.to_css_string(token));
+                }
                 _ => {
-                    // Try to parse as length
-                    if let Some(px_value) = width_str.strip_suffix("px") {
-                        if let Ok(num) = px_value.trim().parse::<f32>() {
-                            return Some(PropertyValue::Length(LengthUnit::Px(num)));
-                        }
-                    }
+                    // Var, Env, Function, DashedIdent, etc.
+                    result.push_str(&format!("{:?}", token_or_value));
                 }
             }
         }
-        None
+        result.trim().to_string()
+    }
+
+    /// Parse a length string like "10px", "1.5em", "50%", "12pt", "1rem"
+    fn parse_length_value(&self, s: &str) -> Option<PropertyValue> {
+        let s = s.trim();
+        if let Some(v) = s.strip_suffix("px") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Px(n)))
+        } else if let Some(v) = s.strip_suffix("em") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Em(n)))
+        } else if let Some(v) = s.strip_suffix("rem") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Rem(n)))
+        } else if let Some(v) = s.strip_suffix("pt") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Pt(n)))
+        } else if let Some(v) = s.strip_suffix('%') {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Percent(n)))
+        } else {
+            // Try as plain number → pixels
+            s.parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Px(n)))
+        }
+    }
+
+    /// Extract px value from a serialized length string
+    fn length_to_px(&self, s: &str) -> f32 {
+        self.parse_length_value(s)
+            .and_then(|v| v.as_length())
+            .map(|l| l.to_px(16.0))
+            .unwrap_or(0.0)
+    }
+
+    /// Attempt to parse a raw value string as color, length, number, or keyword
+    fn parse_value_string(&self, s: &str) -> PropertyValue {
+        let s = s.trim();
+
+        // Try as color first (hex, rgb(), rgba(), named)
+        if let Ok(color) = Color::from_hex(s) {
+            return PropertyValue::Color(color);
+        }
+        // csscolorparser handles rgb()/rgba()/hsl()/named too
+        if s.starts_with("rgb") || s.starts_with("hsl") || s.starts_with("hwb") {
+            if let Ok(c) = csscolorparser::parse(s) {
+                return PropertyValue::Color(Color::new(
+                    (c.r * 255.0) as u8,
+                    (c.g * 255.0) as u8,
+                    (c.b * 255.0) as u8,
+                    (c.a * 255.0) as u8,
+                ));
+            }
+        }
+
+        // Try as length
+        if let Some(v) = self.parse_length_value(s) {
+            return v;
+        }
+
+        // Try as plain number
+        if let Ok(n) = s.parse::<f32>() {
+            return PropertyValue::Number(n);
+        }
+
+        // Fall back to keyword / string
+        PropertyValue::Keyword(s.to_string())
     }
 }
 

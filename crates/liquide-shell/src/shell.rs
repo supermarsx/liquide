@@ -3,13 +3,16 @@
 //! seamless window mode.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::scene::{
-    CursorShape, DecorationButtons, NodeProperties, ResizeDirection, SceneNode, SceneNodeKind,
+    CursorShape, DecorationButtons, DecorationColors, DecorationLayout, NodeProperties,
+    ResizeDirection, SceneNode, SceneNodeKind,
 };
 use liquide_input::KeyEvent;
 use liquide_platform::PlatformEvent;
+use liquide_renderer_css::StyleResolver;
 
 use crate::app_history::AppHistory;
 use crate::config::ShellConfig;
@@ -152,6 +155,8 @@ pub struct Shell {
     seamless: SeamlessManager,
     config: ShellConfig,
     theme: ShellTheme,
+    /// CSS style resolver for dynamic CSS queries.
+    style_resolver: Option<StyleResolver>,
     session_menu_visible: bool,
     /// Desktop right-click context menu state.
     context_menu_visible: bool,
@@ -201,6 +206,9 @@ impl Shell {
         // Register default apps so they appear in launcher search.
         Self::register_default_apps(&mut launcher);
 
+        // Build default CSS theme and keep the engine alive for CSS queries.
+        let (theme, style_resolver) = Self::build_default_theme();
+
         Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
@@ -221,7 +229,8 @@ impl Shell {
             notifications: NotificationManager::new(config.notifications.clone()),
             seamless: SeamlessManager::new(config.seamless.clone()),
             config,
-            theme: ShellTheme::default_dark(),
+            theme,
+            style_resolver: Some(style_resolver),
             session_menu_visible: false,
             context_menu_visible: false,
             context_menu_pos: Point::new(0.0, 0.0),
@@ -256,6 +265,7 @@ impl Shell {
         dock.add_pinned("com.liquide.settings", "Settings", "preferences-system");
         let mut launcher = Launcher::new(config.launcher.clone());
         Self::register_default_apps(&mut launcher);
+        let (theme, style_resolver) = Self::build_default_theme();
         Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
@@ -276,7 +286,8 @@ impl Shell {
             notifications: NotificationManager::new(config.notifications.clone()),
             seamless: SeamlessManager::new(config.seamless.clone()),
             config,
-            theme: ShellTheme::default_dark(),
+            theme,
+            style_resolver: Some(style_resolver),
             session_menu_visible: false,
             context_menu_visible: false,
             context_menu_pos: Point::new(0.0, 0.0),
@@ -897,32 +908,63 @@ impl Shell {
         &self.theme
     }
 
-    /// Set the shell theme.
-    pub fn set_theme(&mut self, theme: ShellTheme) {
-        self.theme = theme;
+    /// Get the CSS style resolver, if available.
+    #[must_use]
+    pub fn style_resolver(&self) -> Option<&StyleResolver> {
+        self.style_resolver.as_ref()
     }
 
-    /// Load a CSS theme from a file
+    /// Set the shell theme (also clears the style resolver since the
+    /// theme is now disconnected from CSS).
+    pub fn set_theme(&mut self, theme: ShellTheme) {
+        self.theme = theme;
+        self.style_resolver = None;
+    }
+
+    /// Build the default Nord CSS theme and its style resolver.
+    fn build_default_theme() -> (ShellTheme, StyleResolver) {
+        use liquide_theme_css::ThemeParser;
+        let parser = ThemeParser::new();
+        match parser.parse_str(theme_loader::default_nord_css()) {
+            Ok(stylesheet) => {
+                let engine = Arc::new(liquide_theme_css::ThemeEngine::new(stylesheet));
+                let theme = theme_loader::css_to_shell_theme(&engine);
+                let resolver = StyleResolver::from_arc(Arc::clone(&engine));
+                (theme, resolver)
+            }
+            Err(_) => {
+                // Fallback: hardcoded dark theme with a dummy resolver
+                let theme = ShellTheme::default_dark();
+                let empty_engine = Arc::new(liquide_theme_css::ThemeEngine::new(
+                    liquide_theme_css::StyleSheet::new(),
+                ));
+                let resolver = StyleResolver::from_arc(empty_engine);
+                (theme, resolver)
+            }
+        }
+    }
+
+    /// Load a CSS theme from a file, keeping the engine alive for CSS queries.
     ///
     /// # Example
     /// ```rust,ignore
     /// shell.load_css_theme("themes/nord.css")?;
     /// ```
     pub fn load_css_theme<P: AsRef<std::path::Path>>(&mut self, path: P) {
-        match theme_loader::load_css_theme(path) {
-            Ok(theme) => self.theme = theme,
+        match theme_loader::load_css_theme_with_engine(path) {
+            Ok((theme, engine)) => {
+                self.theme = theme;
+                self.style_resolver = Some(StyleResolver::from_arc(engine));
+            }
             Err(e) => tracing::warn!("Failed to load CSS theme: {}", e),
         }
     }
 
     /// Load the default Nord CSS theme
     pub fn load_default_css_theme(&mut self) {
-        use liquide_theme_css::ThemeParser;
-        let parser = ThemeParser::new();
-        if let Ok(stylesheet) = parser.parse_str(theme_loader::default_nord_css()) {
-            let engine = liquide_theme_css::ThemeEngine::new(stylesheet);
-            self.theme = theme_loader::css_to_shell_theme(&engine);
-        }
+        let (theme, resolver) = Self::build_default_theme();
+        self.theme = theme;
+        self.style_resolver = Some(resolver);
     }
 
     /// Handle a key event, returning the matching shell action if any.
@@ -1088,6 +1130,18 @@ impl Shell {
         let screen = self.screen_rect;
         let theme = &self.theme;
 
+        // Resolve decoration button colors and layout from CSS (cached per frame).
+        let button_colors = self
+            .style_resolver
+            .as_ref()
+            .map(crate::css_integration::resolve_decoration_colors)
+            .unwrap_or_default();
+        let button_layout = self
+            .style_resolver
+            .as_ref()
+            .map(crate::css_integration::resolve_decoration_layout)
+            .unwrap_or_default();
+
         let mut root = SceneNode::new(NODE_ROOT, SceneNodeKind::Root, NodeProperties::new(screen));
 
         // Background
@@ -1191,6 +1245,8 @@ impl Shell {
                             always_on_top_hovered: self.hovered_button
                                 == Some((window.id, HitZone::AlwaysOnTopButton)),
                         },
+                        button_colors: button_colors.clone(),
+                        button_layout: button_layout.clone(),
                     },
                     NodeProperties::new(window.bounds).with_z_order(window.z_order as u32 * 10 + 2),
                 ));

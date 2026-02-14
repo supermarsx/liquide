@@ -61,9 +61,9 @@ impl Selector {
         let mut element = String::new();
         let mut chars = s.chars().peekable();
         
-        // Read element name
+        // Read element name (may be empty for selectors like #id, .class, :root)
         while let Some(&ch) = chars.peek() {
-            if ch.is_alphanumeric() || ch == '-' || ch == '_' {
+            if ch.is_alphanumeric() || ch == '-' || ch == '_' || ch == '*' {
                 element.push(ch);
                 chars.next();
             } else {
@@ -71,11 +71,14 @@ impl Selector {
             }
         }
         
-        if element.is_empty() {
+        // If no element name and no modifiers follow, it's invalid
+        if element.is_empty() && chars.peek().is_none() {
             return Err(ThemeError::InvalidSelector(s.to_string()));
         }
         
-        let mut selector = Selector::element(&element);
+        // Use "*" as a wildcard element when no element name is present
+        let element_name = if element.is_empty() { "*" } else { &element };
+        let mut selector = Selector::element(element_name);
         
         // Parse modifiers
         while let Some(ch) = chars.next() {
