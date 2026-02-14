@@ -27,6 +27,10 @@ members = [
     "crates/liquide-cursor",
     "crates/liquide-cursor-vector",
     "crates/liquide-theme-css",
+    "crates/liquide-animation",
+
+    # GPU renderer (wgpu)
+    "crates/liquide-renderer-wgpu",
 
     # Plugins & extensions
     "crates/liquide-plugin-host",
@@ -145,6 +149,10 @@ rustls-pemfile = "2"
 zstd = "0.13"
 lz4_flex = "0.11"
 
+# GPU
+wgpu = "24"
+bytemuck = { version = "1", features = ["derive"] }
+
 # Bitflags
 bitflags = "2"
 
@@ -219,6 +227,8 @@ liquide-bridge-qt = { path = "crates/liquide-bridge-qt" }
 liquide-render-thread = { path = "crates/liquide-render-thread" }
 liquide-font-rasterizer = { path = "crates/liquide-font-rasterizer" }
 liquide-platform-win32 = { path = "crates/liquide-platform-win32" }
+liquide-animation = { path = "crates/liquide-animation" }
+liquide-renderer-wgpu = { path = "crates/liquide-renderer-wgpu" }
 
 [profile.dev]
 opt-level = 0

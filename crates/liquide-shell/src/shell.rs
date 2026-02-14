@@ -17,7 +17,6 @@ use liquide_renderer_css::StyleResolver;
 use crate::app_history::AppHistory;
 use crate::config::ShellConfig;
 use crate::decoration::{DecorationStyle, HitZone, hit_test_decoration};
-use liquide_dock::Dock;
 use crate::focus::{FocusManager, FocusPolicy};
 use crate::history::{WindowEventKind, WindowHistory};
 use crate::launcher::{Launcher, LauncherApp, SearchResultKind};
@@ -35,6 +34,7 @@ use crate::tiling::TilingEngine;
 use crate::window::{Window, WindowFlags, WindowId, WindowState};
 use crate::workspace::WorkspaceManager;
 use crate::{Result, ShellError};
+use liquide_dock::Dock;
 
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
@@ -1398,10 +1398,12 @@ impl Shell {
                 item_inactive: theme.dock_item_inactive,
                 hover_highlight: theme.dock_hover_highlight,
             };
-            let dock_rc = dock_layout.as_ref().map(|dl| liquide_dock::DockRenderConfig {
-                blur_radius: dl.blur_radius,
-                border_height: dl.border_height,
-            });
+            let dock_rc = dock_layout
+                .as_ref()
+                .map(|dl| liquide_dock::DockRenderConfig {
+                    blur_radius: dl.blur_radius,
+                    border_height: dl.border_height,
+                });
             root.add_child(self.dock.build_scene(
                 screen,
                 &dock_colors,

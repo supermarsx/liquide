@@ -139,12 +139,12 @@ pub enum FilterSpec {
     Saturate(f32),
     /// Hue rotation in degrees.
     HueRotate(f32),
-    /// Grayscale conversion.
-    Grayscale,
-    /// Sepia tone.
-    Sepia,
-    /// Color inversion.
-    Invert,
+    /// Grayscale conversion (0.0 = none, 1.0 = full).
+    Grayscale(f32),
+    /// Sepia tone (0.0 = none, 1.0 = full).
+    Sepia(f32),
+    /// Color inversion (0.0 = none, 1.0 = full).
+    Invert(f32),
     /// Drop shadow.
     DropShadow {
         offset_x: f32,
@@ -154,6 +154,270 @@ pub enum FilterSpec {
     },
     /// Opacity (multiplies existing alpha).
     Opacity(f32),
+    /// Custom SVG filter reference.
+    Url(String),
+}
+
+/// Backdrop filter specification (applied to the area behind an element).
+///
+/// Mirrors CSS `backdrop-filter` — each variant maps to one CSS filter function.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BackdropFilterSpec {
+    Blur { radius: f32 },
+    Brightness(f32),
+    Contrast(f32),
+    Saturate(f32),
+    HueRotate(f32),
+    Grayscale(f32),
+    Sepia(f32),
+    Invert(f32),
+    Opacity(f32),
+}
+
+/// Text decoration specification (CSS text-decoration).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextDecoration {
+    pub line: TextDecorationLine,
+    pub style: TextDecorationStyle,
+    pub color: Option<Color>,
+    pub thickness: f32,
+}
+
+/// Which line(s) to render for text-decoration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextDecorationLine {
+    None,
+    Underline,
+    Overline,
+    LineThrough,
+    /// Underline + Overline
+    UnderlineOverline,
+}
+
+/// Visual style of the text decoration line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TextDecorationStyle {
+    Solid,
+    Double,
+    Dotted,
+    Dashed,
+    Wavy,
+}
+
+/// Text shadow specification (CSS text-shadow — multiple allowed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextShadow {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur_radius: f32,
+    pub color: Color,
+}
+
+/// Box shadow specification with inset support (CSS box-shadow — multiple allowed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoxShadowSpec {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur_radius: f32,
+    pub spread_radius: f32,
+    pub color: Color,
+    pub inset: bool,
+}
+
+/// Outline specification (CSS outline).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutlineSpec {
+    pub width: f32,
+    pub style: OutlineStyle,
+    pub color: Color,
+    pub offset: f32,
+}
+
+/// Outline line style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutlineStyle {
+    None,
+    Solid,
+    Dashed,
+    Dotted,
+    Double,
+    Groove,
+    Ridge,
+    Inset,
+    Outset,
+}
+
+/// CSS overflow behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Overflow {
+    Visible,
+    Hidden,
+    Scroll,
+    Auto,
+    Clip,
+}
+
+/// CSS mask specification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MaskSpec {
+    /// Mask using an image (URL or image data).
+    Image { image_id: u64, mode: MaskMode },
+    /// Mask using a gradient (luminance or alpha).
+    Gradient { gradient: GradientSpec, mode: MaskMode },
+}
+
+/// How the mask source is interpreted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MaskMode {
+    /// Use the luminance of the mask.
+    Luminance,
+    /// Use the alpha channel of the mask.
+    Alpha,
+    /// Match the mask source type.
+    MatchSource,
+}
+
+/// CSS background specification (for background-image + related properties).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackgroundSpec {
+    pub color: Option<Color>,
+    pub image: Option<BackgroundImage>,
+    pub size: BackgroundSize,
+    pub position: (f32, f32),
+    pub repeat: BackgroundRepeat,
+}
+
+/// Background image source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BackgroundImage {
+    /// URL to image resource.
+    Url(String),
+    /// Image data ID.
+    ImageId(u64),
+    /// Gradient fill.
+    Gradient(GradientSpec),
+}
+
+/// CSS background-size.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum BackgroundSize {
+    Auto,
+    Cover,
+    Contain,
+    Explicit { width: f32, height: f32 },
+}
+
+/// CSS background-repeat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BackgroundRepeat {
+    Repeat,
+    RepeatX,
+    RepeatY,
+    NoRepeat,
+    Space,
+    Round,
+}
+
+/// CSS border-image specification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BorderImageSpec {
+    pub source: BackgroundImage,
+    pub slice: (f32, f32, f32, f32),
+    pub width: (f32, f32, f32, f32),
+    pub outset: (f32, f32, f32, f32),
+    pub repeat: BorderImageRepeat,
+}
+
+/// Repeat mode for border-image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BorderImageRepeat {
+    Stretch,
+    Repeat,
+    Round,
+    Space,
+}
+
+/// Per-side border specification for CSS box model borders.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BorderSides {
+    pub top: BorderSide,
+    pub right: BorderSide,
+    pub bottom: BorderSide,
+    pub left: BorderSide,
+}
+
+/// Single border side.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct BorderSide {
+    pub width: f32,
+    pub style: BorderSideStyle,
+    pub color: Color,
+}
+
+/// Border side line style (CSS border-style).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BorderSideStyle {
+    None,
+    Hidden,
+    Solid,
+    Dashed,
+    Dotted,
+    Double,
+    Groove,
+    Ridge,
+    Inset,
+    Outset,
+}
+
+impl Default for BorderSide {
+    fn default() -> Self {
+        Self {
+            width: 0.0,
+            style: BorderSideStyle::None,
+            color: Color::new(0, 0, 0, 0),
+        }
+    }
+}
+
+impl Default for BorderSides {
+    fn default() -> Self {
+        Self {
+            top: BorderSide::default(),
+            right: BorderSide::default(),
+            bottom: BorderSide::default(),
+            left: BorderSide::default(),
+        }
+    }
+}
+
+impl Default for BackgroundRepeat {
+    fn default() -> Self {
+        Self::Repeat
+    }
+}
+
+impl Default for BackgroundSize {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl Default for Overflow {
+    fn default() -> Self {
+        Self::Visible
+    }
+}
+
+impl Default for TextDecorationLine {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl Default for TextDecorationStyle {
+    fn default() -> Self {
+        Self::Solid
+    }
 }
 
 /// Image fit mode for `SceneNodeKind::Image`.
@@ -474,10 +738,6 @@ pub enum SceneNodeKind {
     /// Software cursor with context-sensitive shape.
     Cursor { shape: CursorShape },
     /// Text label rendered with the font system.
-    ///
-    /// When `font_family` is empty, the renderer falls back to the built-in
-    /// bitmap font with the given `scale`.  Otherwise the font rasterizer
-    /// resolves the family name and renders real TrueType glyphs.
     Text {
         text: String,
         color: Color,
@@ -493,15 +753,24 @@ pub enum SceneNodeKind {
         letter_spacing: f32,
         /// Line-height multiplier (1.0 = tight, 1.5 = comfortable).
         line_height: f32,
+        /// Optional text decoration (underline/strikethrough etc.).
+        text_decoration: Option<TextDecoration>,
+        /// Optional text shadows.
+        text_shadows: Vec<TextShadow>,
     },
     /// Built-in vector icon rendered at the node bounds.
     Icon { icon_id: u32, color: Color },
     /// Isolated render layer with custom blend mode (for compositing groups).
-    RenderLayer { blend_mode: String, isolate: bool },
+    RenderLayer {
+        blend_mode: crate::pixel::BlendMode,
+        isolate: bool,
+    },
     /// Arbitrary clip path (circle, rounded rect, or polygon).
     ClipPath { clip_kind: ClipPathKind },
     /// Post-processing filter chain applied to children.
     Filter { filters: Vec<FilterSpec> },
+    /// Backdrop filter chain (blur/brightness/etc. behind element).
+    BackdropFilter { filters: Vec<BackdropFilterSpec> },
     /// Decoded image content (PNG, BMP, etc.).
     Image {
         image_id: u64,
@@ -511,6 +780,21 @@ pub enum SceneNodeKind {
     },
     /// Gradient fill across the node bounds.
     GradientFill { gradient: GradientSpec },
+    /// Full background specification (color + image + gradients).
+    BackgroundFill { background: BackgroundSpec },
+    /// Outline (rendered outside the border box).
+    Outline { outline: OutlineSpec },
+    /// Multiple box shadows (CSS box-shadow, supports inset).
+    BoxShadows { shadows: Vec<BoxShadowSpec> },
+    /// Mask applied to children (CSS mask / mask-image).
+    Mask { mask: MaskSpec },
+    /// Border with per-side styling.
+    Border {
+        sides: BorderSides,
+        radius: (f32, f32, f32, f32), // top-left, top-right, bottom-right, bottom-left
+    },
+    /// Border image (CSS border-image).
+    BorderImage { spec: BorderImageSpec },
     /// Lock screen overlay.
     LockScreen,
     /// Emergency crash overlay.

@@ -24,9 +24,13 @@ pub use framebuffer::{DoubleBuffer, FrameBuffer};
 pub use geometry::{Affine2D, Point, Rect, Size};
 pub use pixel::{BlendMode, Color, PixelFormat};
 pub use scene::{
-    ClipPathKind, DecorationButtons, DecorationColors, DecorationLayout,
-    FilterSpec, FlatNode, GradientSpec, ImageFit, NodeId, NodeProperties,
+    BackdropFilterSpec, BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec,
+    BorderImageRepeat, BorderImageSpec, BorderSide, BorderSideStyle, BorderSides,
+    BoxShadowSpec, ClipPathKind, DecorationButtons, DecorationColors, DecorationLayout,
+    FilterSpec, FlatNode, GradientSpec, ImageFit, MaskMode, MaskSpec, NodeId, NodeProperties,
+    OutlineSpec, OutlineStyle, Overflow,
     SceneNode, SceneNodeKind,
+    TextDecoration, TextDecorationLine, TextDecorationStyle, TextShadow,
 };
 
 use thiserror::Error;

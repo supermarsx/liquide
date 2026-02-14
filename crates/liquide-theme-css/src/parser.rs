@@ -4,7 +4,9 @@ use crate::error::{Result, ThemeError};
 use crate::property::PropertySet;
 use crate::selector::Selector;
 use crate::stylesheet::StyleSheet;
-use crate::value::{Color, LengthUnit, PropertyValue};
+use crate::value::{
+    Color, FontFaceRule, FontSource, Keyframe, KeyframesRule, LengthUnit, PropertyValue,
+};
 use std::path::Path;
 
 use lightningcss::printer::Printer;
@@ -89,7 +91,88 @@ impl ThemeParser {
                     self.process_rule(nested_rule, stylesheet)?;
                 }
             }
-            // Ignore other rule types (keyframes, font-face, import, etc.)
+            CssRule::Keyframes(keyframes) => {
+                let name = match &keyframes.name {
+                    lightningcss::properties::custom::CustomIdent(s) => s.to_string(),
+                };
+                let mut frames = Vec::new();
+                for kf in &keyframes.keyframes {
+                    let mut selectors = Vec::new();
+                    for sel in &kf.selectors {
+                        match sel {
+                            lightningcss::rules::keyframes::KeyframeSelector::Percentage(p) => {
+                                selectors.push(*p);
+                            }
+                            lightningcss::rules::keyframes::KeyframeSelector::From => {
+                                selectors.push(0.0);
+                            }
+                            lightningcss::rules::keyframes::KeyframeSelector::To => {
+                                selectors.push(1.0);
+                            }
+                        }
+                    }
+                    let declarations =
+                        self.convert_declarations_to_pairs(&kf.declarations)?;
+                    frames.push(Keyframe {
+                        selectors,
+                        declarations,
+                    });
+                }
+                stylesheet.add_keyframes(KeyframesRule {
+                    name,
+                    keyframes: frames,
+                });
+            }
+            CssRule::FontFace(font_face) => {
+                let family = font_face
+                    .properties
+                    .iter()
+                    .find_map(|p| {
+                        if let lightningcss::rules::font_face::FontFaceProperty::FontFamily(f) = p {
+                            Some(f.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default();
+
+                let mut sources = Vec::new();
+                for prop in &font_face.properties {
+                    if let lightningcss::rules::font_face::FontFaceProperty::Source(src_list) = prop {
+                        for src in src_list.iter() {
+                            match src {
+                                lightningcss::rules::font_face::Source::Url(url_src) => {
+                                    sources.push(FontSource::Url {
+                                        url: url_src.url.to_string(),
+                                        format: url_src.format.as_ref().map(|f| format!("{:?}", f)),
+                                    });
+                                }
+                                lightningcss::rules::font_face::Source::Local(local) => {
+                                    let name_str = match local {
+                                        lightningcss::rules::font_face::FontFamilyName::Quoted(s) => s.to_string(),
+                                        #[allow(deprecated)]
+                                        _ => format!("{:?}", local),
+                                    };
+                                    sources.push(FontSource::Local(name_str));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                stylesheet.add_font_face(FontFaceRule {
+                    family,
+                    src: sources,
+                    weight: None,
+                    style: None,
+                    display: None,
+                    unicode_range: None,
+                });
+            }
+            CssRule::Import(import) => {
+                stylesheet.add_import(import.url.to_string());
+            }
+            // Ignore rule types we don't yet handle
             _ => {}
         }
 
@@ -130,6 +213,18 @@ impl ThemeParser {
         }
 
         Ok(properties)
+    }
+
+    /// Convert declarations to (name, value) pairs — used for @keyframes.
+    fn convert_declarations_to_pairs(
+        &self,
+        decls: &lightningcss::declaration::DeclarationBlock,
+    ) -> Result<Vec<(String, PropertyValue)>> {
+        let props = self.convert_declarations(decls)?;
+        Ok(props
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect())
     }
 
     /// Insert converted properties from a single declaration into the property set.

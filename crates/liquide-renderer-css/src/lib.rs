@@ -44,7 +44,13 @@ pub mod transform;
 pub use glass::GlassStyle;
 pub use resolver::StyleResolver;
 pub use shadow::ShadowStyle;
-pub use style::{BorderStyle, RenderStyle};
+pub use style::{
+    AlignItems, AlignSelf, AnimationDirection, AnimationFillMode, AnimationIterationCount,
+    AnimationPlayState, AnimationSpec, BackdropFilterOld, BorderLineStyle, BorderStyle,
+    Display, FlexDirection, FlexWrap, FontStyle, JustifyContent, Margin, Padding,
+    PointerEvents, Position, RenderStyle, StepPosition, TextAlign, TextOverflow,
+    TextTransform, TimingFunction, TransitionSpec, WhiteSpace, WordBreak,
+};
 pub use transform::TransformStyle;
 
 use thiserror::Error;

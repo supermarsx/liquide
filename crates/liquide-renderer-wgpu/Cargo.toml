@@ -1,0 +1,18 @@
+[package]
+name = "liquide-renderer-wgpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "GPU-accelerated renderer for LiquiDE using wgpu (D3D12/Vulkan/Metal)"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+wgpu = "24"
+bytemuck = { version = "1", features = ["derive"] }
+log = "0.4"
+
+liquide-compositor = { path = "../liquide-compositor" }
+
+[dev-dependencies]

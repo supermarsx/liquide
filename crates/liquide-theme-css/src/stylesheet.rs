@@ -2,7 +2,7 @@
 
 use crate::property::PropertySet;
 use crate::selector::Selector;
-use crate::value::PropertyValue;
+use crate::value::{FontFaceRule, Keyframe, KeyframesRule, PropertyValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -14,6 +14,15 @@ pub struct StyleSheet {
     
     /// CSS variables (custom properties)
     variables: HashMap<String, PropertyValue>,
+
+    /// `@keyframes` rules by name.
+    keyframes: HashMap<String, KeyframesRule>,
+
+    /// `@font-face` rules.
+    font_faces: Vec<FontFaceRule>,
+
+    /// `@import` URLs (resolved externally).
+    imports: Vec<String>,
 }
 
 /// A single style rule
@@ -123,6 +132,47 @@ impl StyleSheet {
     pub fn merge(&mut self, other: &StyleSheet) {
         self.rules.extend(other.rules.clone());
         self.variables.extend(other.variables.clone());
+        self.keyframes.extend(other.keyframes.clone());
+        self.font_faces.extend(other.font_faces.clone());
+        self.imports.extend(other.imports.clone());
+    }
+
+    // ── @keyframes ─────────────────────────────────────────────────────
+    /// Add a `@keyframes` rule.
+    pub fn add_keyframes(&mut self, rule: KeyframesRule) {
+        self.keyframes.insert(rule.name.clone(), rule);
+    }
+
+    /// Get a `@keyframes` rule by name.
+    pub fn get_keyframes(&self, name: &str) -> Option<&KeyframesRule> {
+        self.keyframes.get(name)
+    }
+
+    /// All `@keyframes` rules.
+    pub fn keyframes(&self) -> &HashMap<String, KeyframesRule> {
+        &self.keyframes
+    }
+
+    // ── @font-face ─────────────────────────────────────────────────────
+    /// Add a `@font-face` rule.
+    pub fn add_font_face(&mut self, rule: FontFaceRule) {
+        self.font_faces.push(rule);
+    }
+
+    /// All `@font-face` rules.
+    pub fn font_faces(&self) -> &[FontFaceRule] {
+        &self.font_faces
+    }
+
+    // ── @import ────────────────────────────────────────────────────────
+    /// Add an `@import` URL.
+    pub fn add_import(&mut self, url: String) {
+        self.imports.push(url);
+    }
+
+    /// All `@import` URLs.
+    pub fn imports(&self) -> &[String] {
+        &self.imports
     }
 }
 

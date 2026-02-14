@@ -168,18 +168,112 @@ impl Color {
     }
 }
 
-/// Porter-Duff compositing blend modes.
+/// Porter-Duff compositing and CSS `mix-blend-mode` values.
+///
+/// The first five are Porter-Duff operators used by the compositor itself.
+/// The remaining modes correspond to the CSS Compositing and Blending Level 1
+/// specification and are needed for full CSS3 parity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum BlendMode {
+    // -- Porter-Duff operators (compositor) --
     /// Standard alpha compositing (default everywhere).
     #[default]
     SrcOver,
     /// Replace destination (used for opaque surface blit).
     Src,
-    /// Multiply blend (used for color tint on glass surfaces).
-    Multiply,
-    /// Screen blend (used for specular highlights / inner glow).
-    Screen,
     /// Source-atop (used for clip-to-shape effects).
     SrcAtop,
+
+    // -- CSS separable blend modes --
+    /// `multiply` — `out = src * dst` per channel.
+    Multiply,
+    /// `screen` — `out = src + dst - src * dst`.
+    Screen,
+    /// `overlay` — Multiply or Screen depending on dst luminance.
+    Overlay,
+    /// `darken` — `out = min(src, dst)` per channel.
+    Darken,
+    /// `lighten` — `out = max(src, dst)` per channel.
+    Lighten,
+    /// `color-dodge` — brightens dst to reflect src.
+    ColorDodge,
+    /// `color-burn` — darkens dst to reflect src.
+    ColorBurn,
+    /// `hard-light` — Multiply or Screen depending on src luminance.
+    HardLight,
+    /// `soft-light` — softer version of hard-light.
+    SoftLight,
+    /// `difference` — `out = |src - dst|`.
+    Difference,
+    /// `exclusion` — lower contrast difference.
+    Exclusion,
+
+    // -- CSS non-separable blend modes --
+    /// `hue` — hue from src, saturation+luminosity from dst.
+    Hue,
+    /// `saturation` — saturation from src, hue+luminosity from dst.
+    Saturation,
+    /// `color` — hue+saturation from src, luminosity from dst.
+    ColorBlend,
+    /// `luminosity` — luminosity from src, hue+saturation from dst.
+    Luminosity,
+}
+
+impl BlendMode {
+    /// CSS keyword name for this blend mode.
+    #[must_use]
+    pub fn css_name(&self) -> &'static str {
+        match self {
+            Self::SrcOver => "normal",
+            Self::Src => "normal",
+            Self::SrcAtop => "normal",
+            Self::Multiply => "multiply",
+            Self::Screen => "screen",
+            Self::Overlay => "overlay",
+            Self::Darken => "darken",
+            Self::Lighten => "lighten",
+            Self::ColorDodge => "color-dodge",
+            Self::ColorBurn => "color-burn",
+            Self::HardLight => "hard-light",
+            Self::SoftLight => "soft-light",
+            Self::Difference => "difference",
+            Self::Exclusion => "exclusion",
+            Self::Hue => "hue",
+            Self::Saturation => "saturation",
+            Self::ColorBlend => "color",
+            Self::Luminosity => "luminosity",
+        }
+    }
+
+    /// Parse from CSS keyword.
+    pub fn from_css_name(name: &str) -> Option<Self> {
+        match name.trim().to_lowercase().as_str() {
+            "normal" => Some(Self::SrcOver),
+            "multiply" => Some(Self::Multiply),
+            "screen" => Some(Self::Screen),
+            "overlay" => Some(Self::Overlay),
+            "darken" => Some(Self::Darken),
+            "lighten" => Some(Self::Lighten),
+            "color-dodge" => Some(Self::ColorDodge),
+            "color-burn" => Some(Self::ColorBurn),
+            "hard-light" => Some(Self::HardLight),
+            "soft-light" => Some(Self::SoftLight),
+            "difference" => Some(Self::Difference),
+            "exclusion" => Some(Self::Exclusion),
+            "hue" => Some(Self::Hue),
+            "saturation" => Some(Self::Saturation),
+            "color" => Some(Self::ColorBlend),
+            "luminosity" => Some(Self::Luminosity),
+            _ => None,
+        }
+    }
+
+    /// Whether this is a separable blend mode (can be computed per-channel).
+    #[must_use]
+    pub fn is_separable(&self) -> bool {
+        !matches!(
+            self,
+            Self::Hue | Self::Saturation | Self::ColorBlend | Self::Luminosity
+        )
+    }
 }

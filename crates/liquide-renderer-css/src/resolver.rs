@@ -164,9 +164,9 @@ impl StyleResolver {
             }
         }
 
-        // Backdrop filter (custom property)
+        // Backdrop filter (custom property — legacy single-blur shorthand)
         if let Some(blur) = self.get_length(&props, "backdrop-blur") {
-            style.backdrop_filter = Some(crate::style::BackdropFilter::Blur {
+            style.backdrop_filter = Some(crate::style::BackdropFilterOld::Blur {
                 radius: blur as u32,
             });
         }
