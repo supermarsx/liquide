@@ -1077,6 +1077,13 @@ fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
         SceneNodeKind::Filter { .. } => "Filter",
         SceneNodeKind::Image { .. } => "Image",
         SceneNodeKind::GradientFill { .. } => "GradientFill",
+        SceneNodeKind::BackdropFilter { .. } => "BackdropFilter",
+        SceneNodeKind::BackgroundFill { .. } => "BackgroundFill",
+        SceneNodeKind::Outline { .. } => "Outline",
+        SceneNodeKind::BoxShadows { .. } => "BoxShadows",
+        SceneNodeKind::Mask { .. } => "Mask",
+        SceneNodeKind::Border { .. } => "Border",
+        SceneNodeKind::BorderImage { .. } => "BorderImage",
     }
 }
 

@@ -93,7 +93,8 @@ impl ThemeParser {
             }
             CssRule::Keyframes(keyframes) => {
                 let name = match &keyframes.name {
-                    lightningcss::properties::custom::CustomIdent(s) => s.to_string(),
+                    lightningcss::rules::keyframes::KeyframesName::Ident(ident) => ident.0.to_string(),
+                    lightningcss::rules::keyframes::KeyframesName::Custom(s) => s.to_string(),
                 };
                 let mut frames = Vec::new();
                 for kf in &keyframes.keyframes {
@@ -101,13 +102,16 @@ impl ThemeParser {
                     for sel in &kf.selectors {
                         match sel {
                             lightningcss::rules::keyframes::KeyframeSelector::Percentage(p) => {
-                                selectors.push(*p);
+                                selectors.push(p.0);
                             }
                             lightningcss::rules::keyframes::KeyframeSelector::From => {
                                 selectors.push(0.0);
                             }
                             lightningcss::rules::keyframes::KeyframeSelector::To => {
                                 selectors.push(1.0);
+                            }
+                            _ => {
+                                // TimelineRangePercentage and future variants — skip
                             }
                         }
                     }
@@ -129,7 +133,7 @@ impl ThemeParser {
                     .iter()
                     .find_map(|p| {
                         if let lightningcss::rules::font_face::FontFaceProperty::FontFamily(f) = p {
-                            Some(f.to_string())
+                            Some(format!("{:?}", f))
                         } else {
                             None
                         }
@@ -143,17 +147,12 @@ impl ThemeParser {
                             match src {
                                 lightningcss::rules::font_face::Source::Url(url_src) => {
                                     sources.push(FontSource::Url {
-                                        url: url_src.url.to_string(),
+                                        url: url_src.url.url.to_string(),
                                         format: url_src.format.as_ref().map(|f| format!("{:?}", f)),
                                     });
                                 }
                                 lightningcss::rules::font_face::Source::Local(local) => {
-                                    let name_str = match local {
-                                        lightningcss::rules::font_face::FontFamilyName::Quoted(s) => s.to_string(),
-                                        #[allow(deprecated)]
-                                        _ => format!("{:?}", local),
-                                    };
-                                    sources.push(FontSource::Local(name_str));
+                                    sources.push(FontSource::Local(format!("{:?}", local)));
                                 }
                             }
                         }

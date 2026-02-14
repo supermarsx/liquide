@@ -1053,6 +1053,8 @@ impl SoftwareRenderer {
                 font_weight,
                 letter_spacing,
                 line_height: _line_height,
+                text_decoration: _,
+                text_shadows: _,
             } => {
                 let mut c = *color;
                 if opacity < 1.0 {
@@ -1162,8 +1164,15 @@ impl SoftwareRenderer {
             SceneNodeKind::RenderLayer { .. }
             | SceneNodeKind::ClipPath { .. }
             | SceneNodeKind::Filter { .. }
+            | SceneNodeKind::BackdropFilter { .. }
             | SceneNodeKind::Image { .. }
-            | SceneNodeKind::GradientFill { .. } => {}
+            | SceneNodeKind::GradientFill { .. }
+            | SceneNodeKind::BackgroundFill { .. }
+            | SceneNodeKind::Outline { .. }
+            | SceneNodeKind::BoxShadows { .. }
+            | SceneNodeKind::Mask { .. }
+            | SceneNodeKind::Border { .. }
+            | SceneNodeKind::BorderImage { .. } => {}
         }
     }
 

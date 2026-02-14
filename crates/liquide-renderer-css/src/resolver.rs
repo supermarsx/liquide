@@ -328,6 +328,12 @@ impl StyleResolver {
             Some(LengthUnit::Em(em)) => Some(em * 16.0),  // Assume 16px base
             Some(LengthUnit::Rem(rem)) => Some(rem * 16.0), // Assume 16px base
             Some(LengthUnit::Percent(pct)) => Some(pct),  // Return as-is, caller handles
+            Some(LengthUnit::Vw(vw)) => Some(vw),
+            Some(LengthUnit::Vh(vh)) => Some(vh),
+            Some(LengthUnit::Vmin(vmin)) => Some(vmin),
+            Some(LengthUnit::Vmax(vmax)) => Some(vmax),
+            Some(LengthUnit::Ch(ch)) => Some(ch * 8.0),   // Approximate: 1ch ≈ 8px
+            Some(LengthUnit::Ex(ex)) => Some(ex * 8.0),   // Approximate: 1ex ≈ 8px
             None => None,
         })
     }

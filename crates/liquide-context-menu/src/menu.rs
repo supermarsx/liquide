@@ -388,6 +388,8 @@ impl ContextMenu {
                     font_weight: 400,
                     letter_spacing: 0.0,
                     line_height: 1.4,
+                    text_decoration: None,
+                    text_shadows: vec![],
                 },
                 NodeProperties::new(Rect::new(
                     text_x,
@@ -412,6 +414,8 @@ impl ContextMenu {
                         font_weight: 400,
                         letter_spacing: 0.0,
                         line_height: 1.4,
+                        text_decoration: None,
+                        text_shadows: vec![],
                     },
                     NodeProperties::new(Rect::new(
                         bounds.width - 80.0,

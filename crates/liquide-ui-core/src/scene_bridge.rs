@@ -140,6 +140,8 @@ impl SceneBridge {
                         font_weight: weight,
                         letter_spacing: 0.0,
                         line_height: 1.4,
+                        text_decoration: None,
+                        text_shadows: vec![],
                     },
                     NodeProperties::new(bounds).with_z_order(z),
                 ))

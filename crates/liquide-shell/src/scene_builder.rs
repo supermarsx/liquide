@@ -73,6 +73,8 @@ pub fn text_node(
             font_weight: 400,
             letter_spacing: 0.0,
             line_height: 1.4,
+            text_decoration: None,
+            text_shadows: vec![],
         },
         NodeProperties::new(bounds).with_z_order(z),
     )
@@ -102,6 +104,8 @@ pub fn rich_text_node(
             font_weight,
             letter_spacing,
             line_height,
+            text_decoration: None,
+            text_shadows: vec![],
         },
         NodeProperties::new(bounds).with_z_order(z),
     )
