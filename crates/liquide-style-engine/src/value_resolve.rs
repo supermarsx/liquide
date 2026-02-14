@@ -265,3 +265,71 @@ pub fn resolve_cursor(val: &PropertyValue) -> Cursor {
         Cursor::Auto
     }
 }
+
+/// Resolve a keyword to AlignSelf.
+pub fn resolve_align_self(val: &PropertyValue) -> AlignSelf {
+    if let PropertyValue::Keyword(kw) = val {
+        match kw.as_str() {
+            "auto" => AlignSelf::Auto,
+            "flex-start" | "start" => AlignSelf::FlexStart,
+            "flex-end" | "end" => AlignSelf::FlexEnd,
+            "center" => AlignSelf::Center,
+            "baseline" => AlignSelf::Baseline,
+            "stretch" => AlignSelf::Stretch,
+            _ => AlignSelf::Auto,
+        }
+    } else {
+        AlignSelf::Auto
+    }
+}
+
+/// Resolve a keyword to AlignContent.
+pub fn resolve_align_content(val: &PropertyValue) -> AlignContent {
+    if let PropertyValue::Keyword(kw) = val {
+        match kw.as_str() {
+            "flex-start" | "start" => AlignContent::FlexStart,
+            "flex-end" | "end" => AlignContent::FlexEnd,
+            "center" => AlignContent::Center,
+            "stretch" => AlignContent::Stretch,
+            "space-between" => AlignContent::SpaceBetween,
+            "space-around" => AlignContent::SpaceAround,
+            _ => AlignContent::Stretch,
+        }
+    } else {
+        AlignContent::Stretch
+    }
+}
+
+/// Resolve a keyword/value to BorderLineStyle.
+pub fn resolve_border_style(val: &PropertyValue) -> BorderLineStyle {
+    if let PropertyValue::Keyword(kw) = val {
+        match kw.as_str() {
+            "none" => BorderLineStyle::None,
+            "solid" => BorderLineStyle::Solid,
+            "dashed" => BorderLineStyle::Dashed,
+            "dotted" => BorderLineStyle::Dotted,
+            "double" => BorderLineStyle::Double,
+            "groove" => BorderLineStyle::Groove,
+            "ridge" => BorderLineStyle::Ridge,
+            "inset" => BorderLineStyle::Inset,
+            "outset" => BorderLineStyle::Outset,
+            "hidden" => BorderLineStyle::Hidden,
+            _ => BorderLineStyle::None,
+        }
+    } else if let PropertyValue::BorderStyle(bs) = val {
+        match bs {
+            liquide_theme_css::value::BorderStyle::None => BorderLineStyle::None,
+            liquide_theme_css::value::BorderStyle::Solid => BorderLineStyle::Solid,
+            liquide_theme_css::value::BorderStyle::Dashed => BorderLineStyle::Dashed,
+            liquide_theme_css::value::BorderStyle::Dotted => BorderLineStyle::Dotted,
+            liquide_theme_css::value::BorderStyle::Double => BorderLineStyle::Double,
+            liquide_theme_css::value::BorderStyle::Groove => BorderLineStyle::Groove,
+            liquide_theme_css::value::BorderStyle::Ridge => BorderLineStyle::Ridge,
+            liquide_theme_css::value::BorderStyle::Inset => BorderLineStyle::Inset,
+            liquide_theme_css::value::BorderStyle::Outset => BorderLineStyle::Outset,
+            liquide_theme_css::value::BorderStyle::Hidden => BorderLineStyle::Hidden,
+        }
+    } else {
+        BorderLineStyle::None
+    }
+}

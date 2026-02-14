@@ -11,20 +11,26 @@
 //! <root>
 //! ├── <desktop-background>
 //! ├── <statusbar>
-//! │   ├── <statusbar-slot class="left">
-//! │   │   └── (items …)
-//! │   ├── <statusbar-slot class="center">
-//! │   │   └── <statusbar-item id="clock">
-//! │   └── <statusbar-slot class="right">
-//! │       ├── <statusbar-item id="notifications">
-//! │       ├── <statusbar-item id="connection">
-//! │       ├── <statusbar-item id="tray">
-//! │       └── <statusbar-item id="session">
+//! │   ├── <statusbar-slot class="left"> … </statusbar-slot>
+//! │   ├── <statusbar-slot class="center"> … </statusbar-slot>
+//! │   └── <statusbar-slot class="right"> … </statusbar-slot>
 //! ├── <workspace-container>
-//! │   └── <window> … </window>
+//! │   └── <window>
+//! │       ├── <window-titlebar>
+//! │       │   ├── <window-title> … </window-title>
+//! │       │   └── <titlebar-buttons>
+//! │       │       ├── <minimize-button />
+//! │       │       ├── <maximize-button />
+//! │       │       └── <close-button />
+//! │       └── <window-content />
 //! ├── <dock>
 //! │   └── <dock-item class="active"> … </dock-item>
-//! └── <notification> … </notification>
+//! ├── <notification-area>
+//! │   └── <notification> … </notification>
+//! ├── (on demand) <launcher-overlay> → <launcher> → …
+//! ├── (on demand) <session-menu> → <menu-item> …
+//! ├── (on demand) <app-menu> → <menu-item> …
+//! └── (on demand) <context-menu> → <menu-item> / <menu-separator>
 //! ```
 
 use liquide_dom::{Document, NodeId, PseudoStateFlags};
@@ -39,6 +45,12 @@ pub mod element_ids {
     pub const STATUSBAR_SLOT_RIGHT: &str = "statusbar-slot-right";
     pub const WORKSPACE: &str = "workspace-container";
     pub const DOCK: &str = "shell-dock";
+    pub const LAUNCHER_OVERLAY: &str = "launcher-overlay";
+    pub const LAUNCHER: &str = "shell-launcher";
+    pub const LAUNCHER_SEARCH: &str = "launcher-search";
+    pub const SESSION_MENU: &str = "session-menu";
+    pub const APP_MENU: &str = "app-menu";
+    pub const NOTIFICATION_AREA: &str = "notification-area";
 }
 
 /// Desktop document wrapping a DOM tree with shell-element accessors.
@@ -57,6 +69,8 @@ pub struct DesktopDocument {
     pub workspace: NodeId,
     /// The `<dock>` node.
     pub dock: NodeId,
+    /// The `<notification-area>` persistent container.
+    pub notification_area: NodeId,
 }
 
 impl DesktopDocument {
@@ -100,6 +114,11 @@ impl DesktopDocument {
         doc.set_id(dock, element_ids::DOCK);
         doc.append_child(root, dock);
 
+        // <notification-area> — persistent container for toast notifications
+        let notification_area = doc.create_element("notification-area");
+        doc.set_id(notification_area, element_ids::NOTIFICATION_AREA);
+        doc.append_child(root, notification_area);
+
         debug!(
             nodes = doc.node_count(),
             "DesktopDocument: initial tree built"
@@ -114,6 +133,7 @@ impl DesktopDocument {
             statusbar_slot_right: slot_right,
             workspace,
             dock,
+            notification_area,
         }
     }
 
@@ -230,8 +250,21 @@ impl DesktopDocument {
 
         // <window-titlebar>
         let titlebar = self.doc.create_element("window-titlebar");
+
+        // Titlebar text
+        let title_span = self.doc.create_element("window-title");
         let title_txt = self.doc.create_text(title);
-        self.doc.append_child(titlebar, title_txt);
+        self.doc.append_child(title_span, title_txt);
+        self.doc.append_child(titlebar, title_span);
+
+        // Titlebar button group
+        let btn_group = self.doc.create_element("titlebar-buttons");
+        for btn_tag in &["minimize-button", "maximize-button", "close-button"] {
+            let btn = self.doc.create_element(btn_tag);
+            self.doc.append_child(btn_group, btn);
+        }
+        self.doc.append_child(titlebar, btn_group);
+
         self.doc.append_child(el, titlebar);
 
         // <window-content>
@@ -323,7 +356,7 @@ impl DesktopDocument {
 
     // ── Notification helpers ─────────────────────────────────────
 
-    /// Add a notification toast to the DOM.
+    /// Add a notification toast to the notification-area container.
     pub fn add_notification(&mut self, notif_id: &str, title: &str, body: &str) -> NodeId {
         let el = self.doc.create_element("notification");
         self.doc.set_id(el, notif_id);
@@ -338,17 +371,219 @@ impl DesktopDocument {
         self.doc.append_child(body_el, body_txt);
         self.doc.append_child(el, body_el);
 
-        let root = self.doc.root();
-        self.doc.append_child(root, el);
+        self.doc.append_child(self.notification_area, el);
         el
     }
 
     /// Remove a notification by id.
     pub fn remove_notification(&mut self, notif_id: &str) {
         if let Some(node_id) = self.doc.get_element_by_id(notif_id) {
-            let root = self.doc.root();
-            self.doc.remove_child(root, node_id);
+            self.doc.remove_child(self.notification_area, node_id);
             self.doc.destroy_node(node_id);
+        }
+    }
+
+    // ── Launcher helpers ─────────────────────────────────────────
+
+    /// Show the launcher overlay with a search box and optional items.
+    ///
+    /// Creates:
+    /// ```text
+    /// <launcher-overlay>
+    ///   <launcher>
+    ///     <launcher-search />
+    ///     <launcher-results>
+    ///       <launcher-item data-app-id="…"> label </launcher-item>
+    ///       …
+    ///     </launcher-results>
+    ///   </launcher>
+    /// </launcher-overlay>
+    /// ```
+    pub fn show_launcher(&mut self, items: &[LauncherItemInfo]) -> NodeId {
+        // Remove if already visible
+        self.hide_launcher();
+
+        let root = self.doc.root();
+
+        let overlay = self.doc.create_element("launcher-overlay");
+        self.doc.set_id(overlay, element_ids::LAUNCHER_OVERLAY);
+        self.doc.append_child(root, overlay);
+
+        let launcher = self.doc.create_element("launcher");
+        self.doc.set_id(launcher, element_ids::LAUNCHER);
+        self.doc.append_child(overlay, launcher);
+
+        let search = self.doc.create_element("launcher-search");
+        self.doc.set_id(search, element_ids::LAUNCHER_SEARCH);
+        self.doc.append_child(launcher, search);
+
+        let results = self.doc.create_element("launcher-results");
+        for (i, item) in items.iter().enumerate() {
+            let li = self.doc.create_element("launcher-item");
+            self.doc.set_attribute(li, "data-app-id", &item.app_id);
+            self.doc.set_attribute(li, "data-icon", &item.icon);
+            self.doc.set_attribute(li, "data-index", &i.to_string());
+            let txt = self.doc.create_text(&item.label);
+            self.doc.append_child(li, txt);
+            self.doc.append_child(results, li);
+        }
+        self.doc.append_child(launcher, results);
+
+        overlay
+    }
+
+    /// Hide the launcher overlay.
+    pub fn hide_launcher(&mut self) {
+        if let Some(overlay) = self.doc.get_element_by_id(element_ids::LAUNCHER_OVERLAY) {
+            let root = self.doc.root();
+            self.doc.remove_child(root, overlay);
+            self.doc.destroy_node(overlay);
+        }
+    }
+
+    /// Set hover state on a launcher item by index.
+    pub fn set_launcher_hover(&mut self, index: Option<usize>) {
+        if let Some(launcher) = self.doc.get_element_by_id(element_ids::LAUNCHER) {
+            let launcher_kids: Vec<NodeId> = self.doc.children(launcher).to_vec();
+            // The results container is the second child (after search)
+            if let Some(&results) = launcher_kids.get(1) {
+                let items: Vec<NodeId> = self.doc.children(results).to_vec();
+                for (i, &item) in items.iter().enumerate() {
+                    self.doc.set_pseudo_state(
+                        item,
+                        PseudoStateFlags::HOVER,
+                        index == Some(i),
+                    );
+                }
+            }
+        }
+    }
+
+    // ── Session-menu helpers ─────────────────────────────────────
+
+    /// Show the session menu (lock, logout, restart, shutdown etc).
+    pub fn show_session_menu(&mut self, items: &[MenuItemInfo]) -> NodeId {
+        self.hide_session_menu();
+
+        let root = self.doc.root();
+        let menu = self.doc.create_element("session-menu");
+        self.doc.set_id(menu, element_ids::SESSION_MENU);
+
+        for (i, item) in items.iter().enumerate() {
+            let mi = self.doc.create_element("menu-item");
+            self.doc.set_attribute(mi, "data-action", &item.action);
+            self.doc.set_attribute(mi, "data-index", &i.to_string());
+            if !item.icon.is_empty() {
+                self.doc.set_attribute(mi, "data-icon", &item.icon);
+            }
+            let txt = self.doc.create_text(&item.label);
+            self.doc.append_child(mi, txt);
+            self.doc.append_child(menu, mi);
+        }
+
+        self.doc.append_child(root, menu);
+        menu
+    }
+
+    /// Hide the session menu.
+    pub fn hide_session_menu(&mut self) {
+        if let Some(node) = self.doc.get_element_by_id(element_ids::SESSION_MENU) {
+            let root = self.doc.root();
+            self.doc.remove_child(root, node);
+            self.doc.destroy_node(node);
+        }
+    }
+
+    // ── App-menu helpers ─────────────────────────────────────────
+
+    /// Show an application menu (triggered from titlebar or statusbar).
+    pub fn show_app_menu(&mut self, items: &[MenuItemInfo]) -> NodeId {
+        self.hide_app_menu();
+
+        let root = self.doc.root();
+        let menu = self.doc.create_element("app-menu");
+        self.doc.set_id(menu, element_ids::APP_MENU);
+
+        for (i, item) in items.iter().enumerate() {
+            let mi = self.doc.create_element("menu-item");
+            self.doc.set_attribute(mi, "data-action", &item.action);
+            self.doc.set_attribute(mi, "data-index", &i.to_string());
+            if !item.icon.is_empty() {
+                self.doc.set_attribute(mi, "data-icon", &item.icon);
+            }
+            let txt = self.doc.create_text(&item.label);
+            self.doc.append_child(mi, txt);
+            self.doc.append_child(menu, mi);
+        }
+
+        self.doc.append_child(root, menu);
+        menu
+    }
+
+    /// Hide the app menu.
+    pub fn hide_app_menu(&mut self) {
+        if let Some(node) = self.doc.get_element_by_id(element_ids::APP_MENU) {
+            let root = self.doc.root();
+            self.doc.remove_child(root, node);
+            self.doc.destroy_node(node);
+        }
+    }
+
+    // ── Generic menu hover helper ────────────────────────────────
+
+    /// Set hover on a menu item by index within a menu element.
+    pub fn set_menu_hover(&mut self, menu_id: &str, index: Option<usize>) {
+        if let Some(menu_node) = self.doc.get_element_by_id(menu_id) {
+            let children: Vec<NodeId> = self.doc.children(menu_node).to_vec();
+            let mut item_i = 0usize;
+            for child in children {
+                // Only count menu-item elements, skip separators
+                if let Some(node) = self.doc.get(child) {
+                    if node.tag_name() == "menu-item" {
+                        self.doc.set_pseudo_state(
+                            child,
+                            PseudoStateFlags::HOVER,
+                            index == Some(item_i),
+                        );
+                        item_i += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Titlebar button hover ────────────────────────────────────
+
+    /// Set hover on a specific titlebar button within a window.
+    ///
+    /// `button_tag` should be one of: `"close-button"`, `"maximize-button"`,
+    /// `"minimize-button"`.
+    pub fn set_window_button_hover(
+        &mut self,
+        window_id: &str,
+        button_tag: Option<&str>,
+    ) {
+        if let Some(win_node) = self.doc.get_element_by_id(window_id) {
+            let win_kids: Vec<NodeId> = self.doc.children(win_node).to_vec();
+            // First child is window-titlebar
+            if let Some(&titlebar) = win_kids.first() {
+                let tb_kids: Vec<NodeId> = self.doc.children(titlebar).to_vec();
+                // Second child of titlebar is titlebar-buttons
+                if let Some(&btn_group) = tb_kids.get(1) {
+                    let buttons: Vec<NodeId> = self.doc.children(btn_group).to_vec();
+                    for btn in buttons {
+                        let is_hovered = button_tag
+                            .and_then(|tag| {
+                                self.doc
+                                    .get(btn)
+                                    .map(|n| n.tag_name() == tag)
+                            })
+                            .unwrap_or(false);
+                        self.doc
+                            .set_pseudo_state(btn, PseudoStateFlags::HOVER, is_hovered);
+                    }
+                }
+            }
         }
     }
 }
@@ -386,6 +621,22 @@ pub enum ContextMenuItemInfo {
     Separator,
 }
 
+/// Minimal launcher item info for DOM construction.
+#[derive(Debug, Clone)]
+pub struct LauncherItemInfo {
+    pub app_id: String,
+    pub label: String,
+    pub icon: String,
+}
+
+/// Generic menu item info (session-menu, app-menu).
+#[derive(Debug, Clone)]
+pub struct MenuItemInfo {
+    pub label: String,
+    pub action: String,
+    pub icon: String,
+}
+
 // ── Tests ────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -397,8 +648,8 @@ mod tests {
         let desktop = DesktopDocument::new();
         let doc = &desktop.doc;
 
-        // Root has 4 children: desktop-bg, statusbar, workspace, dock
-        assert_eq!(doc.children(doc.root()).len(), 4);
+        // Root has 5 children: desktop-bg, statusbar, workspace, dock, notification-area
+        assert_eq!(doc.children(doc.root()).len(), 5);
 
         // Statusbar has 3 slots
         assert_eq!(doc.children(desktop.statusbar).len(), 3);
@@ -465,6 +716,15 @@ mod tests {
         let kids = desktop.doc.children(win);
         assert_eq!(kids.len(), 2);
 
+        // Titlebar has window-title + titlebar-buttons
+        let titlebar = kids[0];
+        let tb_kids = desktop.doc.children(titlebar);
+        assert_eq!(tb_kids.len(), 2);
+
+        // Titlebar-buttons has 3 buttons: minimize, maximize, close
+        let btn_group = tb_kids[1];
+        assert_eq!(desktop.doc.children(btn_group).len(), 3);
+
         desktop.remove_window("win-1");
         assert!(desktop.doc.get_element_by_id("win-1").is_none());
     }
@@ -527,5 +787,118 @@ mod tests {
         let kids: Vec<NodeId> = desktop.doc.children(desktop.dock).to_vec();
         assert!(!desktop.doc.get(kids[0]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
         assert!(desktop.doc.get(kids[1]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
+    }
+
+    #[test]
+    fn launcher_show_hide() {
+        let mut desktop = DesktopDocument::new();
+        let items = vec![
+            LauncherItemInfo {
+                app_id: "files".into(),
+                label: "Files".into(),
+                icon: "folder".into(),
+            },
+            LauncherItemInfo {
+                app_id: "term".into(),
+                label: "Terminal".into(),
+                icon: "terminal".into(),
+            },
+        ];
+
+        let overlay = desktop.show_launcher(&items);
+        assert!(desktop.doc.get_element_by_id(element_ids::LAUNCHER_OVERLAY).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::LAUNCHER).is_some());
+
+        // Launcher has search + results
+        let launcher = desktop.doc.get_element_by_id(element_ids::LAUNCHER).unwrap();
+        assert_eq!(desktop.doc.children(launcher).len(), 2);
+
+        // Results has 2 items
+        let results = desktop.doc.children(launcher)[1];
+        assert_eq!(desktop.doc.children(results).len(), 2);
+
+        // Verify overlay is child of root
+        assert!(desktop.doc.children(desktop.doc.root()).contains(&overlay));
+
+        desktop.hide_launcher();
+        assert!(desktop.doc.get_element_by_id(element_ids::LAUNCHER_OVERLAY).is_none());
+    }
+
+    #[test]
+    fn session_menu_show_hide() {
+        let mut desktop = DesktopDocument::new();
+        let items = vec![
+            MenuItemInfo {
+                label: "Lock".into(),
+                action: "lock".into(),
+                icon: "lock".into(),
+            },
+            MenuItemInfo {
+                label: "Shutdown".into(),
+                action: "shutdown".into(),
+                icon: "power".into(),
+            },
+        ];
+
+        let menu = desktop.show_session_menu(&items);
+        assert!(desktop.doc.get_element_by_id(element_ids::SESSION_MENU).is_some());
+        assert_eq!(desktop.doc.children(menu).len(), 2);
+
+        desktop.hide_session_menu();
+        assert!(desktop.doc.get_element_by_id(element_ids::SESSION_MENU).is_none());
+    }
+
+    #[test]
+    fn app_menu_show_hide() {
+        let mut desktop = DesktopDocument::new();
+        let items = vec![MenuItemInfo {
+            label: "About".into(),
+            action: "about".into(),
+            icon: "".into(),
+        }];
+
+        let menu = desktop.show_app_menu(&items);
+        assert!(desktop.doc.get_element_by_id(element_ids::APP_MENU).is_some());
+        assert_eq!(desktop.doc.children(menu).len(), 1);
+
+        desktop.hide_app_menu();
+        assert!(desktop.doc.get_element_by_id(element_ids::APP_MENU).is_none());
+    }
+
+    #[test]
+    fn notification_in_area() {
+        let mut desktop = DesktopDocument::new();
+        let n = desktop.add_notification("notif-a", "Title", "Body");
+
+        // Notification is inside the notification-area container
+        let area_kids = desktop.doc.children(desktop.notification_area);
+        assert_eq!(area_kids.len(), 1);
+        assert_eq!(area_kids[0], n);
+
+        desktop.remove_notification("notif-a");
+        assert_eq!(desktop.doc.children(desktop.notification_area).len(), 0);
+    }
+
+    #[test]
+    fn titlebar_button_hover() {
+        let mut desktop = DesktopDocument::new();
+        desktop.add_window("win-btn", "App", false);
+
+        desktop.set_window_button_hover("win-btn", Some("close-button"));
+
+        // Verify close-button has hover, others don't
+        let win = desktop.doc.get_element_by_id("win-btn").unwrap();
+        let titlebar = desktop.doc.children(win)[0];
+        let btn_group = desktop.doc.children(titlebar)[1];
+        let buttons: Vec<NodeId> = desktop.doc.children(btn_group).to_vec();
+
+        // minimize=0, maximize=1, close=2
+        assert!(!desktop.doc.get(buttons[0]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
+        assert!(!desktop.doc.get(buttons[1]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
+        assert!(desktop.doc.get(buttons[2]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
+
+        // Clear hover
+        desktop.set_window_button_hover("win-btn", None);
+        assert!(!desktop.doc.get(buttons[2]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
     }
 }

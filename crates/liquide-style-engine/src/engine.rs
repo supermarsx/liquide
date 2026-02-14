@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use liquide_compositor::pixel::Color;
 use liquide_dom::{Document, NodeId};
 use liquide_theme_css::property::PropertySet;
 use liquide_theme_css::ThemeParser;
@@ -329,6 +330,47 @@ impl StyleEngine {
                 let r = resolve_number(val);
                 style.border_radius = crate::dimension::Corners::all(r);
             }
+            "border-top-left-radius" => style.border_radius.top_left = resolve_number(val),
+            "border-top-right-radius" => style.border_radius.top_right = resolve_number(val),
+            "border-bottom-left-radius" => style.border_radius.bottom_left = resolve_number(val),
+            "border-bottom-right-radius" => style.border_radius.bottom_right = resolve_number(val),
+
+            // Border color
+            "border-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_color = Sides::all(c);
+                }
+            }
+            "border-top-color" => { if let Some(c) = resolve_color(val) { style.border_color.top = c; } }
+            "border-right-color" => { if let Some(c) = resolve_color(val) { style.border_color.right = c; } }
+            "border-bottom-color" => { if let Some(c) = resolve_color(val) { style.border_color.bottom = c; } }
+            "border-left-color" => { if let Some(c) = resolve_color(val) { style.border_color.left = c; } }
+
+            // Border style
+            "border-style" => {
+                let s = resolve_border_style(val);
+                style.border_style = Sides::all(s);
+            }
+            "border-top-style" => style.border_style.top = resolve_border_style(val),
+            "border-right-style" => style.border_style.right = resolve_border_style(val),
+            "border-bottom-style" => style.border_style.bottom = resolve_border_style(val),
+            "border-left-style" => style.border_style.left = resolve_border_style(val),
+
+            // Box shadow
+            "box-shadow" => {
+                if let liquide_theme_css::value::PropertyValue::BoxShadow(shadows) = val {
+                    style.box_shadow = shadows.iter().map(|s| {
+                        liquide_compositor::scene::BoxShadowSpec {
+                            offset_x: s.offset_x,
+                            offset_y: s.offset_y,
+                            blur_radius: s.blur_radius,
+                            spread_radius: s.spread_radius,
+                            color: Color { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a },
+                            inset: s.inset,
+                        }
+                    }).collect();
+                }
+            }
 
             // Flex
             "flex-direction" => style.flex_direction = resolve_flex_direction(val),
@@ -344,6 +386,8 @@ impl StyleEngine {
                 style.gap.height = d;
             }
             "order" => style.order = resolve_number(val) as i32,
+            "align-self" => style.align_self = resolve_align_self(val),
+            "align-content" => style.align_content = resolve_align_content(val),
 
             // Positioning
             "top" => style.top = resolve_dimension(val),
@@ -460,6 +504,45 @@ impl StyleEngine {
                         "isolate" => Isolation::Isolate,
                         _ => Isolation::Auto,
                     };
+                }
+            }
+
+            // ── Shell custom extensions ─────────────────────────
+            // Non-standard CSS properties used by the LiquiDE desktop.
+            "blur-radius" | "backdrop-blur-radius" => {
+                style.x_blur_radius = resolve_number(val);
+            }
+            "glass-tint" => {
+                if let Some(c) = resolve_color(val) {
+                    style.x_glass_tint = Some(c);
+                }
+            }
+            // Standard box-shadow-color shorthand (non-standard, used in themes)
+            "box-shadow-color" => {
+                if let Some(c) = resolve_color(val) {
+                    // Store as a single zero-offset shadow with only the color set.
+                    if style.box_shadow.is_empty() {
+                        style.box_shadow.push(liquide_compositor::scene::BoxShadowSpec {
+                            offset_x: 0.0,
+                            offset_y: 4.0,
+                            blur_radius: 12.0,
+                            spread_radius: 0.0,
+                            color: c,
+                            inset: false,
+                        });
+                    } else {
+                        for sh in &mut style.box_shadow {
+                            sh.color = c;
+                        }
+                    }
+                }
+            }
+            // titlebar-background (legacy compat — maps to x_custom)
+            "titlebar-background" => {
+                if let Some(c) = resolve_color(val) {
+                    style.x_custom.push(("titlebar-background".into(), format!(
+                        "rgba({},{},{},{})", c.r, c.g, c.b, c.a
+                    )));
                 }
             }
 

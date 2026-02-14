@@ -15,7 +15,7 @@
 
 use liquide_compositor::geometry::Rect as CRect;
 use liquide_compositor::pixel::Color;
-use liquide_compositor::scene::{NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
 use liquide_dom::Document;
 use liquide_layout::{DefaultTextMeasurer, LayoutEngine, LayoutTree, Size};
@@ -143,13 +143,71 @@ impl DesktopPipeline {
     }
 
     /// Run the full pipeline and convert the result to compositor SceneNodes.
+    ///
+    /// Glass SceneNodes are generated for elements with `blur-radius` CSS
+    /// property. These are placed *before* the element's normal paint output
+    /// so the blur effect renders behind the content.
     pub fn render_to_scene(
         &mut self,
         doc: &Document,
         base_z: u32,
     ) -> Vec<SceneNode> {
         let output = self.run(doc);
-        self.display_list_to_scene(&output.display_list, base_z)
+
+        // Collect Glass nodes from elements with x_blur_radius > 0.
+        let glass_nodes = self.extract_glass_nodes(&output, base_z);
+        let glass_count = glass_nodes.len() as u32;
+
+        // Convert paint output to scene nodes, offset z by glass count.
+        let mut nodes = glass_nodes;
+        let paint_nodes = self.display_list_to_scene(&output.display_list, base_z + glass_count);
+        nodes.extend(paint_nodes);
+
+        nodes
+    }
+
+    /// Generate Glass SceneNodes for DOM elements that have `x_blur_radius > 0`
+    /// in their computed style. Uses the layout tree to get the element's rect.
+    fn extract_glass_nodes(
+        &mut self,
+        output: &PipelineOutput,
+        base_z: u32,
+    ) -> Vec<SceneNode> {
+        let mut glass_nodes = Vec::new();
+        let mut z = base_z;
+
+        for layout_box in &output.layout.boxes {
+            if let Some(style) = output.styles.get(layout_box.node) {
+                if style.x_blur_radius > 0.0 {
+                    let rect = to_compositor_rect(&layout_box.border_rect);
+                    // Skip zero-area boxes
+                    if rect.width <= 0.0 || rect.height <= 0.0 {
+                        continue;
+                    }
+
+                    let tint_color = style.x_glass_tint.unwrap_or_else(|| {
+                        // Fall back to background_color if no glass-tint
+                        style.background_color
+                    });
+
+                    let id = self.alloc_id();
+                    let glass = SceneNode::new(
+                        id,
+                        SceneNodeKind::Glass(GlassParams {
+                            blur_radius: style.x_blur_radius as u32,
+                            tint_color,
+                            inner_glow: true,
+                            parallax: false,
+                        }),
+                        NodeProperties::new(rect).with_z_order(z),
+                    );
+                    glass_nodes.push(glass);
+                    z += 1;
+                }
+            }
+        }
+
+        glass_nodes
     }
 
     /// Convert a display list to compositor scene nodes.

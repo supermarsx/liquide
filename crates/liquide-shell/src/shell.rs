@@ -17,7 +17,10 @@ use liquide_renderer_css::StyleResolver;
 use crate::app_history::AppHistory;
 use crate::config::ShellConfig;
 use crate::decoration::{DecorationStyle, HitZone, hit_test_decoration};
-use crate::desktop_dom::{ContextMenuItemInfo, DesktopDocument, DockItemInfo, StatusBarSlotKind};
+use crate::desktop_dom::{
+    ContextMenuItemInfo, DesktopDocument, DockItemInfo, LauncherItemInfo, MenuItemInfo,
+    StatusBarSlotKind, element_ids,
+};
 use crate::focus::{FocusManager, FocusPolicy};
 use crate::history::{WindowEventKind, WindowHistory};
 use crate::launcher::{Launcher, LauncherApp, SearchResultKind};
@@ -29,7 +32,7 @@ use crate::screen_time::ScreenTimeTracker;
 use crate::seamless::SeamlessManager;
 use crate::shortcuts::{ShellAction, ShortcutManager};
 use crate::stats::StatsCollector;
-use crate::status_bar::ShellStatusBar;
+use crate::status_bar::{ShellStatusBar, StatusBarItemKind, StatusBarSlot};
 use crate::theme::ShellTheme;
 use crate::theme_loader;
 use crate::tiling::TilingEngine;
@@ -1224,6 +1227,179 @@ impl Shell {
         let hover_idx = self.dock.hover_index();
         self.desktop_dom.set_dock_hover(hover_idx);
 
+        // ── Status bar items ────────────────────────────────
+        for item in self.status_bar.items() {
+            if !item.visible {
+                continue;
+            }
+            let text = match &item.kind {
+                StatusBarItemKind::Clock { .. } => {
+                    let seconds = item.last_update_us / 1_000_000;
+                    let hours = (seconds / 3600) % 24;
+                    let minutes = (seconds % 3600) / 60;
+                    format!("{hours:02}:{minutes:02}")
+                }
+                StatusBarItemKind::NotificationIndicator {
+                    unread_count,
+                    dnd_active,
+                } => {
+                    if *dnd_active {
+                        "DND".into()
+                    } else if *unread_count > 0 {
+                        format!("{unread_count}")
+                    } else {
+                        String::new()
+                    }
+                }
+                StatusBarItemKind::ConnectionQuality {
+                    quality_percent,
+                    latency_ms,
+                } => {
+                    if *latency_ms > 0 {
+                        format!("{quality_percent}% {latency_ms}ms")
+                    } else {
+                        format!("{quality_percent}%")
+                    }
+                }
+                StatusBarItemKind::TrayArea => String::new(),
+                StatusBarItemKind::SessionButton => "\u{23FB}".into(), // ⏻ power symbol
+                StatusBarItemKind::Custom { content, .. } => content.clone(),
+            };
+            let slot = match item.slot {
+                StatusBarSlot::Left => StatusBarSlotKind::Left,
+                StatusBarSlot::Center => StatusBarSlotKind::Center,
+                StatusBarSlot::Right => StatusBarSlotKind::Right,
+            };
+            self.desktop_dom
+                .set_statusbar_item(slot, &item.id, &text, &[]);
+        }
+
+        // ── Notifications ───────────────────────────────────
+        // Clear existing notification DOM elements and rebuild from active list.
+        {
+            let area = self.desktop_dom.notification_area;
+            let existing: Vec<_> = self.desktop_dom.doc.children(area).to_vec();
+            for kid in existing {
+                if let Some(node) = self.desktop_dom.doc.get(kid) {
+                    let id = node.element_id.as_ref().map(|s| s.to_string());
+                    if let Some(nid) = id {
+                        self.desktop_dom.remove_notification(&nid);
+                    }
+                }
+            }
+        }
+        let active_notifs: Vec<(u32, String, String)> = self
+            .notifications
+            .active_notifications()
+            .iter()
+            .map(|sn| {
+                (
+                    sn.id,
+                    sn.notification.summary.clone(),
+                    sn.notification.body.clone(),
+                )
+            })
+            .collect();
+        for (id, summary, body) in &active_notifs {
+            let nid = format!("notif-{id}");
+            self.desktop_dom.add_notification(&nid, summary, body);
+        }
+
+        // ── Launcher ────────────────────────────────────────
+        if self.launcher.is_visible() {
+            let items: Vec<LauncherItemInfo> = self
+                .launcher
+                .results()
+                .iter()
+                .map(|r| {
+                    let app_id = match &r.kind {
+                        SearchResultKind::Application { app_id } => app_id.clone(),
+                        _ => String::new(),
+                    };
+                    LauncherItemInfo {
+                        app_id,
+                        label: r.title.clone(),
+                        icon: r.icon.clone().unwrap_or_default(),
+                    }
+                })
+                .collect();
+            self.desktop_dom.show_launcher(&items);
+            self.desktop_dom
+                .set_launcher_hover(Some(self.launcher.selected_index()));
+        } else {
+            self.desktop_dom.hide_launcher();
+        }
+
+        // ── Session menu ────────────────────────────────────
+        if self.session_menu_visible {
+            let items: Vec<MenuItemInfo> = self
+                .session_menu_items
+                .iter()
+                .map(|si| MenuItemInfo {
+                    label: si.label.clone(),
+                    action: si.label.to_lowercase().replace(' ', "-"),
+                    icon: si.icon.clone(),
+                })
+                .collect();
+            self.desktop_dom.show_session_menu(&items);
+            self.desktop_dom
+                .set_menu_hover(element_ids::SESSION_MENU, self.session_menu_hover_index);
+        } else {
+            self.desktop_dom.hide_session_menu();
+        }
+
+        // ── Context menu ────────────────────────────────────
+        if self.context_menu_visible {
+            let ctx_items = ContextMenuItem::defaults();
+            let infos: Vec<ContextMenuItemInfo> = ctx_items
+                .iter()
+                .map(|ci| ContextMenuItemInfo::Action {
+                    label: ci.label.clone(),
+                    disabled: false,
+                })
+                .collect();
+            self.desktop_dom.remove_context_menu("ctx-shell");
+            self.desktop_dom.add_context_menu("ctx-shell", &infos);
+            self.desktop_dom
+                .set_menu_hover("ctx-shell", self.context_menu_hover_index);
+        } else {
+            self.desktop_dom.remove_context_menu("ctx-shell");
+        }
+
+        // ── App menu ────────────────────────────────────────
+        if self.app_menu_open.is_some() {
+            let items = vec![
+                MenuItemInfo {
+                    label: "Minimize".into(),
+                    action: "minimize".into(),
+                    icon: String::new(),
+                },
+                MenuItemInfo {
+                    label: "Maximize".into(),
+                    action: "maximize".into(),
+                    icon: String::new(),
+                },
+                MenuItemInfo {
+                    label: "Close".into(),
+                    action: "close".into(),
+                    icon: String::new(),
+                },
+                MenuItemInfo {
+                    label: "System Settings".into(),
+                    action: "settings".into(),
+                    icon: String::new(),
+                },
+                MenuItemInfo {
+                    label: "About Liquide".into(),
+                    action: "about".into(),
+                    icon: String::new(),
+                },
+            ];
+            self.desktop_dom.show_app_menu(&items);
+        } else {
+            self.desktop_dom.hide_app_menu();
+        }
+
         // Keep the DOM viewport in sync with the screen rect.
         self.css_pipeline
             .set_viewport(self.screen_rect.width, self.screen_rect.height);
@@ -1233,11 +1409,11 @@ impl Shell {
 
     /// Build the complete shell scene graph.
     ///
-    /// **Hybrid approach**: the CSS pipeline renders background and dock
-    /// from the live DOM tree.  Windows, status bar, launcher, menus, and
-    /// notifications are still assembled manually because they require
-    /// complex interactive state (decoration buttons, hover indices, etc.)
-    /// that the pipeline does not yet model.
+    /// **CSS pipeline approach**: the CSS pipeline renders ALL shell chrome
+    /// (background, dock, status bar, notifications, launcher, menus)
+    /// from the live DOM tree.  Only windows are assembled manually because
+    /// they require complex interactive state (decoration buttons, hover
+    /// indices, z-ordered content surfaces) that the pipeline does not model.
     pub fn build_scene(&mut self) -> SceneNode {
         use crate::scene_builder::*;
         use liquide_compositor::scene::GlassParams;
@@ -1247,7 +1423,7 @@ impl Shell {
         // ── Synchronise DOM with current shell state ────────
         self.sync_dom();
 
-        // ── Run the CSS pipeline (background + dock) ────────
+        // ── Run the CSS pipeline (all shell chrome) ─────────
         let pipeline_nodes = self.css_pipeline.render_to_scene(
             &self.desktop_dom.doc,
             0, // base z-order
@@ -1267,27 +1443,10 @@ impl Shell {
             .map(crate::css_integration::resolve_decoration_layout)
             .unwrap_or_default();
 
-        // Resolve component layouts from CSS (still used for manual elements).
-        let status_bar_layout = self
-            .style_resolver
-            .as_ref()
-            .map(crate::css_integration::resolve_status_bar_layout);
-        let launcher_layout = self
-            .style_resolver
-            .as_ref()
-            .map(crate::css_integration::resolve_launcher_layout);
-        let notification_layout = self
-            .style_resolver
-            .as_ref()
-            .map(crate::css_integration::resolve_notification_layout);
-        let menu_layout = self
-            .style_resolver
-            .as_ref()
-            .map(crate::css_integration::resolve_menu_layout);
-
         let mut root = SceneNode::new(NODE_ROOT, SceneNodeKind::Root, NodeProperties::new(screen));
 
-        // ── Pipeline-generated nodes (background, dock, statusbar placeholders)
+        // ── Pipeline-generated nodes (background, statusbar, dock,
+        //    notifications, launcher, menus — everything except windows) ──
         for node in pipeline_nodes {
             root.add_child(node);
         }
@@ -1420,198 +1579,6 @@ impl Shell {
             );
         }
         root.add_child(ws_node);
-
-        // ── Status bar (manual — icons/indicators) ──────────
-        if self.status_bar_visible {
-            root.add_child(
-                self.status_bar
-                    .build_scene(screen, theme, status_bar_layout.as_ref()),
-            );
-        }
-
-        // ── App menu dropdown (manual) ──────────────────────
-        if let Some(ref _app_id) = self.app_menu_open {
-            let menu_defaults = crate::css_integration::MenuLayout::default();
-            let ml = menu_layout.as_ref().unwrap_or(&menu_defaults);
-            let menu_w = 200.0_f32;
-            let item_h = 32.0_f32;
-            let menu_items = vec![
-                "Minimize",
-                "Maximize",
-                "Close",
-                "---",
-                "System Settings",
-                "About Liquide",
-            ];
-            let menu_h = 16.0 + menu_items.len() as f32 * item_h;
-            let bar_h = self.status_bar.config().height as f32;
-            let menu_x = 80.0;
-            let menu_y = bar_h + 4.0;
-            let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
-
-            root.add_child(SceneNode::new(
-                NODE_APP_MENU,
-                SceneNodeKind::Glass(GlassParams {
-                    blur_radius: ml.blur_radius,
-                    tint_color: theme.dock_glass_tint,
-                    inner_glow: true,
-                    parallax: false,
-                }),
-                NodeProperties::new(menu_bounds).with_z_order(995),
-            ));
-
-            for (i, item_text) in menu_items.iter().enumerate() {
-                let iy = menu_y + 8.0 + i as f32 * item_h;
-
-                if *item_text == "---" {
-                    root.add_child(scene_builder::solid_rect(
-                        NODE_APP_MENU + 100 + i as u64,
-                        theme.menu_separator,
-                        Rect::new(menu_x + 8.0, iy + item_h / 2.0, menu_w - 16.0, 1.0),
-                        996,
-                    ));
-                } else {
-                    root.add_child(scene_builder::text_node(
-                        NODE_APP_MENU + 200 + i as u64,
-                        item_text.to_string(),
-                        theme.status_bar_text,
-                        Rect::new(menu_x + 16.0, iy + 4.0, menu_w - 32.0, item_h - 8.0),
-                        996,
-                        1,
-                    ));
-                }
-            }
-        }
-
-        // ── Notifications (manual) ──────────────────────────
-        root.add_child(
-            self.notifications
-                .build_scene(screen, theme, notification_layout.as_ref()),
-        );
-
-        // ── Launcher (manual — complex search UI) ───────────
-        if self.launcher.is_visible() {
-            root.add_child(
-                self.launcher
-                    .build_scene(screen, theme, launcher_layout.as_ref()),
-            );
-        }
-
-        // ── Session menu (manual) ───────────────────────────
-        if self.session_menu_visible {
-            let menu_defaults = crate::css_integration::MenuLayout::default();
-            let ml = menu_layout.as_ref().unwrap_or(&menu_defaults);
-            let menu_w = 180.0_f32;
-            let item_h = 36.0_f32;
-            let menu_h = 16.0 + self.session_menu_items.len() as f32 * item_h;
-            let bar_h = self.status_bar.config().height as f32;
-            let menu_x = screen.width - menu_w - 8.0;
-            let menu_y = bar_h + 4.0;
-            let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
-
-            root.add_child(SceneNode::new(
-                NODE_SESSION_MENU,
-                SceneNodeKind::Glass(GlassParams {
-                    blur_radius: ml.blur_radius,
-                    tint_color: theme.dock_glass_tint,
-                    inner_glow: true,
-                    parallax: false,
-                }),
-                NodeProperties::new(menu_bounds).with_z_order(990),
-            ));
-
-            for (i, item) in self.session_menu_items.iter().enumerate() {
-                let iy = menu_y + 8.0 + i as f32 * item_h;
-
-                if self.session_menu_hover_index == Some(i) {
-                    root.add_child(tint_overlay(
-                        NODE_SESSION_MENU + 5 + i as u64,
-                        theme.menu_item_hover,
-                        Rect::new(menu_x + 4.0, iy, menu_w - 8.0, item_h),
-                        991,
-                    ));
-                }
-
-                let icon_id = icon_id_for_name(&item.icon);
-                root.add_child(icon_node(
-                    NODE_SESSION_MENU + 10 + i as u64 * 2,
-                    icon_id,
-                    theme.status_bar_text,
-                    Rect::new(menu_x + 14.0, iy + 4.0, 24.0, 24.0),
-                    992,
-                ));
-                root.add_child(text_node(
-                    NODE_SESSION_MENU + 11 + i as u64 * 2,
-                    item.label.clone(),
-                    theme.status_bar_text,
-                    Rect::new(menu_x + 44.0, iy + 6.0, menu_w - 60.0, 20.0),
-                    992,
-                    1,
-                ));
-            }
-        }
-
-        // ── Context menu (manual) ───────────────────────────
-        if self.context_menu_visible {
-            let menu_defaults = crate::css_integration::MenuLayout::default();
-            let ml = menu_layout.as_ref().unwrap_or(&menu_defaults);
-            let ctx_items = ContextMenuItem::defaults();
-            let ctx_item_h = 36.0_f32;
-            let ctx_w = 260.0_f32;
-            let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
-            let ctx_x = self
-                .context_menu_pos
-                .x
-                .min(screen.width - ctx_w - 4.0)
-                .max(0.0);
-            let ctx_y = self
-                .context_menu_pos
-                .y
-                .min(screen.height - ctx_h - 4.0)
-                .max(0.0);
-            let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
-
-            root.add_child(SceneNode::new(
-                NODE_CONTEXT_MENU,
-                SceneNodeKind::Glass(GlassParams {
-                    blur_radius: ml.blur_radius,
-                    tint_color: theme.dock_glass_tint,
-                    inner_glow: true,
-                    parallax: false,
-                }),
-                NodeProperties::new(ctx_bounds).with_z_order(995),
-            ));
-
-            for (i, item) in ctx_items.iter().enumerate() {
-                let iy = ctx_y + 8.0 + i as f32 * ctx_item_h;
-
-                if self.context_menu_hover_index == Some(i) {
-                    root.add_child(tint_overlay(
-                        NODE_CONTEXT_MENU + 5 + i as u64,
-                        theme.menu_item_hover,
-                        Rect::new(ctx_x + 4.0, iy, ctx_w - 8.0, ctx_item_h),
-                        996,
-                    ));
-                }
-
-                let icon_id = icon_id_for_name(&item.icon);
-                root.add_child(icon_node(
-                    NODE_CONTEXT_MENU + 10 + i as u64 * 2,
-                    icon_id,
-                    theme.status_bar_text,
-                    Rect::new(ctx_x + 12.0, iy + 4.0, 24.0, 24.0),
-                    997,
-                ));
-                root.add_child(text_node(
-                    NODE_CONTEXT_MENU + 11 + i as u64 * 2,
-                    item.label.clone(),
-                    theme.status_bar_text,
-                    Rect::new(ctx_x + 44.0, iy + 6.0, ctx_w - 60.0, 20.0),
-                    997,
-                    1,
-                ));
-            }
-        }
 
         root
     }

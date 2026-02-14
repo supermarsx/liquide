@@ -26,7 +26,9 @@ pub enum Display {
 }
 
 impl Default for Display {
-    fn default() -> Self { Display::Block }
+    fn default() -> Self {
+        Display::Block
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,7 +41,9 @@ pub enum Position {
 }
 
 impl Default for Position {
-    fn default() -> Self { Position::Static }
+    fn default() -> Self {
+        Position::Static
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,7 +53,9 @@ pub enum BoxSizing {
 }
 
 impl Default for BoxSizing {
-    fn default() -> Self { BoxSizing::ContentBox }
+    fn default() -> Self {
+        BoxSizing::ContentBox
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,7 +66,9 @@ pub enum Visibility {
 }
 
 impl Default for Visibility {
-    fn default() -> Self { Visibility::Visible }
+    fn default() -> Self {
+        Visibility::Visible
+    }
 }
 
 // ── Flexbox ─────────────────────────────────────────────────────────────────
@@ -74,7 +82,9 @@ pub enum FlexDirection {
 }
 
 impl Default for FlexDirection {
-    fn default() -> Self { FlexDirection::Row }
+    fn default() -> Self {
+        FlexDirection::Row
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,7 +95,9 @@ pub enum FlexWrap {
 }
 
 impl Default for FlexWrap {
-    fn default() -> Self { FlexWrap::NoWrap }
+    fn default() -> Self {
+        FlexWrap::NoWrap
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +111,9 @@ pub enum JustifyContent {
 }
 
 impl Default for JustifyContent {
-    fn default() -> Self { JustifyContent::FlexStart }
+    fn default() -> Self {
+        JustifyContent::FlexStart
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,7 +126,9 @@ pub enum AlignItems {
 }
 
 impl Default for AlignItems {
-    fn default() -> Self { AlignItems::Stretch }
+    fn default() -> Self {
+        AlignItems::Stretch
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,7 +142,9 @@ pub enum AlignSelf {
 }
 
 impl Default for AlignSelf {
-    fn default() -> Self { AlignSelf::Auto }
+    fn default() -> Self {
+        AlignSelf::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,7 +158,9 @@ pub enum AlignContent {
 }
 
 impl Default for AlignContent {
-    fn default() -> Self { AlignContent::Stretch }
+    fn default() -> Self {
+        AlignContent::Stretch
+    }
 }
 
 // ── Grid ────────────────────────────────────────────────────────────────────
@@ -158,7 +178,9 @@ pub enum TrackSize {
 }
 
 impl Default for TrackSize {
-    fn default() -> Self { TrackSize::Auto }
+    fn default() -> Self {
+        TrackSize::Auto
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -184,7 +206,9 @@ pub enum GridLine {
 }
 
 impl Default for GridLine {
-    fn default() -> Self { GridLine::Auto }
+    fn default() -> Self {
+        GridLine::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,7 +220,9 @@ pub enum GridAutoFlow {
 }
 
 impl Default for GridAutoFlow {
-    fn default() -> Self { GridAutoFlow::Row }
+    fn default() -> Self {
+        GridAutoFlow::Row
+    }
 }
 
 // ── Typography ──────────────────────────────────────────────────────────────
@@ -209,7 +235,9 @@ pub enum FontStyle {
 }
 
 impl Default for FontStyle {
-    fn default() -> Self { FontStyle::Normal }
+    fn default() -> Self {
+        FontStyle::Normal
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -220,7 +248,9 @@ pub enum LineHeight {
 }
 
 impl Default for LineHeight {
-    fn default() -> Self { LineHeight::Normal }
+    fn default() -> Self {
+        LineHeight::Normal
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,7 +264,9 @@ pub enum TextAlign {
 }
 
 impl Default for TextAlign {
-    fn default() -> Self { TextAlign::Start }
+    fn default() -> Self {
+        TextAlign::Start
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,7 +278,9 @@ pub enum TextTransform {
 }
 
 impl Default for TextTransform {
-    fn default() -> Self { TextTransform::None }
+    fn default() -> Self {
+        TextTransform::None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,7 +290,9 @@ pub enum TextOverflow {
 }
 
 impl Default for TextOverflow {
-    fn default() -> Self { TextOverflow::Clip }
+    fn default() -> Self {
+        TextOverflow::Clip
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -270,7 +306,9 @@ pub enum WhiteSpace {
 }
 
 impl Default for WhiteSpace {
-    fn default() -> Self { WhiteSpace::Normal }
+    fn default() -> Self {
+        WhiteSpace::Normal
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,7 +320,9 @@ pub enum WordBreak {
 }
 
 impl Default for WordBreak {
-    fn default() -> Self { WordBreak::Normal }
+    fn default() -> Self {
+        WordBreak::Normal
+    }
 }
 
 // ── Cursor & Pointer ────────────────────────────────────────────────────────
@@ -313,7 +353,9 @@ pub enum Cursor {
 }
 
 impl Default for Cursor {
-    fn default() -> Self { Cursor::Auto }
+    fn default() -> Self {
+        Cursor::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -323,7 +365,9 @@ pub enum PointerEvents {
 }
 
 impl Default for PointerEvents {
-    fn default() -> Self { PointerEvents::Auto }
+    fn default() -> Self {
+        PointerEvents::Auto
+    }
 }
 
 // ── Effects ─────────────────────────────────────────────────────────────────
@@ -335,7 +379,9 @@ pub enum Isolation {
 }
 
 impl Default for Isolation {
-    fn default() -> Self { Isolation::Auto }
+    fn default() -> Self {
+        Isolation::Auto
+    }
 }
 
 // ── Border ──────────────────────────────────────────────────────────────────
@@ -355,7 +401,9 @@ pub enum BorderLineStyle {
 }
 
 impl Default for BorderLineStyle {
-    fn default() -> Self { BorderLineStyle::None }
+    fn default() -> Self {
+        BorderLineStyle::None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -370,7 +418,12 @@ impl Default for BorderSide {
         Self {
             width: 0.0,
             style: BorderLineStyle::None,
-            color: Color { r: 0, g: 0, b: 0, a: 255 },
+            color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
         }
     }
 }
@@ -423,7 +476,9 @@ pub enum TimingFunction {
 }
 
 impl Default for TimingFunction {
-    fn default() -> Self { TimingFunction::Ease }
+    fn default() -> Self {
+        TimingFunction::Ease
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -453,7 +508,9 @@ pub enum AnimationIterationCount {
 }
 
 impl Default for AnimationIterationCount {
-    fn default() -> Self { AnimationIterationCount::Finite(1.0) }
+    fn default() -> Self {
+        AnimationIterationCount::Finite(1.0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -465,7 +522,9 @@ pub enum AnimationDirection {
 }
 
 impl Default for AnimationDirection {
-    fn default() -> Self { AnimationDirection::Normal }
+    fn default() -> Self {
+        AnimationDirection::Normal
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -477,7 +536,9 @@ pub enum AnimationFillMode {
 }
 
 impl Default for AnimationFillMode {
-    fn default() -> Self { AnimationFillMode::None }
+    fn default() -> Self {
+        AnimationFillMode::None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -487,7 +548,9 @@ pub enum AnimationPlayState {
 }
 
 impl Default for AnimationPlayState {
-    fn default() -> Self { AnimationPlayState::Running }
+    fn default() -> Self {
+        AnimationPlayState::Running
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -590,6 +653,15 @@ pub struct ComputedStyle {
     // ── Transitions & animations ──
     pub transition: Vec<TransitionDef>,
     pub animation: Vec<AnimationDef>,
+
+    // ── Shell custom extensions ──
+    // Non-standard CSS properties for LiquiDE desktop chrome.
+    /// `backdrop-blur-radius` — shorthand for `backdrop-filter: blur(Npx)`.
+    pub x_blur_radius: f32,
+    /// `glass-tint` — tint color for frosted-glass surfaces.
+    pub x_glass_tint: Option<Color>,
+    /// Generic custom properties bag (for `--var` consumption).
+    pub x_custom: Vec<(String, String)>,
 }
 
 impl Default for ComputedStyle {
@@ -609,7 +681,12 @@ impl Default for ComputedStyle {
             padding: Sides::all(Dimension::Zero),
             border_width: Sides::all(0.0),
             border_style: Sides::all(BorderLineStyle::None),
-            border_color: Sides::all(Color { r: 0, g: 0, b: 0, a: 255 }),
+            border_color: Sides::all(Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            }),
             border_radius: Corners::all(0.0),
             border_image: None,
 
@@ -643,7 +720,12 @@ impl Default for ComputedStyle {
             z_index: None,
 
             // Typography
-            color: Color { r: 0, g: 0, b: 0, a: 255 },
+            color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
             font_family: vec!["sans-serif".to_string()],
             font_size: 16.0,
             font_weight: 400,
@@ -661,7 +743,12 @@ impl Default for ComputedStyle {
             text_indent: 0.0,
 
             // Visual
-            background_color: Color { r: 0, g: 0, b: 0, a: 0 },
+            background_color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            },
             background: None,
             box_shadow: Vec::new(),
             opacity: 1.0,
@@ -684,6 +771,11 @@ impl Default for ComputedStyle {
             // Transitions & animations
             transition: Vec::new(),
             animation: Vec::new(),
+
+            // Shell custom extensions
+            x_blur_radius: 0.0,
+            x_glass_tint: None,
+            x_custom: Vec::new(),
         }
     }
 }
@@ -763,7 +855,12 @@ mod tests {
     #[test]
     fn inherit_from_parent() {
         let mut parent = ComputedStyle::default();
-        parent.color = Color { r: 255, g: 0, b: 0, a: 255 };
+        parent.color = Color {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
         parent.font_size = 20.0;
         parent.cursor = Cursor::Pointer;
 
