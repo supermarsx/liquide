@@ -17,7 +17,7 @@ use liquide_renderer_css::StyleResolver;
 use crate::app_history::AppHistory;
 use crate::config::ShellConfig;
 use crate::decoration::{DecorationStyle, HitZone, hit_test_decoration};
-use crate::dock::Dock;
+use liquide_dock::Dock;
 use crate::focus::{FocusManager, FocusPolicy};
 use crate::history::{WindowEventKind, WindowHistory};
 use crate::launcher::{Launcher, LauncherApp, SearchResultKind};
@@ -180,7 +180,7 @@ pub struct Shell {
     app_menu_open: Option<String>,
     /// Win32 window → dock integration (polls Win32 windows into dock items).
     #[cfg(windows)]
-    win32_dock: crate::win32_dock::Win32DockIntegration,
+    win32_dock: liquide_dock::Win32DockIntegration,
 }
 
 impl Shell {
@@ -246,7 +246,7 @@ impl Shell {
             status_bar_visible: true,
             app_menu_open: None,
             #[cfg(windows)]
-            win32_dock: crate::win32_dock::Win32DockIntegration::new(),
+            win32_dock: liquide_dock::Win32DockIntegration::new(),
         }
     }
 
@@ -305,7 +305,7 @@ impl Shell {
             status_bar_visible: true,
             app_menu_open: None,
             #[cfg(windows)]
-            win32_dock: crate::win32_dock::Win32DockIntegration::new(),
+            win32_dock: liquide_dock::Win32DockIntegration::new(),
         }
     }
 
@@ -1391,7 +1391,23 @@ impl Shell {
 
         // Dock
         if self.dock.is_visible() || !self.dock.config().auto_hide {
-            root.add_child(self.dock.build_scene(screen, theme, dock_layout.as_ref()));
+            let dock_colors = liquide_dock::DockThemeColors {
+                glass_tint: theme.dock_glass_tint,
+                border: theme.dock_border,
+                item_active: theme.dock_item_active,
+                item_inactive: theme.dock_item_inactive,
+                hover_highlight: theme.dock_hover_highlight,
+            };
+            let dock_rc = dock_layout.as_ref().map(|dl| liquide_dock::DockRenderConfig {
+                blur_radius: dl.blur_radius,
+                border_height: dl.border_height,
+            });
+            root.add_child(self.dock.build_scene(
+                screen,
+                &dock_colors,
+                &scene_builder::icon_id_for_name,
+                dock_rc.as_ref(),
+            ));
         }
 
         // Notifications

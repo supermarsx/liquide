@@ -75,6 +75,48 @@ impl fmt::Display for DockMonitorMode {
 }
 
 // ---------------------------------------------------------------------------
+// Click behavior
+// ---------------------------------------------------------------------------
+
+/// Behavior when clicking a running app icon in the dock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DockClickBehavior {
+    /// Toggle minimize/restore.
+    ToggleMinimize,
+    /// Always launch new instance.
+    AlwaysNew,
+    /// Bring to front if minimized, minimize if already front.
+    SmartToggle,
+    /// Show all windows for that app.
+    ShowAllWindows,
+}
+
+// ---------------------------------------------------------------------------
+// Render config
+// ---------------------------------------------------------------------------
+
+/// Configurable rendering parameters for [`Dock::build_scene`].
+///
+/// These can be populated from CSS layout values (e.g. `DockLayout`) or
+/// left at their defaults for standalone usage.
+#[derive(Debug, Clone, Copy)]
+pub struct DockRenderConfig {
+    /// Blur radius for the glass backdrop.
+    pub blur_radius: u32,
+    /// Height of the accent border at the top edge of the dock.
+    pub border_height: f32,
+}
+
+impl Default for DockRenderConfig {
+    fn default() -> Self {
+        Self {
+            blur_radius: 20,
+            border_height: 2.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 
@@ -99,6 +141,8 @@ pub struct DockConfig {
     pub monitor_mode: DockMonitorMode,
     /// Maximum recent items to keep.
     pub max_recent_items: usize,
+    /// Behavior when clicking a running app icon.
+    pub click_running_behavior: DockClickBehavior,
 }
 
 impl Default for DockConfig {
@@ -113,6 +157,7 @@ impl Default for DockConfig {
             show_running_indicators: true,
             monitor_mode: DockMonitorMode::PrimaryOnly,
             max_recent_items: 10,
+            click_running_behavior: DockClickBehavior::SmartToggle,
         }
     }
 }
@@ -466,17 +511,22 @@ impl Dock {
     /// - `screen`: full screen rect
     /// - `colors`: theme colors for the dock
     /// - `icon_resolver`: function to map icon name → numeric icon ID
+    /// - `render_config`: optional rendering parameters (blur, border); defaults used if `None`
     pub fn build_scene(
         &self,
         screen: Rect,
         colors: &DockThemeColors,
         icon_resolver: &dyn Fn(&str) -> u32,
+        render_config: Option<&DockRenderConfig>,
     ) -> SceneNode {
+        let defaults = DockRenderConfig::default();
+        let rc = render_config.unwrap_or(&defaults);
+
         let dock_bounds = self.compute_bounds(screen);
         let mut dock_node = SceneNode::new(
             NODE_DOCK,
             SceneNodeKind::Glass(GlassParams {
-                blur_radius: 20,
+                blur_radius: rc.blur_radius,
                 tint_color: colors.glass_tint,
                 inner_glow: true,
                 parallax: false,
@@ -488,8 +538,8 @@ impl Dock {
         // so that walk_inner's translation doesn't double-offset them.
         let item_rects = self.compute_item_rects(screen);
 
-        // 2px accent border at the top edge of the dock (parent-relative).
-        let border_rect = Rect::new(0.0, 0.0, dock_bounds.width, 2.0);
+        // Accent border at the top edge of the dock (parent-relative).
+        let border_rect = Rect::new(0.0, 0.0, dock_bounds.width, rc.border_height);
         dock_node.add_child(SceneNode::new(
             NODE_DOCK + 1,
             SceneNodeKind::Background {

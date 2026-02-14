@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use liquide_platform_win32::enumerator::Win32WindowEnumerator;
 use liquide_platform_win32::types::{Win32AppEvent, Win32AppInfo};
 
-use crate::dock::Dock;
+use crate::Dock;
 
 /// Syncs Win32 windows to the shell dock.
 pub struct Win32DockIntegration {
@@ -208,6 +208,7 @@ impl Default for Win32DockIntegration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DockConfig;
 
     #[test]
     fn test_app_id_for() {
@@ -238,7 +239,7 @@ mod tests {
     #[test]
     fn test_reconcile_adds_new_apps() {
         let mut integration = Win32DockIntegration::new();
-        let mut dock = Dock::new(crate::dock::DockConfig::default());
+        let mut dock = Dock::new(DockConfig::default());
 
         let windows = vec![Win32AppInfo {
             hwnd: 100,

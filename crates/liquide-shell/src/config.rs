@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::dock::DockConfig;
+use liquide_dock::DockConfig;
 use crate::launcher::LauncherConfig;
 use crate::notification::NotificationConfig;
 use crate::seamless::SeamlessConfig;

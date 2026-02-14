@@ -5,8 +5,13 @@
 //! shell crate, allowing it to be reused independently.
 
 mod dock;
+#[cfg(windows)]
+pub mod win32_dock;
 
 pub use dock::{
-    AutoHideState, Dock, DockConfig, DockItem, DockItemKind, DockMonitorMode, DockPosition,
-    DockThemeColors,
+    AutoHideState, Dock, DockClickBehavior, DockConfig, DockItem, DockItemKind, DockMonitorMode,
+    DockPosition, DockRenderConfig, DockThemeColors,
 };
+
+#[cfg(windows)]
+pub use win32_dock::Win32DockIntegration;

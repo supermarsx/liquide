@@ -10,3 +10,7 @@ description = "Application dock for the Liquide desktop shell"
 [dependencies]
 liquide-compositor = { workspace = true }
 serde = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+liquide-platform-win32 = { workspace = true }

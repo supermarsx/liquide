@@ -1,4 +1,4 @@
-use crate::dock::*;
+use liquide_dock::*;
 use liquide_compositor::geometry::Rect;
 
 // ========== Dock::new ==========

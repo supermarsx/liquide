@@ -2265,7 +2265,9 @@ name = "liquide-dock"
 version = "0.1.0"
 dependencies = [
  "liquide-compositor",
+ "liquide-platform-win32",
  "serde",
+ "tracing",
 ]
 
 [[package]]

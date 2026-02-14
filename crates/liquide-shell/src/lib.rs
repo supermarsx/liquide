@@ -9,7 +9,6 @@ pub mod calculator;
 pub mod config;
 pub mod css_integration;
 pub mod decoration;
-pub mod dock;
 pub mod focus;
 pub mod history;
 pub mod launcher;
@@ -25,7 +24,6 @@ pub mod status_bar;
 pub mod theme;
 pub mod theme_loader;
 pub mod tiling;
-pub mod win32_dock;
 pub mod window;
 pub mod workspace;
 
@@ -110,7 +108,10 @@ pub use workspace::{Workspace, WorkspaceId, WorkspaceManager};
 // Re-exports — new subsystems
 pub use calculator::{CalcResult, CalcToken};
 pub use config::ShellConfig;
-pub use dock::{AutoHideState, Dock, DockConfig, DockItem, DockItemKind, DockPosition};
+pub use liquide_dock::{
+    AutoHideState, Dock, DockClickBehavior, DockConfig, DockItem, DockItemKind, DockPosition,
+    DockRenderConfig, DockThemeColors,
+};
 pub use launcher::{
     AppCategory, ContextAction, Launcher, LauncherApp, LauncherConfig, LauncherView, SearchResult,
     SearchResultKind,
@@ -128,7 +129,8 @@ pub use status_bar::{
 };
 pub use theme::ShellTheme;
 pub use tiling::{SnapZone, TilingConfig, TilingEngine, TilingLayoutKind, TilingMode};
-pub use win32_dock::Win32DockIntegration;
+#[cfg(windows)]
+pub use liquide_dock::Win32DockIntegration;
 
 #[cfg(test)]
 mod tests;
