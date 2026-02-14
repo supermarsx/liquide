@@ -353,13 +353,21 @@ impl ShellStatusBar {
     }
 
     /// Build the scene graph for the status bar.
-    pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
+    pub fn build_scene(
+        &self,
+        screen: Rect,
+        theme: &crate::theme::ShellTheme,
+        layout: Option<&crate::css_integration::StatusBarLayout>,
+    ) -> SceneNode {
         use crate::scene_builder::{
             icon_node, solid_rect, text_node,
             NODE_STATUS_BAR, NODE_STATUS_BAR_ITEM_BASE,
         };
         use liquide_compositor::geometry::Rect as GRect;
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
+
+        let defaults = crate::css_integration::StatusBarLayout::default();
+        let layout = layout.unwrap_or(&defaults);
 
         if !self.config.enabled {
             return SceneNode::new(
@@ -373,7 +381,7 @@ impl ShellStatusBar {
         let mut bar_node = SceneNode::new(
             NODE_STATUS_BAR,
             SceneNodeKind::Glass(GlassParams {
-                blur_radius: 15,
+                blur_radius: layout.blur_radius,
                 tint_color: theme.status_bar_glass_tint,
                 inner_glow: false,
                 parallax: false,
@@ -383,16 +391,16 @@ impl ShellStatusBar {
 
         // Use parent-relative coordinates for child items so that
         // walk_inner's translation from bar_bounds doesn't double-offset them.
-        let padding = 8.0_f32;
+        let padding = layout.padding;
         let item_height = bar_bounds.height - 4.0;
         let item_y = 2.0; // relative to bar top
         let mut left_x = padding;
         let center_x = bar_bounds.width / 2.0;
         let mut right_x = bar_bounds.width - padding;
 
-        // 2px accent border at the bottom edge of the status bar.
+        // Accent border at the bottom edge of the status bar.
         let border_rect =
-            GRect::new(0.0, bar_bounds.height - 2.0, bar_bounds.width, 2.0);
+            GRect::new(0.0, bar_bounds.height - layout.border_height, bar_bounds.width, layout.border_height);
         bar_node.add_child(solid_rect(
             NODE_STATUS_BAR + 1,
             theme.status_bar_border,

@@ -263,9 +263,17 @@ impl NotificationManager {
     }
 
     /// Build the scene graph for active notifications.
-    pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
+    pub fn build_scene(
+        &self,
+        screen: Rect,
+        theme: &crate::theme::ShellTheme,
+        layout: Option<&crate::css_integration::NotificationLayout>,
+    ) -> SceneNode {
         use crate::scene_builder::*;
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
+
+        let defaults = crate::css_integration::NotificationLayout::default();
+        let layout = layout.unwrap_or(&defaults);
 
         let mut container = SceneNode::new(
             NODE_NOTIFICATION_BASE,
@@ -277,11 +285,11 @@ impl NotificationManager {
             return container;
         }
 
-        let notif_width = 320.0_f32;
-        let notif_height = 80.0_f32;
-        let gap = 8.0_f32;
-        let margin = 12.0_f32;
-        let top_offset = 32.0_f32;
+        let notif_width = layout.width;
+        let notif_height = layout.height;
+        let gap = layout.gap;
+        let margin = layout.margin;
+        let top_offset = layout.top_offset;
 
         for (i, _notif) in self.active.iter().enumerate() {
             let (nx, ny) = match self.config.position {
@@ -307,7 +315,7 @@ impl NotificationManager {
             container.add_child(SceneNode::new(
                 NODE_NOTIFICATION_BASE + 1 + i as u64,
                 SceneNodeKind::Glass(GlassParams {
-                    blur_radius: 15,
+                    blur_radius: layout.blur_radius,
                     tint_color: theme.notification_glass_tint,
                     inner_glow: true,
                     parallax: false,

@@ -227,6 +227,8 @@ desktop {
 window {
     background: var(--nord0);
     border-color: var(--nord3);
+    border-width: 1;
+    border-radius: 8;
     box-shadow-color: rgba(0, 0, 0, 0.3);
     glass-tint: var(--nord1);
 }
@@ -239,16 +241,73 @@ window.focused {
 titlebar {
     background: var(--nord1);
     color: var(--nord6);
+    height: 30;
 }
 
 titlebar.focused {
     background: var(--nord2);
 }
 
+titlebar-button {
+    width: 32;
+    height: 22;
+    margin-right: 4;
+    border-radius: 3;
+}
+
+/* Window decoration buttons */
+close-button {
+    background: rgba(232, 17, 35, 0.86);
+    color: rgba(255, 255, 255, 0.94);
+}
+
+close-button:hover {
+    background: rgba(241, 60, 70, 1.0);
+}
+
+maximize-button {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(220, 220, 220, 0.94);
+}
+
+maximize-button:hover {
+    background: rgba(255, 255, 255, 0.24);
+}
+
+minimize-button {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(220, 220, 220, 0.94);
+}
+
+minimize-button:hover {
+    background: rgba(255, 255, 255, 0.24);
+}
+
+pin-button {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(220, 220, 220, 0.94);
+}
+
+pin-button:hover {
+    background: rgba(255, 255, 255, 0.24);
+}
+
+pin-button.active {
+    background: rgba(60, 130, 220, 0.71);
+    color: rgba(255, 255, 255, 1.0);
+}
+
+pin-button.active:hover {
+    background: rgba(80, 150, 240, 0.86);
+}
+
 /* Dock */
 dock {
     background: rgba(46, 52, 64, 0.95);
     border-top-color: var(--nord3);
+    padding: 12;
+    border-width: 2;
+    blur-radius: 20;
 }
 
 dock-item {
@@ -268,6 +327,10 @@ statusbar {
     background: rgba(59, 66, 82, 0.95);
     border-bottom-color: var(--nord3);
     color: var(--nord6);
+    height: 28;
+    padding: 8;
+    border-width: 2;
+    blur-radius: 15;
 }
 
 status-indicator.connected {
@@ -297,14 +360,21 @@ launcher-overlay {
 
 launcher {
     background: rgba(46, 52, 64, 0.96);
+    width: 60;
+    height: 70;
+    padding: 16;
+    blur-radius: 25;
 }
 
 launcher-search {
     background: var(--nord1);
+    height: 36;
 }
 
 launcher-item {
     background: transparent;
+    height: 40;
+    margin-bottom: 4;
 }
 
 launcher-item.selected {
@@ -314,6 +384,20 @@ launcher-item.selected {
 /* Notifications */
 notification {
     background: rgba(59, 66, 82, 0.96);
+    width: 320;
+    height: 80;
+    margin-bottom: 8;
+    margin-right: 12;
+    margin-top: 32;
+    blur-radius: 15;
+}
+
+/* Menus */
+menu {
+    blur-radius: 20;
+    border-radius: 8;
+    padding: 4;
+    height: 28;
 }
 
 /* Cursor */

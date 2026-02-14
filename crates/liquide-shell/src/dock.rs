@@ -456,17 +456,25 @@ impl Dock {
     }
 
     /// Build the scene graph for the dock.
-    pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
+    pub fn build_scene(
+        &self,
+        screen: Rect,
+        theme: &crate::theme::ShellTheme,
+        layout: Option<&crate::css_integration::DockLayout>,
+    ) -> SceneNode {
         use crate::scene_builder::{
             NODE_DOCK, NODE_DOCK_ITEM_BASE, icon_id_for_name, icon_node, solid_rect, tint_overlay,
         };
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
+        let defaults = crate::css_integration::DockLayout::default();
+        let layout = layout.unwrap_or(&defaults);
+
         let dock_bounds = self.compute_bounds(screen);
         let mut dock_node = SceneNode::new(
             NODE_DOCK,
             SceneNodeKind::Glass(GlassParams {
-                blur_radius: 20,
+                blur_radius: layout.blur_radius,
                 tint_color: theme.dock_glass_tint,
                 inner_glow: true,
                 parallax: false,
@@ -478,8 +486,8 @@ impl Dock {
         // so that walk_inner's translation doesn't double-offset them.
         let item_rects = self.compute_item_rects(screen);
 
-        // 2px accent border at the top edge of the dock (parent-relative).
-        let border_rect = Rect::new(0.0, 0.0, dock_bounds.width, 2.0);
+        // Accent border at the top edge of the dock (parent-relative).
+        let border_rect = Rect::new(0.0, 0.0, dock_bounds.width, layout.border_height);
         dock_node.add_child(solid_rect(
             NODE_DOCK + 1,
             theme.dock_border,

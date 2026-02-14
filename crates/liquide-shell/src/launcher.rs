@@ -775,10 +775,18 @@ impl Launcher {
     }
 
     /// Build the scene graph for the launcher overlay.
-    pub fn build_scene(&self, screen: Rect, theme: &crate::theme::ShellTheme) -> SceneNode {
+    pub fn build_scene(
+        &self,
+        screen: Rect,
+        theme: &crate::theme::ShellTheme,
+        layout: Option<&crate::css_integration::LauncherLayout>,
+    ) -> SceneNode {
         use crate::scene_builder::*;
         use liquide_compositor::geometry::Rect as GRect;
         use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
+
+        let defaults = crate::css_integration::LauncherLayout::default();
+        let layout = layout.unwrap_or(&defaults);
 
         if !self.visible {
             return SceneNode::new(
@@ -796,8 +804,8 @@ impl Launcher {
             NodeProperties::new(screen).with_z_order(980),
         );
 
-        let panel_w = screen.width * 0.6;
-        let panel_h = screen.height * 0.7;
+        let panel_w = screen.width * layout.width_ratio;
+        let panel_h = screen.height * layout.height_ratio;
         let panel_x = screen.x + (screen.width - panel_w) / 2.0;
         let panel_y = screen.y + (screen.height - panel_h) / 2.0;
         let panel_bounds = GRect::new(panel_x, panel_y, panel_w, panel_h);
@@ -805,7 +813,7 @@ impl Launcher {
         launcher_root.add_child(SceneNode::new(
             NODE_LAUNCHER + 1,
             SceneNodeKind::Glass(GlassParams {
-                blur_radius: 25,
+                blur_radius: layout.blur_radius,
                 tint_color: theme.launcher_glass_tint,
                 inner_glow: true,
                 parallax: false,
@@ -814,7 +822,12 @@ impl Launcher {
         ));
 
         // Search bar background.
-        let search_bounds = GRect::new(panel_x + 20.0, panel_y + 15.0, panel_w - 40.0, 36.0);
+        let search_bounds = GRect::new(
+            panel_x + layout.padding + 4.0,
+            panel_y + 15.0,
+            panel_w - (layout.padding + 4.0) * 2.0,
+            layout.search_height,
+        );
         launcher_root.add_child(solid_rect(
             NODE_LAUNCHER + 2,
             theme.launcher_search_bar,
@@ -851,9 +864,9 @@ impl Launcher {
             983,
         ));
 
-        let item_start_y = panel_y + 65.0;
-        let item_height = 40.0_f32;
-        let item_gap = 4.0_f32;
+        let item_start_y = panel_y + layout.search_height + 29.0;
+        let item_height = layout.item_height;
+        let item_gap = layout.item_gap;
         let max_visible = ((panel_h - 80.0) / (item_height + item_gap)) as usize;
 
         // Determine items to show: search results or favourites/all apps.

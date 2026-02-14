@@ -1142,6 +1142,28 @@ impl Shell {
             .map(crate::css_integration::resolve_decoration_layout)
             .unwrap_or_default();
 
+        // Resolve component layouts from CSS.
+        let dock_layout = self
+            .style_resolver
+            .as_ref()
+            .map(crate::css_integration::resolve_dock_layout);
+        let status_bar_layout = self
+            .style_resolver
+            .as_ref()
+            .map(crate::css_integration::resolve_status_bar_layout);
+        let launcher_layout = self
+            .style_resolver
+            .as_ref()
+            .map(crate::css_integration::resolve_launcher_layout);
+        let notification_layout = self
+            .style_resolver
+            .as_ref()
+            .map(crate::css_integration::resolve_notification_layout);
+        let menu_layout = self
+            .style_resolver
+            .as_ref()
+            .map(crate::css_integration::resolve_menu_layout);
+
         let mut root = SceneNode::new(NODE_ROOT, SceneNodeKind::Root, NodeProperties::new(screen));
 
         // Background
@@ -1289,11 +1311,13 @@ impl Shell {
 
         // Status bar (conditionally visible based on auto-hide settings)
         if self.status_bar_visible {
-            root.add_child(self.status_bar.build_scene(screen, theme));
+            root.add_child(self.status_bar.build_scene(screen, theme, status_bar_layout.as_ref()));
         }
 
         // App menu dropdown (macOS-style, anchored below app title in status bar)
         if let Some(ref _app_id) = self.app_menu_open {
+            let menu_defaults = crate::css_integration::MenuLayout::default();
+            let ml = menu_layout.as_ref().unwrap_or(&menu_defaults);
             let menu_w = 200.0_f32;
             let item_h = 32.0_f32;
             let menu_items = vec![
@@ -1313,7 +1337,7 @@ impl Shell {
             root.add_child(SceneNode::new(
                 NODE_APP_MENU,
                 SceneNodeKind::Glass(GlassParams {
-                    blur_radius: 20,
+                    blur_radius: ml.blur_radius,
                     tint_color: theme.dock_glass_tint,
                     inner_glow: true,
                     parallax: false,
@@ -1348,19 +1372,21 @@ impl Shell {
 
         // Dock
         if self.dock.is_visible() || !self.dock.config().auto_hide {
-            root.add_child(self.dock.build_scene(screen, theme));
+            root.add_child(self.dock.build_scene(screen, theme, dock_layout.as_ref()));
         }
 
         // Notifications
-        root.add_child(self.notifications.build_scene(screen, theme));
+        root.add_child(self.notifications.build_scene(screen, theme, notification_layout.as_ref()));
 
         // Launcher (on top of everything)
         if self.launcher.is_visible() {
-            root.add_child(self.launcher.build_scene(screen, theme));
+            root.add_child(self.launcher.build_scene(screen, theme, launcher_layout.as_ref()));
         }
 
         // Session menu (anchored below the session button on the status bar)
         if self.session_menu_visible {
+            let menu_defaults = crate::css_integration::MenuLayout::default();
+            let ml = menu_layout.as_ref().unwrap_or(&menu_defaults);
             let menu_w = 180.0_f32;
             let item_h = 36.0_f32;
             let menu_h = 16.0 + self.session_menu_items.len() as f32 * item_h;
@@ -1372,7 +1398,7 @@ impl Shell {
             root.add_child(SceneNode::new(
                 NODE_SESSION_MENU,
                 SceneNodeKind::Glass(GlassParams {
-                    blur_radius: 20,
+                    blur_radius: ml.blur_radius,
                     tint_color: theme.dock_glass_tint,
                     inner_glow: true,
                     parallax: false,
@@ -1414,6 +1440,8 @@ impl Shell {
 
         // Desktop right-click context menu
         if self.context_menu_visible {
+            let menu_defaults = crate::css_integration::MenuLayout::default();
+            let ml = menu_layout.as_ref().unwrap_or(&menu_defaults);
             let ctx_items = ContextMenuItem::defaults();
             let ctx_item_h = 36.0_f32;
             let ctx_w = 260.0_f32;
@@ -1434,7 +1462,7 @@ impl Shell {
             root.add_child(SceneNode::new(
                 NODE_CONTEXT_MENU,
                 SceneNodeKind::Glass(GlassParams {
-                    blur_radius: 20,
+                    blur_radius: ml.blur_radius,
                     tint_color: theme.dock_glass_tint,
                     inner_glow: true,
                     parallax: false,
