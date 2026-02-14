@@ -46,10 +46,10 @@ impl StatusBar {
     }
 
     /// Update the clock.
-    pub fn update_clock(&mut self, timestamp_us: u64) {
+    pub fn update_clock(&mut self, new_timestamp_us: u64) {
         for ind in &mut self.indicators {
-            if let crate::indicator::IndicatorKind::Clock { ref mut timestamp_us: ts, .. } = ind.kind {
-                *ts = timestamp_us;
+            if let crate::indicator::IndicatorKind::Clock { ref mut timestamp_us, .. } = ind.kind {
+                *timestamp_us = new_timestamp_us;
                 self.dirty = true;
             }
         }

@@ -1,0 +1,27 @@
+# Liquide Cursor Theme — Sunset
+# Pairs with the sunset UI theme.
+
+name = "Liquide Sunset"
+description = "Warm amber cursors with golden accents for Sunset mode"
+author = "Liquide Team"
+version = "1.0"
+sizes = [16, 24, 32, 48, 64]
+default_size = 24
+
+[colors]
+# Primary cursor body — warm cream tone
+body     = "#F5E6D0EE"
+# Outline / border — warm brown edge
+outline  = "#2E1E0E99"
+# Accent highlight — golden amber
+accent   = "#FF9F0A80"
+# Shadow — warm tinted shadow
+shadow   = "#1A0A0040"
+# Interactive / pointer accent
+pointer  = "#FF9F0A"
+# Danger / not-allowed
+danger   = "#FF6961"
+# Wait / progress spinner
+wait     = "#FFD60A"
+# Resize handle tint
+resize   = "#8A7660"

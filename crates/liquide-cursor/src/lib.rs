@@ -18,12 +18,14 @@ mod state;
 mod theme;
 mod renderer;
 mod animation;
+pub mod themed_cursors;
 
 pub use shape::{CursorShape, ResizeDirection};
 pub use state::{CursorState, CursorVisibility};
 pub use theme::{CursorTheme, CursorThemeError, ThemeMetadata};
 pub use renderer::{CursorRenderer, RenderTarget, SoftwareCursorRenderer};
 pub use animation::{AnimatedCursor, CursorFrame};
+pub use themed_cursors::{CursorColors, ThemedCursorGenerator};
 
 /// Result type for cursor operations.
 pub type Result<T> = std::result::Result<T, CursorError>;

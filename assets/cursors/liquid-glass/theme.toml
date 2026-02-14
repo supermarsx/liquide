@@ -1,0 +1,27 @@
+# Liquide Cursor Theme — Liquid Glass (Dark)
+# Pairs with the liquid_glass_dark UI theme.
+
+name = "Liquide Glass"
+description = "Translucent glass-effect cursors for the default dark theme"
+author = "Liquide Team"
+version = "1.0"
+sizes = [16, 24, 32, 48, 64]
+default_size = 24
+
+[colors]
+# Primary cursor body — soft white with glass transparency
+body     = "#E8E8ECDD"
+# Outline / border — subtle dark edge for contrast
+outline  = "#1A1A2899"
+# Accent highlight — blue focus ring tint
+accent   = "#007AFF80"
+# Shadow — subtle depth
+shadow   = "#00000040"
+# Interactive / pointer accent
+pointer  = "#007AFF"
+# Danger / not-allowed
+danger   = "#FF3B30"
+# Wait / progress spinner
+wait     = "#5AC8FA"
+# Resize handle tint
+resize   = "#8E8E93"

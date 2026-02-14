@@ -18,6 +18,7 @@ pub mod painter;
 pub mod style;
 pub mod text;
 pub mod theme;
+pub mod theme_manager;
 pub mod widget;
 
 // Re-exports
@@ -32,6 +33,7 @@ pub use painter::{PaintCommand, Painter};
 pub use style::{BorderStyle, BoxShadow, StyleSheet};
 pub use text::{FontMetrics, TextMeasure};
 pub use theme::{ThemeColors, ThemeMode, UiTheme};
+pub use theme_manager::{ThemeConfig, ThemeManager, ThemePreset};
 pub use widget::{EventResult, Widget, WidgetLifecycle, WidgetState};
 
 use thiserror::Error;

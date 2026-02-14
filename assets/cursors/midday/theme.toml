@@ -1,0 +1,27 @@
+# Liquide Cursor Theme — Midday
+# Pairs with the midday UI theme (light mode).
+
+name = "Liquide Midday"
+description = "Clean dark cursors with blue accents for the light Midday theme"
+author = "Liquide Team"
+version = "1.0"
+sizes = [16, 24, 32, 48, 64]
+default_size = 24
+
+[colors]
+# Primary cursor body — dark for contrast against light background
+body     = "#1C1C1EEE"
+# Outline / border — very light halo for visibility against dark cursor
+outline  = "#FFFFFF66"
+# Accent highlight — blue focus tint
+accent   = "#0071B380"
+# Shadow — subtle on light backgrounds
+shadow   = "#00000025"
+# Interactive / pointer accent
+pointer  = "#0071B3"
+# Danger / not-allowed
+danger   = "#E5383B"
+# Wait / progress spinner
+wait     = "#34C759"
+# Resize handle tint
+resize   = "#48484A"

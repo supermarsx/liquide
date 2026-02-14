@@ -1,0 +1,27 @@
+# Liquide Cursor Theme — Night
+# Pairs with the night UI theme.
+
+name = "Liquide Night"
+description = "Deep navy cursors with cool blue accents for Night mode"
+author = "Liquide Team"
+version = "1.0"
+sizes = [16, 24, 32, 48, 64]
+default_size = 24
+
+[colors]
+# Primary cursor body — lighter tone against dark background
+body     = "#C8D0E0EE"
+# Outline / border — deep navy edge
+outline  = "#0A0A1299"
+# Accent highlight — system blue
+accent   = "#0A84FF80"
+# Shadow — deeper for dark theme
+shadow   = "#00000060"
+# Interactive / pointer accent
+pointer  = "#0A84FF"
+# Danger / not-allowed
+danger   = "#FF453A"
+# Wait / progress spinner
+wait     = "#64D2FF"
+# Resize handle tint
+resize   = "#636366"

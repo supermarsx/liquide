@@ -16,4 +16,5 @@ liquide-compositor = { path = "../liquide-compositor" }
 liquide-theme-css = { path = "../liquide-theme-css" }
 serde.workspace = true
 thiserror.workspace = true
+toml.workspace = true
 tracing.workspace = true

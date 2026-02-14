@@ -303,7 +303,10 @@ mod tests {
         assert_eq!(mgr.opacity(), 1.0); // fully visible
 
         mgr.update(201.0); // past display_duration
-        assert!(mgr.is_visible()); // fading out
+        // Now in FadingOut state (may still have opacity ~1.0 at elapsed=0)
+        assert!(mgr.is_visible()); // fading out (still visible)
+
+        mgr.update(30.0); // partial fade out
         assert!(mgr.opacity() < 1.0);
 
         mgr.update(51.0); // past fade_out
