@@ -20,8 +20,8 @@ use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNod
 use liquide_dom::Document;
 use liquide_layout::{DefaultTextMeasurer, LayoutEngine, LayoutTree, Size};
 use liquide_paint::{DisplayItem, DisplayList, Painter};
-use liquide_style_engine::{StyleEngine, StyleMap};
 use liquide_style_engine::engine::ViewportSize;
+use liquide_style_engine::{StyleEngine, StyleMap};
 
 use crate::desktop_dom::DesktopDocument;
 use crate::theme_loader;
@@ -95,29 +95,22 @@ impl DesktopPipeline {
 
     /// Replace styles with a named theme preset.
     pub fn set_theme(&mut self, preset_css: &str) {
-        self.style_engine = StyleEngine::new(
-            self.style_engine.viewport,
-            self.style_engine.base_font_size,
-        );
+        self.style_engine =
+            StyleEngine::new(self.style_engine.viewport, self.style_engine.base_font_size);
         self.style_engine.add_stylesheet(preset_css);
     }
 
     /// Update viewport dimensions (e.g. on monitor resolution change).
     pub fn set_viewport(&mut self, width: f32, height: f32) {
-        self.style_engine.set_viewport(ViewportSize {
-            width,
-            height,
-        });
+        self.style_engine
+            .set_viewport(ViewportSize { width, height });
         self.layout_engine.viewport = Size { width, height };
     }
 
     /// Run the full pipeline: Style → Layout → Paint.
     ///
     /// Returns the style map, layout tree, and display list.
-    pub fn run(
-        &mut self,
-        doc: &Document,
-    ) -> PipelineOutput {
+    pub fn run(&mut self, doc: &Document) -> PipelineOutput {
         let text_measurer = DefaultTextMeasurer;
         let image_measurer = liquide_layout::DefaultImageMeasurer;
 
@@ -125,12 +118,9 @@ impl DesktopPipeline {
         let styles = self.style_engine.restyle_all(doc);
 
         // 2. Layout
-        let layout = self.layout_engine.layout(
-            doc,
-            &styles,
-            &text_measurer,
-            &image_measurer,
-        );
+        let layout = self
+            .layout_engine
+            .layout(doc, &styles, &text_measurer, &image_measurer);
 
         // 3. Paint
         let display_list = self.painter.paint(doc, &layout, &styles);
@@ -147,11 +137,7 @@ impl DesktopPipeline {
     /// Glass SceneNodes are generated for elements with `blur-radius` CSS
     /// property. These are placed *before* the element's normal paint output
     /// so the blur effect renders behind the content.
-    pub fn render_to_scene(
-        &mut self,
-        doc: &Document,
-        base_z: u32,
-    ) -> Vec<SceneNode> {
+    pub fn render_to_scene(&mut self, doc: &Document, base_z: u32) -> Vec<SceneNode> {
         let output = self.run(doc);
 
         // Collect Glass nodes from elements with x_blur_radius > 0.
@@ -168,11 +154,7 @@ impl DesktopPipeline {
 
     /// Generate Glass SceneNodes for DOM elements that have `x_blur_radius > 0`
     /// in their computed style. Uses the layout tree to get the element's rect.
-    fn extract_glass_nodes(
-        &mut self,
-        output: &PipelineOutput,
-        base_z: u32,
-    ) -> Vec<SceneNode> {
+    fn extract_glass_nodes(&mut self, output: &PipelineOutput, base_z: u32) -> Vec<SceneNode> {
         let mut glass_nodes = Vec::new();
         let mut z = base_z;
 
@@ -218,11 +200,7 @@ impl DesktopPipeline {
     /// - PushTransform: applies transform to all subsequent nodes until PopTransform
     /// - PushBlendMode: groups subsequent nodes in a RenderLayer with blend mode
     /// - PushStackingContext: groups subsequent nodes with z-index ordering
-    pub fn display_list_to_scene(
-        &mut self,
-        list: &DisplayList,
-        base_z: u32,
-    ) -> Vec<SceneNode> {
+    pub fn display_list_to_scene(&mut self, list: &DisplayList, base_z: u32) -> Vec<SceneNode> {
         use liquide_compositor::geometry::Affine2D;
 
         /// Active state from Push items.
@@ -347,11 +325,7 @@ impl DesktopPipeline {
     }
 
     /// Map a single DisplayItem to a SceneNode.
-    fn display_item_to_scene(
-        &mut self,
-        item: &DisplayItem,
-        z: u32,
-    ) -> Option<SceneNode> {
+    fn display_item_to_scene(&mut self, item: &DisplayItem, z: u32) -> Option<SceneNode> {
         let id = self.alloc_id();
 
         match item {
@@ -406,7 +380,7 @@ impl DesktopPipeline {
                 spread_radius,
                 color,
                 inset,
-                radius,
+                radius: _radius, // TODO: Use radius for rounded shadow mask
             } => {
                 let bounds = to_compositor_rect(rect);
                 let shadow = liquide_compositor::scene::BoxShadowSpec {
@@ -444,10 +418,7 @@ impl DesktopPipeline {
                         text: text.clone(),
                         color: *color,
                         scale: 1,
-                        font_family: font_family
-                            .first()
-                            .cloned()
-                            .unwrap_or_default(),
+                        font_family: font_family.first().cloned().unwrap_or_default(),
                         font_size: *font_size,
                         font_weight: *font_weight,
                         letter_spacing: 0.0,
@@ -486,9 +457,9 @@ impl DesktopPipeline {
             | DisplayItem::PushBlendMode { .. }
             | DisplayItem::PopBlendMode
             | DisplayItem::PushStackingContext { .. }
-            | DisplayItem::PopStackingContext => unreachable!(
-                "Push/Pop items should be handled by display_list_to_scene"
-            ),
+            | DisplayItem::PopStackingContext => {
+                unreachable!("Push/Pop items should be handled by display_list_to_scene")
+            }
 
             DisplayItem::Surface { rect, surface_id } => {
                 let bounds = to_compositor_rect(rect);
@@ -599,15 +570,13 @@ mod tests {
 
         let mut desktop = DesktopDocument::new();
         desktop.populate_default_statusbar();
-        desktop.sync_dock_items(&[
-            DockItemInfo {
-                app_id: "files".into(),
-                label: "Files".into(),
-                icon: "folder".into(),
-                is_running: true,
-                is_pinned: true,
-            },
-        ]);
+        desktop.sync_dock_items(&[DockItemInfo {
+            app_id: "files".into(),
+            label: "Files".into(),
+            icon: "folder".into(),
+            is_running: true,
+            is_pinned: true,
+        }]);
 
         let output = pipeline.run(&desktop.doc);
 
