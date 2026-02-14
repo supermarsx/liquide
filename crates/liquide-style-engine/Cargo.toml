@@ -1,0 +1,14 @@
+[package]
+name = "liquide-style-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "CSS style computation: cascade, specificity, inheritance, selectors, variables"
+
+[dependencies]
+liquide-dom = { path = "../liquide-dom" }
+liquide-theme-css = { path = "../liquide-theme-css" }
+liquide-compositor = { path = "../liquide-compositor" }
+serde = { workspace = true }
+tracing = { workspace = true }

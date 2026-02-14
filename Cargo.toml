@@ -102,6 +102,13 @@ members = [
     # Testing & benchmarking
     "crates/liquide-bench",
     "crates/liquide-conformance",
+
+    # CSS rendering pipeline
+    "crates/liquide-dom",
+    "crates/liquide-style-engine",
+    "crates/liquide-layout",
+    "crates/liquide-paint",
+    "crates/liquide-hit-test",
 ]
 
 [workspace.package]
@@ -229,6 +236,11 @@ liquide-font-rasterizer = { path = "crates/liquide-font-rasterizer" }
 liquide-platform-win32 = { path = "crates/liquide-platform-win32" }
 liquide-animation = { path = "crates/liquide-animation" }
 liquide-renderer-wgpu = { path = "crates/liquide-renderer-wgpu" }
+liquide-dom = { path = "crates/liquide-dom" }
+liquide-style-engine = { path = "crates/liquide-style-engine" }
+liquide-layout = { path = "crates/liquide-layout" }
+liquide-paint = { path = "crates/liquide-paint" }
+liquide-hit-test = { path = "crates/liquide-hit-test" }
 
 [profile.dev]
 opt-level = 0

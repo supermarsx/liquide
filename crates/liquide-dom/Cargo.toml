@@ -1,0 +1,12 @@
+[package]
+name = "liquide-dom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "DOM element tree for the LiquiDE desktop environment"
+
+[dependencies]
+serde = { workspace = true }
+bitflags = { workspace = true }

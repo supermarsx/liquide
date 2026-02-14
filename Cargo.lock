@@ -2507,6 +2507,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-dom"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "serde",
+]
+
+[[package]]
 name = "liquide-encoder"
 version = "0.1.0"
 dependencies = [
@@ -2579,6 +2587,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-hit-test"
+version = "0.1.0"
+dependencies = [
+ "liquide-dom",
+ "liquide-layout",
+ "liquide-style-engine",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-ime"
 version = "0.1.0"
 dependencies = [
@@ -2608,6 +2627,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "liquide-layout"
+version = "0.1.0"
+dependencies = [
+ "liquide-dom",
+ "liquide-style-engine",
+ "serde",
  "tracing",
 ]
 
@@ -2645,6 +2674,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "liquide-paint"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-dom",
+ "liquide-layout",
+ "liquide-style-engine",
+ "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -2860,6 +2901,17 @@ version = "0.1.0"
 dependencies = [
  "liquide-compositor",
  "liquide-ui-core",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "liquide-style-engine"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-dom",
+ "liquide-theme-css",
  "serde",
  "tracing",
 ]

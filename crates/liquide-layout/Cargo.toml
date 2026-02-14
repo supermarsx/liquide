@@ -1,0 +1,13 @@
+[package]
+name = "liquide-layout"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "CSS box model layout engine: block, inline, flex, grid, positioned"
+
+[dependencies]
+liquide-dom = { path = "../liquide-dom" }
+liquide-style-engine = { path = "../liquide-style-engine" }
+serde = { workspace = true }
+tracing = { workspace = true }

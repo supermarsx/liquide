@@ -1,0 +1,14 @@
+[package]
+name = "liquide-hit-test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "CSS-aware hit testing and DOM event dispatch"
+
+[dependencies]
+liquide-dom = { path = "../liquide-dom" }
+liquide-style-engine = { path = "../liquide-style-engine" }
+liquide-layout = { path = "../liquide-layout" }
+serde = { workspace = true }
+tracing = { workspace = true }

@@ -561,6 +561,178 @@ impl ThemeParser {
                 properties.insert("display".into(), PropertyValue::Keyword(css_str));
             }
 
+            // ── Position ────────────────────────────────────────────────
+            Property::Position(pos) => {
+                let css_str = self.to_css_string(pos);
+                properties.insert("position".into(), PropertyValue::Keyword(css_str));
+            }
+
+            // ── Overflow ────────────────────────────────────────────────
+            Property::Overflow(overflow) => {
+                let x = self.to_css_string(&overflow.x);
+                let y = self.to_css_string(&overflow.y);
+                properties.insert("overflow-x".into(), PropertyValue::Keyword(x.clone()));
+                properties.insert("overflow-y".into(), PropertyValue::Keyword(y));
+                properties.insert("overflow".into(), PropertyValue::Keyword(x));
+            }
+
+            // ── Flex ────────────────────────────────────────────────────
+            Property::FlexDirection(dir, _prefix) => {
+                let css_str = self.to_css_string(dir);
+                properties.insert("flex-direction".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::FlexWrap(wrap, _prefix) => {
+                let css_str = self.to_css_string(wrap);
+                properties.insert("flex-wrap".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::FlexGrow(grow, _prefix) => {
+                properties.insert("flex-grow".into(), PropertyValue::Number(*grow));
+            }
+            Property::FlexShrink(shrink, _prefix) => {
+                properties.insert("flex-shrink".into(), PropertyValue::Number(*shrink));
+            }
+            Property::JustifyContent(jc, _prefix) => {
+                let css_str = self.to_css_string(jc);
+                properties.insert("justify-content".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::AlignItems(ai, _prefix) => {
+                let css_str = self.to_css_string(ai);
+                properties.insert("align-items".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::AlignSelf(a, _prefix) => {
+                let css_str = self.to_css_string(a);
+                properties.insert("align-self".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::AlignContent(ac, _prefix) => {
+                let css_str = self.to_css_string(ac);
+                properties.insert("align-content".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::Gap(gap) => {
+                let row_str = self.to_css_string(&gap.row);
+                let col_str = self.to_css_string(&gap.column);
+                if let Some(v) = self.parse_length_value(&row_str) {
+                    properties.insert("row-gap".into(), v.clone());
+                    properties.insert("gap".into(), v);
+                }
+                if let Some(v) = self.parse_length_value(&col_str) {
+                    properties.insert("column-gap".into(), v);
+                }
+            }
+            Property::RowGap(gap) => {
+                let css_str = self.to_css_string(gap);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("row-gap".into(), v);
+                }
+            }
+            Property::ColumnGap(gap) => {
+                let css_str = self.to_css_string(gap);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("column-gap".into(), v);
+                }
+            }
+
+            // ── Inset properties (top/right/bottom/left) ───────────────
+            Property::Top(val) => {
+                let css_str = self.to_css_string(val);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("top".into(), v);
+                }
+            }
+            Property::Right(val) => {
+                let css_str = self.to_css_string(val);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("right".into(), v);
+                }
+            }
+            Property::Bottom(val) => {
+                let css_str = self.to_css_string(val);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("bottom".into(), v);
+                }
+            }
+            Property::Left(val) => {
+                let css_str = self.to_css_string(val);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("left".into(), v);
+                }
+            }
+
+            // ── Min/max dimensions ──────────────────────────────────────
+            Property::MinWidth(size) => {
+                let css_str = self.to_css_string(size);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("min-width".into(), v);
+                }
+            }
+            Property::MaxWidth(size) => {
+                let css_str = self.to_css_string(size);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("max-width".into(), v);
+                }
+            }
+            Property::MinHeight(size) => {
+                let css_str = self.to_css_string(size);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("min-height".into(), v);
+                }
+            }
+            Property::MaxHeight(size) => {
+                let css_str = self.to_css_string(size);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("max-height".into(), v);
+                }
+            }
+
+            // ── Text ────────────────────────────────────────────────────
+            Property::TextAlign(align) => {
+                let css_str = self.to_css_string(align);
+                properties.insert("text-align".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::WhiteSpace(ws) => {
+                let css_str = self.to_css_string(ws);
+                properties.insert("white-space".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::WordBreak(wb) => {
+                let css_str = self.to_css_string(wb);
+                properties.insert("word-break".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::TextOverflow(to, _prefix) => {
+                let css_str = self.to_css_string(to);
+                properties.insert("text-overflow".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::TextTransform(tt) => {
+                let css_str = self.to_css_string(tt);
+                properties.insert("text-transform".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::LetterSpacing(ls) => {
+                let css_str = self.to_css_string(ls);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("letter-spacing".into(), v);
+                }
+            }
+            Property::Cursor(cursor) => {
+                let css_str = self.to_css_string(cursor);
+                properties.insert("cursor".into(), PropertyValue::Keyword(css_str));
+            }
+
+            // ── Transform ───────────────────────────────────────────────
+            Property::Transform(transforms, _prefix) => {
+                let css_str = self.to_css_string(transforms);
+                properties.insert("transform".into(), PropertyValue::Keyword(css_str));
+            }
+
+            // ── Transition ──────────────────────────────────────────────
+            Property::Transition(transitions, _prefix) => {
+                let css_str = self.to_css_string(transitions);
+                properties.insert("transition".into(), PropertyValue::Keyword(css_str));
+            }
+
+            // ── Box sizing ──────────────────────────────────────────────
+            Property::BoxSizing(bs, _prefix) => {
+                let css_str = self.to_css_string(bs);
+                properties.insert("box-sizing".into(), PropertyValue::Keyword(css_str));
+            }
+
             // ── Custom properties (--var-name: value) ───────────────────
             Property::Custom(custom) => {
                 let name = self.to_css_string(&custom.name);
