@@ -125,6 +125,9 @@ pub fn css_to_shell_theme(engine: &ThemeEngine) -> ShellTheme {
         menu_item_hover: query_color(engine, "menu-item", &[], &["hover".into()], "background")
             .unwrap_or_else(|| Color::new(94, 129, 172, 100)),
         
+        menu_separator: query_color(engine, "menu-separator", &[], &[], "background")
+            .unwrap_or_else(|| Color::new(255, 255, 255, 40)),
+        
         // Loading overlay
         loading_overlay: query_color(engine, "loading-overlay", &[], &[], "background")
             .unwrap_or_else(|| Color::new(46, 52, 64, 220)),
@@ -134,6 +137,23 @@ pub fn css_to_shell_theme(engine: &ThemeEngine) -> ShellTheme {
         
         loading_text: query_color(engine, "loading-panel", &[], &[], "color")
             .unwrap_or_else(|| Color::new(236, 239, 244, 255)),
+        
+        // Window content
+        window_content_background: query_color(engine, "window-content", &[], &[], "background")
+            .unwrap_or_else(|| Color::new(35, 35, 40, 255)),
+        
+        // App-specific colors
+        app_settings_sidebar_item: query_color(engine, "app-settings", &["sidebar-item".into()], &[], "background")
+            .unwrap_or_else(|| Color::new(45, 45, 55, 200)),
+        
+        app_terminal_background: query_color(engine, "app-terminal", &[], &[], "background")
+            .unwrap_or_else(|| Color::new(20, 20, 25, 255)),
+        
+        app_terminal_text: query_color(engine, "app-terminal", &[], &[], "color")
+            .unwrap_or_else(|| Color::new(100, 220, 100, 255)),
+        
+        app_browser_urlbar: query_color(engine, "app-browser", &["urlbar".into()], &[], "background")
+            .unwrap_or_else(|| Color::new(55, 55, 65, 255)),
     }
 }
 
@@ -298,6 +318,10 @@ menu-item:hover {
     background: rgba(94, 129, 172, 0.4);
 }
 
+menu-separator {
+    background: rgba(255, 255, 255, 0.16);
+}
+
 /* Loading */
 loading-overlay {
     background: rgba(46, 52, 64, 0.9);
@@ -306,6 +330,25 @@ loading-overlay {
 loading-panel {
     background: rgba(59, 66, 82, 0.95);
     color: var(--nord6);
+}
+
+/* Window Content */
+window-content {
+    background: var(--nord0);
+}
+
+/* App-specific colors */
+app-settings.sidebar-item {
+    background: rgba(45, 45, 55, 0.8);
+}
+
+app-terminal {
+    background: rgb(20, 20, 25);
+    color: rgb(100, 220, 100);
+}
+
+app-browser.urlbar {
+    background: rgba(55, 55, 65, 1.0);
 }
 "#
 }

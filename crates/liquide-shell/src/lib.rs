@@ -26,6 +26,13 @@ pub mod theme;
 pub mod theme_loader;
 pub mod tiling;
 pub mod scene_builder;
+pub mod css_integration;
+
+// Example modules demonstrating CSS styling
+pub mod css_dock_example;
+
+#[cfg(test)]
+mod css_debug_test;
 
 use thiserror::Error;
 

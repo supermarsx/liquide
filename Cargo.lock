@@ -2442,6 +2442,19 @@ dependencies = [
  "criterion",
  "liquide-common",
  "liquide-compositor",
+ "liquide-renderer-css",
+ "liquide-theme-css",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "liquide-renderer-css"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-theme-css",
+ "serde",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -2496,6 +2509,7 @@ dependencies = [
  "liquide-input",
  "liquide-interop",
  "liquide-platform",
+ "liquide-renderer-css",
  "liquide-theme-css",
  "liquide-ui",
  "serde",

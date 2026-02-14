@@ -73,27 +73,27 @@
 //! # }
 //! ```
 
-pub mod parser;
-pub mod engine;
-pub mod selector;
-pub mod value;
-pub mod error;
-pub mod stylesheet;
-pub mod property;
-pub mod watcher;
 pub mod cache;
+pub mod engine;
+pub mod error;
+pub mod parser;
+pub mod property;
+pub mod selector;
+pub mod stylesheet;
+pub mod value;
+pub mod watcher;
 
-pub use parser::ThemeParser;
+pub use cache::{CacheStats, QueryCache};
 pub use engine::ThemeEngine;
+pub use error::{Result, ThemeError};
+pub use parser::ThemeParser;
 pub use stylesheet::StyleSheet;
-pub use error::{ThemeError, Result};
-pub use cache::{QueryCache, CacheStats};
 
 pub mod prelude {
-    pub use crate::parser::ThemeParser;
+    pub use crate::cache::{CacheStats, QueryCache};
     pub use crate::engine::ThemeEngine;
+    pub use crate::error::{Result, ThemeError};
+    pub use crate::parser::ThemeParser;
     pub use crate::stylesheet::StyleSheet;
-    pub use crate::error::{ThemeError, Result};
-    pub use crate::value::{PropertyValue, Color};
-    pub use crate::cache::{QueryCache, CacheStats};
+    pub use crate::value::{Color, PropertyValue};
 }

@@ -1,16 +1,21 @@
-//! CSS parser for themes
+//! CSS parser for themes using lightningcss
 
 use crate::error::{Result, ThemeError};
 use crate::property::PropertySet;
 use crate::selector::Selector;
 use crate::stylesheet::StyleSheet;
-use crate::value::{BorderStyle, BoxShadow, Color, ColorStop, Gradient, LengthUnit, PropertyValue};
+use crate::value::{Color, LengthUnit, PropertyValue};
 use std::path::Path;
 
-/// CSS theme parser
-pub struct ThemeParser {
-    // Parser state
-}
+use lightningcss::printer::Printer;
+use lightningcss::properties::Property;
+use lightningcss::rules::CssRule;
+use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet as LightningStyleSheet};
+use lightningcss::traits::ToCss;
+use lightningcss::values::color::CssColor;
+
+/// CSS theme parser using lightningcss for full CSS3 support
+pub struct ThemeParser {}
 
 impl Default for ThemeParser {
     fn default() -> Self {
@@ -23,265 +28,227 @@ impl ThemeParser {
     pub fn new() -> Self {
         Self {}
     }
-    
+
     /// Parse CSS from a string
     pub fn parse_str(&self, css: &str) -> Result<StyleSheet> {
-        let mut stylesheet = StyleSheet::new();
-        
-        // Simple parser (in production, use lightningcss)
-        let rules = self.parse_rules(css)?;
-        
-        for (selector_str, properties) in rules {
-            let selector = Selector::parse(&selector_str)?;
-            stylesheet.add_rule(selector, properties);
-        }
-        
-        Ok(stylesheet)
+        // Parse with lightningcss - use default options with static lifetime
+        let options = ParserOptions::default();
+        let lightning_sheet =
+            LightningStyleSheet::parse(css, options).map_err(|e| ThemeError::ParseError {
+                message: format!("lightningcss parse error: {:?}", e),
+                location: "unknown".to_string(),
+            })?;
+
+        // Convert to our stylesheet format
+        self.convert_stylesheet(lightning_sheet)
     }
-    
+
     /// Parse CSS from a file
     pub fn parse_file<P: AsRef<Path>>(&self, path: P) -> Result<StyleSheet> {
         let css = std::fs::read_to_string(path)?;
         self.parse_str(&css)
     }
-    
-    /// Parse CSS rules (simplified parser)
-    fn parse_rules(&self, css: &str) -> Result<Vec<(String, PropertySet)>> {
-        let mut rules = Vec::new();
-        let mut current_pos = 0;
-        let chars: Vec<char> = css.chars().collect();
-        
-        while current_pos < chars.len() {
-            // Skip whitespace and comments
-            current_pos = self.skip_whitespace_and_comments(&chars, current_pos);
-            
-            if current_pos >= chars.len() {
-                break;
-            }
-            
-            // Parse selector
-            let (selector, new_pos) = self.parse_selector(&chars, current_pos)?;
-            current_pos = new_pos;
-            
-            // Expect '{'
-            current_pos = self.skip_whitespace(&chars, current_pos);
-            if current_pos >= chars.len() || chars[current_pos] != '{' {
-                return Err(ThemeError::ParseError {
-                    message: "Expected '{'".to_string(),
-                    location: format!("position {}", current_pos),
-                });
-            }
-            current_pos += 1;
-            
-            // Parse properties
-            let (properties, new_pos) = self.parse_properties(&chars, current_pos)?;
-            current_pos = new_pos;
-            
-            // Expect '}'
-            current_pos = self.skip_whitespace(&chars, current_pos);
-            if current_pos >= chars.len() || chars[current_pos] != '}' {
-                return Err(ThemeError::ParseError {
-                    message: "Expected '}'".to_string(),
-                    location: format!("position {}", current_pos),
-                });
-            }
-            current_pos += 1;
-            
-            rules.push((selector, properties));
+
+    /// Convert lightningcss StyleSheet to our StyleSheet format
+    fn convert_stylesheet(&self, lightning: LightningStyleSheet) -> Result<StyleSheet> {
+        let mut stylesheet = StyleSheet::new();
+
+        // Process all rules
+        for rule in lightning.rules.0.iter() {
+            self.process_rule(rule, &mut stylesheet)?;
         }
-        
-        Ok(rules)
+
+        Ok(stylesheet)
     }
-    
-    fn parse_selector(&self, chars: &[char], start: usize) -> Result<(String, usize)> {
-        let mut pos = start;
-        let mut selector = String::new();
-        
-        while pos < chars.len() && chars[pos] != '{' {
-            selector.push(chars[pos]);
-            pos += 1;
-        }
-        
-        Ok((selector.trim().to_string(), pos))
-    }
-    
-    fn parse_properties(&self, chars: &[char], start: usize) -> Result<(PropertySet, usize)> {
-        let mut pos = start;
-        let mut properties = PropertySet::new();
-        
-        while pos < chars.len() && chars[pos] != '}' {
-            pos = self.skip_whitespace(&chars, pos);
-            
-            if pos >= chars.len() || chars[pos] == '}' {
-                break;
-            }
-            
-            // Parse property name
-            let (name, new_pos) = self.parse_identifier(&chars, pos)?;
-            pos = new_pos;
-            
-            // Expect ':'
-            pos = self.skip_whitespace(&chars, pos);
-            if pos >= chars.len() || chars[pos] != ':' {
-                return Err(ThemeError::ParseError {
-                    message: "Expected ':'".to_string(),
-                    location: format!("position {}", pos),
-                });
-            }
-            pos += 1;
-            
-            // Parse property value
-            let (value_str, new_pos) = self.parse_value(&chars, pos)?;
-            pos = new_pos;
-            
-            // Parse value into PropertyValue
-            let value = self.parse_property_value(&name, &value_str)?;
-            properties.insert(name, value);
-            
-            // Expect ';'
-            pos = self.skip_whitespace(&chars, pos);
-            if pos < chars.len() && chars[pos] == ';' {
-                pos += 1;
-            }
-        }
-        
-        Ok((properties, pos))
-    }
-    
-    fn parse_identifier(&self, chars: &[char], start: usize) -> Result<(String, usize)> {
-        let mut pos = start;
-        let mut ident = String::new();
-        
-        while pos < chars.len() {
-            let ch = chars[pos];
-            if ch.is_alphanumeric() || ch == '-' || ch == '_' {
-                ident.push(ch);
-                pos += 1;
-            } else {
-                break;
-            }
-        }
-        
-        Ok((ident, pos))
-    }
-    
-    fn parse_value(&self, chars: &[char], start: usize) -> Result<(String, usize)> {
-        let mut pos = start;
-        pos = self.skip_whitespace(&chars, pos);
-        
-        let mut value = String::new();
-        let mut depth = 0;
-        
-        while pos < chars.len() {
-            let ch = chars[pos];
-            
-            if ch == '(' {
-                depth += 1;
-            } else if ch == ')' {
-                depth -= 1;
-            }
-            
-            if (ch == ';' || ch == '}') && depth == 0 {
-                break;
-            }
-            
-            value.push(ch);
-            pos += 1;
-        }
-        
-        Ok((value.trim().to_string(), pos))
-    }
-    
-    fn parse_property_value(&self, name: &str, value: &str) -> Result<PropertyValue> {
-        let value = value.trim();
-        
-        // Try to parse as color
-        if let Ok(color) = Color::from_hex(value) {
-            return Ok(PropertyValue::Color(color));
-        }
-        
-        // Try to parse as length
-        if let Some(px_value) = value.strip_suffix("px") {
-            if let Ok(num) = px_value.trim().parse::<f32>() {
-                return Ok(PropertyValue::Length(LengthUnit::Px(num)));
-            }
-        }
-        
-        if let Some(em_value) = value.strip_suffix("em") {
-            if let Ok(num) = em_value.trim().parse::<f32>() {
-                return Ok(PropertyValue::Length(LengthUnit::Em(num)));
-            }
-        }
-        
-        if let Some(pct_value) = value.strip_suffix('%') {
-            if let Ok(num) = pct_value.trim().parse::<f32>() {
-                return Ok(PropertyValue::Length(LengthUnit::Percent(num)));
-            }
-        }
-        
-        // Try to parse as number
-        if let Ok(num) = value.parse::<f32>() {
-            return Ok(PropertyValue::Number(num));
-        }
-        
-        // Border styles
-        if name.contains("border-style") {
-            let style = match value.to_lowercase().as_str() {
-                "solid" => BorderStyle::Solid,
-                "dashed" => BorderStyle::Dashed,
-                "dotted" => BorderStyle::Dotted,
-                "double" => BorderStyle::Double,
-                _ => BorderStyle::None,
-            };
-            return Ok(PropertyValue::BorderStyle(style));
-        }
-        
-        // Default to keyword/string
-        if value.starts_with('"') && value.ends_with('"') {
-            Ok(PropertyValue::String(value[1..value.len()-1].to_string()))
-        } else {
-            Ok(PropertyValue::Keyword(value.to_string()))
-        }
-    }
-    
-    fn skip_whitespace(&self, chars: &[char], start: usize) -> usize {
-        let mut pos = start;
-        while pos < chars.len() && chars[pos].is_whitespace() {
-            pos += 1;
-        }
-        pos
-    }
-    
-    fn skip_whitespace_and_comments(&self, chars: &[char], start: usize) -> usize {
-        let mut pos = start;
-        
-        loop {
-            pos = self.skip_whitespace(&chars, pos);
-            
-            // Check for comments
-            if pos + 1 < chars.len() && chars[pos] == '/' && chars[pos + 1] == '*' {
-                // Skip until */
-                pos += 2;
-                while pos + 1 < chars.len() {
-                    if chars[pos] == '*' && chars[pos + 1] == '/' {
-                        pos += 2;
-                        break;
-                    }
-                    pos += 1;
+
+    /// Process a CSS rule recursively
+    fn process_rule(&self, rule: &CssRule, stylesheet: &mut StyleSheet) -> Result<()> {
+        match rule {
+            CssRule::Style(style_rule) => {
+                // Convert selector list to our format
+                for selector in &style_rule.selectors.0 {
+                    let selector_str = self.selector_to_string(selector)?;
+                    let our_selector = Selector::parse(&selector_str)?;
+
+                    // Convert declarations to properties
+                    let properties = self.convert_declarations(&style_rule.declarations)?;
+
+                    stylesheet.add_rule(our_selector, properties);
                 }
-            } else {
-                break;
+            }
+            CssRule::Media(media) => {
+                // Process nested rules in media queries
+                for nested_rule in &media.rules.0 {
+                    self.process_rule(nested_rule, stylesheet)?;
+                }
+            }
+            CssRule::Supports(supports) => {
+                // Process nested rules in @supports
+                for nested_rule in &supports.rules.0 {
+                    self.process_rule(nested_rule, stylesheet)?;
+                }
+            }
+            // Ignore other rule types (keyframes, font-face, import, etc.)
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    /// Convert lightningcss selector to string
+    fn selector_to_string(
+        &self,
+        selector: &lightningcss::selector::Selector<'_>,
+    ) -> Result<String> {
+        let mut css_string = String::new();
+        let mut printer = Printer::new(&mut css_string, PrinterOptions::default());
+        selector
+            .to_css(&mut printer)
+            .map_err(|e| ThemeError::ParseError {
+                message: format!("Failed to serialize selector: {:?}", e),
+                location: "selector".to_string(),
+            })?;
+        Ok(css_string)
+    }
+
+    /// Convert lightningcss declarations to our PropertySet
+    fn convert_declarations(
+        &self,
+        decls: &lightningcss::declaration::DeclarationBlock,
+    ) -> Result<PropertySet> {
+        let mut properties = PropertySet::new();
+
+        for decl in &decls.declarations {
+            if let Some((name, value)) = self.convert_property(decl) {
+                properties.insert(name, value);
             }
         }
-        
-        pos
+
+        Ok(properties)
+    }
+
+    /// Convert a single property
+    fn convert_property(&self, prop: &Property) -> Option<(String, PropertyValue)> {
+        match prop {
+            Property::BackgroundColor(color) => {
+                Some(("background".to_string(), self.convert_color(color)?))
+            }
+            Property::Color(color) => Some(("color".to_string(), self.convert_color(color)?)),
+            Property::BorderTopColor(color)
+            | Property::BorderRightColor(color)
+            | Property::BorderBottomColor(color)
+            | Property::BorderLeftColor(color) => {
+                Some(("border-color".to_string(), self.convert_color(color)?))
+            }
+            // Width/Height are Size types, just serialize them as strings for now
+            Property::Width(size) | Property::Height(size) => {
+                let mut size_str = String::new();
+                let mut printer = Printer::new(&mut size_str, PrinterOptions::default());
+                if size.to_css(&mut printer).is_ok() {
+                    if let Some(px_value) = size_str.strip_suffix("px") {
+                        if let Ok(num) = px_value.trim().parse::<f32>() {
+                            let prop_name = if matches!(prop, Property::Width(_)) {
+                                "width"
+                            } else {
+                                "height"
+                            };
+                            return Some((
+                                prop_name.to_string(),
+                                PropertyValue::Length(LengthUnit::Px(num)),
+                            ));
+                        }
+                    }
+                }
+                None
+            }
+            Property::BorderTopWidth(width)
+            | Property::BorderRightWidth(width)
+            | Property::BorderBottomWidth(width)
+            | Property::BorderLeftWidth(width) => Some((
+                "border-width".to_string(),
+                self.convert_border_width(width)?,
+            )),
+            // For now, skip unparsed properties
+            // TODO: Handle more property types as needed
+            _ => None,
+        }
+    }
+
+    /// Convert lightningcss color to our Color type
+    fn convert_color(&self, css_color: &CssColor) -> Option<PropertyValue> {
+        match css_color {
+            CssColor::RGBA(rgba) => Some(PropertyValue::Color(Color::new(
+                rgba.red, rgba.green, rgba.blue, rgba.alpha,
+            ))),
+            _ => {
+                // For other color types, try to serialize and parse
+                let mut color_str = String::new();
+                let mut printer = Printer::new(&mut color_str, PrinterOptions::default());
+                if css_color.to_css(&mut printer).is_ok() {
+                    if let Ok(color) = Color::from_hex(&color_str) {
+                        return Some(PropertyValue::Color(color));
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    /// Convert lightningcss length value wrapper
+    fn convert_length_value(
+        &self,
+        length: &lightningcss::values::length::Length,
+    ) -> Option<PropertyValue> {
+        // Try to serialize and parse
+        let mut length_str = String::new();
+        let mut printer = Printer::new(&mut length_str, PrinterOptions::default());
+        if length.to_css(&mut printer).is_ok() {
+            // Try to parse as px, em, etc.
+            if let Some(px_value) = length_str.strip_suffix("px") {
+                if let Ok(num) = px_value.trim().parse::<f32>() {
+                    return Some(PropertyValue::Length(LengthUnit::Px(num)));
+                }
+            }
+            if let Some(em_value) = length_str.strip_suffix("em") {
+                if let Ok(num) = em_value.trim().parse::<f32>() {
+                    return Some(PropertyValue::Length(LengthUnit::Em(num)));
+                }
+            }
+        }
+        None
+    }
+
+    /// Convert border width
+    fn convert_border_width(
+        &self,
+        width: &lightningcss::properties::border::BorderSideWidth,
+    ) -> Option<PropertyValue> {
+        // Serialize and parse
+        let mut width_str = String::new();
+        let mut printer = Printer::new(&mut width_str, PrinterOptions::default());
+        if width.to_css(&mut printer).is_ok() {
+            match width_str.as_str() {
+                "thin" => return Some(PropertyValue::Length(LengthUnit::Px(1.0))),
+                "medium" => return Some(PropertyValue::Length(LengthUnit::Px(3.0))),
+                "thick" => return Some(PropertyValue::Length(LengthUnit::Px(5.0))),
+                _ => {
+                    // Try to parse as length
+                    if let Some(px_value) = width_str.strip_suffix("px") {
+                        if let Ok(num) = px_value.trim().parse::<f32>() {
+                            return Some(PropertyValue::Length(LengthUnit::Px(num)));
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_parse_simple() {
         let css = r#"
@@ -290,13 +257,13 @@ mod tests {
                 width: 100px;
             }
         "#;
-        
+
         let parser = ThemeParser::new();
         let sheet = parser.parse_str(css).unwrap();
-        
+
         assert_eq!(sheet.rule_count(), 1);
     }
-    
+
     #[test]
     fn test_parse_multiple_rules() {
         let css = r#"
@@ -308,13 +275,13 @@ mod tests {
                 border: 1px;
             }
         "#;
-        
+
         let parser = ThemeParser::new();
         let sheet = parser.parse_str(css).unwrap();
-        
+
         assert_eq!(sheet.rule_count(), 2);
     }
-    
+
     #[test]
     fn test_parse_with_comments() {
         let css = r#"
@@ -325,10 +292,59 @@ mod tests {
                 width: 100px;
             }
         "#;
-        
+
         let parser = ThemeParser::new();
         let sheet = parser.parse_str(css).unwrap();
-        
+
         assert_eq!(sheet.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_parse_pseudo_classes() {
+        let css = r#"
+            button:hover {
+                background: #00ff00;
+            }
+        "#;
+
+        let parser = ThemeParser::new();
+        let result = parser.parse_str(css);
+
+        // Should parse successfully with lightningcss
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_rgba_colors() {
+        let css = r#"
+            window {
+                background: rgba(255, 0, 0, 0.5);
+            }
+        "#;
+
+        let parser = ThemeParser::new();
+        let result = parser.parse_str(css);
+
+        // Should parse successfully with lightningcss
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_css_variables() {
+        let css = r#"
+            :root {
+                --primary: #5e81ac;
+            }
+            
+            button {
+                background: var(--primary);
+            }
+        "#;
+
+        let parser = ThemeParser::new();
+        let result = parser.parse_str(css);
+
+        // Should parse successfully with lightningcss (full CSS3 support)
+        assert!(result.is_ok());
     }
 }

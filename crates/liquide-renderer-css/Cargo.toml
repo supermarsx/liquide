@@ -1,22 +1,17 @@
 [package]
-name = "liquide-renderer-cpu"
+name = "liquide-renderer-css"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "CSS-to-renderer style translation middleware for Liquide"
 
 [dependencies]
-liquide-common.workspace = true
 liquide-compositor.workspace = true
-liquide-renderer-css.workspace = true
 liquide-theme-css.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]
-criterion.workspace = true
-
-[[bench]]
-name = "renderer_bench"
-harness = false

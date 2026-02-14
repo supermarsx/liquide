@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 
 use liquide_compositor::geometry::{Point, Rect};
-use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{
     CursorShape, DecorationButtons, NodeProperties, ResizeDirection, SceneNode, SceneNodeKind,
 };
@@ -1212,7 +1211,7 @@ impl Shell {
             let z_content = window.z_order as u32 * 10 + 3;
 
             // Background fill for the content area.
-            let content_bg = liquide_compositor::pixel::Color::new(35, 35, 40, 255);
+            let content_bg = theme.window_content_background;
             ws_node.add_child(solid_rect(
                 win_base + 2,
                 content_bg,
@@ -1273,7 +1272,7 @@ impl Shell {
                     // Separator
                     root.add_child(scene_builder::solid_rect(
                         NODE_APP_MENU + 100 + i as u64,
-                        Color::new(255, 255, 255, 40),
+                        theme.menu_separator,
                         Rect::new(menu_x + 8.0, iy + item_h / 2.0, menu_w - 16.0, 1.0),
                         996,
                     ));
@@ -1471,7 +1470,7 @@ impl Shell {
                 for (i, cat) in categories.iter().enumerate() {
                     let iy = cy + 60.0 + i as f32 * 32.0;
                     // Sidebar item background
-                    let item_bg = liquide_compositor::pixel::Color::new(45, 45, 55, 200);
+                    let item_bg = theme.app_settings_sidebar_item;
                     parent.add_child(solid_rect(
                         win_base + 5 + i as u64,
                         item_bg,
@@ -1490,12 +1489,12 @@ impl Shell {
             }
             "com.liquide.terminal" => {
                 // Dark terminal background
-                let term_bg = liquide_compositor::pixel::Color::new(20, 20, 25, 255);
+                let term_bg = theme.app_terminal_background;
                 parent.add_child(solid_rect(win_base + 3, term_bg, content, z + 1));
                 parent.add_child(text_node(
                     win_base + 4,
                     "user@liquide:~$".into(),
-                    liquide_compositor::pixel::Color::new(100, 220, 100, 255),
+                    theme.app_terminal_text,
                     Rect::new(cx + 12.0, cy + 12.0, cw - 24.0, 20.0),
                     z + 2,
                     1,
@@ -1539,7 +1538,7 @@ impl Shell {
             }
             "com.liquide.browser" => {
                 // URL bar
-                let bar_bg = liquide_compositor::pixel::Color::new(55, 55, 65, 255);
+                let bar_bg = theme.app_browser_urlbar;
                 parent.add_child(solid_rect(
                     win_base + 3,
                     bar_bg,

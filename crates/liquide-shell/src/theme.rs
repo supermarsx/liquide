@@ -81,6 +81,8 @@ pub struct ShellTheme {
     // Context / session menus
     /// Hover highlight color for context and session menu items.
     pub menu_item_hover: Color,
+    /// Background color for menu separators.
+    pub menu_separator: Color,
 
     // Loading overlay
     /// Full-screen loading overlay tint.
@@ -89,6 +91,20 @@ pub struct ShellTheme {
     pub loading_glass_tint: Color,
     /// Text color for loading messages.
     pub loading_text: Color,
+
+    // Window content
+    /// Generic window content background color.
+    pub window_content_background: Color,
+
+    // App-specific colors
+    /// Settings app sidebar item background.
+    pub app_settings_sidebar_item: Color,
+    /// Terminal app background.
+    pub app_terminal_background: Color,
+    /// Terminal app text color.
+    pub app_terminal_text: Color,
+    /// Browser app URL bar background.
+    pub app_browser_urlbar: Color,
 }
 
 impl ShellTheme {
@@ -200,6 +216,7 @@ impl ShellTheme {
             ),
             cursor_color: Color::new(255, 255, 255, 255),
             menu_item_hover: Color::new(255, 255, 255, 30),
+            menu_separator: Color::new(255, 255, 255, 40),
             loading_overlay: Color::new(0, 0, 0, 180),
             loading_glass_tint: Color::new(
                 c.surface.r.saturating_add(7),
@@ -208,6 +225,36 @@ impl ShellTheme {
                 220,
             ),
             loading_text: Color::new(c.foreground.r, c.foreground.g, c.foreground.b, 255),
+            window_content_background: Color::new(
+                c.surface.r.saturating_sub(10),
+                c.surface.g.saturating_sub(10),
+                c.surface.b.saturating_sub(10),
+                255,
+            ),
+            app_settings_sidebar_item: Color::new(
+                c.surface.r.saturating_add(10),
+                c.surface.g.saturating_add(10),
+                c.surface.b.saturating_add(15),
+                200,
+            ),
+            app_terminal_background: Color::new(
+                c.background.r.saturating_sub(15),
+                c.background.g.saturating_sub(15),
+                c.background.b.saturating_sub(20),
+                255,
+            ),
+            app_terminal_text: Color::new(
+                c.success.r.max(100),
+                c.success.g.max(220),
+                c.success.b.max(100),
+                255,
+            ),
+            app_browser_urlbar: Color::new(
+                c.surface.r.saturating_add(20),
+                c.surface.g.saturating_add(20),
+                c.surface.b.saturating_add(30),
+                255,
+            ),
         }
     }
 
@@ -216,12 +263,7 @@ impl ShellTheme {
         let c = &theme.colors;
         Self {
             desktop_background: Color::new(140, 180, 220, 255),
-            window_title_bar_focused: Color::new(
-                c.surface.r,
-                c.surface.g,
-                c.surface.b,
-                245,
-            ),
+            window_title_bar_focused: Color::new(c.surface.r, c.surface.g, c.surface.b, 245),
             window_title_bar_unfocused: Color::new(
                 c.background.r.saturating_sub(10),
                 c.background.g.saturating_sub(10),
@@ -232,12 +274,7 @@ impl ShellTheme {
             window_border_focused: Color::new(c.primary.r, c.primary.g, c.primary.b, 200),
             window_border_unfocused: Color::new(c.border.r, c.border.g, c.border.b, 150),
             window_shadow: Color::new(0, 0, 0, 40),
-            window_glass_tint: Color::new(
-                c.surface.r,
-                c.surface.g,
-                c.surface.b,
-                180,
-            ),
+            window_glass_tint: Color::new(c.surface.r, c.surface.g, c.surface.b, 180),
             dock_glass_tint: Color::new(240, 240, 240, 200),
             dock_border: Color::new(200, 200, 205, 120),
             dock_item_active: Color::new(c.primary.r, c.primary.g, c.primary.b, 200),
@@ -259,9 +296,40 @@ impl ShellTheme {
             notification_glass_tint: Color::new(248, 248, 252, 230),
             cursor_color: Color::new(0, 0, 0, 255),
             menu_item_hover: Color::new(0, 0, 0, 20),
+            menu_separator: Color::new(0, 0, 0, 30),
             loading_overlay: Color::new(255, 255, 255, 160),
             loading_glass_tint: Color::new(245, 245, 245, 230),
             loading_text: Color::new(c.foreground.r, c.foreground.g, c.foreground.b, 255),
+            window_content_background: Color::new(
+                c.surface.r.saturating_sub(5),
+                c.surface.g.saturating_sub(5),
+                c.surface.b.saturating_sub(5),
+                255,
+            ),
+            app_settings_sidebar_item: Color::new(
+                c.surface.r.saturating_add(10),
+                c.surface.g.saturating_add(10),
+                c.surface.b.saturating_add(10),
+                200,
+            ),
+            app_terminal_background: Color::new(
+                c.background.r.saturating_sub(30),
+                c.background.g.saturating_sub(30),
+                c.background.b.saturating_sub(30),
+                255,
+            ),
+            app_terminal_text: Color::new(
+                c.success.r.saturating_sub(50),
+                c.success.g.saturating_sub(20),
+                c.success.b.saturating_sub(50),
+                255,
+            ),
+            app_browser_urlbar: Color::new(
+                c.surface.r.saturating_sub(15),
+                c.surface.g.saturating_sub(15),
+                c.surface.b.saturating_sub(15),
+                255,
+            ),
         }
     }
 
@@ -314,11 +382,21 @@ impl ShellTheme {
             // Cursor
             cursor_color: Color::new(255, 255, 255, 255),
             menu_item_hover: Color::new(255, 255, 255, 40),
+            menu_separator: Color::new(255, 255, 255, 40),
 
             // Loading overlay
             loading_overlay: Color::new(0, 0, 0, 180),
             loading_glass_tint: Color::new(40, 40, 50, 220),
             loading_text: Color::new(220, 220, 220, 255),
+
+            // Window content
+            window_content_background: Color::new(35, 35, 40, 255),
+
+            // App-specific
+            app_settings_sidebar_item: Color::new(45, 45, 55, 200),
+            app_terminal_background: Color::new(20, 20, 25, 255),
+            app_terminal_text: Color::new(100, 220, 100, 255),
+            app_browser_urlbar: Color::new(55, 55, 65, 255),
         }
     }
 
@@ -371,11 +449,21 @@ impl ShellTheme {
             // Cursor
             cursor_color: Color::new(0, 0, 0, 255),
             menu_item_hover: Color::new(0, 0, 0, 20),
+            menu_separator: Color::new(0, 0, 0, 30),
 
             // Loading overlay
             loading_overlay: Color::new(255, 255, 255, 160),
             loading_glass_tint: Color::new(245, 245, 245, 230),
             loading_text: Color::new(40, 40, 40, 255),
+
+            // Window content
+            window_content_background: Color::new(250, 250, 252, 255),
+
+            // App-specific
+            app_settings_sidebar_item: Color::new(240, 240, 245, 200),
+            app_terminal_background: Color::new(230, 230, 235, 255),
+            app_terminal_text: Color::new(40, 120, 40, 255),
+            app_browser_urlbar: Color::new(235, 235, 240, 255),
         }
     }
 }

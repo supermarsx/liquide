@@ -15,6 +15,7 @@ members = [
     "crates/liquide-compositor",
     "crates/liquide-renderer-cpu",
     "crates/liquide-renderer-gpu",
+    "crates/liquide-renderer-css",
     "crates/liquide-render-coordinator",
     "crates/liquide-encoder",
     "crates/liquide-encoder-hw",
@@ -139,6 +140,8 @@ liquide-policy = { path = "crates/liquide-policy" }
 liquide-compositor = { path = "crates/liquide-compositor" }
 liquide-renderer-cpu = { path = "crates/liquide-renderer-cpu" }
 liquide-renderer-gpu = { path = "crates/liquide-renderer-gpu" }
+liquide-renderer-css = { path = "crates/liquide-renderer-css" }
+liquide-theme-css = { path = "crates/liquide-theme-css" }
 liquide-encoder = { path = "crates/liquide-encoder" }
 liquide-encoder-hw = { path = "crates/liquide-encoder-hw" }
 liquide-css = { path = "crates/liquide-css" }
