@@ -108,6 +108,30 @@ impl SoftwareRenderer {
         }
     }
 
+    /// Create a renderer with a pre-loaded font database for real TrueType rendering.
+    #[must_use]
+    pub fn with_font_db(font_db: liquide_font_rasterizer::database::FontDatabase) -> Self {
+        Self {
+            srgb_lut: SrgbLut::new(),
+            glyph_atlas: GlyphAtlas::new(2048, 2048),
+            effect_params: EffectParams::for_profile(
+                liquide_compositor::effects::QualityProfile::Balanced,
+            ),
+            blur_enabled: true,
+            avg_render_ms: 0.0,
+            blur_budget_ms: 16.0,
+            blur_worker: BlurWorker::new(),
+            shadow_cache: HashMap::new(),
+            font_worker: FontWorker::with_font_db(font_db),
+            layout_cache: LayoutCacheManager::new(),
+            texture_cache: TextureCache::new(),
+            dirty_rects: DirtyRectManager::new(1920, 1080),
+            lod_manager: LodManager::new(1920.0, 1080.0),
+            buffer_pool: ObjectPool::new(64),
+            skeleton_window: None,
+        }
+    }
+
     /// Access the glyph atlas.
     #[must_use]
     pub fn glyph_atlas(&self) -> &GlyphAtlas {
@@ -1020,25 +1044,44 @@ impl SoftwareRenderer {
             // Root and Workspace are structural, not visual
             SceneNodeKind::Root | SceneNodeKind::Workspace { .. } => {}
 
-            SceneNodeKind::Text { text, color, scale } => {
+            SceneNodeKind::Text { text, color, scale, font_family, font_size, font_weight, letter_spacing, line_height: _line_height } => {
                 let mut c = *color;
                 if opacity < 1.0 {
                     c.a = (c.a as f32 * opacity + 0.5) as u8;
                 }
 
-                // Calculate target glyph height from scale.
-                // scale=1 → 16px (base), scale=2 → 32px, etc.
-                let glyph_height = 16 * scale.max(&1);
+                // Determine effective glyph height:
+                //  - If font_size > 0, use that directly as the pixel height.
+                //  - Otherwise fall back to scale-based sizing (scale=1 → 16px).
+                let glyph_height = if *font_size > 0.0 {
+                    (*font_size).round() as u32
+                } else {
+                    16 * scale.max(&1)
+                };
 
-                // Try atlas-based antialiased rendering first.
-                let font_id = 0_u32; // built-in bitmap font
+                // Encode font_weight and letter_spacing into the font_id
+                // so the glyph atlas can differentiate bold vs regular.
+                // Bit layout: [unused:8][weight:8][family_hash:16]
+                let family_hash = if font_family.is_empty() {
+                    0_u32
+                } else {
+                    // Simple hash of the family name for atlas key purposes.
+                    let mut h: u32 = 5381;
+                    for b in font_family.bytes() {
+                        h = h.wrapping_mul(33).wrapping_add(b as u32);
+                    }
+                    h & 0xFFFF
+                };
+                let font_id = (((*font_weight as u32) & 0xFF) << 16) | family_hash;
+
                 let size_px = glyph_height as u16;
                 let mut pen_x = bounds.x;
                 let pen_y = bounds.y;
                 let mut all_in_atlas = true;
 
                 // First pass: check which glyphs are in the atlas, request
-                // missing ones from the font worker.
+                // missing ones from the font worker (with font family/weight
+                // so the worker can use real TrueType rasterization).
                 for ch in text.chars() {
                     if ch == '\n' || ch == '\r' {
                         continue;
@@ -1052,7 +1095,13 @@ impl SoftwareRenderer {
                     };
                     if self.glyph_atlas.get(&key).is_none() {
                         all_in_atlas = false;
-                        self.font_worker.request_glyph(key, ch, glyph_height);
+                        self.font_worker.request_glyph_with_font(
+                            key,
+                            ch,
+                            glyph_height,
+                            font_family.clone(),
+                            *font_weight,
+                        );
                     }
                 }
 
@@ -1074,7 +1123,7 @@ impl SoftwareRenderer {
                                 pen_y + glyph_height as f32,
                             );
                             self.glyph_atlas.blit_glyph(fb, &cached, pos, c);
-                            pen_x += cached.advance;
+                            pen_x += cached.advance + *letter_spacing;
                         }
                     }
                 } else {
@@ -1097,6 +1146,15 @@ impl SoftwareRenderer {
                 }
                 crate::icons::draw_icon(fb, *icon_id, bounds, c, &self.srgb_lut);
             }
+
+            // New scene node kinds added for advanced rendering — handled
+            // as no-ops in the CPU renderer for now; real implementations
+            // would delegate to specialised drawing routines.
+            SceneNodeKind::RenderLayer { .. }
+            | SceneNodeKind::ClipPath { .. }
+            | SceneNodeKind::Filter { .. }
+            | SceneNodeKind::Image { .. }
+            | SceneNodeKind::GradientFill { .. } => {}
         }
     }
 

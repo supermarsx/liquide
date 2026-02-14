@@ -13,6 +13,8 @@ path = "src/lib.rs"
 
 [dependencies]
 liquide-compositor = { path = "../liquide-compositor" }
+liquide-font-rasterizer = { path = "../liquide-font-rasterizer" }
+liquide-text-engine = { path = "../liquide-text-engine" }
 liquide-theme-css = { path = "../liquide-theme-css" }
 serde.workspace = true
 thiserror.workspace = true

@@ -383,6 +383,11 @@ impl ContextMenu {
                     text: item.label.clone(),
                     color: label_color,
                     scale: 1,
+                    font_family: String::new(),
+                    font_size: 0.0,
+                    font_weight: 400,
+                    letter_spacing: 0.0,
+                    line_height: 1.4,
                 },
                 NodeProperties::new(Rect::new(
                     text_x,
@@ -402,6 +407,11 @@ impl ContextMenu {
                         text: hint.clone(),
                         color: hint_color,
                         scale: 1,
+                        font_family: String::new(),
+                        font_size: 0.0,
+                        font_weight: 400,
+                        letter_spacing: 0.0,
+                        line_height: 1.4,
                     },
                     NodeProperties::new(Rect::new(
                         bounds.width - 80.0,

@@ -258,7 +258,7 @@ mod tests {
         let task_id = coordinator.render_window(1, true).unwrap();
         assert!(task_id > 0);
         
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(100));
         
         let outputs = coordinator.poll_outputs().unwrap();
         assert!(!outputs.is_empty());

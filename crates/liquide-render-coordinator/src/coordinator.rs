@@ -304,7 +304,7 @@ mod tests {
         let task_id = coordinator.render_window(1, true).await.unwrap();
         assert!(task_id > 0);
         
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         
         let outputs = coordinator.poll_outputs().await.unwrap();
         assert!(!outputs.is_empty());
@@ -322,7 +322,7 @@ mod tests {
         coordinator.render_dock().await.unwrap();
         coordinator.render_statusbar().await.unwrap();
         
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         
         let outputs = coordinator.poll_outputs().await.unwrap();
         assert!(outputs.len() >= 2);

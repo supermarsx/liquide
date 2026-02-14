@@ -9,7 +9,9 @@ rust-version.workspace = true
 [dependencies]
 liquide-common.workspace = true
 liquide-compositor.workspace = true
+liquide-font-rasterizer.workspace = true
 liquide-renderer-css.workspace = true
+liquide-text-engine.workspace = true
 liquide-theme-css.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

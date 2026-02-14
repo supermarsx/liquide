@@ -104,6 +104,104 @@ impl Default for GlassParams {
     }
 }
 
+/// Kind of clip path for `SceneNodeKind::ClipPath`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ClipPathKind {
+    /// Circular clip.
+    Circle {
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+    },
+    /// Rounded rectangle clip.
+    RoundedRect { corner_radius: f32 },
+    /// Ellipse clip.
+    Ellipse {
+        center_x: f32,
+        center_y: f32,
+        rx: f32,
+        ry: f32,
+    },
+    /// Polygon clip (list of vertices).
+    Polygon { points: Vec<(f32, f32)> },
+}
+
+/// Post-processing filter specification for `SceneNodeKind::Filter`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FilterSpec {
+    /// Gaussian blur.
+    Blur { radius: f32 },
+    /// Brightness adjustment (1.0 = normal).
+    Brightness(f32),
+    /// Contrast adjustment (1.0 = normal).
+    Contrast(f32),
+    /// Saturation adjustment (0.0 = grayscale, 1.0 = normal).
+    Saturate(f32),
+    /// Hue rotation in degrees.
+    HueRotate(f32),
+    /// Grayscale conversion.
+    Grayscale,
+    /// Sepia tone.
+    Sepia,
+    /// Color inversion.
+    Invert,
+    /// Drop shadow.
+    DropShadow {
+        offset_x: f32,
+        offset_y: f32,
+        blur: f32,
+        color: Color,
+    },
+    /// Opacity (multiplies existing alpha).
+    Opacity(f32),
+}
+
+/// Image fit mode for `SceneNodeKind::Image`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImageFit {
+    /// Scale to fill bounds, preserving aspect ratio (may crop).
+    Cover,
+    /// Scale to fit within bounds, preserving aspect ratio (may letterbox).
+    Contain,
+    /// Stretch to exactly fill bounds (may distort).
+    Fill,
+    /// No scaling — display at natural size.
+    None,
+}
+
+/// Gradient specification for `SceneNodeKind::GradientFill`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GradientSpec {
+    /// Linear gradient from start to end point (normalized 0..1).
+    Linear {
+        start_x: f32,
+        start_y: f32,
+        end_x: f32,
+        end_y: f32,
+        stops: Vec<(f32, Color)>,
+    },
+    /// Radial gradient from center outward.
+    Radial {
+        center_x: f32,
+        center_y: f32,
+        radius: f32,
+        stops: Vec<(f32, Color)>,
+    },
+    /// Conic (sweep) gradient around a center point.
+    Conic {
+        center_x: f32,
+        center_y: f32,
+        start_angle: f32,
+        stops: Vec<(f32, Color)>,
+    },
+    /// Mesh gradient using a grid of color patches.
+    Mesh {
+        rows: u32,
+        cols: u32,
+        colors: Vec<Color>,
+    },
+}
+
 /// Window decoration button visibility state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecorationButtons {
@@ -244,7 +342,7 @@ pub struct SurfaceBuffer {
 pub use liquide_cursor::{CursorShape as NewCursorShape, ResizeDirection};
 
 /// Legacy cursor shape enum for backward compatibility.
-/// 
+///
 /// **Deprecated**: Use `liquide_cursor::CursorShape` directly.
 /// This enum provides compatibility with existing code but will be removed in a future version.
 #[deprecated(since = "0.1.0", note = "use liquide_cursor::CursorShape instead")]
@@ -375,14 +473,44 @@ pub enum SceneNodeKind {
     ShellLayer,
     /// Software cursor with context-sensitive shape.
     Cursor { shape: CursorShape },
-    /// Text label rendered with the built-in bitmap font.
+    /// Text label rendered with the font system.
+    ///
+    /// When `font_family` is empty, the renderer falls back to the built-in
+    /// bitmap font with the given `scale`.  Otherwise the font rasterizer
+    /// resolves the family name and renders real TrueType glyphs.
     Text {
         text: String,
         color: Color,
+        /// Legacy scale factor (1 = 16px base). Used when font_family is empty.
         scale: u32,
+        /// Font family name (e.g. "Manrope", "Inter"). Empty = bitmap fallback.
+        font_family: String,
+        /// Font size in logical pixels (e.g. 14.0). 0 = use scale-based sizing.
+        font_size: f32,
+        /// Font weight (100–900, 400 = Regular, 700 = Bold).
+        font_weight: u16,
+        /// Letter-spacing adjustment in pixels.
+        letter_spacing: f32,
+        /// Line-height multiplier (1.0 = tight, 1.5 = comfortable).
+        line_height: f32,
     },
     /// Built-in vector icon rendered at the node bounds.
     Icon { icon_id: u32, color: Color },
+    /// Isolated render layer with custom blend mode (for compositing groups).
+    RenderLayer { blend_mode: String, isolate: bool },
+    /// Arbitrary clip path (circle, rounded rect, or polygon).
+    ClipPath { clip_kind: ClipPathKind },
+    /// Post-processing filter chain applied to children.
+    Filter { filters: Vec<FilterSpec> },
+    /// Decoded image content (PNG, BMP, etc.).
+    Image {
+        image_id: u64,
+        width: u32,
+        height: u32,
+        fit: ImageFit,
+    },
+    /// Gradient fill across the node bounds.
+    GradientFill { gradient: GradientSpec },
     /// Lock screen overlay.
     LockScreen,
     /// Emergency crash overlay.

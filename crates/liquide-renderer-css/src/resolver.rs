@@ -132,6 +132,25 @@ impl StyleResolver {
             style.line_height = Some(lh);
         }
 
+        // Font family — extract the first family name from the CSS value.
+        if let Some(family_val) = props.get("font-family") {
+            if let Some(family_str) = family_val.as_string() {
+                // CSS font-family may be a comma-separated list; take first.
+                let first = family_str
+                    .split(',')
+                    .next()
+                    .unwrap_or(family_str)
+                    .trim()
+                    .trim_matches(|c| c == '\'' || c == '"');
+                style.font_family = Some(first.to_string());
+            }
+        }
+
+        // Letter-spacing
+        if let Some(ls) = self.get_length(&props, "letter-spacing") {
+            style.letter_spacing = Some(ls);
+        }
+
         // Layout
         if let Some(z) = self.get_number(&props, "z-index") {
             style.z_index = z as i32;

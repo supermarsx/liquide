@@ -1,0 +1,18 @@
+[package]
+name = "liquide-font-rasterizer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "TrueType/OpenType font loading, shaping, and glyph rasterization bridge for the Liquide renderer"
+
+[dependencies]
+liquide-fonts.workspace = true
+liquide-text-engine.workspace = true
+ab_glyph.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+
+[dev-dependencies]

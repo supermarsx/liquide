@@ -13,18 +13,24 @@ pub(crate) mod blur_worker;
 pub mod color;
 pub mod dirty_rects;
 pub mod effects;
+pub mod filter;
 pub(crate) mod font_worker;
 pub mod glyph;
 pub mod icons;
+pub mod image_decode;
 pub mod layout_cache;
 pub mod lod;
+pub mod nine_patch;
 pub mod object_pool;
 pub mod path;
+pub mod pattern;
 pub mod rasterizer;
 pub mod renderer;
+pub mod text_layout;
 pub mod texture_cache;
 
 pub use renderer::{Renderer, SoftwareRenderer};
+pub use text_layout::TextLayoutEngine;
 
 use thiserror::Error;
 

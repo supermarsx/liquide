@@ -1,0 +1,18 @@
+[package]
+name = "liquide-text-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Complete text rendering stack: shaping, rasterization, bidi, line breaking, selection, and editing"
+
+[lib]
+name = "liquide_text_engine"
+path = "src/lib.rs"
+
+[dependencies]
+liquide-compositor = { path = "../liquide-compositor" }
+serde.workspace = true
+tracing.workspace = true
+thiserror.workspace = true

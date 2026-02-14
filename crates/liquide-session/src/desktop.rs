@@ -1072,6 +1072,11 @@ fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
         SceneNodeKind::LockScreen => "LockScreen",
         SceneNodeKind::CrashScreen => "CrashScreen",
         SceneNodeKind::Workspace { .. } => "Workspace",
+        SceneNodeKind::RenderLayer { .. } => "RenderLayer",
+        SceneNodeKind::ClipPath { .. } => "ClipPath",
+        SceneNodeKind::Filter { .. } => "Filter",
+        SceneNodeKind::Image { .. } => "Image",
+        SceneNodeKind::GradientFill { .. } => "GradientFill",
     }
 }
 

@@ -11,26 +11,50 @@
 //! - **ProgressBar** — determinate/indeterminate progress indicator.
 //! - **Separator** — horizontal or vertical divider.
 //! - **ScrollView** — scrollable container.
+//! - **ListView** — virtualized list for large datasets.
+//! - **TreeView** — hierarchical tree with expand/collapse.
+//! - **TableView** — sortable, resizable data table.
+//! - **Menu** — menu bar, popup/context menus.
+//! - **TabView** — tabbed container.
+//! - **Toolbar** — tool button strip.
+//! - **Splitter** — resizable split panes.
+//! - **Spinner** — loading indicator.
 
 pub mod button;
 pub mod checkbox;
 pub mod dropdown;
 pub mod label;
+pub mod list_view;
+pub mod menu;
 pub mod progress;
 pub mod scroll_view;
 pub mod separator;
 pub mod slider;
+pub mod spinner;
+pub mod splitter;
+pub mod tab_view;
+pub mod table_view;
 pub mod text_area;
 pub mod text_input;
+pub mod toolbar;
+pub mod tree_view;
 
 // Re-exports
 pub use button::{Button, ButtonStyle, ButtonVariant};
 pub use checkbox::Checkbox;
 pub use dropdown::{Dropdown, DropdownItem};
 pub use label::Label;
+pub use list_view::{ListView, ListItem, SelectionMode, RowHeightMode};
+pub use menu::{MenuBar, MenuItem, ContextMenu, MenuItemId, Shortcut};
 pub use progress::ProgressBar;
 pub use scroll_view::ScrollView;
 pub use separator::Separator;
 pub use slider::Slider;
+pub use spinner::Spinner;
+pub use splitter::{Splitter, SplitPane, SplitDirection, PaneSize};
+pub use tab_view::{TabView, Tab, TabId, TabPosition};
+pub use table_view::{TableView, Column, TableRow, CellValue, SortDirection};
 pub use text_area::TextArea;
 pub use text_input::TextInput;
+pub use toolbar::{Toolbar, ToolItem, ToolItemId};
+pub use tree_view::{TreeView, TreeNode, NodeId};

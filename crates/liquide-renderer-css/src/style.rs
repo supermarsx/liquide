@@ -40,8 +40,10 @@ pub struct RenderStyle {
 
     // Text
     pub text_color: Option<Color>,
+    pub font_family: Option<String>,
     pub font_size: Option<f32>,
     pub font_weight: Option<u16>,
+    pub letter_spacing: Option<f32>,
     pub line_height: Option<f32>,
 
     // Layout
@@ -115,8 +117,10 @@ impl Default for RenderStyle {
             shadow: None,
             transform: TransformStyle::default(),
             text_color: None,
+            font_family: None,
             font_size: None,
             font_weight: None,
+            letter_spacing: None,
             line_height: None,
             z_index: 0,
             visibility: true,

@@ -75,6 +75,26 @@ members = [
     "crates/liquide-ctl",
     "crates/liquide-telemetry-viewer",
 
+    # Text engine
+    "crates/liquide-text-engine",
+
+    # IME & drag-drop
+    "crates/liquide-ime",
+    "crates/liquide-dnd",
+
+    # Platform bridges
+    "crates/liquide-bridge-gtk",
+    "crates/liquide-bridge-qt",
+
+    # Threaded rendering
+    "crates/liquide-render-thread",
+
+    # Font rasterizer bridge
+    "crates/liquide-font-rasterizer",
+
+    # Win32 platform integration
+    "crates/liquide-platform-win32",
+
     # Testing & benchmarking
     "crates/liquide-bench",
     "crates/liquide-conformance",
@@ -140,6 +160,10 @@ clap_complete = "4"
 # Directories
 dirs = "6"
 
+# Font rendering
+ab_glyph = "0.2"
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_Shell"] }
+
 # Testing
 criterion = { version = "0.5", features = ["html_reports"] }
 
@@ -187,6 +211,14 @@ liquide-bench = { path = "crates/liquide-bench" }
 liquide-conformance = { path = "crates/liquide-conformance" }
 liquide-render-coordinator = { path = "crates/liquide-render-coordinator" }
 liquide-cursor-vector = { path = "crates/liquide-cursor-vector" }
+liquide-text-engine = { path = "crates/liquide-text-engine" }
+liquide-ime = { path = "crates/liquide-ime" }
+liquide-dnd = { path = "crates/liquide-dnd" }
+liquide-bridge-gtk = { path = "crates/liquide-bridge-gtk" }
+liquide-bridge-qt = { path = "crates/liquide-bridge-qt" }
+liquide-render-thread = { path = "crates/liquide-render-thread" }
+liquide-font-rasterizer = { path = "crates/liquide-font-rasterizer" }
+liquide-platform-win32 = { path = "crates/liquide-platform-win32" }
 
 [profile.dev]
 opt-level = 0

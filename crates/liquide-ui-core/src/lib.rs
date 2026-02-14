@@ -15,8 +15,10 @@ pub mod focus;
 pub mod id;
 pub mod layout;
 pub mod painter;
+pub mod scene_bridge;
 pub mod style;
 pub mod text;
+pub mod text_service;
 pub mod theme;
 pub mod theme_manager;
 pub mod widget;
@@ -24,15 +26,21 @@ pub mod widget;
 // Re-exports
 pub use callback::{Callback, CallbackId};
 pub use color::UiColor;
-pub use constraints::Constraints;
+pub use constraints::{BoxEdges, Constraints, SizeValue};
 pub use event::{Event, EventResponse, Key, Modifiers, MouseButton};
 pub use focus::{FocusChain, FocusDirection, FocusId};
 pub use id::WidgetId;
 pub use layout::{Alignment, Direction, LayoutNode, LayoutResult, Padding, Spacing};
 pub use painter::{PaintCommand, Painter};
+pub use scene_bridge::SceneBridge;
 pub use style::{BorderStyle, BoxShadow, StyleSheet};
 pub use text::{FontMetrics, TextMeasure};
-pub use theme::{ThemeColors, ThemeMode, UiTheme};
+pub use text_service::TextService;
+pub use theme::{
+    EasingCurve, ElementStateStyle, ElementTheme, ElevationToken, FontToken,
+    InteractionState, ThemeColors, ThemeElevation, ThemeFonts, ThemeMode,
+    ThemeMotion, UiTheme, WidgetThemes,
+};
 pub use theme_manager::{ThemeConfig, ThemeManager, ThemePreset};
 pub use widget::{EventResult, Widget, WidgetLifecycle, WidgetState};
 

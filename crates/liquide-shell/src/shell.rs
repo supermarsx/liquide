@@ -178,6 +178,9 @@ pub struct Shell {
     status_bar_visible: bool,
     /// Active app menu dropdown (app_id).
     app_menu_open: Option<String>,
+    /// Win32 window → dock integration (polls Win32 windows into dock items).
+    #[cfg(windows)]
+    win32_dock: crate::win32_dock::Win32DockIntegration,
 }
 
 impl Shell {
@@ -242,6 +245,8 @@ impl Shell {
             cursor_shape: CursorShape::Arrow,
             status_bar_visible: true,
             app_menu_open: None,
+            #[cfg(windows)]
+            win32_dock: crate::win32_dock::Win32DockIntegration::new(),
         }
     }
 
@@ -299,6 +304,8 @@ impl Shell {
             cursor_shape: CursorShape::Arrow,
             status_bar_visible: true,
             app_menu_open: None,
+            #[cfg(windows)]
+            win32_dock: crate::win32_dock::Win32DockIntegration::new(),
         }
     }
 
@@ -828,6 +835,15 @@ impl Shell {
     /// Get the dock mutably.
     pub fn dock_mut(&mut self) -> &mut Dock {
         &mut self.dock
+    }
+
+    /// Poll Win32 windows and update the dock with running desktop apps.
+    ///
+    /// Call periodically (e.g. every 500ms) to keep the dock synchronized
+    /// with running Windows applications like Chrome, VS Code, etc.
+    #[cfg(windows)]
+    pub fn poll_win32_apps(&mut self) {
+        self.win32_dock.poll(&mut self.dock);
     }
 
     /// Get the status bar.

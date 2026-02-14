@@ -4,10 +4,10 @@
 //! thread, producing antialiased alpha bitmaps that are inserted into the
 //! renderer's [`GlyphAtlas`].
 //!
-//! The built-in 8×16 bitmap font is used as the source glyph data.  Glyphs
-//! are upscaled to the requested pixel size via 4× supersampled rendering
-//! with box-filter downsampling, producing smooth antialiased edges at any
-//! size — from tiny 10px UI labels to large 32px title text.
+//! When a [`FontDatabase`] is provided, glyphs are rasterized using real
+//! TrueType/OpenType outlines via `ab_glyph`.  When no matching font face
+//! can be resolved, the worker falls back to the built-in 8×16 bitmap font
+//! with 4× supersampled box-filter downsampling.
 //!
 //! # Architecture
 //!
@@ -25,8 +25,11 @@
 //! results into the glyph atlas.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
+
+use liquide_font_rasterizer::database::FontDatabase;
+use liquide_font_rasterizer::rasterize::{GlyphRasterizer, RasterConfig};
 
 use crate::bitmap_font::BitmapFont;
 use crate::glyph::{GlyphKey, GlyphMetrics};
@@ -42,6 +45,10 @@ struct GlyphRequest {
     codepoint: char,
     /// Target glyph height in pixels.
     target_height: u32,
+    /// Font family name (empty = bitmap fallback).
+    font_family: String,
+    /// Font weight (100–900).
+    font_weight: u16,
 }
 
 /// A completed rasterized glyph returned from the worker.
@@ -64,8 +71,9 @@ enum WorkerMsg {
 
 /// Manages a background thread that rasterizes glyphs asynchronously.
 ///
-/// Glyphs are rendered by upscaling the 8×16 bitmap font source data at 4×
-/// resolution and box-filter downsampling to produce antialiased alpha maps.
+/// Uses TrueType/OpenType fonts via `GlyphRasterizer` when available,
+/// falling back to the built-in 8×16 bitmap font with 4× supersampled
+/// box-filter downsampling.
 pub(crate) struct FontWorker {
     /// Channel to send requests to the worker thread.
     request_tx: mpsc::Sender<WorkerMsg>,
@@ -75,17 +83,27 @@ pub(crate) struct FontWorker {
     handle: Option<JoinHandle<()>>,
     /// Set of glyph keys currently being processed (avoid duplicate requests).
     pending: HashSet<GlyphKey>,
+    /// Shared font database — also held by the worker thread.
+    font_db: Arc<Mutex<FontDatabase>>,
 }
 
 impl FontWorker {
     /// Spawn the background font rasterization worker thread.
     pub fn new() -> Self {
+        Self::with_font_db(FontDatabase::new())
+    }
+
+    /// Spawn the worker with a pre-loaded font database.
+    pub fn with_font_db(db: FontDatabase) -> Self {
+        let font_db = Arc::new(Mutex::new(db));
+        let db_clone = Arc::clone(&font_db);
+
         let (req_tx, req_rx) = mpsc::channel::<WorkerMsg>();
         let (res_tx, res_rx) = mpsc::channel::<RasterizedGlyph>();
 
         let handle = thread::Builder::new()
             .name("font-worker".into())
-            .spawn(move || Self::worker_loop(req_rx, res_tx))
+            .spawn(move || Self::worker_loop(req_rx, res_tx, db_clone))
             .expect("failed to spawn font worker thread");
 
         Self {
@@ -93,6 +111,7 @@ impl FontWorker {
             result_rx: res_rx,
             handle: Some(handle),
             pending: HashSet::new(),
+            font_db,
         }
     }
 
@@ -100,6 +119,18 @@ impl FontWorker {
     ///
     /// If the glyph is already pending, the request is silently skipped.
     pub fn request_glyph(&mut self, key: GlyphKey, codepoint: char, target_height: u32) {
+        self.request_glyph_with_font(key, codepoint, target_height, String::new(), 400);
+    }
+
+    /// Submit a glyph rasterization request with font family/weight info.
+    pub fn request_glyph_with_font(
+        &mut self,
+        key: GlyphKey,
+        codepoint: char,
+        target_height: u32,
+        font_family: String,
+        font_weight: u16,
+    ) {
         if self.pending.contains(&key) {
             return;
         }
@@ -107,6 +138,8 @@ impl FontWorker {
             key,
             codepoint,
             target_height,
+            font_family,
+            font_weight,
         };
         if self.request_tx.send(WorkerMsg::Rasterize(req)).is_ok() {
             self.pending.insert(key);
@@ -130,12 +163,19 @@ impl FontWorker {
         self.pending.contains(key)
     }
 
+    /// Get a reference to the shared font database.
+    pub fn font_db(&self) -> &Arc<Mutex<FontDatabase>> {
+        &self.font_db
+    }
+
     /// The worker thread's main loop.
     fn worker_loop(
         rx: mpsc::Receiver<WorkerMsg>,
         tx: mpsc::Sender<RasterizedGlyph>,
+        font_db: Arc<Mutex<FontDatabase>>,
     ) {
-        let font = BitmapFont::new();
+        let bitmap_font = BitmapFont::new();
+        let raster_config = RasterConfig::default();
 
         loop {
             let first = match rx.recv() {
@@ -159,9 +199,19 @@ impl FontWorker {
                         }
                     }
 
-                    // Process all unique glyph requests.
+                    // Process all unique glyph requests — try real fonts first,
+                    // fall back to bitmap font.
+                    let db = font_db.lock().unwrap();
+                    let rasterizer = GlyphRasterizer::new(&db);
+
                     for (_, request) in batch {
-                        let result = Self::rasterize_glyph(&font, &request);
+                        let result = Self::rasterize_glyph_real(
+                            &rasterizer,
+                            &raster_config,
+                            &db,
+                            &bitmap_font,
+                            &request,
+                        );
                         if tx.send(result).is_err() {
                             return; // receiver dropped
                         }
@@ -171,11 +221,44 @@ impl FontWorker {
         }
     }
 
+    /// Rasterize a glyph using TrueType/OpenType outlines when available,
+    /// falling back to the bitmap font.
+    fn rasterize_glyph_real(
+        rasterizer: &GlyphRasterizer<'_>,
+        config: &RasterConfig,
+        db: &FontDatabase,
+        bitmap_font: &BitmapFont,
+        req: &GlyphRequest,
+    ) -> RasterizedGlyph {
+        // Try to resolve a real font face if a family was specified.
+        if !req.font_family.is_empty() {
+            if let Some(face_id) = db.resolve(&req.font_family, req.font_weight, false) {
+                let size_px = req.target_height as f32;
+                if let Ok(glyph_bitmap) = rasterizer.rasterize(face_id, req.codepoint, size_px, config) {
+                    return RasterizedGlyph {
+                        key: req.key,
+                        bitmap: glyph_bitmap.pixels,
+                        metrics: GlyphMetrics {
+                            width: glyph_bitmap.width,
+                            height: glyph_bitmap.height,
+                            bearing_x: glyph_bitmap.bearing_x.round() as i32,
+                            bearing_y: glyph_bitmap.bearing_y.round() as i32,
+                            advance: glyph_bitmap.advance,
+                        },
+                    };
+                }
+            }
+        }
+
+        // Fallback: supersampled bitmap font.
+        Self::rasterize_glyph_bitmap(bitmap_font, req)
+    }
+
     /// Rasterize a single glyph using 4× supersampled box-filter downsampling.
     ///
     /// Takes the 8×16 source glyph, renders it at 4× the target size, then
     /// box-filter downsamples to produce smooth antialiased alpha values.
-    fn rasterize_glyph(font: &BitmapFont, req: &GlyphRequest) -> RasterizedGlyph {
+    fn rasterize_glyph_bitmap(font: &BitmapFont, req: &GlyphRequest) -> RasterizedGlyph {
         let src_w = BitmapFont::GLYPH_WIDTH; // 8
         let src_h = BitmapFont::GLYPH_HEIGHT; // 16
 

@@ -45,7 +45,7 @@
 //! let coordinator = ThreadedRenderCoordinator::new(config)?;
 //!
 //! // Submit render tasks (non-blocking message passing)
-//! coordinator.render_window(window_id, is_focused)?;
+//! coordinator.render_window(1, true)?;
 //! coordinator.render_dock()?;
 //! coordinator.render_statusbar()?;
 //! # Ok(())
