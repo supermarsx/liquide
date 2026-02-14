@@ -263,7 +263,10 @@ pub enum MaskSpec {
     /// Mask using an image (URL or image data).
     Image { image_id: u64, mode: MaskMode },
     /// Mask using a gradient (luminance or alpha).
-    Gradient { gradient: GradientSpec, mode: MaskMode },
+    Gradient {
+        gradient: GradientSpec,
+        mode: MaskMode,
+    },
 }
 
 /// How the mask source is interpreted.

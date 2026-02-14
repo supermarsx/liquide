@@ -18,24 +18,26 @@ impl Color {
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
     }
-    
+
     /// Create an opaque color
     pub fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self::new(r, g, b, 255)
     }
-    
+
     /// Parse from hex string (#RRGGBB or #RRGGBBAA)
     pub fn from_hex(hex: &str) -> Result<Self> {
         csscolorparser::parse(hex)
-            .map(|c| Color::new(
-                (c.r * 255.0) as u8,
-                (c.g * 255.0) as u8,
-                (c.b * 255.0) as u8,
-                (c.a * 255.0) as u8,
-            ))
+            .map(|c| {
+                Color::new(
+                    (c.r * 255.0) as u8,
+                    (c.g * 255.0) as u8,
+                    (c.b * 255.0) as u8,
+                    (c.a * 255.0) as u8,
+                )
+            })
             .map_err(|e| ThemeError::ColorParse(hex.to_string(), e.to_string()))
     }
-    
+
     /// Convert to hex string
     pub fn to_hex(&self) -> String {
         if self.a == 255 {
@@ -44,7 +46,7 @@ impl Color {
             format!("#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a)
         }
     }
-    
+
     /// Lighten color by percentage (0.0 - 1.0)
     pub fn lighten(&self, amount: f32) -> Self {
         let factor = 1.0 + amount;
@@ -55,7 +57,7 @@ impl Color {
             self.a,
         )
     }
-    
+
     /// Darken color by percentage (0.0 - 1.0)
     pub fn darken(&self, amount: f32) -> Self {
         let factor = 1.0 - amount;
@@ -66,7 +68,7 @@ impl Color {
             self.a,
         )
     }
-    
+
     /// Mix with another color
     pub fn mix(&self, other: &Color, ratio: f32) -> Self {
         let ratio = ratio.clamp(0.0, 1.0);
@@ -177,7 +179,11 @@ impl CssMathExpr {
                 .iter()
                 .map(|e| e.resolve(base_px, vw, vh))
                 .fold(f32::NEG_INFINITY, f32::max),
-            CssMathExpr::Clamp { min, preferred, max } => {
+            CssMathExpr::Clamp {
+                min,
+                preferred,
+                max,
+            } => {
                 let min_v = min.resolve(base_px, vw, vh);
                 let pref = preferred.resolve(base_px, vw, vh);
                 let max_v = max.resolve(base_px, vw, vh);
@@ -334,7 +340,7 @@ impl PropertyValue {
             _ => None,
         }
     }
-    
+
     /// Try to get as length
     pub fn as_length(&self) -> Option<LengthUnit> {
         match self {
@@ -342,7 +348,7 @@ impl PropertyValue {
             _ => None,
         }
     }
-    
+
     /// Try to get as number
     pub fn as_number(&self) -> Option<f32> {
         match self {
@@ -350,7 +356,7 @@ impl PropertyValue {
             _ => None,
         }
     }
-    
+
     /// Try to get as string
     pub fn as_string(&self) -> Option<&str> {
         match self {
@@ -401,7 +407,7 @@ impl fmt::Display for PropertyValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_color_from_hex() {
         let color = Color::from_hex("#ff0000").unwrap();
@@ -410,19 +416,19 @@ mod tests {
         assert_eq!(color.b, 0);
         assert_eq!(color.a, 255);
     }
-    
+
     #[test]
     fn test_color_lighten() {
         let color = Color::rgb(100, 100, 100);
         let lighter = color.lighten(0.2);
         assert!(lighter.r > color.r);
     }
-    
+
     #[test]
     fn test_length_conversion() {
         let px = LengthUnit::Px(16.0);
         assert_eq!(px.to_px(16.0), 16.0);
-        
+
         let em = LengthUnit::Em(1.5);
         assert_eq!(em.to_px(16.0), 24.0);
     }
