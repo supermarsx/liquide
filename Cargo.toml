@@ -56,6 +56,11 @@ members = [
 
     # UI toolkit & apps
     "crates/liquide-ui",
+    "crates/liquide-ui-core",
+    "crates/liquide-ui-widgets",
+    "crates/liquide-ui-window",
+    "crates/liquide-tooltip",
+    "crates/liquide-statusbar",
     "crates/liquide-apps-terminal",
     "crates/liquide-apps-files",
     "crates/liquide-apps-settings",
@@ -85,6 +90,11 @@ rust-version = "1.85"
 [workspace.dependencies]
 # Local crates
 liquide-cursor = { path = "crates/liquide-cursor" }
+liquide-ui-core = { path = "crates/liquide-ui-core" }
+liquide-ui-widgets = { path = "crates/liquide-ui-widgets" }
+liquide-ui-window = { path = "crates/liquide-ui-window" }
+liquide-tooltip = { path = "crates/liquide-tooltip" }
+liquide-statusbar = { path = "crates/liquide-statusbar" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -114,6 +124,9 @@ rustls-pemfile = "2"
 # Compression
 zstd = "0.13"
 lz4_flex = "0.11"
+
+# Bitflags
+bitflags = "2"
 
 # Bytes & I/O
 bytes = "1"
@@ -172,6 +185,8 @@ liquide-manager-frontend = { path = "crates/liquide-manager-frontend" }
 liquide-ctl = { path = "crates/liquide-ctl" }
 liquide-bench = { path = "crates/liquide-bench" }
 liquide-conformance = { path = "crates/liquide-conformance" }
+liquide-render-coordinator = { path = "crates/liquide-render-coordinator" }
+liquide-cursor-vector = { path = "crates/liquide-cursor-vector" }
 
 [profile.dev]
 opt-level = 0

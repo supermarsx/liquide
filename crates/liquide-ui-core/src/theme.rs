@@ -57,6 +57,12 @@ pub struct ThemeColors {
     // Scrollbar
     pub scrollbar_thumb: UiColor,
     pub scrollbar_track: UiColor,
+
+    // Elevated surface (popups, dropdowns, tooltips)
+    pub surface_elevated: UiColor,
+
+    // Focus ring (keyboard focus indicator)
+    pub focus_ring: UiColor,
 }
 
 impl Default for ThemeColors {
@@ -90,6 +96,8 @@ impl ThemeColors {
             glass_tint: UiColor::new(30, 30, 50, 179),
             scrollbar_thumb: UiColor::new(255, 255, 255, 51),
             scrollbar_track: UiColor::new(255, 255, 255, 10),
+            surface_elevated: UiColor::new(45, 45, 65, 255),
+            focus_ring: UiColor::new(0, 122, 255, 128),
         }
     }
 
@@ -117,6 +125,8 @@ impl ThemeColors {
             glass_tint: UiColor::new(10, 10, 10, 224),
             scrollbar_thumb: UiColor::new(255, 255, 255, 41),
             scrollbar_track: UiColor::new(255, 255, 255, 8),
+            surface_elevated: UiColor::new(30, 30, 35, 255),
+            focus_ring: UiColor::new(10, 132, 255, 128),
         }
     }
 
@@ -144,6 +154,8 @@ impl ThemeColors {
             glass_tint: UiColor::new(32, 22, 10, 184),
             scrollbar_thumb: UiColor::new(255, 200, 120, 46),
             scrollbar_track: UiColor::new(255, 200, 120, 10),
+            surface_elevated: UiColor::new(46, 30, 14, 255),
+            focus_ring: UiColor::new(255, 159, 10, 128),
         }
     }
 
@@ -171,6 +183,8 @@ impl ThemeColors {
             glass_tint: UiColor::new(248, 244, 238, 199),
             scrollbar_thumb: UiColor::new(28, 27, 24, 51),
             scrollbar_track: UiColor::new(28, 27, 24, 10),
+            surface_elevated: UiColor::new(255, 252, 248, 255),
+            focus_ring: UiColor::new(0, 113, 179, 128),
         }
     }
 }

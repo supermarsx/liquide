@@ -2519,6 +2519,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-statusbar"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-ui-core",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-supervisor"
 version = "0.1.0"
 dependencies = [
@@ -2578,6 +2588,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-tooltip"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-ui-core",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-transport"
 version = "0.1.0"
 dependencies = [
@@ -2606,6 +2626,38 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "liquide-ui-core"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-theme-css",
+ "serde",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "liquide-ui-widgets"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-ui-core",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "liquide-ui-window"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "liquide-compositor",
+ "liquide-ui-core",
+ "serde",
+ "tracing",
 ]
 
 [[package]]

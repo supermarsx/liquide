@@ -1,0 +1,18 @@
+[package]
+name = "liquide-tooltip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "High-performance tooltip system for the LiquiDE UI toolkit"
+
+[lib]
+name = "liquide_tooltip"
+path = "src/lib.rs"
+
+[dependencies]
+liquide-ui-core = { path = "../liquide-ui-core" }
+liquide-compositor = { path = "../liquide-compositor" }
+serde.workspace = true
+tracing.workspace = true
