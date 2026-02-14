@@ -25,6 +25,7 @@ pub mod stats;
 pub mod status_bar;
 pub mod theme;
 pub mod theme_loader;
+pub mod themes;
 pub mod tiling;
 pub mod window;
 pub mod workspace;

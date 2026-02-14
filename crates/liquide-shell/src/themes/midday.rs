@@ -1,0 +1,382 @@
+//! Create the Midday tarnished-white light theme CSS (spec-theme-midday.md)
+//!
+//! Warm off-white surfaces, dark text, deep teal accent, light-mode glass.
+
+pub const CSS: &str = r#"
+/* ═══════════════════════════════════════════════════════
+   LiquiDE Theme: Midday — Tarnished White Light
+   Preset: midday
+   Spec: spec-theme-midday.md
+   ═══════════════════════════════════════════════════════ */
+
+desktop-background {
+    background: rgb(245, 240, 232);
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+/* ── Status bar ── */
+
+statusbar {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 28;
+    padding-left: 8;
+    padding-right: 8;
+    align-items: center;
+    z-index: 10;
+    background: rgba(242, 238, 230, 0.92);
+    border-bottom-color: rgba(28, 27, 24, 0.10);
+    border-bottom-width: 1;
+    color: rgba(28, 27, 24, 1.0);
+    font-size: 13;
+    blur-radius: 10;
+}
+
+statusbar-slot {
+    display: flex;
+    align-items: center;
+    flex-grow: 1;
+    gap: 8;
+}
+
+statusbar-slot.left { justify-content: flex-start; }
+statusbar-slot.center { justify-content: center; }
+statusbar-slot.right { justify-content: flex-end; }
+
+statusbar-item {
+    display: flex;
+    align-items: center;
+    padding-left: 4;
+    padding-right: 4;
+}
+
+status-indicator.connected { color: rgb(36, 138, 61); }
+status-indicator.degraded { color: rgb(178, 80, 0); }
+notification-indicator.active { color: rgb(215, 0, 21); }
+notification-indicator { color: rgba(0, 113, 179, 0.55); }
+
+status-tray {
+    background: rgba(28, 27, 24, 0.04);
+    border-radius: 4;
+    padding: 2;
+}
+
+/* ── Windows ── */
+
+window {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    background: rgba(248, 244, 238, 0.82);
+    border-color: rgba(28, 27, 24, 0.10);
+    border-width: 1;
+    border-radius: 16;
+    box-shadow-color: rgba(28, 20, 8, 0.12);
+    glass-tint: rgba(248, 244, 238, 0.78);
+    overflow: hidden;
+}
+
+window.focused {
+    border-color: rgba(28, 27, 24, 0.18);
+    titlebar-background: rgba(240, 236, 228, 0.70);
+}
+
+window-titlebar {
+    display: flex;
+    align-items: center;
+    height: 36;
+    padding-left: 12;
+    padding-right: 8;
+    background: rgba(240, 236, 228, 0.65);
+    color: rgba(28, 27, 24, 1.0);
+    font-size: 13;
+    font-weight: 500;
+}
+
+window-title {
+    flex-grow: 1;
+    text-align: center;
+    color: rgba(28, 27, 24, 1.0);
+}
+
+titlebar-buttons {
+    display: flex;
+    align-items: center;
+    gap: 6;
+}
+
+close-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14;
+    height: 14;
+    border-radius: 7;
+    background: rgba(215, 0, 21, 0.80);
+    color: rgba(255, 255, 255, 0.94);
+}
+
+close-button:hover { background: rgba(215, 0, 21, 1.0); }
+
+maximize-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14;
+    height: 14;
+    border-radius: 7;
+    background: rgba(28, 27, 24, 0.04);
+    color: rgba(28, 27, 24, 0.62);
+}
+
+maximize-button:hover { background: rgba(28, 27, 24, 0.07); }
+
+minimize-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14;
+    height: 14;
+    border-radius: 7;
+    background: rgba(28, 27, 24, 0.04);
+    color: rgba(28, 27, 24, 0.62);
+}
+
+minimize-button:hover { background: rgba(28, 27, 24, 0.07); }
+
+window-content {
+    flex-grow: 1;
+    background: rgba(250, 246, 240, 0.95);
+}
+
+/* ── Dock ── */
+
+dock {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 56;
+    justify-content: center;
+    align-items: center;
+    gap: 4;
+    padding-left: 12;
+    padding-right: 12;
+    background: rgba(248, 244, 238, 0.78);
+    border-top-color: rgba(28, 27, 24, 0.05);
+    border-top-width: 1;
+    blur-radius: 20;
+}
+
+dock-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44;
+    height: 44;
+    border-radius: 12;
+    color: rgba(28, 27, 24, 0.62);
+}
+
+dock-item.active { color: rgba(28, 27, 24, 1.0); }
+dock-item:hover { background: rgba(28, 27, 24, 0.07); }
+
+/* ── Notifications ── */
+
+notification-area {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 36;
+    right: 12;
+    z-index: 20;
+    gap: 8;
+}
+
+notification {
+    display: flex;
+    flex-direction: column;
+    width: 320;
+    padding: 12;
+    border-radius: 12;
+    background: rgba(248, 244, 238, 0.94);
+    blur-radius: 20;
+}
+
+notification-title {
+    font-weight: 600;
+    font-size: 13;
+    color: rgba(28, 27, 24, 1.0);
+    margin-bottom: 4;
+}
+
+notification-body {
+    font-size: 12;
+    color: rgba(28, 27, 24, 0.60);
+}
+
+/* ── Launcher ── */
+
+launcher-overlay {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    background: rgba(28, 27, 24, 0.20);
+}
+
+launcher {
+    display: flex;
+    flex-direction: column;
+    width: 480;
+    max-height: 600;
+    padding: 16;
+    border-radius: 16;
+    background: rgba(248, 244, 238, 0.97);
+    blur-radius: 40;
+}
+
+launcher-search {
+    height: 36;
+    padding-left: 12;
+    padding-right: 12;
+    border-radius: 8;
+    background: rgba(255, 255, 255, 0.65);
+    color: rgba(28, 27, 24, 1.0);
+    font-size: 14;
+    margin-bottom: 8;
+}
+
+launcher-results {
+    display: flex;
+    flex-direction: column;
+    gap: 2;
+    overflow: hidden;
+}
+
+launcher-item {
+    display: flex;
+    align-items: center;
+    height: 40;
+    padding-left: 12;
+    padding-right: 12;
+    border-radius: 8;
+    background: transparent;
+    color: rgba(28, 27, 24, 1.0);
+    font-size: 14;
+}
+
+launcher-item:hover { background: rgba(28, 27, 24, 0.04); }
+launcher-item.selected { background: rgba(0, 113, 179, 0.15); }
+
+/* ── Menus ── */
+
+context-menu {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    z-index: 25;
+    padding: 4;
+    border-radius: 10;
+    background: rgba(248, 244, 238, 0.95);
+    border-color: rgba(28, 27, 24, 0.10);
+    border-width: 1;
+    blur-radius: 20;
+    min-width: 180;
+}
+
+session-menu {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    z-index: 25;
+    padding: 4;
+    border-radius: 10;
+    background: rgba(248, 244, 238, 0.95);
+    border-color: rgba(28, 27, 24, 0.10);
+    border-width: 1;
+    blur-radius: 20;
+    min-width: 200;
+}
+
+app-menu {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    z-index: 25;
+    padding: 4;
+    border-radius: 10;
+    background: rgba(248, 244, 238, 0.95);
+    border-color: rgba(28, 27, 24, 0.10);
+    border-width: 1;
+    blur-radius: 20;
+    min-width: 180;
+}
+
+menu-item {
+    display: flex;
+    align-items: center;
+    height: 28;
+    padding-left: 12;
+    padding-right: 12;
+    border-radius: 6;
+    color: rgba(28, 27, 24, 1.0);
+    font-size: 13;
+}
+
+menu-item:hover { background: rgba(0, 113, 179, 0.15); }
+menu-item.disabled { color: rgba(28, 27, 24, 0.35); }
+
+menu-separator {
+    height: 1;
+    margin-top: 4;
+    margin-bottom: 4;
+    margin-left: 12;
+    margin-right: 12;
+    background: rgba(28, 27, 24, 0.10);
+}
+
+/* ── Loading ── */
+
+loading-overlay {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    background: rgba(245, 240, 232, 0.85);
+}
+
+loading-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32;
+    border-radius: 16;
+    background: rgba(248, 244, 238, 0.94);
+    color: rgba(28, 27, 24, 1.0);
+}
+
+cursor { color: rgba(28, 27, 24, 1.0); }
+
+app-settings.sidebar-item { background: rgba(28, 27, 24, 0.04); }
+app-terminal { background: rgb(248, 244, 238); color: rgb(28, 27, 24); }
+app-browser.urlbar { background: rgba(255, 255, 255, 0.65); }
+"#;
