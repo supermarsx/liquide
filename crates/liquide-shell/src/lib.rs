@@ -16,6 +16,7 @@ pub mod launcher;
 pub mod layout;
 pub mod notification;
 pub mod pipeline;
+pub mod sandboxing;
 pub mod scene_builder;
 pub mod screen_time;
 pub mod seamless;
@@ -26,12 +27,23 @@ pub mod status_bar;
 pub mod theme;
 pub mod theme_loader;
 pub mod themes;
+pub mod threading;
 pub mod tiling;
 pub mod window;
 pub mod workspace;
 
 // Example modules demonstrating CSS styling
 pub mod css_dock_example;
+
+// Re-export the components from liquide-components
+pub use liquide_components::{
+    Component, TemplateNode, TemplateRenderer,
+    dock as components_dock,
+    statusbar as components_statusbar,
+    launcher as components_launcher,
+    notifications as components_notifications,
+    menus as components_menus,
+};
 
 #[cfg(test)]
 mod css_debug_test;
@@ -111,13 +123,15 @@ pub use workspace::{Workspace, WorkspaceId, WorkspaceManager};
 // Re-exports — new subsystems
 pub use calculator::{CalcResult, CalcToken};
 pub use config::ShellConfig;
-pub use liquide_dock::{
-    AutoHideState, Dock, DockClickBehavior, DockConfig, DockItem, DockItemKind, DockPosition,
-    DockRenderConfig, DockThemeColors,
-};
 pub use launcher::{
     AppCategory, ContextAction, Launcher, LauncherApp, LauncherConfig, LauncherView, SearchResult,
     SearchResultKind,
+};
+#[cfg(windows)]
+pub use liquide_dock::Win32DockIntegration;
+pub use liquide_dock::{
+    AutoHideState, Dock, DockClickBehavior, DockConfig, DockItem, DockItemKind, DockPosition,
+    DockRenderConfig, DockThemeColors,
 };
 pub use notification::{
     NotificationConfig, NotificationManager, NotificationPosition, ShellNotification,
@@ -132,8 +146,6 @@ pub use status_bar::{
 };
 pub use theme::ShellTheme;
 pub use tiling::{SnapZone, TilingConfig, TilingEngine, TilingLayoutKind, TilingMode};
-#[cfg(windows)]
-pub use liquide_dock::Win32DockIntegration;
 
 #[cfg(test)]
 mod tests;

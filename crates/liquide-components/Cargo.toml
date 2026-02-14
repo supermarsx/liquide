@@ -1,0 +1,11 @@
+[package]
+name = "liquide-components"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Native shell components with CSS+HTML templating"
+
+[dependencies]
+liquide-dom = { path = "../liquide-dom" }
+
+[dev-dependencies]

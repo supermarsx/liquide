@@ -167,6 +167,8 @@ impl Painter {
                         font_size: style.font_size,
                         font_family: style.font_family.clone(),
                         font_weight: style.font_weight,
+                        text_decoration: style.text_decoration.clone(),
+                        text_shadows: style.text_shadow.clone(),
                     });
                 }
                 NodeData::Image { src, .. } => {

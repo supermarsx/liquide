@@ -69,8 +69,8 @@ impl DesktopPipeline {
 
         let mut style_engine = StyleEngine::new(viewport, config.base_font_size);
 
-        // Load the default theme
-        style_engine.add_stylesheet(theme_loader::default_liquid_glass_css());
+        // Load the default theme (Night)
+        style_engine.add_stylesheet(theme_loader::default_theme_css());
 
         let layout_engine = LayoutEngine::new(
             Size {
@@ -211,18 +211,135 @@ impl DesktopPipeline {
     }
 
     /// Convert a display list to compositor scene nodes.
+    ///
+    /// Uses a state stack to handle Push/Pop items properly:
+    /// - PushClip: clips all subsequent nodes until PopClip
+    /// - PushOpacity: applies opacity to all subsequent nodes until PopOpacity
+    /// - PushTransform: applies transform to all subsequent nodes until PopTransform
+    /// - PushBlendMode: groups subsequent nodes in a RenderLayer with blend mode
+    /// - PushStackingContext: groups subsequent nodes with z-index ordering
     pub fn display_list_to_scene(
         &mut self,
         list: &DisplayList,
         base_z: u32,
     ) -> Vec<SceneNode> {
+        use liquide_compositor::geometry::Affine2D;
+
+        /// Active state from Push items.
+        #[derive(Clone)]
+        struct PipelineState {
+            clip: Option<CRect>,
+            opacity: f32,
+            transform: Affine2D,
+        }
+
+        impl Default for PipelineState {
+            fn default() -> Self {
+                Self {
+                    clip: None,
+                    opacity: 1.0,
+                    transform: Affine2D::identity(),
+                }
+            }
+        }
+
+        let mut stack: Vec<PipelineState> = Vec::new();
+        let mut current = PipelineState::default();
         let mut nodes = Vec::new();
         let mut z = base_z;
 
         for item in &list.items {
-            if let Some(node) = self.display_item_to_scene(item, z) {
-                nodes.push(node);
-                z += 1;
+            match item {
+                // ── Push state items ────────────────────────
+                DisplayItem::PushClip { rect, .. } => {
+                    stack.push(current.clone());
+                    let clip_rect = to_compositor_rect(rect);
+                    // Intersect with existing clip
+                    current.clip = Some(match current.clip {
+                        Some(existing) => intersect_rects(&existing, &clip_rect),
+                        None => clip_rect,
+                    });
+                }
+                DisplayItem::PopClip => {
+                    if let Some(prev) = stack.pop() {
+                        current = prev;
+                    }
+                }
+
+                DisplayItem::PushOpacity { opacity } => {
+                    stack.push(current.clone());
+                    current.opacity *= opacity;
+                }
+                DisplayItem::PopOpacity => {
+                    if let Some(prev) = stack.pop() {
+                        current = prev;
+                    }
+                }
+
+                DisplayItem::PushTransform {
+                    translate_x,
+                    translate_y,
+                    scale_x,
+                    scale_y,
+                    rotate,
+                } => {
+                    stack.push(current.clone());
+                    let mut xform = Affine2D::identity();
+                    if *translate_x != 0.0 || *translate_y != 0.0 {
+                        xform = xform.then(&Affine2D::translation(*translate_x, *translate_y));
+                    }
+                    if *scale_x != 1.0 || *scale_y != 1.0 {
+                        xform = xform.then(&Affine2D::scale(*scale_x, *scale_y));
+                    }
+                    if *rotate != 0.0 {
+                        xform = xform.then(&Affine2D::rotation(*rotate));
+                    }
+                    current.transform = current.transform.then(&xform);
+                }
+                DisplayItem::PopTransform => {
+                    if let Some(prev) = stack.pop() {
+                        current = prev;
+                    }
+                }
+
+                DisplayItem::PushBlendMode { .. } => {
+                    // Blend mode affects composition but we use flat node list.
+                    // Just push state so Pop is balanced.
+                    stack.push(current.clone());
+                }
+                DisplayItem::PopBlendMode => {
+                    if let Some(prev) = stack.pop() {
+                        current = prev;
+                    }
+                }
+
+                DisplayItem::PushStackingContext { .. } => {
+                    stack.push(current.clone());
+                }
+                DisplayItem::PopStackingContext => {
+                    if let Some(prev) = stack.pop() {
+                        current = prev;
+                    }
+                }
+
+                // ── Renderable items ────────────────────────
+                other => {
+                    if let Some(mut node) = self.display_item_to_scene(other, z) {
+                        // Apply accumulated state from the stack
+                        if current.opacity < 1.0 {
+                            node.properties.opacity *= current.opacity;
+                        }
+                        if let Some(ref clip) = current.clip {
+                            node.properties.clip = Some(*clip);
+                        }
+                        if !current.transform.is_identity() {
+                            node.properties.transform =
+                                node.properties.transform.then(&current.transform);
+                        }
+                        nodes.push(node);
+                        z += 1;
+                    }
+                }
             }
         }
 
@@ -245,7 +362,7 @@ impl DesktopPipeline {
                 let bounds = to_compositor_rect(rect);
                 let node = SceneNode::new(
                     id,
-                    SceneNodeKind::Tint { color: *color },
+                    SceneNodeKind::Background { color: *color },
                     NodeProperties::new(bounds).with_z_order(z),
                 );
                 Some(node)
@@ -317,6 +434,8 @@ impl DesktopPipeline {
                 font_size,
                 font_family,
                 font_weight,
+                text_decoration,
+                text_shadows,
             } => {
                 let bounds = to_compositor_rect(rect);
                 let node = SceneNode::new(
@@ -333,8 +452,8 @@ impl DesktopPipeline {
                         font_weight: *font_weight,
                         letter_spacing: 0.0,
                         line_height: 1.2,
-                        text_decoration: None,
-                        text_shadows: Vec::new(),
+                        text_decoration: text_decoration.clone(),
+                        text_shadows: text_shadows.clone(),
                     },
                     NodeProperties::new(bounds).with_z_order(z),
                 );
@@ -356,11 +475,8 @@ impl DesktopPipeline {
                 Some(node)
             }
 
-            // Clip / transform / opacity / blend / stacking contexts are
-            // handled structurally via push/pop. For the flat-to-tree
-            // conversion we currently skip them — the compositor applies
-            // these as node properties. A full implementation would nest
-            // children inside grouped nodes. TODO: push/pop grouping.
+            // Push/Pop items are handled by display_list_to_scene's state stack.
+            // They should never reach this method.
             DisplayItem::PushClip { .. }
             | DisplayItem::PopClip
             | DisplayItem::PushOpacity { .. }
@@ -370,7 +486,9 @@ impl DesktopPipeline {
             | DisplayItem::PushBlendMode { .. }
             | DisplayItem::PopBlendMode
             | DisplayItem::PushStackingContext { .. }
-            | DisplayItem::PopStackingContext => None,
+            | DisplayItem::PopStackingContext => unreachable!(
+                "Push/Pop items should be handled by display_list_to_scene"
+            ),
 
             DisplayItem::Surface { rect, surface_id } => {
                 let bounds = to_compositor_rect(rect);
@@ -456,6 +574,15 @@ fn hash_string(s: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     s.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Intersect two rectangles, returning the overlapping area.
+fn intersect_rects(a: &CRect, b: &CRect) -> CRect {
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    let right = (a.x + a.width).min(b.x + b.width);
+    let bottom = (a.y + a.height).min(b.y + b.height);
+    CRect::new(x, y, (right - x).max(0.0), (bottom - y).max(0.0))
 }
 
 // ── Tests ────────────────────────────────────────────────────────
@@ -563,13 +690,15 @@ mod tests {
             font_size: 14.0,
             font_family: vec!["Inter".into()],
             font_weight: 400,
+            text_decoration: None,
+            text_shadows: Vec::new(),
         });
 
         let nodes = pipeline.display_list_to_scene(&list, 100);
         assert_eq!(nodes.len(), 2);
 
-        // First is solid color → Tint node
-        assert!(matches!(nodes[0].kind, SceneNodeKind::Tint { .. }));
+        // First is solid color → Background node
+        assert!(matches!(nodes[0].kind, SceneNodeKind::Background { .. }));
         // Second is text → Text node
         assert!(matches!(nodes[1].kind, SceneNodeKind::Text { .. }));
     }

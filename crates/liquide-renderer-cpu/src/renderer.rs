@@ -289,6 +289,31 @@ impl SoftwareRenderer {
         self.texture_cache.stats()
     }
 
+    /// Register an image from raw bytes (auto-detects format).
+    /// Returns Ok(()) if successful, Err if decoding fails.
+    pub fn register_image(&mut self, image_id: u64, data: &[u8]) -> Result<(), String> {
+        let decoded = crate::image_decode::decode_image(data)
+            .map_err(|e| format!("Image decode error: {}", e))?;
+
+        let texture_id = format!("img_{}", image_id);
+        self.texture_cache
+            .insert(texture_id, decoded.pixels, decoded.width, decoded.height);
+        Ok(())
+    }
+
+    /// Register a pre-decoded RGBA8 image.
+    pub fn register_image_rgba(&mut self, image_id: u64, pixels: Vec<u8>, width: u32, height: u32) {
+        let texture_id = format!("img_{}", image_id);
+        self.texture_cache.insert(texture_id, pixels, width, height);
+    }
+
+    /// Check if an image is loaded.
+    #[must_use]
+    pub fn has_image(&mut self, image_id: u64) -> bool {
+        let texture_id = format!("img_{}", image_id);
+        self.texture_cache.get(&texture_id).is_some()
+    }
+
     // --- Dirty Rectangle Management ---
 
     /// Mark a screen region as dirty (needs rerendering).
@@ -1165,14 +1190,415 @@ impl SoftwareRenderer {
             | SceneNodeKind::ClipPath { .. }
             | SceneNodeKind::Filter { .. }
             | SceneNodeKind::BackdropFilter { .. }
-            | SceneNodeKind::Image { .. }
             | SceneNodeKind::GradientFill { .. }
             | SceneNodeKind::BackgroundFill { .. }
-            | SceneNodeKind::Outline { .. }
-            | SceneNodeKind::BoxShadows { .. }
             | SceneNodeKind::Mask { .. }
-            | SceneNodeKind::Border { .. }
             | SceneNodeKind::BorderImage { .. } => {}
+
+            // ── CSS Border rendering ────────────────────────────────
+            SceneNodeKind::Border { sides, radius } => {
+                use liquide_compositor::scene::BorderSideStyle;
+
+                let (r_tl, r_tr, r_br, r_bl) = *radius;
+                let has_radius = r_tl > 0.5 || r_tr > 0.5 || r_br > 0.5 || r_bl > 0.5;
+
+                if !has_radius {
+                    // ── Fast path: straight edges (fill_rect per side) ──
+                    let draw_border_side = |fb: &mut FrameBuffer,
+                                            side_rect: Rect,
+                                            side: &liquide_compositor::scene::BorderSide,
+                                            op: f32| {
+                        if side.width <= 0.0
+                            || side.style == BorderSideStyle::None
+                            || side.style == BorderSideStyle::Hidden
+                        {
+                            return;
+                        }
+                        let mut c = side.color;
+                        if op < 1.0 {
+                            c.a = (c.a as f32 * op + 0.5) as u8;
+                        }
+                        if c.a == 0 {
+                            return;
+                        }
+                        rasterizer::fill_rect(fb, side_rect, c, BlendMode::SrcOver);
+                    };
+
+                    // Top border
+                    draw_border_side(
+                        fb,
+                        Rect::new(bounds.x, bounds.y, bounds.width, sides.top.width),
+                        &sides.top,
+                        opacity,
+                    );
+                    // Bottom border
+                    draw_border_side(
+                        fb,
+                        Rect::new(
+                            bounds.x,
+                            bounds.bottom() - sides.bottom.width,
+                            bounds.width,
+                            sides.bottom.width,
+                        ),
+                        &sides.bottom,
+                        opacity,
+                    );
+                    // Left border (between top and bottom)
+                    draw_border_side(
+                        fb,
+                        Rect::new(
+                            bounds.x,
+                            bounds.y + sides.top.width,
+                            sides.left.width,
+                            bounds.height - sides.top.width - sides.bottom.width,
+                        ),
+                        &sides.left,
+                        opacity,
+                    );
+                    // Right border (between top and bottom)
+                    draw_border_side(
+                        fb,
+                        Rect::new(
+                            bounds.right() - sides.right.width,
+                            bounds.y + sides.top.width,
+                            sides.right.width,
+                            bounds.height - sides.top.width - sides.bottom.width,
+                        ),
+                        &sides.right,
+                        opacity,
+                    );
+                } else {
+                    // ── Rounded border: SDF-based per-pixel rendering ──
+                    //
+                    // Uses outer − inner rounded-rect SDF coverage to
+                    // determine the border region, then a diagonal quadrant
+                    // test to pick the per-side color (CSS trapezoidal rule).
+
+                    let outer = bounds;
+                    let inner = Rect::new(
+                        bounds.x + sides.left.width,
+                        bounds.y + sides.top.width,
+                        (bounds.width - sides.left.width - sides.right.width).max(0.0),
+                        (bounds.height - sides.top.width - sides.bottom.width).max(0.0),
+                    );
+
+                    // Inner radii: shrink by the larger adjacent border width
+                    let ir_tl = (r_tl - sides.left.width.max(sides.top.width)).max(0.0);
+                    let ir_tr = (r_tr - sides.right.width.max(sides.top.width)).max(0.0);
+                    let ir_br = (r_br - sides.right.width.max(sides.bottom.width)).max(0.0);
+                    let ir_bl = (r_bl - sides.left.width.max(sides.bottom.width)).max(0.0);
+
+                    let x0 = (outer.x.max(0.0) as u32).min(fb.width);
+                    let y0 = (outer.y.max(0.0) as u32).min(fb.height);
+                    let x1 = (outer.right().ceil() as u32).min(fb.width);
+                    let y1 = (outer.bottom().ceil() as u32).min(fb.height);
+
+                    if x0 >= x1 || y0 >= y1 {
+                        return;
+                    }
+
+                    // Centre for CSS trapezoidal side selection
+                    let hx = outer.width * 0.5;
+                    let hy = outer.height * 0.5;
+                    let cx = outer.x + hx;
+                    let cy = outer.y + hy;
+
+                    // Pre-resolve each side: (visible, premultiplied color)
+                    let resolve_side = |side: &liquide_compositor::scene::BorderSide| {
+                        if side.width <= 0.0
+                            || side.style == BorderSideStyle::None
+                            || side.style == BorderSideStyle::Hidden
+                        {
+                            return (false, Color::new(0, 0, 0, 0));
+                        }
+                        let mut c = side.color;
+                        if opacity < 1.0 {
+                            c.a = (c.a as f32 * opacity + 0.5) as u8;
+                        }
+                        if c.a == 0 {
+                            return (false, Color::new(0, 0, 0, 0));
+                        }
+                        (true, c.premultiply())
+                    };
+                    let (top_vis, top_pm) = resolve_side(&sides.top);
+                    let (right_vis, right_pm) = resolve_side(&sides.right);
+                    let (bottom_vis, bottom_pm) = resolve_side(&sides.bottom);
+                    let (left_vis, left_pm) = resolve_side(&sides.left);
+
+                    // Skip entirely if no sides are visible
+                    if !top_vis && !right_vis && !bottom_vis && !left_vis {
+                        return;
+                    }
+
+                    // Aspect-ratio factor for diagonal side selection:
+                    // normalise dx,dy to -1..1 range so diagonals are 45°.
+                    let inv_hx = if hx > 0.0 { 1.0 / hx } else { 0.0 };
+                    let inv_hy = if hy > 0.0 { 1.0 / hy } else { 0.0 };
+
+                    for y in y0..y1 {
+                        let fy = y as f32 + 0.5;
+                        for x in x0..x1 {
+                            let fx = x as f32 + 0.5;
+
+                            // Outer SDF coverage (per-corner radii)
+                            let outer_d = rasterizer::sdf_rounded_rect_per_corner(
+                                fx, fy, &outer, r_tl, r_tr, r_br, r_bl,
+                            );
+                            let outer_cov = (-outer_d + 0.5).clamp(0.0, 1.0);
+                            if outer_cov <= 0.0 {
+                                continue;
+                            }
+
+                            // Inner SDF coverage (shrunk radii)
+                            let inner_cov = if inner.width > 0.0 && inner.height > 0.0 {
+                                let inner_d = rasterizer::sdf_rounded_rect_per_corner(
+                                    fx, fy, &inner, ir_tl, ir_tr, ir_br, ir_bl,
+                                );
+                                (-inner_d + 0.5).clamp(0.0, 1.0)
+                            } else {
+                                0.0
+                            };
+
+                            let border_cov = (outer_cov - inner_cov).clamp(0.0, 1.0);
+                            if border_cov <= 0.0 {
+                                continue;
+                            }
+
+                            // CSS trapezoidal side selection via diagonals
+                            let rx = (fx - cx) * inv_hx;
+                            let ry = (fy - cy) * inv_hy;
+                            let abs_rx = rx.abs();
+
+                            let (vis, pm) = if ry < -abs_rx {
+                                (top_vis, top_pm)
+                            } else if ry > abs_rx {
+                                (bottom_vis, bottom_pm)
+                            } else if rx < 0.0 {
+                                (left_vis, left_pm)
+                            } else {
+                                (right_vis, right_pm)
+                            };
+
+                            if !vis {
+                                continue;
+                            }
+
+                            let mut src = pm;
+                            if border_cov < 1.0 {
+                                src.a = (src.a as f32 * border_cov + 0.5) as u8;
+                                src.r = (src.r as f32 * border_cov + 0.5) as u8;
+                                src.g = (src.g as f32 * border_cov + 0.5) as u8;
+                                src.b = (src.b as f32 * border_cov + 0.5) as u8;
+                            }
+
+                            if src.a == 0 {
+                                continue;
+                            }
+
+                            let dst = fb.get_pixel(x, y);
+                            let blended = crate::blend::blend(dst, src, BlendMode::SrcOver);
+                            fb.set_pixel(x, y, blended);
+                        }
+                    }
+                }
+            }
+
+            // ── CSS BoxShadow rendering ─────────────────────────────
+            SceneNodeKind::BoxShadows { shadows } => {
+                if lod_level == LodLevel::Low {
+                    return; // Skip shadows at low detail
+                }
+                for shadow in shadows {
+                    if shadow.color.a == 0 {
+                        continue;
+                    }
+                    let mut shadow_color = shadow.color;
+                    if opacity < 1.0 {
+                        shadow_color.a = (shadow_color.a as f32 * opacity + 0.5) as u8;
+                    }
+
+                    if shadow.inset {
+                        // Inset shadow: darken inside edges of the element
+                        // Top edge
+                        let edge_h = shadow.blur_radius.max(shadow.spread_radius).max(1.0);
+                        let mut c = shadow_color;
+                        c.a = c.a / 2; // soften inset shadow
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(bounds.x, bounds.y, bounds.width, edge_h),
+                            c,
+                            BlendMode::SrcOver,
+                        );
+                        // Bottom edge
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(bounds.x, bounds.bottom() - edge_h, bounds.width, edge_h),
+                            c,
+                            BlendMode::SrcOver,
+                        );
+                    } else {
+                        // Outer shadow: use the existing shadow effect system
+                        let lod_blur = (shadow.blur_radius * quality_factor) as u32;
+                        let shadow_bounds = Rect::new(
+                            bounds.x + shadow.offset_x - shadow.spread_radius,
+                            bounds.y + shadow.offset_y - shadow.spread_radius,
+                            bounds.width + shadow.spread_radius * 2.0,
+                            bounds.height + shadow.spread_radius * 2.0,
+                        );
+                        let params = ShadowParams {
+                            surface_rect: shadow_bounds,
+                            corner_radius: 0.0,
+                            spread: shadow.spread_radius,
+                            blur_radius: lod_blur,
+                            offset_x: shadow.offset_x,
+                            offset_y: shadow.offset_y,
+                            shadow_color,
+                        };
+                        if let Some(mask) =
+                            BoxShadow::generate_shadow_mask(fb.width, fb.height, &params)
+                        {
+                            BoxShadow::composite_shadow_mask(fb, &mask);
+                        }
+                    }
+                }
+            }
+
+            // ── CSS Image rendering ─────────────────────────────────
+            SceneNodeKind::Image {
+                image_id,
+                width,
+                height,
+                fit,
+            } => {
+                let texture_id = format!("img_{}", image_id);
+
+                // Try to get the cached texture
+                if let Some(texture) = self.texture_cache.get(&texture_id) {
+                    // Calculate source and destination rectangles based on fit mode
+                    let src_w = texture.width as f32;
+                    let src_h = texture.height as f32;
+                    let dst_w = bounds.width;
+                    let dst_h = bounds.height;
+
+                    let (src_rect, dst_rect) = match fit {
+                        liquide_compositor::scene::ImageFit::Fill => {
+                            // Stretch to fill entire bounds
+                            (Rect::new(0.0, 0.0, src_w, src_h), bounds)
+                        }
+                        liquide_compositor::scene::ImageFit::Contain => {
+                            // Scale to fit within bounds, preserving aspect ratio
+                            let scale = (dst_w / src_w).min(dst_h / src_h);
+                            let scaled_w = src_w * scale;
+                            let scaled_h = src_h * scale;
+                            let offset_x = (dst_w - scaled_w) / 2.0;
+                            let offset_y = (dst_h - scaled_h) / 2.0;
+                            (
+                                Rect::new(0.0, 0.0, src_w, src_h),
+                                Rect::new(
+                                    bounds.x + offset_x,
+                                    bounds.y + offset_y,
+                                    scaled_w,
+                                    scaled_h,
+                                ),
+                            )
+                        }
+                        liquide_compositor::scene::ImageFit::Cover => {
+                            // Scale to fill bounds, preserving aspect ratio (may crop)
+                            let scale = (dst_w / src_w).max(dst_h / src_h);
+                            let scaled_w = src_w * scale;
+                            let scaled_h = src_h * scale;
+                            let crop_x = ((scaled_w - dst_w) / 2.0) / scale;
+                            let crop_y = ((scaled_h - dst_h) / 2.0) / scale;
+                            (
+                                Rect::new(
+                                    crop_x,
+                                    crop_y,
+                                    src_w - crop_x * 2.0,
+                                    src_h - crop_y * 2.0,
+                                ),
+                                bounds,
+                            )
+                        }
+                        liquide_compositor::scene::ImageFit::None => {
+                            // Display at natural size, centered
+                            let offset_x = (dst_w - src_w) / 2.0;
+                            let offset_y = (dst_h - src_h) / 2.0;
+                            (
+                                Rect::new(0.0, 0.0, src_w, src_h),
+                                Rect::new(
+                                    bounds.x + offset_x,
+                                    bounds.y + offset_y,
+                                    src_w.min(dst_w),
+                                    src_h.min(dst_h),
+                                ),
+                            )
+                        }
+                    };
+
+                    // Draw the image with scaling
+                    self.draw_scaled_texture(fb, &texture, src_rect, dst_rect, opacity);
+                } else {
+                    // Fallback: render placeholder when image not loaded
+                    let placeholder_color = Color::new(
+                        128,
+                        128,
+                        128,
+                        if opacity < 1.0 {
+                            (64.0 * opacity + 0.5) as u8
+                        } else {
+                            64
+                        },
+                    );
+                    rasterizer::fill_rect(fb, bounds, placeholder_color, BlendMode::SrcOver);
+
+                    // Small center indicator
+                    let cx = bounds.x + bounds.width / 2.0;
+                    let cy = bounds.y + bounds.height / 2.0;
+                    let dot_size = 4.0_f32.min(bounds.width / 4.0).min(bounds.height / 4.0);
+                    if dot_size > 0.5 {
+                        let indicator = Color::new(
+                            180,
+                            180,
+                            180,
+                            if opacity < 1.0 {
+                                (80.0 * opacity + 0.5) as u8
+                            } else {
+                                80
+                            },
+                        );
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx - dot_size, cy - dot_size, dot_size * 2.0, dot_size * 2.0),
+                            indicator,
+                            BlendMode::SrcOver,
+                        );
+                    }
+                }
+                let _ = (width, height); // suppress unused warnings
+            }
+
+            // ── CSS Outline rendering ───────────────────────────────
+            SceneNodeKind::Outline { outline } => {
+                use liquide_compositor::scene::OutlineStyle;
+                if outline.width <= 0.0 || outline.style == OutlineStyle::None {
+                    return;
+                }
+                let mut c = outline.color;
+                if opacity < 1.0 {
+                    c.a = (c.a as f32 * opacity + 0.5) as u8;
+                }
+                if c.a == 0 {
+                    return;
+                }
+                let offset = outline.offset;
+                let outline_rect = Rect::new(
+                    bounds.x - outline.width - offset,
+                    bounds.y - outline.width - offset,
+                    bounds.width + (outline.width + offset) * 2.0,
+                    bounds.height + (outline.width + offset) * 2.0,
+                );
+                rasterizer::stroke_rect(fb, outline_rect, outline.width, c, BlendMode::SrcOver);
+            }
         }
     }
 
@@ -2163,6 +2589,69 @@ impl SoftwareRenderer {
             }
             self.blur_worker
                 .request_blur(node_id, snapshot, w, h, radius);
+        }
+    }
+
+    /// Draw a texture to the framebuffer with scaling.
+    fn draw_scaled_texture(
+        &mut self,
+        fb: &mut FrameBuffer,
+        texture: &crate::texture_cache::CachedTexture,
+        src_rect: Rect,
+        dst_rect: Rect,
+        opacity: f32,
+    ) {
+        let src_x0 = src_rect.x.max(0.0) as u32;
+        let src_y0 = src_rect.y.max(0.0) as u32;
+        let src_x1 = (src_rect.right().min(texture.width as f32)) as u32;
+        let src_y1 = (src_rect.bottom().min(texture.height as f32)) as u32;
+
+        let dst_x0 = dst_rect.x.max(0.0);
+        let dst_y0 = dst_rect.y.max(0.0);
+        let dst_x1 = dst_rect.right().min(fb.width as f32);
+        let dst_y1 = dst_rect.bottom().min(fb.height as f32);
+
+        if dst_x0 >= dst_x1 || dst_y0 >= dst_y1 {
+            return;
+        }
+
+        let src_w = (src_x1 - src_x0) as f32;
+        let src_h = (src_y1 - src_y0) as f32;
+        let dst_w = dst_x1 - dst_x0;
+        let dst_h = dst_y1 - dst_y0;
+
+        // Nearest-neighbor scaling for simplicity
+        // (could be upgraded to bilinear for better quality)
+        for dst_y in (dst_y0 as u32)..(dst_y1 as u32) {
+            for dst_x in (dst_x0 as u32)..(dst_x1 as u32) {
+                let rel_x = (dst_x as f32 - dst_x0) / dst_w;
+                let rel_y = (dst_y as f32 - dst_y0) / dst_h;
+                let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
+                let src_y = (src_y0 as f32 + rel_y * src_h) as u32;
+
+                let src_idx = ((src_y * texture.width + src_x) * 4) as usize;
+                if src_idx + 3 >= texture.data.len() {
+                    continue;
+                }
+
+                let mut src_color = Color::new(
+                    texture.data[src_idx],
+                    texture.data[src_idx + 1],
+                    texture.data[src_idx + 2],
+                    texture.data[src_idx + 3],
+                );
+
+                // Apply opacity
+                if opacity < 1.0 {
+                    src_color.a = (src_color.a as f32 * opacity + 0.5) as u8;
+                }
+
+                // Premultiply and blend
+                src_color = src_color.premultiply();
+                let dst_color = fb.get_pixel(dst_x, dst_y);
+                let blended = crate::blend::blend(dst_color, src_color, BlendMode::SrcOver);
+                fb.set_pixel(dst_x, dst_y, blended);
+            }
         }
     }
 }

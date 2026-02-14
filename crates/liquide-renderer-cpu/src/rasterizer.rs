@@ -804,3 +804,47 @@ fn sdf_rounded_rect_val(fx: f32, fy: f32, rect: &Rect, radius: f32) -> f32 {
 
     outside + inside - radius
 }
+
+/// Signed distance from a point to a rounded rectangle with per-corner radii.
+///
+/// Uses the iq (Inigo Quilez) formulation: selects the radius for the
+/// quadrant the sample point falls in, then evaluates the standard
+/// rounded-box SDF with that radius.  This is exact at every corner arc
+/// and along every flat edge; the only approximation is at the *join*
+/// between two adjacent corners that have different radii, where the
+/// transition is a straight line rather than a smooth curve — visually
+/// indistinguishable at typical border widths.
+pub fn sdf_rounded_rect_per_corner(
+    fx: f32,
+    fy: f32,
+    rect: &Rect,
+    r_tl: f32,
+    r_tr: f32,
+    r_br: f32,
+    r_bl: f32,
+) -> f32 {
+    let hx = rect.width * 0.5;
+    let hy = rect.height * 0.5;
+    let cx = rect.x + hx;
+    let cy = rect.y + hy;
+
+    let px = fx - cx;
+    let py = fy - cy;
+
+    // Select corner radius based on quadrant (iq formulation)
+    let r = if px > 0.0 {
+        if py > 0.0 { r_br } else { r_tr }
+    } else if py > 0.0 {
+        r_bl
+    } else {
+        r_tl
+    };
+
+    let qx = px.abs() - (hx - r);
+    let qy = py.abs() - (hy - r);
+
+    let outside = (qx.max(0.0) * qx.max(0.0) + qy.max(0.0) * qy.max(0.0)).sqrt();
+    let inside = qx.max(qy).min(0.0);
+
+    outside + inside - r
+}

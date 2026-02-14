@@ -1,16 +1,16 @@
 //! Theme presets for the LiquiDE desktop environment.
 
 pub mod liquid_glass;
+pub mod midday;
 pub mod night;
 pub mod sunset;
-pub mod midday;
 
 /// Available theme preset IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThemePreset {
-    /// Standard Liquid Glass dark theme (default).
+    /// Standard Liquid Glass dark theme.
     LiquidGlass,
-    /// OLED-optimized dark theme with true black backgrounds.
+    /// OLED-optimized dark theme with true black backgrounds (default).
     Night,
     /// Warm dark theme with amber/orange tones.
     Sunset,
@@ -32,8 +32,8 @@ impl ThemePreset {
     /// Parse a theme ID string to a preset.
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
-            "liquid-glass" | "standard" | "default" => Some(ThemePreset::LiquidGlass),
-            "night" => Some(ThemePreset::Night),
+            "liquid-glass" | "standard" => Some(ThemePreset::LiquidGlass),
+            "night" | "default" => Some(ThemePreset::Night),
             "sunset" => Some(ThemePreset::Sunset),
             "midday" => Some(ThemePreset::Midday),
             _ => None,

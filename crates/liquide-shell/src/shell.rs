@@ -17,10 +17,7 @@ use liquide_renderer_css::StyleResolver;
 use crate::app_history::AppHistory;
 use crate::config::ShellConfig;
 use crate::decoration::{DecorationStyle, HitZone, hit_test_decoration};
-use crate::desktop_dom::{
-    ContextMenuItemInfo, DesktopDocument, DockItemInfo, LauncherItemInfo, MenuItemInfo,
-    StatusBarSlotKind, element_ids,
-};
+use crate::desktop_dom::{DesktopDocument, DockItemInfo};
 use crate::focus::{FocusManager, FocusPolicy};
 use crate::history::{WindowEventKind, WindowHistory};
 use crate::launcher::{Launcher, LauncherApp, SearchResultKind};
@@ -32,7 +29,7 @@ use crate::screen_time::ScreenTimeTracker;
 use crate::seamless::SeamlessManager;
 use crate::shortcuts::{ShellAction, ShortcutManager};
 use crate::stats::StatsCollector;
-use crate::status_bar::{ShellStatusBar, StatusBarItemKind, StatusBarSlot};
+use crate::status_bar::ShellStatusBar;
 use crate::theme::ShellTheme;
 use crate::theme_loader;
 use crate::tiling::TilingEngine;
@@ -193,6 +190,11 @@ pub struct Shell {
     css_pipeline: DesktopPipeline,
     /// Whether the DOM needs re-sync before the next `build_scene()`.
     dom_dirty: bool,
+    // ── Threading and sandboxing ────────────────────────────
+    /// Thread coordinator for shell elements (dock, statusbar, etc.).
+    thread_coordinator: Option<crate::threading::ShellThreadCoordinator>,
+    /// Sandbox manager for application isolation.
+    sandbox_manager: crate::sandboxing::SandboxManager,
 }
 
 impl Shell {
@@ -248,6 +250,17 @@ impl Shell {
         };
         let css_pipeline = DesktopPipeline::new(&pipeline_cfg);
 
+        // Initialize threading for shell elements
+        let thread_css = theme_loader::default_theme_css().to_string();
+        let thread_coordinator = crate::threading::ShellThreadCoordinator::new(
+            thread_css,
+            screen_width as u32,
+            screen_height as u32,
+        );
+
+        // Initialize sandboxing manager
+        let sandbox_manager = crate::sandboxing::SandboxManager::new();
+
         Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
@@ -286,6 +299,8 @@ impl Shell {
             desktop_dom,
             css_pipeline,
             dom_dirty: true,
+            thread_coordinator: Some(thread_coordinator),
+            sandbox_manager,
         }
     }
 
@@ -334,6 +349,17 @@ impl Shell {
         };
         let css_pipeline = DesktopPipeline::new(&pipeline_cfg);
 
+        // Initialize threading for shell elements
+        let thread_css = theme_loader::default_theme_css().to_string();
+        let thread_coordinator = crate::threading::ShellThreadCoordinator::new(
+            thread_css,
+            screen_width as u32,
+            screen_height as u32,
+        );
+
+        // Initialize sandboxing manager
+        let sandbox_manager = crate::sandboxing::SandboxManager::new();
+
         Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
@@ -372,6 +398,8 @@ impl Shell {
             desktop_dom,
             css_pipeline,
             dom_dirty: true,
+            thread_coordinator: Some(thread_coordinator),
+            sandbox_manager,
         }
     }
 
@@ -1003,11 +1031,11 @@ impl Shell {
         self.style_resolver = None;
     }
 
-    /// Build the default Liquid Glass CSS theme and its style resolver.
+    /// Build the default Night CSS theme and its style resolver.
     fn build_default_theme() -> (ShellTheme, StyleResolver) {
         use liquide_theme_css::ThemeParser;
         let parser = ThemeParser::new();
-        match parser.parse_str(theme_loader::default_liquid_glass_css()) {
+        match parser.parse_str(theme_loader::default_theme_css()) {
             Ok(stylesheet) => {
                 let engine = Arc::new(liquide_theme_css::ThemeEngine::new(stylesheet));
                 let theme = theme_loader::css_to_shell_theme(&engine);
@@ -1209,12 +1237,24 @@ impl Shell {
     ///
     /// Called once per frame just before the CSS pipeline runs.
     fn sync_dom(&mut self) {
-        // ── Dock ────────────────────────────────────────────
-        let dock_infos: Vec<DockItemInfo> = self
+        use crate::components_dock::DockComponent;
+        use crate::components_launcher::LauncherComponent;
+        use crate::components_menus::{
+            AppMenuComponent, ContextMenuComponent, SessionMenuComponent,
+        };
+        use crate::components_notifications::{
+            NotificationInfo, NotificationUrgency, NotificationsComponent,
+        };
+        use crate::components_statusbar::StatusBarComponent;
+        use crate::{Component, TemplateRenderer};
+        use liquide_components::element_ids;
+
+        // ── Dock (template-driven) ──────────────────────────
+        let dock_infos: Vec<liquide_components::DockItemInfo> = self
             .dock
             .items()
             .iter()
-            .map(|item| DockItemInfo {
+            .map(|item| liquide_components::DockItemInfo {
                 app_id: item.app_id.clone(),
                 label: item.label.clone(),
                 icon: item.icon.clone(),
@@ -1222,92 +1262,95 @@ impl Shell {
                 is_pinned: item.pinned_position.is_some(),
             })
             .collect();
-        self.desktop_dom.sync_dock_items(&dock_infos);
-
         let hover_idx = self.dock.hover_index();
-        self.desktop_dom.set_dock_hover(hover_idx);
+        let dock_comp = DockComponent {
+            items: &dock_infos,
+            hover_index: hover_idx,
+        };
+        TemplateRenderer::apply(&mut self.desktop_dom.doc, &dock_comp);
 
-        // ── Status bar items ────────────────────────────────
+        // ── Status bar (template-driven, correct tag names) ──
+        use liquide_components::{StatusBarItemData, StatusBarSlot};
+
+        // Map status bar items to component types
+        let mut left_items = Vec::new();
+        let mut center_items = Vec::new();
+        let mut right_items = Vec::new();
+
         for item in self.status_bar.items() {
-            if !item.visible {
-                continue;
-            }
-            let text = match &item.kind {
+            use crate::status_bar::StatusBarItemKind;
+            let component_item = match &item.kind {
                 StatusBarItemKind::Clock { .. } => {
-                    let seconds = item.last_update_us / 1_000_000;
-                    let hours = (seconds / 3600) % 24;
-                    let minutes = (seconds % 3600) / 60;
-                    format!("{hours:02}:{minutes:02}")
+                    // Format current time
+                    let now = std::time::SystemTime::now();
+                    let time_str = format!(
+                        "{:02}:{:02}",
+                        (now.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() / 60) % 60,
+                        now.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 60
+                    );
+                    StatusBarItemData::Clock { time: time_str }
                 }
                 StatusBarItemKind::NotificationIndicator {
                     unread_count,
                     dnd_active,
-                } => {
-                    if *dnd_active {
-                        "DND".into()
-                    } else if *unread_count > 0 {
-                        format!("{unread_count}")
-                    } else {
-                        String::new()
-                    }
-                }
+                } => StatusBarItemData::NotificationIndicator {
+                    unread_count: *unread_count as usize,
+                    dnd: *dnd_active,
+                },
                 StatusBarItemKind::ConnectionQuality {
-                    quality_percent,
-                    latency_ms,
-                } => {
-                    if *latency_ms > 0 {
-                        format!("{quality_percent}% {latency_ms}ms")
-                    } else {
-                        format!("{quality_percent}%")
-                    }
-                }
-                StatusBarItemKind::TrayArea => String::new(),
-                StatusBarItemKind::SessionButton => "\u{23FB}".into(), // ⏻ power symbol
-                StatusBarItemKind::Custom { content, .. } => content.clone(),
+                    quality_percent, ..
+                } => StatusBarItemData::ConnectionQuality {
+                    connected: *quality_percent > 0,
+                    degraded: *quality_percent < 80,
+                },
+                StatusBarItemKind::TrayArea => StatusBarItemData::TrayArea,
+                StatusBarItemKind::SessionButton => StatusBarItemData::SessionButton {
+                    username: "user".into(),
+                },
+                StatusBarItemKind::Custom { .. } => continue,
             };
-            let slot = match item.slot {
-                StatusBarSlot::Left => StatusBarSlotKind::Left,
-                StatusBarSlot::Center => StatusBarSlotKind::Center,
-                StatusBarSlot::Right => StatusBarSlotKind::Right,
-            };
-            self.desktop_dom
-                .set_statusbar_item(slot, &item.id, &text, &[]);
-        }
 
-        // ── Notifications ───────────────────────────────────
-        // Clear existing notification DOM elements and rebuild from active list.
-        {
-            let area = self.desktop_dom.notification_area;
-            let existing: Vec<_> = self.desktop_dom.doc.children(area).to_vec();
-            for kid in existing {
-                if let Some(node) = self.desktop_dom.doc.get(kid) {
-                    let id = node.element_id.as_ref().map(|s| s.to_string());
-                    if let Some(nid) = id {
-                        self.desktop_dom.remove_notification(&nid);
-                    }
-                }
+            // Distribute to slots (this is simplified - real shell might have slot info)
+            if matches!(item.kind, StatusBarItemKind::Clock { .. }) {
+                center_items.push(component_item);
+            } else {
+                right_items.push(component_item);
             }
         }
-        let active_notifs: Vec<(u32, String, String)> = self
+
+        let slots = [
+            StatusBarSlot { items: left_items },
+            StatusBarSlot {
+                items: center_items,
+            },
+            StatusBarSlot { items: right_items },
+        ];
+
+        let statusbar_comp = StatusBarComponent { slots: &slots };
+        TemplateRenderer::apply(&mut self.desktop_dom.doc, &statusbar_comp);
+
+        // ── Notifications (template-driven, incremental) ─────
+        let notif_infos: Vec<NotificationInfo> = self
             .notifications
             .active_notifications()
             .iter()
-            .map(|sn| {
-                (
-                    sn.id,
-                    sn.notification.summary.clone(),
-                    sn.notification.body.clone(),
-                )
+            .map(|sn| NotificationInfo {
+                id: sn.id,
+                summary: sn.notification.summary.clone(),
+                body: sn.notification.body.clone(),
+                urgency: NotificationUrgency::Normal, // TODO: map from protocol urgency
+                icon: String::new(),                  // TODO: map from notification icon
+                actions: Vec::new(),                  // TODO: map from notification actions
             })
             .collect();
-        for (id, summary, body) in &active_notifs {
-            let nid = format!("notif-{id}");
-            self.desktop_dom.add_notification(&nid, summary, body);
-        }
+        let notif_comp = NotificationsComponent {
+            notifications: &notif_infos,
+        };
+        TemplateRenderer::apply(&mut self.desktop_dom.doc, &notif_comp);
 
-        // ── Launcher ────────────────────────────────────────
+        // ── Launcher (template-driven) ──────────────────────
         if self.launcher.is_visible() {
-            let items: Vec<LauncherItemInfo> = self
+            let items: Vec<liquide_components::LauncherItemInfo> = self
                 .launcher
                 .results()
                 .iter()
@@ -1316,88 +1359,145 @@ impl Shell {
                         SearchResultKind::Application { app_id } => app_id.clone(),
                         _ => String::new(),
                     };
-                    LauncherItemInfo {
+                    liquide_components::LauncherItemInfo {
                         app_id,
-                        label: r.title.clone(),
+                        name: r.title.clone(),
+                        description: String::new(),
                         icon: r.icon.clone().unwrap_or_default(),
                     }
                 })
                 .collect();
-            self.desktop_dom.show_launcher(&items);
-            self.desktop_dom
-                .set_launcher_hover(Some(self.launcher.selected_index()));
+            let launcher_comp = LauncherComponent {
+                items: &items,
+                selected_index: self.launcher.selected_index(),
+                search_query: self.launcher.query(),
+                visible: true,
+            };
+            let root = self.desktop_dom.doc.root();
+            let template = launcher_comp.render();
+            TemplateRenderer::apply_or_create(
+                &mut self.desktop_dom.doc,
+                root,
+                element_ids::LAUNCHER_OVERLAY,
+                &template,
+            );
         } else {
-            self.desktop_dom.hide_launcher();
+            TemplateRenderer::unmount(&mut self.desktop_dom.doc, element_ids::LAUNCHER_OVERLAY);
         }
 
-        // ── Session menu ────────────────────────────────────
+        // ── Session menu (template-driven) ──────────────────
         if self.session_menu_visible {
-            let items: Vec<MenuItemInfo> = self
+            let items: Vec<liquide_components::MenuItemInfo> = self
                 .session_menu_items
                 .iter()
-                .map(|si| MenuItemInfo {
+                .map(|si| liquide_components::MenuItemInfo {
                     label: si.label.clone(),
                     action: si.label.to_lowercase().replace(' ', "-"),
-                    icon: si.icon.clone(),
-                })
-                .collect();
-            self.desktop_dom.show_session_menu(&items);
-            self.desktop_dom
-                .set_menu_hover(element_ids::SESSION_MENU, self.session_menu_hover_index);
-        } else {
-            self.desktop_dom.hide_session_menu();
-        }
-
-        // ── Context menu ────────────────────────────────────
-        if self.context_menu_visible {
-            let ctx_items = ContextMenuItem::defaults();
-            let infos: Vec<ContextMenuItemInfo> = ctx_items
-                .iter()
-                .map(|ci| ContextMenuItemInfo::Action {
-                    label: ci.label.clone(),
+                    icon: if si.icon.is_empty() {
+                        None
+                    } else {
+                        Some(si.icon.clone())
+                    },
                     disabled: false,
                 })
                 .collect();
-            self.desktop_dom.remove_context_menu("ctx-shell");
-            self.desktop_dom.add_context_menu("ctx-shell", &infos);
-            self.desktop_dom
-                .set_menu_hover("ctx-shell", self.context_menu_hover_index);
+            let session_comp = SessionMenuComponent {
+                items: &items,
+                hover_index: self.session_menu_hover_index,
+            };
+            let root = self.desktop_dom.doc.root();
+            let template = session_comp.render();
+            TemplateRenderer::apply_or_create(
+                &mut self.desktop_dom.doc,
+                root,
+                element_ids::SESSION_MENU,
+                &template,
+            );
         } else {
-            self.desktop_dom.remove_context_menu("ctx-shell");
+            TemplateRenderer::unmount(&mut self.desktop_dom.doc, element_ids::SESSION_MENU);
         }
 
-        // ── App menu ────────────────────────────────────────
+        // ── Context menu (template-driven) ──────────────────
+        if self.context_menu_visible {
+            let ctx_items = ContextMenuItem::defaults();
+            let infos: Vec<liquide_components::ContextMenuItemInfo> = ctx_items
+                .iter()
+                .map(|ci| {
+                    liquide_components::ContextMenuItemInfo::Item(
+                        liquide_components::MenuItemInfo {
+                            label: ci.label.clone(),
+                            action: ci.label.to_lowercase().replace(' ', "-"),
+                            icon: None,
+                            disabled: false,
+                        },
+                    )
+                })
+                .collect();
+            let ctx_comp = ContextMenuComponent {
+                menu_id: "ctx-shell",
+                items: &infos,
+                hover_index: self.context_menu_hover_index,
+            };
+            let root = self.desktop_dom.doc.root();
+            let template = ctx_comp.render();
+            TemplateRenderer::apply_or_create(
+                &mut self.desktop_dom.doc,
+                root,
+                "ctx-shell",
+                &template,
+            );
+        } else {
+            TemplateRenderer::unmount(&mut self.desktop_dom.doc, "ctx-shell");
+        }
+
+        // ── App menu (template-driven) ──────────────────────
         if self.app_menu_open.is_some() {
             let items = vec![
-                MenuItemInfo {
+                liquide_components::MenuItemInfo {
                     label: "Minimize".into(),
                     action: "minimize".into(),
-                    icon: String::new(),
+                    icon: None,
+                    disabled: false,
                 },
-                MenuItemInfo {
+                liquide_components::MenuItemInfo {
                     label: "Maximize".into(),
                     action: "maximize".into(),
-                    icon: String::new(),
+                    icon: None,
+                    disabled: false,
                 },
-                MenuItemInfo {
+                liquide_components::MenuItemInfo {
                     label: "Close".into(),
                     action: "close".into(),
-                    icon: String::new(),
+                    icon: None,
+                    disabled: false,
                 },
-                MenuItemInfo {
+                liquide_components::MenuItemInfo {
                     label: "System Settings".into(),
                     action: "settings".into(),
-                    icon: String::new(),
+                    icon: None,
+                    disabled: false,
                 },
-                MenuItemInfo {
+                liquide_components::MenuItemInfo {
                     label: "About Liquide".into(),
                     action: "about".into(),
-                    icon: String::new(),
+                    icon: None,
+                    disabled: false,
                 },
             ];
-            self.desktop_dom.show_app_menu(&items);
+            let app_comp = AppMenuComponent {
+                items: &items,
+                hover_index: None,
+            };
+            let root = self.desktop_dom.doc.root();
+            let template = app_comp.render();
+            TemplateRenderer::apply_or_create(
+                &mut self.desktop_dom.doc,
+                root,
+                element_ids::APP_MENU,
+                &template,
+            );
         } else {
-            self.desktop_dom.hide_app_menu();
+            TemplateRenderer::unmount(&mut self.desktop_dom.doc, element_ids::APP_MENU);
         }
 
         // Keep the DOM viewport in sync with the screen rect.

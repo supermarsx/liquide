@@ -267,6 +267,14 @@ fn query_color(
     }
 }
 
+/// Get the default theme CSS (Night theme).
+///
+/// The default theme is Night — OLED-optimized with true black backgrounds
+/// and restrained glass effects for maximum battery efficiency.
+pub fn default_theme_css() -> &'static str {
+    themes::night::CSS
+}
+
 /// Create the default Liquid Glass dark theme CSS (spec §2.1 "Standard")
 ///
 /// This is the default Liquid Glass theme — cool blue tones, full glass effects,

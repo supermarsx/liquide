@@ -2384,6 +2384,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-components"
+version = "0.1.0"
+dependencies = [
+ "liquide-dom",
+]
+
+[[package]]
 name = "liquide-compositor"
 version = "0.1.0"
 dependencies = [
@@ -2599,6 +2606,13 @@ dependencies = [
  "liquide-style-engine",
  "serde",
  "tracing",
+]
+
+[[package]]
+name = "liquide-icons"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
 ]
 
 [[package]]
@@ -2883,6 +2897,7 @@ name = "liquide-shell"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "liquide-components",
  "liquide-compositor",
  "liquide-context-menu",
  "liquide-dock",
@@ -2894,6 +2909,7 @@ dependencies = [
  "liquide-paint",
  "liquide-platform",
  "liquide-platform-win32",
+ "liquide-renderer-cpu",
  "liquide-renderer-css",
  "liquide-style-engine",
  "liquide-theme-css",

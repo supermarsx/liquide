@@ -109,6 +109,12 @@ members = [
     "crates/liquide-layout",
     "crates/liquide-paint",
     "crates/liquide-hit-test",
+
+    # Shell components (templates)
+    "crates/liquide-components",
+
+    # Icon database
+    "crates/liquide-icons",
 ]
 
 [workspace.package]
@@ -241,6 +247,8 @@ liquide-style-engine = { path = "crates/liquide-style-engine" }
 liquide-layout = { path = "crates/liquide-layout" }
 liquide-paint = { path = "crates/liquide-paint" }
 liquide-hit-test = { path = "crates/liquide-hit-test" }
+liquide-components = { path = "crates/liquide-components" }
+liquide-icons = { path = "crates/liquide-icons" }
 
 [profile.dev]
 opt-level = 0
