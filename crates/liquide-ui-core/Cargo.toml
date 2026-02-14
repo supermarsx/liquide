@@ -1,0 +1,19 @@
+[package]
+name = "liquide-ui-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Core UI building blocks: traits, layout primitives, event dispatch, and theming for the LiquiDE desktop"
+
+[lib]
+name = "liquide_ui_core"
+path = "src/lib.rs"
+
+[dependencies]
+liquide-compositor = { path = "../liquide-compositor" }
+liquide-theme-css = { path = "../liquide-theme-css" }
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

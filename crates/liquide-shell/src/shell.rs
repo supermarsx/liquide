@@ -1311,7 +1311,10 @@ impl Shell {
 
         // Status bar (conditionally visible based on auto-hide settings)
         if self.status_bar_visible {
-            root.add_child(self.status_bar.build_scene(screen, theme, status_bar_layout.as_ref()));
+            root.add_child(
+                self.status_bar
+                    .build_scene(screen, theme, status_bar_layout.as_ref()),
+            );
         }
 
         // App menu dropdown (macOS-style, anchored below app title in status bar)
@@ -1376,11 +1379,17 @@ impl Shell {
         }
 
         // Notifications
-        root.add_child(self.notifications.build_scene(screen, theme, notification_layout.as_ref()));
+        root.add_child(
+            self.notifications
+                .build_scene(screen, theme, notification_layout.as_ref()),
+        );
 
         // Launcher (on top of everything)
         if self.launcher.is_visible() {
-            root.add_child(self.launcher.build_scene(screen, theme, launcher_layout.as_ref()));
+            root.add_child(
+                self.launcher
+                    .build_scene(screen, theme, launcher_layout.as_ref()),
+            );
         }
 
         // Session menu (anchored below the session button on the status bar)
