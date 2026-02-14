@@ -74,7 +74,8 @@ function Download-Font {
     Write-Host "  [GET]  $($Font.Name) ..." -ForegroundColor Cyan
     try {
         Invoke-WebRequest -Uri $Font.Url -OutFile $filePath -UseBasicParsing
-    } catch {
+    }
+    catch {
         Write-Host "  [FAIL] $($Font.Name): $($_.Exception.Message)" -ForegroundColor Red
         return
     }

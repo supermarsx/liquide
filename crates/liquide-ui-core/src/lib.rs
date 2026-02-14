@@ -24,7 +24,7 @@ pub mod widget;
 pub use callback::{Callback, CallbackId};
 pub use color::UiColor;
 pub use constraints::Constraints;
-pub use event::{Event, EventResponse, MouseButton, Modifiers, Key};
+pub use event::{Event, EventResponse, Key, Modifiers, MouseButton};
 pub use focus::{FocusChain, FocusDirection, FocusId};
 pub use id::WidgetId;
 pub use layout::{Alignment, Direction, LayoutNode, LayoutResult, Padding, Spacing};
