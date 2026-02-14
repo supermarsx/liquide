@@ -17,11 +17,13 @@ use liquide_renderer_css::StyleResolver;
 use crate::app_history::AppHistory;
 use crate::config::ShellConfig;
 use crate::decoration::{DecorationStyle, HitZone, hit_test_decoration};
+use crate::desktop_dom::{ContextMenuItemInfo, DesktopDocument, DockItemInfo, StatusBarSlotKind};
 use crate::focus::{FocusManager, FocusPolicy};
 use crate::history::{WindowEventKind, WindowHistory};
 use crate::launcher::{Launcher, LauncherApp, SearchResultKind};
 use crate::layout::{FloatingLayout, LayoutPolicy};
 use crate::notification::NotificationManager;
+use crate::pipeline::{DesktopPipeline, PipelineConfig};
 use crate::scene_builder;
 use crate::screen_time::ScreenTimeTracker;
 use crate::seamless::SeamlessManager;
@@ -181,6 +183,13 @@ pub struct Shell {
     /// Win32 window → dock integration (polls Win32 windows into dock items).
     #[cfg(windows)]
     win32_dock: liquide_dock::Win32DockIntegration,
+    // ── DOM / CSS pipeline ──────────────────────────────────
+    /// The full desktop DOM tree (background, statusbar, dock, windows, etc.).
+    desktop_dom: DesktopDocument,
+    /// CSS Style → Layout → Paint → SceneNode pipeline.
+    css_pipeline: DesktopPipeline,
+    /// Whether the DOM needs re-sync before the next `build_scene()`.
+    dom_dirty: bool,
 }
 
 impl Shell {
@@ -211,6 +220,30 @@ impl Shell {
 
         // Build default CSS theme and keep the engine alive for CSS queries.
         let (theme, style_resolver) = Self::build_default_theme();
+
+        // ── DOM + CSS pipeline ──────────────────────────────────────
+        let mut desktop_dom = DesktopDocument::new();
+        desktop_dom.populate_default_statusbar();
+        // Mirror the initial dock items into the DOM tree.
+        let dock_infos: Vec<DockItemInfo> = dock
+            .items()
+            .iter()
+            .map(|item| DockItemInfo {
+                app_id: item.app_id.clone(),
+                label: item.label.clone(),
+                icon: item.icon.clone(),
+                is_running: item.running_window_count > 0,
+                is_pinned: item.pinned_position.is_some(),
+            })
+            .collect();
+        desktop_dom.sync_dock_items(&dock_infos);
+
+        let pipeline_cfg = PipelineConfig {
+            width: screen_width,
+            height: screen_height,
+            base_font_size: 14.0,
+        };
+        let css_pipeline = DesktopPipeline::new(&pipeline_cfg);
 
         Self {
             windows: HashMap::new(),
@@ -247,6 +280,9 @@ impl Shell {
             app_menu_open: None,
             #[cfg(windows)]
             win32_dock: liquide_dock::Win32DockIntegration::new(),
+            desktop_dom,
+            css_pipeline,
+            dom_dirty: true,
         }
     }
 
@@ -271,6 +307,30 @@ impl Shell {
         let mut launcher = Launcher::new(config.launcher.clone());
         Self::register_default_apps(&mut launcher);
         let (theme, style_resolver) = Self::build_default_theme();
+
+        // ── DOM + CSS pipeline ──────────────────────────────────────
+        let mut desktop_dom = DesktopDocument::new();
+        desktop_dom.populate_default_statusbar();
+        let dock_infos: Vec<DockItemInfo> = dock
+            .items()
+            .iter()
+            .map(|item| DockItemInfo {
+                app_id: item.app_id.clone(),
+                label: item.label.clone(),
+                icon: item.icon.clone(),
+                is_running: item.running_window_count > 0,
+                is_pinned: item.pinned_position.is_some(),
+            })
+            .collect();
+        desktop_dom.sync_dock_items(&dock_infos);
+
+        let pipeline_cfg = PipelineConfig {
+            width: screen_width,
+            height: screen_height,
+            base_font_size: 14.0,
+        };
+        let css_pipeline = DesktopPipeline::new(&pipeline_cfg);
+
         Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
@@ -306,6 +366,9 @@ impl Shell {
             app_menu_open: None,
             #[cfg(windows)]
             win32_dock: liquide_dock::Win32DockIntegration::new(),
+            desktop_dom,
+            css_pipeline,
+            dom_dirty: true,
         }
     }
 
@@ -1135,18 +1198,64 @@ impl Shell {
         }
     }
 
+    // ================================================================
+    // DOM synchronisation
+    // ================================================================
+
+    /// Push current shell state into the desktop DOM tree.
+    ///
+    /// Called once per frame just before the CSS pipeline runs.
+    fn sync_dom(&mut self) {
+        // ── Dock ────────────────────────────────────────────
+        let dock_infos: Vec<DockItemInfo> = self
+            .dock
+            .items()
+            .iter()
+            .map(|item| DockItemInfo {
+                app_id: item.app_id.clone(),
+                label: item.label.clone(),
+                icon: item.icon.clone(),
+                is_running: item.running_window_count > 0,
+                is_pinned: item.pinned_position.is_some(),
+            })
+            .collect();
+        self.desktop_dom.sync_dock_items(&dock_infos);
+
+        let hover_idx = self.dock.hover_index();
+        self.desktop_dom.set_dock_hover(hover_idx);
+
+        // Keep the DOM viewport in sync with the screen rect.
+        self.css_pipeline
+            .set_viewport(self.screen_rect.width, self.screen_rect.height);
+
+        self.dom_dirty = false;
+    }
+
     /// Build the complete shell scene graph.
     ///
-    /// Assembles: background, active workspace with window decorations,
-    /// status bar, dock, notifications, and launcher overlay.
-    pub fn build_scene(&self) -> SceneNode {
+    /// **Hybrid approach**: the CSS pipeline renders background and dock
+    /// from the live DOM tree.  Windows, status bar, launcher, menus, and
+    /// notifications are still assembled manually because they require
+    /// complex interactive state (decoration buttons, hover indices, etc.)
+    /// that the pipeline does not yet model.
+    pub fn build_scene(&mut self) -> SceneNode {
         use crate::scene_builder::*;
         use liquide_compositor::scene::GlassParams;
 
         let screen = self.screen_rect;
+
+        // ── Synchronise DOM with current shell state ────────
+        self.sync_dom();
+
+        // ── Run the CSS pipeline (background + dock) ────────
+        let pipeline_nodes = self.css_pipeline.render_to_scene(
+            &self.desktop_dom.doc,
+            0, // base z-order
+        );
+
         let theme = &self.theme;
 
-        // Resolve decoration button colors and layout from CSS (cached per frame).
+        // Resolve decoration button colors and layout from CSS (for windows).
         let button_colors = self
             .style_resolver
             .as_ref()
@@ -1158,11 +1267,7 @@ impl Shell {
             .map(crate::css_integration::resolve_decoration_layout)
             .unwrap_or_default();
 
-        // Resolve component layouts from CSS.
-        let dock_layout = self
-            .style_resolver
-            .as_ref()
-            .map(crate::css_integration::resolve_dock_layout);
+        // Resolve component layouts from CSS (still used for manual elements).
         let status_bar_layout = self
             .style_resolver
             .as_ref()
@@ -1182,15 +1287,12 @@ impl Shell {
 
         let mut root = SceneNode::new(NODE_ROOT, SceneNodeKind::Root, NodeProperties::new(screen));
 
-        // Background
-        root.add_child(solid_rect(
-            NODE_BACKGROUND,
-            theme.desktop_background,
-            screen,
-            0,
-        ));
+        // ── Pipeline-generated nodes (background, dock, statusbar placeholders)
+        for node in pipeline_nodes {
+            root.add_child(node);
+        }
 
-        // Active workspace
+        // ── Windows (manual — complex interactive decorations) ────
         let ws = self.workspaces.active();
         let ws_id = NODE_WORKSPACE_BASE + ws.id.0 as u64;
         let mut ws_node = SceneNode::new(
@@ -1199,7 +1301,6 @@ impl Shell {
             NodeProperties::new(screen).with_z_order(1),
         );
 
-        // Windows back-to-front
         for window in &self.visible_windows() {
             let win_base = NODE_WINDOW_BASE + window.id.0 * NODE_WINDOW_STRIDE;
 
@@ -1231,7 +1332,6 @@ impl Shell {
                     title_h,
                 );
 
-                // Glass backdrop for the title bar — frosted glass effect
                 ws_node.add_child(SceneNode::new(
                     win_base + 10,
                     SceneNodeKind::Glass(GlassParams {
@@ -1244,11 +1344,9 @@ impl Shell {
                         .with_z_order(window.z_order as u32 * 10 + 1),
                 ));
 
-                // Decoration overlay on top of glass (semi-transparent to
-                // let the blur show through)
                 let title_bg = if is_focused {
                     let mut c = theme.window_title_bar_focused;
-                    c.a = (c.a / 2).max(60); // halve alpha for glass transparency
+                    c.a = (c.a / 2).max(60);
                     c
                 } else {
                     let mut c = theme.window_title_bar_unfocused;
@@ -1304,7 +1402,6 @@ impl Shell {
             );
             let z_content = window.z_order as u32 * 10 + 3;
 
-            // Background fill for the content area.
             let content_bg = theme.window_content_background;
             ws_node.add_child(solid_rect(
                 win_base + 2,
@@ -1313,7 +1410,6 @@ impl Shell {
                 z_content,
             ));
 
-            // App-specific content nodes.
             self.build_window_content(
                 &mut ws_node,
                 window,
@@ -1325,7 +1421,7 @@ impl Shell {
         }
         root.add_child(ws_node);
 
-        // Status bar (conditionally visible based on auto-hide settings)
+        // ── Status bar (manual — icons/indicators) ──────────
         if self.status_bar_visible {
             root.add_child(
                 self.status_bar
@@ -1333,7 +1429,7 @@ impl Shell {
             );
         }
 
-        // App menu dropdown (macOS-style, anchored below app title in status bar)
+        // ── App menu dropdown (manual) ──────────────────────
         if let Some(ref _app_id) = self.app_menu_open {
             let menu_defaults = crate::css_integration::MenuLayout::default();
             let ml = menu_layout.as_ref().unwrap_or(&menu_defaults);
@@ -1349,7 +1445,7 @@ impl Shell {
             ];
             let menu_h = 16.0 + menu_items.len() as f32 * item_h;
             let bar_h = self.status_bar.config().height as f32;
-            let menu_x = 80.0; // Position below app title area
+            let menu_x = 80.0;
             let menu_y = bar_h + 4.0;
             let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
 
@@ -1368,7 +1464,6 @@ impl Shell {
                 let iy = menu_y + 8.0 + i as f32 * item_h;
 
                 if *item_text == "---" {
-                    // Separator
                     root.add_child(scene_builder::solid_rect(
                         NODE_APP_MENU + 100 + i as u64,
                         theme.menu_separator,
@@ -1376,7 +1471,6 @@ impl Shell {
                         996,
                     ));
                 } else {
-                    // Menu item
                     root.add_child(scene_builder::text_node(
                         NODE_APP_MENU + 200 + i as u64,
                         item_text.to_string(),
@@ -1389,36 +1483,13 @@ impl Shell {
             }
         }
 
-        // Dock
-        if self.dock.is_visible() || !self.dock.config().auto_hide {
-            let dock_colors = liquide_dock::DockThemeColors {
-                glass_tint: theme.dock_glass_tint,
-                border: theme.dock_border,
-                item_active: theme.dock_item_active,
-                item_inactive: theme.dock_item_inactive,
-                hover_highlight: theme.dock_hover_highlight,
-            };
-            let dock_rc = dock_layout
-                .as_ref()
-                .map(|dl| liquide_dock::DockRenderConfig {
-                    blur_radius: dl.blur_radius,
-                    border_height: dl.border_height,
-                });
-            root.add_child(self.dock.build_scene(
-                screen,
-                &dock_colors,
-                &scene_builder::icon_id_for_name,
-                dock_rc.as_ref(),
-            ));
-        }
-
-        // Notifications
+        // ── Notifications (manual) ──────────────────────────
         root.add_child(
             self.notifications
                 .build_scene(screen, theme, notification_layout.as_ref()),
         );
 
-        // Launcher (on top of everything)
+        // ── Launcher (manual — complex search UI) ───────────
         if self.launcher.is_visible() {
             root.add_child(
                 self.launcher
@@ -1426,7 +1497,7 @@ impl Shell {
             );
         }
 
-        // Session menu (anchored below the session button on the status bar)
+        // ── Session menu (manual) ───────────────────────────
         if self.session_menu_visible {
             let menu_defaults = crate::css_integration::MenuLayout::default();
             let ml = menu_layout.as_ref().unwrap_or(&menu_defaults);
@@ -1452,7 +1523,6 @@ impl Shell {
             for (i, item) in self.session_menu_items.iter().enumerate() {
                 let iy = menu_y + 8.0 + i as f32 * item_h;
 
-                // Hover highlight
                 if self.session_menu_hover_index == Some(i) {
                     root.add_child(tint_overlay(
                         NODE_SESSION_MENU + 5 + i as u64,
@@ -1481,7 +1551,7 @@ impl Shell {
             }
         }
 
-        // Desktop right-click context menu
+        // ── Context menu (manual) ───────────────────────────
         if self.context_menu_visible {
             let menu_defaults = crate::css_integration::MenuLayout::default();
             let ml = menu_layout.as_ref().unwrap_or(&menu_defaults);
@@ -1489,7 +1559,6 @@ impl Shell {
             let ctx_item_h = 36.0_f32;
             let ctx_w = 260.0_f32;
             let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
-            // Clamp position so menu stays on-screen.
             let ctx_x = self
                 .context_menu_pos
                 .x
@@ -1516,7 +1585,6 @@ impl Shell {
             for (i, item) in ctx_items.iter().enumerate() {
                 let iy = ctx_y + 8.0 + i as f32 * ctx_item_h;
 
-                // Hover highlight
                 if self.context_menu_hover_index == Some(i) {
                     root.add_child(tint_overlay(
                         NODE_CONTEXT_MENU + 5 + i as u64,

@@ -5,6 +5,7 @@
 //! shell crate, allowing it to be reused independently.
 
 mod dock;
+pub mod dom;
 #[cfg(windows)]
 pub mod win32_dock;
 

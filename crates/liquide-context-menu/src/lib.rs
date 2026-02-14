@@ -4,7 +4,7 @@
 //! right-click menus, window title-bar menus, dock item menus, status bar
 //! menus, and any other popup menu surface.
 
-mod menu;pub mod presets;
-pub use menu::{
-    ContextMenu, ContextMenuConfig, MenuAction, MenuItem, MenuItemKind, MenuSeparator,
-};
+pub mod dom;
+mod menu;
+pub mod presets;
+pub use menu::{ContextMenu, ContextMenuConfig, MenuAction, MenuItem, MenuItemKind, MenuSeparator};

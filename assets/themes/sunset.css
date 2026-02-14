@@ -1,4 +1,245 @@
-/* Liquid Desktop -- Sunset theme */
-:root {
-    /* TODO: define sunset theme custom properties */
+/* ═══════════════════════════════════════════════════════
+   LiquiDE Theme: Sunset — Warm Dark
+   Preset: sunset
+   Spec: spec-theme-sunset.md
+
+   Amber/orange tones, warm glass tint, full effects.
+   The golden-hour theme.
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Desktop ── */
+desktop {
+    background: rgb(26, 16, 8);
+}
+
+/* ── Windows ── */
+window {
+    background: rgba(32, 22, 10, 0.78);
+    border-color: rgba(255, 180, 80, 0.12);
+    border-width: 1;
+    border-radius: 16;
+    box-shadow-color: rgba(20, 10, 0, 0.40);
+    glass-tint: rgba(32, 22, 10, 0.72);
+}
+
+window.focused {
+    border-color: rgba(255, 180, 80, 0.22);
+    titlebar-background: rgba(40, 28, 14, 0.65);
+}
+
+titlebar {
+    background: rgba(40, 28, 14, 0.60);
+    color: rgba(255, 245, 230, 255);
+    height: 36;
+}
+
+titlebar.focused {
+    background: rgba(40, 28, 14, 0.70);
+}
+
+titlebar-button {
+    width: 28;
+    height: 28;
+    margin-right: 4;
+    border-radius: 14;
+}
+
+close-button {
+    background: rgba(255, 107, 107, 0.75);
+    color: rgba(255, 245, 230, 0.94);
+}
+
+close-button:hover {
+    background: rgba(255, 107, 107, 1.0);
+}
+
+maximize-button {
+    background: rgba(255, 200, 120, 0.06);
+    color: rgba(255, 245, 230, 0.72);
+}
+
+maximize-button:hover {
+    background: rgba(255, 200, 120, 0.10);
+}
+
+minimize-button {
+    background: rgba(255, 200, 120, 0.06);
+    color: rgba(255, 245, 230, 0.72);
+}
+
+minimize-button:hover {
+    background: rgba(255, 200, 120, 0.10);
+}
+
+pin-button {
+    background: rgba(255, 200, 120, 0.06);
+    color: rgba(255, 245, 230, 0.72);
+}
+
+pin-button:hover {
+    background: rgba(255, 200, 120, 0.10);
+}
+
+pin-button.active {
+    background: rgba(255, 159, 10, 0.65);
+    color: rgba(26, 14, 0, 1.0);
+}
+
+pin-button.active:hover {
+    background: rgba(255, 159, 10, 0.85);
+}
+
+/* ── Dock ── */
+dock {
+    background: rgba(32, 22, 10, 0.72);
+    border-top-color: rgba(255, 180, 80, 0.06);
+    padding: 12;
+    border-width: 1;
+    blur-radius: 20;
+}
+
+dock-item {
+    color: rgba(255, 245, 230, 0.72);
+}
+
+dock-item.active {
+    color: rgba(255, 159, 10, 1.0);
+}
+
+dock-item:hover {
+    background: rgba(255, 200, 120, 0.10);
+}
+
+/* ── Status Bar ── */
+statusbar {
+    background: rgba(20, 14, 4, 0.90);
+    border-bottom-color: rgba(255, 180, 80, 0.06);
+    color: rgba(255, 245, 230, 255);
+    height: 28;
+    padding: 8;
+    border-width: 1;
+    blur-radius: 10;
+}
+
+status-indicator.connected {
+    color: rgb(52, 199, 89);
+}
+
+status-indicator.degraded {
+    color: rgb(255, 214, 10);
+}
+
+notification-indicator.active {
+    color: rgb(255, 107, 107);
+}
+
+notification-indicator {
+    color: rgba(255, 179, 64, 0.60);
+}
+
+status-tray {
+    background: rgba(255, 200, 120, 0.08);
+}
+
+/* ── Launcher ── */
+launcher-overlay {
+    background: rgba(0, 0, 0, 0.45);
+}
+
+launcher {
+    background: rgba(16, 10, 2, 0.96);
+    width: 60;
+    height: 70;
+    padding: 16;
+    blur-radius: 40;
+}
+
+launcher-search {
+    background: rgba(255, 200, 120, 0.06);
+    height: 36;
+}
+
+launcher-item {
+    background: transparent;
+    height: 40;
+    margin-bottom: 4;
+}
+
+launcher-item.selected {
+    background: rgba(255, 159, 10, 0.25);
+}
+
+/* ── Notifications ── */
+notification {
+    background: rgba(36, 26, 12, 0.94);
+    width: 320;
+    height: 80;
+    margin-bottom: 8;
+    margin-right: 12;
+    margin-top: 32;
+    blur-radius: 20;
+}
+
+/* ── Menus ── */
+menu {
+    blur-radius: 20;
+    border-radius: 10;
+    padding: 4;
+    height: 28;
+}
+
+context-menu {
+    background: rgba(32, 22, 10, 0.94);
+    border-color: rgba(255, 180, 80, 0.10);
+    border-width: 1;
+    border-radius: 10;
+    blur-radius: 20;
+}
+
+menu-item {
+    color: rgba(255, 245, 230, 0.90);
+    height: 28;
+    padding: 8;
+}
+
+menu-item:hover {
+    background: rgba(255, 159, 10, 0.25);
+}
+
+menu-separator {
+    background: rgba(255, 180, 80, 0.12);
+}
+
+/* ── Cursor ── */
+cursor {
+    color: rgba(255, 245, 230, 255);
+}
+
+/* ── Loading ── */
+loading-overlay {
+    background: rgba(20, 10, 0, 0.85);
+}
+
+loading-panel {
+    background: rgba(36, 26, 12, 0.94);
+    color: rgba(255, 245, 230, 255);
+}
+
+/* ── Window Content ── */
+window-content {
+    background: rgba(26, 16, 8, 0.95);
+}
+
+/* ── App-specific ── */
+app-settings.sidebar-item {
+    background: rgba(255, 200, 120, 0.06);
+}
+
+app-terminal {
+    background: rgb(18, 10, 2);
+    color: rgb(255, 179, 64);
+}
+
+app-browser.urlbar {
+    background: rgba(255, 200, 120, 0.08);
 }

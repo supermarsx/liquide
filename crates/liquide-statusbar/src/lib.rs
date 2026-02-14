@@ -11,6 +11,7 @@
 
 pub mod app_menu;
 pub mod config;
+pub mod dom;
 pub mod indicator;
 pub mod menu_bar;
 pub mod status_bar;

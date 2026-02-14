@@ -1,0 +1,1347 @@
+warning: unused imports: `debug`, `trace`, and `warn`
+ --> crates\liquide-platform-win32\src\enumerator.rs:5:15
+  |
+5 | use tracing::{debug, info, trace, warn};
+  |               ^^^^^        ^^^^^  ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `GWL_STYLE`
+   --> crates\liquide-platform-win32\src\enumerator.rs:136:53
+    |
+136 |             IsWindowVisible, IsZoomed, GWL_EXSTYLE, GWL_STYLE, WS_EX_APPWINDOW,
+    |                                                     ^^^^^^^^^
+
+warning[E0133]: dereference of raw pointer is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:147:28
+    |
+147 |             let ctx = &mut *(lparam as *mut EnumContext);
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ dereference of raw pointer
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: raw pointers may be null, dangling or unaligned; they can violate aliasing rules and cause data races: all of these are undefined behavior
+note: an unsafe function restricts its caller, but its body is safe by default
+   --> crates\liquide-platform-win32\src\enumerator.rs:146:9
+    |
+146 |         unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: `#[warn(unsafe_op_in_unsafe_fn)]` (part of `#[warn(rust_2024_compatibility)]`) on by default
+
+warning[E0133]: call to unsafe function `windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:150:16
+    |
+150 |             if IsWindowVisible(hwnd) == 0 {
+    |                ^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongW` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:155:28
+    |
+155 |             let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `windows_sys::Win32::UI::WindowsAndMessaging::GetClassNameW` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:165:29
+    |
+165 |             let class_len = GetClassNameW(hwnd, class_buf.as_mut_ptr(), 256);
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `windows_sys::Win32::UI::WindowsAndMessaging::GetWindowTextLengthW` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:184:29
+    |
+184 |             let title_len = GetWindowTextLengthW(hwnd);
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `windows_sys::Win32::UI::WindowsAndMessaging::GetWindowTextW` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:187:30
+    |
+187 |                 let actual = GetWindowTextW(hwnd, title_buf.as_mut_ptr(), title_len + 1);
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:202:13
+    |
+202 |             GetWindowThreadProcessId(hwnd, &mut pid);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `std::mem::zeroed` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:205:28
+    |
+205 |             let mut rect = mem::zeroed::<windows_sys::Win32::Foundation::RECT>();
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:206:13
+    |
+206 |             GetWindowRect(hwnd, &mut rect);
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `windows_sys::Win32::UI::WindowsAndMessaging::IsIconic` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:215:29
+    |
+215 |             let minimized = IsIconic(hwnd) != 0;
+    |                             ^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning[E0133]: call to unsafe function `windows_sys::Win32::UI::WindowsAndMessaging::IsZoomed` is unsafe and requires unsafe block
+   --> crates\liquide-platform-win32\src\enumerator.rs:216:29
+    |
+216 |             let maximized = IsZoomed(hwnd) != 0;
+    |                             ^^^^^^^^^^^^^^ call to unsafe function
+    |
+    = note: for more information, see <https://doc.rust-lang.org/edition-guide/rust-2024/unsafe-op-in-unsafe-fn.html>
+    = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning: method `is_ignored_class` is never used
+   --> crates\liquide-platform-win32\src\enumerator.rs:119:8
+    |
+ 22 | impl Win32WindowEnumerator {
+    | -------------------------- method in this implementation
+...
+119 |     fn is_ignored_class(&self, class_name: &str) -> bool {
+    |        ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+For more information about this error, try `rustc --explain E0133`.
+warning: `liquide-platform-win32` (lib) generated 14 warnings (run `cargo fix --lib -p liquide-platform-win32` to apply 3 suggestions)
+warning: unused variable: `img`
+   --> crates\liquide-cursor\src\state.rs:173:21
+    |
+173 |         if let Some(ref img) = self.custom_image {
+    |                     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_img`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `default_theme` is never used
+   --> crates\liquide-cursor\src\theme.rs:159:8
+    |
+159 | pub fn default_theme() -> CursorTheme {
+    |        ^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `AnimatedCursorBuilder` is never constructed
+   --> crates\liquide-cursor\src\animation.rs:120:12
+    |
+120 | pub struct AnimatedCursorBuilder {
+    |            ^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `new`, `add_frame`, and `build` are never used
+   --> crates\liquide-cursor\src\animation.rs:128:12
+    |
+126 | impl AnimatedCursorBuilder {
+    | -------------------------- associated items in this implementation
+127 |     /// Create a new builder.
+128 |     pub fn new(id: u64, shape: CursorShape) -> Self {
+    |            ^^^
+...
+137 |     pub fn add_frame(
+    |            ^^^^^^^^^
+...
+158 |     pub fn build(self) -> AnimatedCursor {
+    |            ^^^^^
+
+warning: `liquide-cursor` (lib) generated 4 warnings (run `cargo fix --lib -p liquide-cursor` to apply 1 suggestion)
+warning: use of deprecated enum `scene::LegacyCursorShape`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:651:11
+    |
+651 | impl From<LegacyCursorShape> for NewCursorShape {
+    |           ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated enum `scene::LegacyCursorShape`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:684:18
+    |
+684 | impl Default for LegacyCursorShape {
+    |                  ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated enum `scene::LegacyCursorShape`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:652:21
+    |
+652 |     fn from(legacy: LegacyCursorShape) -> Self {
+    |                     ^^^^^^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Arrow`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:654:32
+    |
+654 |             LegacyCursorShape::Arrow => NewCursorShape::Arrow,
+    |                                ^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Move`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:655:32
+    |
+655 |             LegacyCursorShape::Move => NewCursorShape::Move,
+    |                                ^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::ResizeNS`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:656:32
+    |
+656 |             LegacyCursorShape::ResizeNS => NewCursorShape::Resize(ResizeDirection::North),
+    |                                ^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::ResizeEW`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:657:32
+    |
+657 |             LegacyCursorShape::ResizeEW => NewCursorShape::Resize(ResizeDirection::East),
+    |                                ^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::ResizeNWSE`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:658:32
+    |
+658 |             LegacyCursorShape::ResizeNWSE => NewCursorShape::Resize(ResizeDirection::NorthWest),
+    |                                ^^^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::ResizeNESW`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:659:32
+    |
+659 |             LegacyCursorShape::ResizeNESW => NewCursorShape::Resize(ResizeDirection::NorthEast),
+    |                                ^^^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Pointer`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:660:32
+    |
+660 |             LegacyCursorShape::Pointer => NewCursorShape::Pointer,
+    |                                ^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Text`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:661:32
+    |
+661 |             LegacyCursorShape::Text => NewCursorShape::Text,
+    |                                ^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::NotAllowed`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:662:32
+    |
+662 |             LegacyCursorShape::NotAllowed => NewCursorShape::NotAllowed,
+    |                                ^^^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Wait`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:663:32
+    |
+663 |             LegacyCursorShape::Wait => NewCursorShape::Wait,
+    |                                ^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Progress`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:664:32
+    |
+664 |             LegacyCursorShape::Progress => NewCursorShape::Progress,
+    |                                ^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Help`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:665:32
+    |
+665 |             LegacyCursorShape::Help => NewCursorShape::Help,
+    |                                ^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Crosshair`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:666:32
+    |
+666 |             LegacyCursorShape::Crosshair => NewCursorShape::Crosshair,
+    |                                ^^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Grab`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:667:32
+    |
+667 |             LegacyCursorShape::Grab => NewCursorShape::Grab,
+    |                                ^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Grabbing`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:668:32
+    |
+668 |             LegacyCursorShape::Grabbing => NewCursorShape::Grabbing,
+    |                                ^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::ZoomIn`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:669:32
+    |
+669 |             LegacyCursorShape::ZoomIn => NewCursorShape::ZoomIn,
+    |                                ^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::ZoomOut`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:670:32
+    |
+670 |             LegacyCursorShape::ZoomOut => NewCursorShape::ZoomOut,
+    |                                ^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::ContextMenu`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:671:32
+    |
+671 |             LegacyCursorShape::ContextMenu => NewCursorShape::ContextMenu,
+    |                                ^^^^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Alias`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:672:32
+    |
+672 |             LegacyCursorShape::Alias => NewCursorShape::Alias,
+    |                                ^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Copy`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:673:32
+    |
+673 |             LegacyCursorShape::Copy => NewCursorShape::Copy,
+    |                                ^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::NoDrop`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:674:32
+    |
+674 |             LegacyCursorShape::NoDrop => NewCursorShape::NoDrop,
+    |                                ^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Cell`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:675:32
+    |
+675 |             LegacyCursorShape::Cell => NewCursorShape::Cell,
+    |                                ^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::VerticalText`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:676:32
+    |
+676 |             LegacyCursorShape::VerticalText => NewCursorShape::VerticalText,
+    |                                ^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::AllScroll`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:677:32
+    |
+677 |             LegacyCursorShape::AllScroll => NewCursorShape::AllScroll,
+    |                                ^^^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::ExpandH`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:678:32
+    |
+678 |             LegacyCursorShape::ExpandH => NewCursorShape::ColResize,
+    |                                ^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::ExpandV`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:679:32
+    |
+679 |             LegacyCursorShape::ExpandV => NewCursorShape::RowResize,
+    |                                ^^^^^^^
+
+warning: use of deprecated unit variant `scene::LegacyCursorShape::Arrow`: use liquide_cursor::CursorShape instead
+   --> crates\liquide-compositor\src\scene.rs:686:15
+    |
+686 |         Self::Arrow
+    |               ^^^^^
+
+   Compiling liquide-theme-css v0.1.0 (C:\Projects\liquide\crates\liquide-theme-css)
+warning: `liquide-compositor` (lib) generated 30 warnings
+warning: unused import: `Keyframe`
+ --> crates\liquide-theme-css\src\stylesheet.rs:5:34
+  |
+5 | use crate::value::{FontFaceRule, Keyframe, KeyframesRule, PropertyValue};
+  |                                  ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Sender`
+ --> crates\liquide-theme-css\src\watcher.rs:8:42
+  |
+8 | use std::sync::mpsc::{channel, Receiver, Sender};
+  |                                          ^^^^^^
+
+warning: unused import: `Mutex`
+ --> crates\liquide-theme-css\src\watcher.rs:9:22
+  |
+9 | use std::sync::{Arc, Mutex};
+  |                      ^^^^^
+
+   Compiling liquide-style-engine v0.1.0 (C:\Projects\liquide\crates\liquide-style-engine)
+   Compiling liquide-renderer-css v0.1.0 (C:\Projects\liquide\crates\liquide-renderer-css)
+warning: unused import: `Dimension`
+  --> crates\liquide-style-engine\src\engine.rs:10:24
+   |
+10 | use crate::dimension::{Dimension, Sides};
+   |                        ^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::inheritance`
+  --> crates\liquide-style-engine\src\engine.rs:11:5
+   |
+11 | use crate::inheritance;
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Tag`
+  --> crates\liquide-style-engine\src\selector.rs:15:61
+   |
+15 | use liquide_dom::{Document, Node, NodeId, PseudoStateFlags, Tag};
+   |                                                             ^^^
+
+warning: unused import: `PropertyValue`
+ --> crates\liquide-renderer-css\src\resolver.rs:8:25
+  |
+8 |     value::{LengthUnit, PropertyValue},
+  |                         ^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `StyleError`
+  --> crates\liquide-renderer-css\src\resolver.rs:12:13
+   |
+12 |     Result, StyleError,
+   |             ^^^^^^^^^^
+
+warning: unused imports: `BackgroundRepeat` and `BackgroundSize`
+ --> crates\liquide-renderer-css\src\style.rs:9:25
+  |
+9 |     BackdropFilterSpec, BackgroundRepeat, BackgroundSize, BackgroundSpec,
+  |                         ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^
+
+   Compiling liquide-layout v0.1.0 (C:\Projects\liquide\crates\liquide-layout)
+   Compiling liquide-context-menu v0.1.0 (C:\Projects\liquide\crates\liquide-context-menu)
+   Compiling liquide-dock v0.1.0 (C:\Projects\liquide\crates\liquide-dock)
+warning: unused import: `Display`
+ --> crates\liquide-layout\src\engine.rs:4:38
+  |
+4 | use liquide_style_engine::computed::{Display, Position};
+  |                                      ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `LayoutBoxId`
+ --> crates\liquide-layout\src\engine.rs:8:19
+  |
+8 | use crate::tree::{LayoutBoxId, LayoutTree};
+  |                   ^^^^^^^^^^^
+
+warning: unused import: `FlexWrap`
+ --> crates\liquide-layout\src\flex.rs:4:62
+  |
+4 | use liquide_style_engine::computed::{Display, FlexDirection, FlexWrap, JustifyContent, AlignItems, Position};
+  |                                                              ^^^^^^^^
+
+warning: unused import: `GridAutoFlow`
+ --> crates\liquide-layout\src\grid.rs:4:47
+  |
+4 | use liquide_style_engine::computed::{Display, GridAutoFlow, TrackSize, Position};
+  |                                               ^^^^^^^^^^^^
+
+warning: unused import: `LineBox`
+ --> crates\liquide-layout\src\inline.rs:7:53
+  |
+7 | use crate::tree::{BoxType, LayoutBoxId, LayoutTree, LineBox};
+  |                                                     ^^^^^^^
+
+warning: unused import: `liquide_style_engine::dimension::Dimension`
+ --> crates\liquide-layout\src\positioned.rs:5:5
+  |
+5 | use liquide_style_engine::dimension::Dimension;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `liquide-renderer-css` (lib) generated 3 warnings (run `cargo fix --lib -p liquide-renderer-css` to apply 3 suggestions)
+   Compiling liquide-hit-test v0.1.0 (C:\Projects\liquide\crates\liquide-hit-test)
+   Compiling liquide-paint v0.1.0 (C:\Projects\liquide\crates\liquide-paint)
+warning: unused imports: `Deserialize` and `Serialize`
+ --> crates\liquide-paint\src\display_list.rs:8:13
+  |
+8 | use serde::{Deserialize, Serialize};
+  |             ^^^^^^^^^^^  ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `NodeId`
+ --> crates\liquide-paint\src\painter.rs:4:39
+  |
+4 | use liquide_dom::{Document, NodeData, NodeId};
+  |                                       ^^^^^^
+
+warning: unused imports: `BoxType` and `LayoutBox`
+ --> crates\liquide-paint\src\painter.rs:5:28
+  |
+5 | use liquide_layout::tree::{BoxType, LayoutBox, LayoutBoxId, LayoutTree};
+  |                            ^^^^^^^  ^^^^^^^^^
+
+warning: unused import: `LayoutBox`
+ --> crates\liquide-hit-test\src\engine.rs:5:28
+  |
+5 | use liquide_layout::tree::{LayoutBox, LayoutBoxId, LayoutTree};
+  |                            ^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `a`
+   --> crates\liquide-paint\src\painter.rs:292:31
+    |
+292 |             Transform::Matrix(a, b, c, d, e, f) => {
+    |                               ^ help: if this is intentional, prefix it with an underscore: `_a`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `b`
+   --> crates\liquide-paint\src\painter.rs:292:34
+    |
+292 |             Transform::Matrix(a, b, c, d, e, f) => {
+    |                                  ^ help: if this is intentional, prefix it with an underscore: `_b`
+
+warning: unused variable: `c`
+   --> crates\liquide-paint\src\painter.rs:292:37
+    |
+292 |             Transform::Matrix(a, b, c, d, e, f) => {
+    |                                     ^ help: if this is intentional, prefix it with an underscore: `_c`
+
+warning: unused variable: `d`
+   --> crates\liquide-paint\src\painter.rs:292:40
+    |
+292 |             Transform::Matrix(a, b, c, d, e, f) => {
+    |                                        ^ help: if this is intentional, prefix it with an underscore: `_d`
+
+   Compiling liquide-shell v0.1.0 (C:\Projects\liquide\crates\liquide-shell)
+warning: `liquide-style-engine` (lib) generated 3 warnings (run `cargo fix --lib -p liquide-style-engine` to apply 3 suggestions)
+warning: `liquide-paint` (lib) generated 7 warnings (run `cargo fix --lib -p liquide-paint` to apply 7 suggestions)
+warning: `liquide-layout` (lib) generated 6 warnings (run `cargo fix --lib -p liquide-layout` to apply 6 suggestions)
+warning: `liquide-hit-test` (lib) generated 1 warning (run `cargo fix --lib -p liquide-hit-test` to apply 1 suggestion)
+warning: unused import: `GlassStyle`
+ --> crates\liquide-shell\src\css_integration.rs:8:28
+  |
+8 | use liquide_renderer_css::{GlassStyle, RenderStyle, StyleResolver};
+  |                            ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `liquide_compositor::pixel::Color`
+  --> crates\liquide-shell\src\pipeline.rs:17:5
+   |
+17 | use liquide_compositor::pixel::Color;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::desktop_dom::DesktopDocument`
+  --> crates\liquide-shell\src\pipeline.rs:26:5
+   |
+26 | use crate::desktop_dom::DesktopDocument;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `DecorationColors` and `DecorationLayout`
+  --> crates\liquide-shell\src\shell.rs:10:37
+   |
+10 |     CursorShape, DecorationButtons, DecorationColors, DecorationLayout, NodeProperties,
+   |                                     ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `ContextMenuItemInfo` and `StatusBarSlotKind`
+  --> crates\liquide-shell\src\shell.rs:20:26
+   |
+20 | use crate::desktop_dom::{ContextMenuItemInfo, DesktopDocument, DockItemInfo, StatusBarSlotKind};
+   |                          ^^^^^^^^^^^^^^^^^^^                                 ^^^^^^^^^^^^^^^^^
+
+warning: `liquide-theme-css` (lib) generated 3 warnings (run `cargo fix --lib -p liquide-theme-css` to apply 3 suggestions)
+warning: unused variable: `radius`
+   --> crates\liquide-shell\src\pipeline.rs:234:17
+    |
+234 |                 radius,
+    |                 ^^^^^^ help: try ignoring the field: `radius: _`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::desktop_dom::DesktopDocument`
+  --> crates\liquide-shell\src\pipeline.rs:26:5
+   |
+26 | use crate::desktop_dom::DesktopDocument;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `liquide-shell` (lib) generated 6 warnings (run `cargo fix --lib -p liquide-shell` to apply 6 suggestions)
+warning: comparison is useless due to type limits
+   --> crates\liquide-shell\src\pipeline.rs:448:17
+    |
+448 |         assert!(nodes.len() >= 0); // no panic = success
+    |                 ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: `liquide-shell` (lib test) generated 5 warnings (3 duplicates) (run `cargo fix --lib -p liquide-shell --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.60s
+     Running unittests src\lib.rs (target\debug\deps\liquide_shell-ed877551596861b6.exe)
+
+running 678 tests
+test desktop_dom::tests::notification ... ok
+test tests::app_history_tests::app_history_display_app_history ... ok
+test desktop_dom::tests::sync_dock_items ... ok
+test desktop_dom::tests::context_menu ... ok
+test desktop_dom::tests::statusbar_items ... ok
+test desktop_dom::tests::window_management ... ok
+test css_integration::tests::test_border_extraction ... ok
+test desktop_dom::tests::initial_tree_structure ... ok
+test tests::app_history_tests::app_history_clear ... ok
+test css_debug_test::tests::debug_css_query ... ok
+test css_dock_example::tests::test_build_dock_with_css ... ok
+test css_integration::tests::test_glass_style_conversion ... ok
+test tests::app_history_tests::app_history_active_window_count ... ok
+test tests::app_history_tests::app_history_display_app_info ... ok
+test desktop_dom::tests::dock_hover_state ... ok
+test css_integration::tests::test_css_integration ... ok
+test tests::app_history_tests::app_history_display_app_session ... ok
+test tests::app_history_tests::app_history_empty_app_id_ignored ... ok
+test tests::app_history_tests::app_history_eviction_prefers_least_recently_used ... ok
+test tests::app_history_tests::app_history_first_last_seen ... ok
+test tests::app_history_tests::app_history_last_bounds_for ... ok
+test tests::app_history_tests::app_history_last_bounds_remembered ... ok
+test tests::app_history_tests::app_history_max_tracked_eviction ... ok
+test tests::app_history_tests::app_history_most_frequent_more_than_tracked ... ok
+test tests::app_history_tests::app_history_most_frequent ... ok
+test tests::app_history_tests::app_history_most_recent ... ok
+test tests::app_history_tests::app_history_most_recent_empty ... ok
+test tests::app_history_tests::app_history_multiple_sessions_same_app ... ok
+test pipeline::tests::pipeline_produces_scene_nodes ... ok
+test tests::app_history_tests::app_history_new_empty ... ok
+test tests::app_history_tests::app_history_no_eviction_when_all_active ... ok
+test tests::app_history_tests::app_history_record_open ... ok
+test pipeline::tests::viewport_update ... ok
+test tests::app_history_tests::app_history_record_open_close_session ... ok
+test pipeline::tests::display_list_bridge ... ok
+test pipeline::tests::pipeline_runs_on_desktop_document ... ok
+test tests::app_history_tests::app_history_total_windows_opened ... ok
+test tests::app_history_tests::app_history_touch_updates_last_seen ... ok
+test tests::app_history_tests::app_history_serde_roundtrip_app_session ... ok
+test tests::app_history_tests::app_history_serde_roundtrip_app_info ... ok
+test tests::calculator_tests::calc_result_display_conversion ... ok
+test tests::calculator_tests::calc_result_display_error ... ok
+test tests::calculator_tests::calc_result_display_number ... ok
+test tests::calculator_tests::calculator_abs_negative ... ok
+test tests::calculator_tests::calculator_addition ... ok
+test tests::calculator_tests::calculator_cos_zero ... ok
+test tests::calculator_tests::calculator_division_by_zero ... ok
+test tests::calculator_tests::calculator_division ... ok
+test tests::calculator_tests::calculator_double_negate ... ok
+test tests::calculator_tests::calculator_empty_expression ... ok
+test tests::calculator_tests::calculator_ln_e ... ok
+test tests::calculator_tests::calculator_log_100 ... ok
+test tests::calculator_tests::calculator_missing_closing_paren ... ok
+test tests::calculator_tests::calculator_modulo ... ok
+test tests::calculator_tests::calculator_multiplication ... ok
+test tests::calculator_tests::calculator_nested_parentheses ... ok
+test tests::calculator_tests::calculator_operator_precedence ... ok
+test tests::calculator_tests::calculator_modulo_by_zero ... ok
+test tests::calculator_tests::calculator_operator_precedence_subtraction ... ok
+test tests::calculator_tests::calculator_parentheses ... ok
+test tests::calculator_tests::calculator_power ... ok
+test tests::calculator_tests::calculator_power_right_associative ... ok
+test tests::calculator_tests::calculator_sin_zero ... ok
+test tests::calculator_tests::calculator_sqrt ... ok
+test tests::calculator_tests::calculator_subtraction ... ok
+test tests::calculator_tests::calculator_tan_zero ... ok
+test tests::calculator_tests::calculator_unary_minus ... ok
+test tests::calculator_tests::calculator_unary_plus ... ok
+test tests::calculator_tests::calculator_unexpected_token ... ok
+test tests::calculator_tests::calculator_unknown_function ... ok
+test tests::calculator_tests::convert_c_to_f ... ok
+test tests::calculator_tests::convert_c_to_k ... ok
+test tests::calculator_tests::convert_f_to_c_boiling ... ok
+test tests::calculator_tests::convert_f_to_c_freezing ... ok
+test tests::calculator_tests::convert_k_to_c ... ok
+test tests::calculator_tests::convert_kg_to_lb ... ok
+test tests::calculator_tests::convert_km_to_mi ... ok
+test tests::calculator_tests::convert_lb_to_kg ... ok
+test tests::calculator_tests::convert_mi_to_km ... ok
+test tests::calculator_tests::convert_unsupported_pair_returns_none ... ok
+test tests::calculator_tests::tokenize_all_operators ... ok
+test tests::calculator_tests::tokenize_function ... ok
+test pipeline::tests::theme_switching ... ok
+test tests::calculator_tests::tokenize_parentheses ... ok
+test tests::calculator_tests::tokenize_simple_expression ... ok
+test tests::calculator_tests::tokenize_whitespace_ignored ... ok
+test tests::config_tests::config_access_dock_show_running_indicators ... ok
+test tests::config_tests::config_access_launcher_max_favorites ... ok
+test tests::config_tests::config_access_dock_auto_hide_delay ... ok
+test tests::config_tests::config_access_notifications_history_capacity ... ok
+test tests::config_tests::config_access_seamless_forward_notifications ... ok
+test tests::config_tests::config_access_tiling_master_ratio ... ok
+test tests::config_tests::config_access_status_bar_clock_format ... ok
+test tests::config_tests::config_default_dock_auto_hide ... ok
+test tests::config_tests::config_default_dock_icon_size ... ok
+test tests::config_tests::config_default_creates_valid_config ... ok
+test tests::config_tests::config_default_dock_magnification_factor ... ok
+test tests::config_tests::config_default_launcher_calculator_enabled ... ok
+test tests::config_tests::config_default_notifications_default_timeout ... ok
+test tests::config_tests::config_default_seamless_disabled ... ok
+test tests::config_tests::config_default_status_bar_enabled ... ok
+test tests::config_tests::config_default_status_bar_height ... ok
+test tests::config_tests::config_default_tiling_enabled ... ok
+test tests::config_tests::config_default_notifications_max_visible ... ok
+test tests::config_tests::config_default_tiling_gap ... ok
+test tests::config_tests::config_display_auto_hide_dock ... ok
+test tests::decoration_tests::default_style ... ok
+test tests::config_tests::config_display_default ... ok
+test tests::decoration_tests::hit_zone_client_area ... ok
+test tests::decoration_tests::hit_zone_close_button ... ok
+test tests::config_tests::config_serde_json_roundtrip ... ok
+test tests::decoration_tests::hit_zone_corner_bottom_right ... ok
+test tests::decoration_tests::hit_zone_maximize_button ... ok
+test tests::decoration_tests::hit_zone_minimize_button ... ok
+test tests::decoration_tests::hit_zone_resize_border_bottom ... ok
+test tests::decoration_tests::hit_zone_outside ... ok
+test tests::decoration_tests::hit_zone_resize_border_left ... ok
+test tests::decoration_tests::hit_zone_title_bar ... ok
+test tests::dock_tests::auto_hide_state_display ... ok
+test tests::dock_tests::dock_add_pinned_creates_item ... ok
+test tests::dock_tests::dock_add_pinned_sequential_ids_and_positions ... ok
+test tests::dock_tests::dock_add_running_new_app ... ok
+test tests::dock_tests::dock_add_running_pinned_app_increments_count ... ok
+test tests::dock_tests::dock_add_running_same_app_multiple_times_returns_same_id ... ok
+test tests::dock_tests::dock_auto_hide_state_accessor ... ok
+test tests::dock_tests::dock_compute_bounds_bottom ... ok
+test tests::dock_tests::dock_compute_bounds_left ... ok
+test tests::dock_tests::dock_compute_bounds_right ... ok
+test tests::dock_tests::dock_compute_bounds_top ... ok
+test tests::dock_tests::dock_compute_item_rects_correct_per_item ... ok
+test tests::dock_tests::dock_config_accessor ... ok
+test tests::dock_tests::dock_display ... ok
+test tests::dock_tests::dock_is_visible_accessor ... ok
+test tests::dock_tests::dock_item_at_index_out_of_range ... ok
+test tests::dock_tests::dock_item_at_index_valid ... ok
+test tests::dock_tests::dock_item_count ... ok
+test tests::dock_tests::dock_item_kind_display ... ok
+test tests::dock_tests::dock_items_returns_all ... ok
+test tests::dock_tests::dock_magnified_size_disabled ... ok
+test tests::dock_tests::dock_magnified_size_enabled_hover_zero ... ok
+test tests::dock_tests::dock_magnified_size_large_distance ... ok
+test tests::dock_tests::dock_new_auto_hide_config ... ok
+test tests::dock_tests::dock_new_default_config_visible ... ok
+test tests::dock_tests::dock_on_hover_leave_clears ... ok
+test tests::dock_tests::dock_on_hover_out_of_bounds_does_nothing ... ok
+test tests::dock_tests::dock_on_hover_sets_hover_index ... ok
+test tests::dock_tests::dock_position_display ... ok
+test tests::dock_tests::dock_remove_pinned_nonexistent_returns_false ... ok
+test tests::dock_tests::dock_remove_pinned_reindexes ... ok
+test tests::dock_tests::dock_remove_running_decrements_and_removes ... ok
+test tests::dock_tests::dock_remove_running_does_not_remove_pinned ... ok
+test tests::dock_tests::dock_reorder_pinned_out_of_range_does_nothing ... ok
+test tests::dock_tests::dock_reorder_pinned_swaps_positions ... ok
+test tests::dock_tests::dock_set_auto_hide_state_transitions ... ok
+test tests::dock_tests::dock_set_badge ... ok
+test tests::dock_tests::dock_set_badge_nonexistent_does_nothing ... ok
+test tests::edge_case_tests::decoration_exact_boundary_bottom_right ... ok
+test tests::edge_case_tests::decoration_exact_boundary_top_left ... ok
+test tests::edge_case_tests::decoration_resize_bottom_left_corner ... ok
+test tests::edge_case_tests::decoration_resize_right ... ok
+test tests::edge_case_tests::decoration_resize_top ... ok
+test tests::edge_case_tests::decoration_resize_top_left_corner ... ok
+test tests::edge_case_tests::decoration_resize_top_right_corner ... ok
+test tests::edge_case_tests::focus_cycle_full_loop ... ok
+test tests::edge_case_tests::focus_next_empty_history ... ok
+test tests::edge_case_tests::focus_next_no_current_focus ... ok
+test tests::edge_case_tests::focus_policy_display ... ok
+test tests::edge_case_tests::focus_prev_empty_history ... ok
+test tests::edge_case_tests::focus_remove_only_window ... ok
+test tests::edge_case_tests::focus_remove_unfocused_window ... ok
+test tests::edge_case_tests::focus_set_policy ... ok
+test tests::edge_case_tests::focus_set_same_twice ... ok
+test tests::edge_case_tests::hit_zone_display ... ok
+test tests::edge_case_tests::shell_close_removes_focus ... ok
+test tests::edge_case_tests::shell_focus_manager_mut_accessor ... ok
+test tests::edge_case_tests::stacked_default_trait ... ok
+test tests::edge_case_tests::stacked_single_window ... ok
+test tests::edge_case_tests::shell_maximize_already_maximized ... ok
+test tests::edge_case_tests::shell_lower_nonexistent ... ok
+test tests::edge_case_tests::shell_lower_window ... ok
+test tests::edge_case_tests::window_app_id_default_empty ... ok
+test tests::edge_case_tests::stacked_zero_windows ... ok
+test tests::edge_case_tests::tiling_max_columns_one ... ok
+test tests::edge_case_tests::shell_arrange_with_minimized_windows ... ok
+test tests::edge_case_tests::tiling_zero_windows ... ok
+test tests::edge_case_tests::window_double_save_overwrites ... ok
+test tests::edge_case_tests::window_flags_custom ... ok
+test tests::edge_case_tests::shell_raise_window ... ok
+test tests::edge_case_tests::shell_focus_nonexistent ... ok
+test tests::edge_case_tests::shell_close_reopen_different_id ... ok
+test tests::edge_case_tests::window_flags_display ... ok
+test tests::edge_case_tests::window_id_display ... ok
+test tests::edge_case_tests::shell_visible_windows_excludes_minimized ... ok
+test tests::edge_case_tests::window_flags_display_empty ... ok
+test tests::edge_case_tests::window_restore_no_saved_bounds ... ok
+test tests::edge_case_tests::window_set_flags ... ok
+test tests::edge_case_tests::shell_move_nonexistent ... ok
+test tests::edge_case_tests::window_save_restore_cycle ... ok
+test tests::edge_case_tests::window_state_display ... ok
+test tests::edge_case_tests::workspace_add_duplicate ... ok
+test tests::edge_case_tests::shell_minimize_already_minimized ... ok
+test tests::edge_case_tests::workspace_id_display ... ok
+test tests::edge_case_tests::workspace_remove_nonexistent ... ok
+test tests::edge_case_tests::ws_manager_default_trait ... ok
+test tests::edge_case_tests::ws_manager_move_window_nonexistent_source ... ok
+test tests::edge_case_tests::shell_toggle_fullscreen_twice_restores ... ok
+test tests::edge_case_tests::ws_manager_move_window_not_in_source ... ok
+test tests::edge_case_tests::ws_manager_remove_active_fails ... ok
+test tests::edge_case_tests::shell_open_windows_sequential_ids ... ok
+test tests::edge_case_tests::ws_manager_remove_nonexistent ... ok
+test tests::edge_case_tests::ws_manager_switch_nonexistent ... ok
+test tests::edge_case_tests::shell_restore_normal_window ... ok
+test tests::edge_case_tests::ws_manager_switch_to_current ... ok
+test tests::edge_case_tests::shell_resize_nonexistent ... ok
+test tests::focus_tests::focus_clear ... ok
+test tests::focus_tests::focus_follows_mouse ... ok
+test tests::edge_case_tests::shell_set_decoration_style ... ok
+test tests::focus_tests::focus_history ... ok
+test tests::focus_tests::focus_initial_none ... ok
+test tests::edge_case_tests::shell_zero_size_screen ... ok
+test tests::focus_tests::focus_next_cycles ... ok
+test tests::focus_tests::focus_policy_default ... ok
+test tests::focus_tests::focus_prev_cycles ... ok
+test tests::focus_tests::focus_remove_focused_falls_back ... ok
+test tests::edge_case_tests::shell_workspace_manager_accessor ... ok
+test tests::focus_tests::focus_set ... ok
+test tests::focus_tests::focus_remove_window_cleans_history ... ok
+test tests::history_tests::history_all_event_kinds_recorded ... ok
+test tests::history_tests::history_capacity_zero ... ok
+test tests::history_tests::history_clear ... ok
+test tests::history_tests::history_display_window_event ... ok
+test tests::edge_case_tests::shell_raise_nonexistent ... ok
+test tests::history_tests::history_display_window_history ... ok
+test tests::history_tests::history_display_window_event_kind ... ok
+test tests::history_tests::history_events_by_kind_opened ... ok
+test tests::history_tests::history_events_for_window ... ok
+test tests::history_tests::history_events_for_window_nonexistent ... ok
+test tests::history_tests::history_events_by_kind_state_changed ... ok
+test tests::history_tests::history_events_in_range ... ok
+test tests::history_tests::history_events_in_range_empty ... ok
+test tests::history_tests::history_moved_event_captures_bounds ... ok
+test tests::history_tests::history_new_empty ... ok
+test tests::history_tests::history_recent_more_than_stored ... ok
+test tests::history_tests::history_recent_n ... ok
+test tests::history_tests::history_reconstruct_window_lifecycle ... ok
+test tests::history_tests::history_record_at_explicit_timestamp ... ok
+test tests::history_tests::history_record_returns_incrementing_timestamps ... ok
+test tests::history_tests::history_record_single_event ... ok
+test tests::history_tests::history_ring_buffer_overflow ... ok
+test tests::history_tests::history_ring_buffer_preserves_newest ... ok
+test tests::history_tests::history_serde_roundtrip_window_event ... ok
+test tests::history_tests::history_serde_roundtrip_all_kinds ... ok
+test tests::history_tests::history_state_changed_captures_states ... ok
+test tests::launcher_tests::activate_selected_empty_returns_none ... ok
+test tests::launcher_tests::activate_selected_returns_kind ... ok
+test tests::launcher_tests::add_app_increases_count ... ok
+test tests::launcher_tests::apps_by_category_excludes_no_display ... ok
+test tests::launcher_tests::app_lookup_by_id ... ok
+test tests::launcher_tests::app_lookup_missing_returns_none ... ok
+test tests::launcher_tests::apps_by_category_returns_matching ... ok
+test tests::launcher_tests::close_hides_launcher ... ok
+test tests::launcher_tests::context_actions_for_app_without_exec ... ok
+test tests::launcher_tests::context_actions_for_favorite_app ... ok
+test tests::launcher_tests::context_actions_for_non_favorite_app ... ok
+test tests::launcher_tests::display_app_category ... ok
+test tests::launcher_tests::display_context_action ... ok
+test tests::launcher_tests::display_launcher ... ok
+test tests::launcher_tests::display_launcher_hidden ... ok
+test tests::launcher_tests::display_launcher_view ... ok
+test tests::launcher_tests::fuzzy_score_case_insensitive ... ok
+test tests::launcher_tests::fuzzy_score_empty_query ... ok
+test tests::history_tests::shell_app_history_accessor ... ok
+test tests::launcher_tests::fuzzy_score_empty_target ... ok
+test tests::launcher_tests::fuzzy_score_subsequence_match ... ok
+test tests::launcher_tests::fuzzy_score_exact_match ... ok
+test tests::history_tests::shell_close_records_event ... ok
+test tests::launcher_tests::fuzzy_score_no_match ... ok
+test tests::launcher_tests::fuzzy_score_prefix_match ... ok
+test tests::history_tests::shell_close_updates_app_history ... ok
+test tests::launcher_tests::fuzzy_score_substring_match ... ok
+test tests::launcher_tests::launch_frequency_boosts_search_relevance ... ok
+test tests::launcher_tests::launcher_config_default_values ... ok
+test tests::history_tests::shell_custom_history_capacity ... ok
+test tests::history_tests::shell_move_records_event ... ok
+test tests::history_tests::shell_failed_operations_no_events ... ok
+test tests::launcher_tests::launcher_initially_hidden ... ok
+test tests::history_tests::shell_maximize_records_state_and_resize ... ok
+test tests::launcher_tests::most_frequent_returns_sorted_by_count ... ok
+test tests::launcher_tests::pin_favorite_adds_to_list ... ok
+test tests::launcher_tests::most_recent_excludes_never_launched ... ok
+test tests::history_tests::shell_open_records_event ... ok
+test tests::launcher_tests::most_recent_returns_sorted_by_timestamp ... ok
+test tests::launcher_tests::open_makes_visible_and_resets_state ... ok
+test tests::launcher_tests::pin_favorite_duplicate_returns_false ... ok
+test tests::launcher_tests::record_launch_increments_count ... ok
+test tests::launcher_tests::pin_favorite_max_limit ... ok
+test tests::history_tests::shell_window_history_accessor ... ok
+test tests::launcher_tests::record_launch_multiple_times ... ok
+test tests::history_tests::shell_open_with_app_records_app_history ... ok
+test tests::launcher_tests::remove_app_also_removes_from_favorites ... ok
+test tests::launcher_tests::remove_app_returns_false_when_not_found ... ok
+test tests::history_tests::shell_lower_records_z_order_change ... ok
+test tests::launcher_tests::remove_app_returns_true_when_found ... ok
+test tests::launcher_tests::search_calculator_disabled_skips_math ... ok
+test tests::history_tests::shell_minimize_records_state_and_visibility ... ok
+test tests::launcher_tests::search_custom_command_empty_after_prefix ... ok
+test tests::launcher_tests::search_custom_command_with_prefix ... ok
+test tests::launcher_tests::search_empty_query_shows_no_results ... ok
+test tests::launcher_tests::search_matches_app_by_name ... ok
+test tests::launcher_tests::search_matches_description ... ok
+test tests::history_tests::shell_resize_records_event ... ok
+test tests::launcher_tests::search_matches_keywords ... ok
+test tests::history_tests::shell_raise_records_z_order_change ... ok
+test tests::launcher_tests::search_math_expression_produces_calculator_result ... ok
+test tests::launcher_tests::search_no_display_app_excluded ... ok
+test tests::history_tests::shell_toggle_fullscreen_records_events ... ok
+test tests::launcher_tests::search_results_sorted_by_relevance ... ok
+test tests::launcher_tests::search_web_fallback_when_no_matches ... ok
+test tests::launcher_tests::select_index_clamps_to_bounds ... ok
+test tests::launcher_tests::select_index_empty_results_stays_zero ... ok
+test tests::history_tests::shell_restore_records_events ... ok
+test tests::launcher_tests::select_next_with_empty_results_stays_zero ... ok
+test tests::history_tests::shell_set_focus_records_focused_unfocused ... ok
+test tests::launcher_tests::select_next_wraps_around ... ok
+test tests::launcher_tests::select_prev_with_empty_results_stays_zero ... ok
+test tests::launcher_tests::select_prev_wraps_around ... ok
+test tests::launcher_tests::set_view_explicit ... ok
+test tests::launcher_tests::toggle_opens_and_closes ... ok
+test tests::launcher_tests::toggle_view_switches_between_list_and_grid ... ok
+test tests::launcher_tests::unpin_favorite_not_found_returns_false ... ok
+test tests::launcher_tests::unpin_favorite_removes_from_list ... ok
+test tests::layout_tests::floating_name ... ok
+test tests::layout_tests::floating_noop ... ok
+test tests::layout_tests::layout_name ... ok
+test tests::layout_tests::stacked_cascade ... ok
+test tests::layout_tests::stacked_name ... ok
+test tests::layout_tests::tiling_max_columns ... ok
+test tests::layout_tests::tiling_respects_gap ... ok
+test tests::layout_tests::tiling_single_window ... ok
+test tests::layout_tests::tiling_three_windows_wraps ... ok
+test tests::layout_tests::tiling_two_windows ... ok
+test tests::notification_tests::notification_active_count ... ok
+test tests::notification_tests::notification_active_notifications_slice ... ok
+test tests::notification_tests::notification_clear_history ... ok
+test tests::notification_tests::notification_custom_timeout_used_when_positive ... ok
+test tests::notification_tests::notification_default_timeout_when_zero ... ok
+test tests::notification_tests::notification_dismiss_all ... ok
+test tests::notification_tests::notification_dismiss_moves_to_history ... ok
+test tests::notification_tests::notification_dismiss_nonexistent_does_nothing ... ok
+test tests::notification_tests::notification_dnd_allows_critical_when_configured ... ok
+test tests::notification_tests::notification_dnd_blocks_critical_when_not_allowed ... ok
+test tests::notification_tests::notification_dnd_blocks_low ... ok
+test tests::notification_tests::notification_dnd_blocks_normal ... ok
+test tests::notification_tests::notification_history_accessor ... ok
+test tests::notification_tests::notification_history_capacity_ring ... ok
+test tests::notification_tests::notification_history_count ... ok
+test tests::notification_tests::notification_manager_display ... ok
+test tests::notification_tests::notification_manager_new_defaults ... ok
+test tests::notification_tests::notification_manager_display_with_dnd ... ok
+test tests::notification_tests::notification_manager_new_dnd_from_config ... ok
+test tests::notification_tests::notification_mark_read ... ok
+test tests::notification_tests::notification_mark_read_in_history ... ok
+test tests::notification_tests::notification_max_visible_pushes_oldest_to_history ... ok
+test tests::notification_tests::notification_notify_adds_to_active ... ok
+test tests::notification_tests::notification_notify_returns_some_id ... ok
+test tests::notification_tests::notification_notify_sequential_ids ... ok
+test tests::notification_tests::notification_position_display ... ok
+test tests::notification_tests::notification_set_dnd_is_dnd ... ok
+test tests::notification_tests::notification_should_show_dnd_on ... ok
+test tests::notification_tests::notification_should_show_no_dnd ... ok
+test tests::notification_tests::notification_tick_expires_past_notifications ... ok
+test tests::notification_tests::notification_tick_not_yet_expired ... ok
+test tests::notification_tests::notification_tick_returns_expired_ids ... ok
+test tests::notification_tests::notification_unread_count ... ok
+test tests::screen_time_tests::add_limit_check_exceeded ... ok
+test tests::screen_time_tests::add_limit_check_not_exceeded ... ok
+test tests::screen_time_tests::app_screen_time_avg_session ... ok
+test tests::screen_time_tests::app_screen_time_multiple_windows ... ok
+test tests::screen_time_tests::category_multiple_apps ... ok
+test tests::screen_time_tests::category_uncategorized_apps ... ok
+test tests::screen_time_tests::check_limits_no_data_returns_empty ... ok
+test tests::screen_time_tests::compare_days_basic ... ok
+test tests::screen_time_tests::compare_days_percent_change ... ok
+test tests::screen_time_tests::daily_report_empty_day ... ok
+test tests::screen_time_tests::daily_report_peak_hour ... ok
+test tests::screen_time_tests::daily_report_top_apps ... ok
+test tests::screen_time_tests::daily_report_total_screen_time ... ok
+test tests::screen_time_tests::day_key_epoch_zero ... ok
+test tests::screen_time_tests::day_key_known_date ... ok
+test tests::screen_time_tests::display_impls_all_types ... ok
+test tests::screen_time_tests::empty_app_id_ignored ... ok
+test tests::screen_time_tests::feed_close_increments_session_count ... ok
+test tests::screen_time_tests::feed_first_last_used_tracked ... ok
+test tests::screen_time_tests::feed_focus_auto_flushes_previous ... ok
+test tests::screen_time_tests::feed_focus_switches_count ... ok
+test tests::screen_time_tests::feed_focus_unfocus_screen_time ... ok
+test tests::screen_time_tests::feed_focus_updates_hourly_slot ... ok
+test tests::screen_time_tests::feed_longest_session_tracked ... ok
+test tests::screen_time_tests::feed_midnight_crossing_splits_days ... ok
+test tests::screen_time_tests::feed_midnight_crossing_splits_hours ... ok
+test tests::screen_time_tests::feed_multiple_focus_sessions ... ok
+test tests::screen_time_tests::feed_open_creates_daily_report ... ok
+test tests::screen_time_tests::feed_open_increments_launch_count ... ok
+test tests::screen_time_tests::feed_unfocus_without_focus ... ok
+test tests::screen_time_tests::hour_of_day_boundaries ... ok
+test tests::screen_time_tests::hourly_heatmap_24_slots ... ok
+test tests::screen_time_tests::limit_all_apps ... ok
+test tests::screen_time_tests::limit_by_category ... ok
+test tests::screen_time_tests::limit_percent_used ... ok
+test tests::screen_time_tests::no_events_empty_reports ... ok
+test tests::screen_time_tests::no_pickup_within_threshold ... ok
+test tests::screen_time_tests::pickup_after_idle_gap ... ok
+test tests::screen_time_tests::pickup_custom_threshold ... ok
+test tests::screen_time_tests::remove_category ... ok
+test tests::screen_time_tests::remove_limit_by_index ... ok
+test tests::screen_time_tests::max_days_retained_eviction ... ok
+test tests::screen_time_tests::remove_limit_out_of_bounds ... ok
+test tests::screen_time_tests::serde_roundtrip_screen_time_alert ... ok
+test tests::screen_time_tests::serde_roundtrip_daily_report ... ok
+test tests::screen_time_tests::set_category_and_breakdown ... ok
+test tests::screen_time_tests::to_wall_clock_custom_tick_duration ... ok
+test tests::screen_time_tests::to_wall_clock_identity ... ok
+test tests::screen_time_tests::to_wall_clock_offset ... ok
+test tests::screen_time_tests::today_returns_current_day ... ok
+test tests::screen_time_tests::weekly_average_full_week ... ok
+test tests::screen_time_tests::weekly_average_partial_data ... ok
+test tests::screen_time_tests::weekly_summary_most_used_app ... ok
+test tests::screen_time_tests::zero_tick_duration_handled ... ok
+test tests::seamless_tests::all_windows_returns_full_map ... ok
+test tests::seamless_tests::apply_message_client_dnd_drop_is_noop ... ok
+test tests::seamless_tests::apply_message_client_focus_is_noop ... ok
+test tests::seamless_tests::add_tray_icon_inserts_into_map ... ok
+test tests::seamless_tests::apply_message_client_tray_action_is_noop ... ok
+test tests::seamless_tests::apply_message_client_window_close ... ok
+test tests::seamless_tests::apply_message_client_window_move ... ok
+test tests::seamless_tests::apply_message_client_window_state ... ok
+test tests::seamless_tests::apply_message_client_window_resize ... ok
+test tests::seamless_tests::apply_message_tray_icon_create ... ok
+test tests::seamless_tests::apply_message_dnd_events_are_noop ... ok
+test tests::seamless_tests::apply_message_tray_icon_update_icon_data ... ok
+test tests::seamless_tests::apply_message_tray_icon_destroy ... ok
+test tests::seamless_tests::apply_message_tray_icon_update_tooltip ... ok
+test tests::seamless_tests::apply_message_window_create ... ok
+test tests::seamless_tests::apply_message_window_destroy ... ok
+test tests::seamless_tests::apply_message_window_focus_is_noop ... ok
+test tests::seamless_tests::apply_message_window_geometry ... ok
+test tests::seamless_tests::apply_message_window_icon ... ok
+test tests::seamless_tests::apply_message_window_state ... ok
+test tests::seamless_tests::apply_message_window_title ... ok
+test tests::seamless_tests::apply_message_window_z_order ... ok
+test tests::seamless_tests::config_accessor_returns_reference ... ok
+test tests::seamless_tests::create_window_adds_to_map ... ok
+test tests::seamless_tests::create_window_adds_to_z_order ... ok
+test tests::seamless_tests::create_window_does_not_duplicate_in_z_order ... ok
+test tests::seamless_tests::default_mode_is_desktop ... ok
+test tests::seamless_tests::destroy_window_nonexistent_returns_none ... ok
+test tests::seamless_tests::destroy_window_removes_from_map_and_z_order ... ok
+test tests::seamless_tests::display_seamless_manager ... ok
+test tests::seamless_tests::display_seamless_mode ... ok
+test tests::seamless_tests::display_seamless_window_type ... ok
+test tests::seamless_tests::is_excluded_returns_false_by_default ... ok
+test tests::seamless_tests::is_excluded_with_configured_exclusions ... ok
+test tests::seamless_tests::manager_new_starts_empty ... ok
+test tests::seamless_tests::remove_tray_icon_nonexistent_returns_none ... ok
+test tests::seamless_tests::remove_tray_icon_returns_removed ... ok
+test tests::seamless_tests::seamless_config_default_values ... ok
+test tests::seamless_tests::seamless_window_with_parent_and_type ... ok
+test tests::seamless_tests::set_mode_back_to_desktop ... ok
+test tests::seamless_tests::set_mode_to_seamless ... ok
+test tests::seamless_tests::set_z_order_replaces_list ... ok
+test tests::screen_time_tests::shell_screen_time_accessor ... ok
+test tests::seamless_tests::tray_icons_returns_full_map ... ok
+test tests::screen_time_tests::shell_open_close_feeds_screen_time ... ok
+test tests::seamless_tests::update_geometry_changes_window_rect ... ok
+test tests::seamless_tests::update_icon_sets_icon_data ... ok
+test tests::seamless_tests::update_state_changes_window_state ... ok
+test tests::seamless_tests::update_title_changes_window_title ... ok
+test tests::seamless_tests::window_mut_allows_modification ... ok
+test tests::screen_time_tests::shell_focus_feeds_screen_time ... ok
+test tests::shortcuts_tests::shortcut_bind_existing_key_returns_displaced ... ok
+test tests::shortcuts_tests::shortcut_bind_new_key_returns_none ... ok
+test tests::shortcuts_tests::shortcut_binding_for_reverse_lookup ... ok
+test tests::shortcuts_tests::shortcut_all_bindings_returns_hashmap ... ok
+test tests::shortcuts_tests::shortcut_binding_for_unknown_action ... ok
+test tests::shortcuts_tests::shortcut_conflicts_bound_key ... ok
+test tests::shortcuts_tests::shortcut_conflicts_unbound_key ... ok
+test tests::shortcuts_tests::shortcut_default_close_window ... ok
+test tests::shortcuts_tests::shortcut_default_lock_session ... ok
+test tests::shortcuts_tests::shortcut_default_open_file_manager ... ok
+test tests::shortcuts_tests::shortcut_default_has_bindings ... ok
+test tests::shortcuts_tests::shortcut_default_open_task_manager ... ok
+test tests::shortcuts_tests::shortcut_default_open_terminal ... ok
+test tests::shortcuts_tests::shortcut_default_screenshot_full ... ok
+test tests::shortcuts_tests::shortcut_direction_display ... ok
+test tests::shortcuts_tests::shortcut_default_show_desktop ... ok
+test tests::shortcuts_tests::shortcut_dock_app_super_5 ... ok
+test tests::shortcuts_tests::shortcut_dock_app_all_digits ... ok
+test tests::shortcuts_tests::shortcut_dock_app_super_1 ... ok
+test tests::shortcuts_tests::shortcut_dock_app_super_9 ... ok
+test tests::shortcuts_tests::shortcut_handle_key_event_pressed_match ... ok
+test tests::shortcuts_tests::shortcut_handle_key_event_repeat_returns_none ... ok
+test tests::shortcuts_tests::shortcut_handle_key_event_released_returns_none ... ok
+test tests::shortcuts_tests::shortcut_key_binding_display ... ok
+test tests::shortcuts_tests::shortcut_key_binding_display_multi_modifiers ... ok
+test tests::shortcuts_tests::shortcut_shell_action_display_close_window ... ok
+test tests::shortcuts_tests::shortcut_handle_key_event_unbound_returns_none ... ok
+test tests::shortcuts_tests::shortcut_shell_action_display_launch_dock_app ... ok
+test tests::shortcuts_tests::shortcut_shell_action_display_lock_session ... ok
+test tests::shortcuts_tests::shortcut_shell_action_display_switch_to_workspace ... ok
+test tests::shortcuts_tests::shortcut_unbind_removes_binding ... ok
+test tests::stats_tests::all_window_stats_returns_all ... ok
+test tests::shell_tests::shell_close_not_found ... ok
+test tests::stats_tests::app_stats_active_vs_closed_counts ... ok
+test tests::stats_tests::app_stats_first_last_seen ... ok
+test tests::stats_tests::app_stats_min_max_session_duration ... ok
+test tests::stats_tests::app_stats_nonexistent ... ok
+test tests::stats_tests::app_stats_single_session_closed ... ok
+test tests::stats_tests::app_stats_multiple_sessions_avg_runtime ... ok
+test tests::stats_tests::app_stats_total_moves_resizes ... ok
+test tests::shell_tests::shell_focus ... ok
+test tests::stats_tests::idle_windows_detection ... ok
+test tests::stats_tests::app_stats_single_session_still_open ... ok
+test tests::stats_tests::app_stats_total_event_count ... ok
+test tests::stats_tests::app_stats_total_focus_across_windows ... ok
+test tests::shell_tests::shell_arrange_tiling ... ok
+test tests::shell_tests::shell_open_window ... ok
+test tests::shell_tests::shell_resize_screen ... ok
+test tests::shell_tests::shell_minimize_restore ... ok
+test tests::shell_tests::shell_arrange_floating ... ok
+test tests::shell_tests::shell_window_count ... ok
+test tests::shell_tests::shell_create ... ok
+test tests::shell_tests::shell_visible_windows_sorted ... ok
+test tests::stats_tests::stats_display_impls ... ok
+test tests::shell_tests::shell_maximize_restore ... ok
+test tests::stats_tests::stats_focus_without_unfocus_still_open ... ok
+test tests::stats_tests::stats_ring_buffer_partial_data ... ok
+test tests::shell_tests::shell_toggle_fullscreen ... ok
+test tests::shell_tests::shell_resize_window ... ok
+test tests::stats_tests::stats_serde_roundtrip_app_stats ... ok
+test tests::shell_tests::shell_close_window ... ok
+test tests::stats_tests::stats_window_opened_twice_in_history ... ok
+test tests::stats_tests::stats_zero_runtime_window ... ok
+test tests::stats_tests::stats_serde_roundtrip_system_stats ... ok
+test tests::stats_tests::stats_serde_roundtrip_window_stats ... ok
+test tests::shell_tests::shell_move_window ... ok
+test tests::stats_tests::system_stats_avg_runtime ... ok
+test tests::stats_tests::system_stats_basic_counts ... ok
+test tests::stats_tests::system_stats_empty ... ok
+test tests::stats_tests::system_stats_events_per_window_avg ... ok
+test tests::stats_tests::system_stats_longest_shortest_session ... ok
+test tests::stats_tests::system_stats_most_active_app ... ok
+test tests::stats_tests::system_stats_most_focused_window ... ok
+test tests::stats_tests::system_stats_timestamp_range ... ok
+test tests::stats_tests::system_stats_unique_apps ... ok
+test tests::stats_tests::system_stats_total_runtime ... ok
+test tests::stats_tests::top_by_focus_time_ranking ... ok
+test tests::stats_tests::top_apps_by_runtime_ranking ... ok
+test tests::stats_tests::top_by_runtime_ranking ... ok
+test tests::stats_tests::window_stats_distance_moved_no_moves ... ok
+test tests::stats_tests::window_stats_empty_history ... ok
+test tests::stats_tests::window_stats_focus_closed_without_unfocus ... ok
+test tests::stats_tests::window_stats_focus_duration_multiple ... ok
+test tests::stats_tests::window_stats_flags_change_count ... ok
+test tests::stats_tests::window_stats_focus_duration_single ... ok
+test tests::stats_tests::shell_stats_after_complex_lifecycle ... ok
+test tests::stats_tests::window_stats_full_lifecycle ... ok
+test tests::stats_tests::window_stats_last_state ... ok
+test tests::stats_tests::window_stats_move_count ... ok
+test tests::stats_tests::window_stats_opened_only ... ok
+test tests::stats_tests::shell_stats_empty_shell ... ok
+test tests::stats_tests::window_stats_resize_count ... ok
+test tests::stats_tests::window_stats_state_change_count ... ok
+test tests::stats_tests::window_stats_time_in_state ... ok
+test tests::stats_tests::window_stats_title_change_count ... ok
+test tests::stats_tests::window_stats_total_event_count ... ok
+test tests::stats_tests::window_stats_total_distance_moved ... ok
+test tests::stats_tests::window_stats_visibility_change_count ... ok
+test tests::stats_tests::window_stats_z_order_change_count ... ok
+test tests::stats_tests::shell_stats_accessor_works ... ok
+test tests::status_bar_tests::status_bar_add_item ... ok
+test tests::status_bar_tests::status_bar_config_accessor ... ok
+test tests::status_bar_tests::status_bar_compute_bounds_top_position ... ok
+test tests::status_bar_tests::status_bar_dirty_lifecycle ... ok
+test tests::status_bar_tests::status_bar_dirty_starts_true_mark_clean_then_update ... ok
+test tests::status_bar_tests::status_bar_display ... ok
+test tests::status_bar_tests::status_bar_find_item ... ok
+test tests::status_bar_tests::status_bar_find_item_nonexistent ... ok
+test tests::status_bar_tests::status_bar_item_count ... ok
+test tests::status_bar_tests::status_bar_is_enabled ... ok
+test tests::status_bar_tests::status_bar_items_in_slot_center ... ok
+test tests::status_bar_tests::status_bar_items_in_slot_left ... ok
+test tests::status_bar_tests::status_bar_items_in_slot_right ... ok
+test tests::status_bar_tests::status_bar_items_returns_all ... ok
+test tests::status_bar_tests::status_bar_new_all_disabled_creates_zero_items ... ok
+test tests::status_bar_tests::status_bar_new_default_config_creates_four_items ... ok
+test tests::status_bar_tests::status_bar_remove_item ... ok
+test tests::status_bar_tests::status_bar_remove_item_nonexistent ... ok
+test tests::status_bar_tests::status_bar_set_dnd ... ok
+test tests::status_bar_tests::status_bar_slot_display ... ok
+test tests::status_bar_tests::status_bar_update_clock_sets_dirty ... ok
+test tests::status_bar_tests::status_bar_update_connection_quality ... ok
+test tests::status_bar_tests::status_bar_update_notification_count ... ok
+test tests::tiling_tests::add_and_match_window_rule ... ok
+test tests::tiling_tests::arrange_zero_windows_returns_empty ... ok
+test tests::tiling_tests::clear_snap_preview ... ok
+test tests::tiling_tests::config_accessor_returns_reference ... ok
+test tests::tiling_tests::custom_grid_3x3_config ... ok
+test tests::tiling_tests::custom_grid_caps_at_total_slots ... ok
+test tests::tiling_tests::custom_grid_config_default_values ... ok
+test tests::tiling_tests::custom_grid_default_2x2_four_windows ... ok
+test tests::tiling_tests::detect_snap_zone_bottom_edge ... ok
+test tests::tiling_tests::detect_snap_zone_bottom_left ... ok
+test tests::tiling_tests::detect_snap_zone_bottom_right ... ok
+test tests::tiling_tests::detect_snap_zone_center_is_none ... ok
+test tests::tiling_tests::detect_snap_zone_left_edge ... ok
+test tests::tiling_tests::detect_snap_zone_right_edge ... ok
+test tests::tiling_tests::detect_snap_zone_top_edge ... ok
+test tests::tiling_tests::detect_snap_zone_top_left_corner ... ok
+test tests::tiling_tests::detect_snap_zone_top_right_corner ... ok
+test tests::tiling_tests::display_snap_zone ... ok
+test tests::tiling_tests::display_tiling_layout_kind ... ok
+test tests::tiling_tests::display_tiling_engine ... ok
+test tests::tiling_tests::display_tiling_mode ... ok
+test tests::tiling_tests::load_preset_not_found ... ok
+test tests::tiling_tests::match_window_rule_no_match ... ok
+test tests::tiling_tests::presets_returns_all ... ok
+test tests::tiling_tests::quadrant_caps_at_four ... ok
+test tests::tiling_tests::quadrant_four_windows_fills_quadrants ... ok
+test tests::tiling_tests::quadrant_two_windows_only_fills_two ... ok
+test tests::tiling_tests::save_and_load_preset ... ok
+test tests::tiling_tests::save_preset_overwrites_existing ... ok
+test tests::tiling_tests::set_and_get_snap_preview ... ok
+test tests::tiling_tests::set_and_get_workspace_layout ... ok
+test tests::tiling_tests::set_and_get_workspace_mode ... ok
+test tests::tiling_tests::set_custom_grid_and_read_back ... ok
+test tests::tiling_tests::snap_preview_initially_none ... ok
+test tests::tiling_tests::snap_zone_rect_center_is_full_usable ... ok
+test tests::tiling_tests::snap_zone_rect_left_half ... ok
+test tests::tiling_tests::snap_zone_rect_top_right_quarter ... ok
+test tests::tiling_tests::spiral_single_window_fills_usable ... ok
+test tests::tiling_tests::spiral_three_windows_fibonacci ... ok
+test tests::tiling_tests::spiral_two_windows_alternating_split ... ok
+test tests::tiling_tests::split_h_single_window_fills_usable ... ok
+test tests::tiling_tests::split_h_three_windows_stack_divides_height ... ok
+test tests::tiling_tests::split_h_two_windows_master_and_stack ... ok
+test tests::tiling_tests::split_v_single_window_fills_usable ... ok
+test tests::tiling_tests::split_v_two_windows_master_top_stack_bottom ... ok
+test tests::tiling_tests::stacking_all_windows_same_rect ... ok
+test tests::tiling_tests::three_column_single_window_fills_usable ... ok
+test tests::tiling_tests::three_column_three_windows_center_left_right ... ok
+test tests::tiling_tests::tiling_config_default_values ... ok
+test tests::tiling_tests::workspace_layout_falls_back_to_default ... ok
+test tests::tiling_tests::workspace_mode_falls_back_to_default ... ok
+test tests::window_tests::window_create ... ok
+test tests::window_tests::window_effective_bounds_normal ... ok
+test tests::window_tests::window_flags_default ... ok
+test tests::window_tests::window_id_equality ... ok
+test tests::window_tests::window_is_decorated ... ok
+test tests::window_tests::window_is_focusable ... ok
+test tests::window_tests::window_is_resizable ... ok
+test tests::window_tests::window_opacity_default ... ok
+test tests::window_tests::window_parent_none ... ok
+test tests::window_tests::window_state_default_normal ... ok
+test tests::workspace_tests::workspace_add_window ... ok
+test tests::workspace_tests::workspace_contains ... ok
+test tests::workspace_tests::workspace_create ... ok
+test tests::workspace_tests::workspace_is_empty ... ok
+test tests::workspace_tests::workspace_remove_window ... ok
+test tests::workspace_tests::ws_manager_create_workspace ... ok
+test tests::workspace_tests::ws_manager_find_window ... ok
+test tests::workspace_tests::ws_manager_move_window ... ok
+test tests::workspace_tests::ws_manager_remove_workspace ... ok
+test tests::workspace_tests::ws_manager_switch ... ok
+test theme_loader::tests::test_theme_preset_from_id ... ok
+test theme_loader::tests::test_default_liquid_glass_theme ... ok
+test theme_loader::tests::test_midday_theme ... FAILED
+test theme_loader::tests::test_sunset_theme ... FAILED
+test theme_loader::tests::test_night_theme ... FAILED
+
+failures:
+
+---- theme_loader::tests::test_midday_theme stdout ----
+
+thread 'theme_loader::tests::test_midday_theme' (41708) panicked at crates\liquide-shell\src\theme_loader.rs:1255:9:
+assertion `left == right` failed
+  left: 28
+ right: 245
+stack backtrace:
+   0: std::panicking::panic_handler
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\std\src\panicking.rs:689
+   1: core::panicking::panic_fmt
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\core\src\panicking.rs:80
+   2: core::panicking::assert_failed_inner
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\core\src\panicking.rs:439
+   3: core::panicking::assert_failed<u8,u8>
+             at C:\Users\Mars\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\panicking.rs:394
+   4: liquide_shell::theme_loader::tests::test_midday_theme
+             at .\src\theme_loader.rs:1255
+   5: liquide_shell::theme_loader::tests::test_midday_theme::closure$0
+             at .\src\theme_loader.rs:1248
+   6: core::ops::function::FnOnce::call_once<liquide_shell::theme_loader::tests::test_midday_theme::closure_env$0,tuple$<> >
+             at C:\Users\Mars\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:250
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\core\src\ops\function.rs:250
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- theme_loader::tests::test_sunset_theme stdout ----
+
+thread 'theme_loader::tests::test_sunset_theme' (32176) panicked at crates\liquide-shell\src\theme_loader.rs:1242:9:
+assertion `left == right` failed
+  left: 28
+ right: 26
+stack backtrace:
+   0: std::panicking::panic_handler
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\std\src\panicking.rs:689
+   1: core::panicking::panic_fmt
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\core\src\panicking.rs:80
+   2: core::panicking::assert_failed_inner
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\core\src\panicking.rs:439
+   3: core::panicking::assert_failed<u8,u8>
+             at C:\Users\Mars\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\panicking.rs:394
+   4: liquide_shell::theme_loader::tests::test_sunset_theme
+             at .\src\theme_loader.rs:1242
+   5: liquide_shell::theme_loader::tests::test_sunset_theme::closure$0
+             at .\src\theme_loader.rs:1235
+   6: core::ops::function::FnOnce::call_once<liquide_shell::theme_loader::tests::test_sunset_theme::closure_env$0,tuple$<> >
+             at C:\Users\Mars\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:250
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\core\src\ops\function.rs:250
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+---- theme_loader::tests::test_night_theme stdout ----
+
+thread 'theme_loader::tests::test_night_theme' (41868) panicked at crates\liquide-shell\src\theme_loader.rs:1229:9:
+assertion `left == right` failed
+  left: 28
+ right: 0
+stack backtrace:
+   0: std::panicking::panic_handler
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\std\src\panicking.rs:689
+   1: core::panicking::panic_fmt
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\core\src\panicking.rs:80
+   2: core::panicking::assert_failed_inner
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\core\src\panicking.rs:439
+   3: core::panicking::assert_failed<u8,u8>
+             at C:\Users\Mars\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\panicking.rs:394
+   4: liquide_shell::theme_loader::tests::test_night_theme
+             at .\src\theme_loader.rs:1229
+   5: liquide_shell::theme_loader::tests::test_night_theme::closure$0
+             at .\src\theme_loader.rs:1222
+   6: core::ops::function::FnOnce::call_once<liquide_shell::theme_loader::tests::test_night_theme::closure_env$0,tuple$<> >
+             at C:\Users\Mars\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\src\rust\library\core\src\ops\function.rs:250
+   7: core::ops::function::FnOnce::call_once
+             at /rustc/254b59607d4417e9dffbc307138ae5c86280fe4c/library\core\src\ops\function.rs:250
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    theme_loader::tests::test_midday_theme
+    theme_loader::tests::test_night_theme
+    theme_loader::tests::test_sunset_theme
+
+test result: FAILED. 675 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+error: test failed, to rerun pass `-p liquide-shell --lib`

@@ -2418,6 +2418,8 @@ name = "liquide-context-menu"
 version = "0.1.0"
 dependencies = [
  "liquide-compositor",
+ "liquide-dom",
+ "liquide-style-engine",
  "serde",
 ]
 
@@ -2501,7 +2503,9 @@ name = "liquide-dock"
 version = "0.1.0"
 dependencies = [
  "liquide-compositor",
+ "liquide-dom",
  "liquide-platform-win32",
+ "liquide-style-engine",
  "serde",
  "tracing",
 ]
@@ -2882,11 +2886,16 @@ dependencies = [
  "liquide-compositor",
  "liquide-context-menu",
  "liquide-dock",
+ "liquide-dom",
+ "liquide-hit-test",
  "liquide-input",
  "liquide-interop",
+ "liquide-layout",
+ "liquide-paint",
  "liquide-platform",
  "liquide-platform-win32",
  "liquide-renderer-css",
+ "liquide-style-engine",
  "liquide-theme-css",
  "liquide-ui",
  "serde",
@@ -2900,6 +2909,8 @@ name = "liquide-statusbar"
 version = "0.1.0"
 dependencies = [
  "liquide-compositor",
+ "liquide-dom",
+ "liquide-style-engine",
  "liquide-ui-core",
  "serde",
  "tracing",

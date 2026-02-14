@@ -14,5 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 liquide-ui-core = { path = "../liquide-ui-core" }
 liquide-compositor = { path = "../liquide-compositor" }
+liquide-dom = { workspace = true }
+liquide-style-engine = { workspace = true }
 serde.workspace = true
 tracing.workspace = true

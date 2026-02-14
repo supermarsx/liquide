@@ -9,6 +9,8 @@ description = "Application dock for the Liquide desktop shell"
 
 [dependencies]
 liquide-compositor = { workspace = true }
+liquide-dom = { workspace = true }
+liquide-style-engine = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 

@@ -17,6 +17,11 @@ liquide-platform-win32.workspace = true
 liquide-ui.workspace = true
 liquide-theme-css = { path = "../liquide-theme-css" }
 liquide-renderer-css.workspace = true
+liquide-dom.workspace = true
+liquide-style-engine.workspace = true
+liquide-layout.workspace = true
+liquide-paint.workspace = true
+liquide-hit-test.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
