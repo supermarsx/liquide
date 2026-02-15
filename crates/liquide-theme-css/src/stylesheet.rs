@@ -2,7 +2,7 @@
 
 use crate::property::PropertySet;
 use crate::selector::Selector;
-use crate::value::{FontFaceRule, Keyframe, KeyframesRule, PropertyValue};
+use crate::value::{FontFaceRule, KeyframesRule, PropertyValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

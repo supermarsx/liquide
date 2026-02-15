@@ -25,6 +25,7 @@ pub struct BreakOpportunity {
 
 /// Line break class (simplified from full UAX #14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum LineBreakClass {
     /// Mandatory break (BK)
     BK,

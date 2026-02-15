@@ -26,10 +26,7 @@ use std::sync::{Arc, Mutex};
 
 use liquide_font_rasterizer::database::{FontDatabase, FontFaceId};
 use liquide_font_rasterizer::metrics::FontMetricsProvider;
-use liquide_text_engine::paragraph::{
-    LayoutLine, ParagraphLayout, ParagraphLayouter, ParagraphStyle, TextAlignment,
-};
-use liquide_text_engine::shaping::ShapedGlyph;
+use liquide_text_engine::paragraph::TextAlignment;
 
 /// Bridges font-rasterizer and text-engine for complete text layout.
 ///

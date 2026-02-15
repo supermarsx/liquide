@@ -11,8 +11,6 @@
 //! glyph is upscaled 4x, Gaussian-blurred, and downsampled back to
 //! 8x16 alpha values.  The cache is computed once on first use.
 
-use std::sync::OnceLock;
-
 /// A built-in 8x16 bitmap font.
 ///
 /// This is a zero-sized type — all glyph data lives in a static table.

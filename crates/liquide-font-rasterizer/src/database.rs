@@ -5,10 +5,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use ab_glyph::{FontArc, FontVec};
-use tracing::{debug, info, warn};
+use ab_glyph::FontArc;
+use tracing::{debug, info};
 
 use crate::{FontRasterizerError, Result};
 

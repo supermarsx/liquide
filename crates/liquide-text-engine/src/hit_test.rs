@@ -4,7 +4,7 @@
 //! boundary) is closest to a pixel coordinate. Used for click placement,
 //! mouse selection, and touch targeting.
 
-use crate::paragraph::{LayoutLine, ParagraphLayout, PositionedGlyph};
+use crate::paragraph::{LayoutLine, ParagraphLayout};
 use crate::selection::{Affinity, TextOffset};
 
 /// Result of a hit test.
@@ -214,7 +214,7 @@ impl HitTester {
         }
 
         // After the last glyph.
-        let last_cluster = line.glyphs.last().map(|g| g.cluster as usize).unwrap_or(0);
+        let _last_cluster = line.glyphs.last().map(|g| g.cluster as usize).unwrap_or(0);
         HitTestResult {
             offset: TextOffset(if best_trailing {
                 next_cluster_offset(line, line.glyphs.len() - 1)

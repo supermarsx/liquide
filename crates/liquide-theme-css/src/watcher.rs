@@ -5,8 +5,8 @@ use crate::parser::ThemeParser;
 use crate::stylesheet::StyleSheet;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher as NotifyWatcher};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Receiver};
+use std::sync::Arc;
 use std::thread;
 use tracing::{debug, error, info};
 

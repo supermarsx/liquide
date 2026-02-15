@@ -8,8 +8,7 @@ use liquide_theme_css::property::PropertySet;
 use liquide_theme_css::ThemeParser;
 
 use crate::computed::*;
-use crate::dimension::{Dimension, Sides};
-use crate::inheritance;
+use crate::dimension::Sides;
 use crate::selector::ComplexSelector;
 use crate::specificity::Specificity;
 use crate::style_map::StyleMap;

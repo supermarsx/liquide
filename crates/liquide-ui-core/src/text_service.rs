@@ -18,7 +18,7 @@ use liquide_font_rasterizer::database::FontDatabase;
 use liquide_font_rasterizer::metrics::{FontMetricsProvider, RealFontMetrics};
 use liquide_font_rasterizer::shaper::TextShaper;
 
-use crate::theme::{FontToken, ThemeFonts, UiTheme};
+use crate::theme::{FontToken, UiTheme};
 
 /// Text measurement and layout services for widgets.
 ///

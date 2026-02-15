@@ -96,13 +96,13 @@ impl<'a> TextShaper<'a> {
         let mut lines = Vec::new();
         let mut current_line = Vec::new();
         let mut line_width = 0.0_f32;
-        let mut word_start = 0;
+        let _word_start = 0;
         let mut word_glyphs = Vec::new();
         let mut word_width = 0.0_f32;
 
         let (all_glyphs, _) = self.shape(face_id, text, size_px, letter_spacing);
 
-        for (i, glyph) in all_glyphs.iter().enumerate() {
+        for (_i, glyph) in all_glyphs.iter().enumerate() {
             if glyph.codepoint == ' ' || glyph.codepoint == '\n' {
                 // End of word — flush word to line.
                 if line_width + word_width > max_width && !current_line.is_empty() {

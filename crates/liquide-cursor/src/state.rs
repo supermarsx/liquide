@@ -170,7 +170,7 @@ impl CursorState {
     
     /// Get the effective cursor size accounting for scale.
     pub fn effective_size(&self) -> (u32, u32) {
-        if let Some(ref img) = self.custom_image {
+        if self.custom_image.is_some() {
             let w = (self.custom_width as f32 * self.scale) as u32;
             let h = (self.custom_height as f32 * self.scale) as u32;
             (w, h)

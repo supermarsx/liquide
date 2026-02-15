@@ -117,6 +117,7 @@ impl AnimatedCursor {
 }
 
 /// Builder for creating animated cursors.
+#[allow(dead_code)]
 pub struct AnimatedCursorBuilder {
     id: u64,
     shape: CursorShape,

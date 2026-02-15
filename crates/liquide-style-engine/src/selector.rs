@@ -12,7 +12,7 @@
 //! }
 //! ```
 
-use liquide_dom::{Document, Node, NodeId, PseudoStateFlags, Tag};
+use liquide_dom::{Document, Node, NodeId, PseudoStateFlags};
 
 use crate::specificity::Specificity;
 

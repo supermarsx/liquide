@@ -33,8 +33,6 @@ pub use config::FontConfig;
 pub use error::{FontError, Result};
 pub use roles::{FontRole, FontStack};
 
-use std::sync::Arc;
-
 /// The central font manager.
 ///
 /// Coordinates font discovery, installation, indexing, preview, and

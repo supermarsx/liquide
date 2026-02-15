@@ -156,6 +156,7 @@ impl CursorTheme {
 }
 
 /// Built-in default cursor theme.
+#[allow(dead_code)]
 pub fn default_theme() -> CursorTheme {
     CursorTheme {
         metadata: ThemeMetadata {

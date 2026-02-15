@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use tracing::{debug, info, trace, warn};
+use tracing::info;
 
 use crate::types::{Win32AppEvent, Win32AppInfo, Win32WindowState};
 use crate::Result;
@@ -116,6 +116,7 @@ impl Win32WindowEnumerator {
     }
 
     /// Check if a window class should be ignored.
+    #[allow(dead_code)]
     fn is_ignored_class(&self, class_name: &str) -> bool {
         self.ignored_classes
             .iter()
@@ -133,7 +134,7 @@ impl Win32WindowEnumerator {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowRect,
             GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-            IsWindowVisible, IsZoomed, GWL_EXSTYLE, GWL_STYLE, WS_EX_APPWINDOW,
+            IsWindowVisible, IsZoomed, GWL_EXSTYLE, WS_EX_APPWINDOW,
             WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
         };
 

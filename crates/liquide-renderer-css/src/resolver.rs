@@ -5,11 +5,11 @@ use std::sync::Arc;
 use liquide_compositor::pixel::Color;
 use liquide_theme_css::{
     engine::ThemeEngine,
-    value::{LengthUnit, PropertyValue},
+    value::LengthUnit,
 };
 
 use crate::{
-    Result, StyleError,
+    Result,
     glass::GlassStyle,
     shadow::ShadowStyle,
     style::{BorderLineStyle, BorderStyle, Margin, Padding, RenderStyle},

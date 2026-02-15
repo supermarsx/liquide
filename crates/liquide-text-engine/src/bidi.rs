@@ -92,27 +92,32 @@ impl BidiClass {
             0x2069 => Self::PDI,
             // Boundary neutral
             0x200B..=0x200D | 0xFEFF => Self::BN,
-            // Arabic letters
-            0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF |
-            0xFB50..=0xFDFF | 0xFE70..=0xFEFF => Self::AL,
-            // Hebrew
-            0x0590..=0x05FF | 0xFB1D..=0xFB4F => Self::R,
-            // European numbers
-            0x0030..=0x0039 | 0x06F0..=0x06F9 | 0x00B2..=0x00B3 | 0x00B9 => Self::EN,
+            // European numbers (must come before Arabic letters range)
+            0x0030..=0x0039 | 0x00B2..=0x00B3 | 0x00B9 => Self::EN,
             // European separators
             0x002B | 0x002D | 0x207A | 0x207B | 0x208A | 0x208B | 0x2212 => Self::ES,
-            // European terminators
+            // European terminators (must come before Arabic letters range)
             0x0023..=0x0025 | 0x00A2..=0x00A5 | 0x00B0..=0x00B1 | 0x058F |
-            0x0609..=0x060A | 0x066A | 0x09F2..=0x09F3 | 0x20A0..=0x20CF => Self::ET,
-            // Arabic numbers
-            0x0660..=0x0669 => Self::AN,
-            // Common separators
-            0x002C | 0x002E | 0x002F | 0x003A | 0x00A0 | 0x060C | 0x202F => Self::CS,
-            // Non-spacing marks
-            0x0300..=0x036F | 0x0483..=0x0489 | 0x0591..=0x05BD |
-            0x0610..=0x061A | 0x064B..=0x065F | 0x0670 |
-            0x06D6..=0x06DC | 0x06DF..=0x06E4 | 0x06E7..=0x06E8 |
+            0x09F2..=0x09F3 | 0x20A0..=0x20CF => Self::ET,
+            // Common separators (must come before Arabic letters range)
+            0x002C | 0x002E | 0x002F | 0x003A | 0x00A0 | 0x202F => Self::CS,
+            // Non-spacing marks (must come before Arabic letters and Hebrew)
+            0x0300..=0x036F | 0x0483..=0x0489 |
             0xFE20..=0xFE2F => Self::NSM,
+            // Arabic numbers (must come before Arabic letters range)
+            0x0660..=0x0669 => Self::AN,
+            // Arabic-specific: numbers, terminators, separators within Arabic block
+            0x06F0..=0x06F9 => Self::EN,
+            0x0609..=0x060A | 0x066A => Self::ET,
+            0x060C => Self::CS,
+            0x0591..=0x05BD => Self::NSM,
+            0x0610..=0x061A | 0x064B..=0x065F | 0x0670 |
+            0x06D6..=0x06DC | 0x06DF..=0x06E4 | 0x06E7..=0x06E8 => Self::NSM,
+            // Arabic letters (general Arabic range, after specific subranges)
+            0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF |
+            0xFB50..=0xFDFF | 0xFE70..=0xFEFF => Self::AL,
+            // Hebrew (after NSM subranges)
+            0x0590..=0x05FF | 0xFB1D..=0xFB4F => Self::R,
             // Strong left-to-right: Latin, Greek, Cyrillic, CJK, most others
             0x0041..=0x005A | 0x0061..=0x007A | 0x00C0..=0x024F |
             0x0370..=0x03FF | 0x0400..=0x052F |

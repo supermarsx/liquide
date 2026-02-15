@@ -6,7 +6,7 @@
 
 use liquide_compositor::pixel::{BlendMode, Color};
 use liquide_compositor::scene::{
-    BackdropFilterSpec, BackgroundRepeat, BackgroundSize, BackgroundSpec,
+    BackdropFilterSpec, BackgroundSpec,
     BorderImageSpec, BorderSides, BoxShadowSpec, MaskSpec, OutlineSpec, Overflow,
     TextDecoration, TextShadow,
 };
