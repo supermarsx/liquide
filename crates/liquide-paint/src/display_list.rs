@@ -209,6 +209,8 @@ pub enum DisplayItem {
         scale_x: f32,
         scale_y: f32,
         rotate: f32,
+        skew_x: f32,
+        skew_y: f32,
     },
     PopTransform,
 

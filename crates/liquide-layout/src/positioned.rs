@@ -28,6 +28,7 @@ pub fn layout_positioned(
     let box_type = match style.position {
         Position::Absolute => BoxType::Absolute,
         Position::Fixed => BoxType::Fixed,
+        Position::Sticky => BoxType::Sticky,
         _ => return None,
     };
 
@@ -36,6 +37,8 @@ pub fn layout_positioned(
     } else {
         containing_rect
     };
+
+    let is_sticky = style.position == Position::Sticky;
 
     let font_size = style.font_size;
 
@@ -133,20 +136,56 @@ pub fn layout_positioned(
     let content_h = (outer_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
 
     // ── Calculate position ──────────────────────────────────────────────
-    let x = if let Some(l) = left {
-        cb.x + l
-    } else if let Some(r) = right {
-        cb.x + cb.width - r - outer_w
-    } else {
-        cb.x
-    };
+    let (x, y) = if is_sticky {
+        // Sticky positioning: lay out in normal flow first, then clamp.
+        // The normal-flow position is roughly cb.x / cb.y (the containing
+        // block origin), since the element participates in normal flow.
+        let normal_x = cb.x;
+        let normal_y = cb.y;
 
-    let y = if let Some(t) = top {
-        cb.y + t
-    } else if let Some(b_val) = bottom {
-        cb.y + cb.height - b_val - outer_h
+        // Clamp so the element sticks within the containing block's
+        // padding area, offset by the specified sticky edges.
+        let min_x = if let Some(l) = left {
+            cb.x + l
+        } else {
+            f32::NEG_INFINITY
+        };
+        let max_x = if let Some(r) = right {
+            cb.x + cb.width - r - outer_w
+        } else {
+            f32::INFINITY
+        };
+        let min_y = if let Some(t) = top {
+            cb.y + t
+        } else {
+            f32::NEG_INFINITY
+        };
+        let max_y = if let Some(b_val) = bottom {
+            cb.y + cb.height - b_val - outer_h
+        } else {
+            f32::INFINITY
+        };
+
+        let clamped_x = normal_x.clamp(min_x, max_x);
+        let clamped_y = normal_y.clamp(min_y, max_y);
+        (clamped_x, clamped_y)
     } else {
-        cb.y
+        let x = if let Some(l) = left {
+            cb.x + l
+        } else if let Some(r) = right {
+            cb.x + cb.width - r - outer_w
+        } else {
+            cb.x
+        };
+
+        let y = if let Some(t) = top {
+            cb.y + t
+        } else if let Some(b_val) = bottom {
+            cb.y + cb.height - b_val - outer_h
+        } else {
+            cb.y
+        };
+        (x, y)
     };
 
     let content_x = x + border_left + pad_left;

@@ -1,7 +1,7 @@
 //! Block layout — CSS block formatting context.
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{Display, Position};
+use liquide_style_engine::computed::{BoxSizing, Display, Position};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
 
@@ -34,10 +34,10 @@ pub fn layout_block(
 
     // Resolve own dimensions
     let font_size = style.font_size;
-    let width = style
+    let explicit_width = style
         .width
-        .resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h)
-        .unwrap_or(container_width);
+        .resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h);
+    let width = explicit_width.unwrap_or(container_width);
 
     // Resolve padding
     let pad_top = resolve_dim(&style.padding.top, width, base_font_size, font_size, viewport_w, viewport_h);
@@ -45,18 +45,55 @@ pub fn layout_block(
     let pad_bottom = resolve_dim(&style.padding.bottom, width, base_font_size, font_size, viewport_w, viewport_h);
     let pad_left = resolve_dim(&style.padding.left, width, base_font_size, font_size, viewport_w, viewport_h);
 
-    // Resolve margin
-    let mar_top = resolve_dim(&style.margin.top, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_right = resolve_dim(&style.margin.right, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_bottom = resolve_dim(&style.margin.bottom, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_left = resolve_dim(&style.margin.left, container_width, base_font_size, font_size, viewport_w, viewport_h);
-
     let border_top = style.border_width.top;
     let border_right = style.border_width.right;
     let border_bottom = style.border_width.bottom;
     let border_left = style.border_width.left;
 
-    let content_width = width - pad_left - pad_right - border_left - border_right;
+    // box-sizing: content-box (default) — `width` is the content width
+    // box-sizing: border-box — `width` includes padding + border
+    // width: auto — fills container, subtract padding + border regardless
+    let content_width = match (explicit_width, style.box_sizing) {
+        (Some(w), BoxSizing::ContentBox) => w,
+        (Some(w), BoxSizing::BorderBox) => {
+            (w - pad_left - pad_right - border_left - border_right).max(0.0)
+        }
+        (None, _) => {
+            (width - pad_left - pad_right - border_left - border_right).max(0.0)
+        }
+    };
+
+    // Apply min-width / max-width constraints
+    let content_width = {
+        let min_w = style.min_width.resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h).unwrap_or(0.0);
+        let max_w = style.max_width.resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h).unwrap_or(f32::INFINITY);
+        content_width.max(min_w).min(max_w)
+    };
+
+    // Resolve vertical margins (top/bottom)
+    let mar_top = resolve_dim(&style.margin.top, container_width, base_font_size, font_size, viewport_w, viewport_h);
+    let mar_bottom = resolve_dim(&style.margin.bottom, container_width, base_font_size, font_size, viewport_w, viewport_h);
+
+    // Resolve horizontal margins with auto-margin centering support
+    let (mar_left, mar_right) = {
+        let ml = style.margin.left.resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h);
+        let mr = style.margin.right.resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h);
+        let ml_auto = matches!(style.margin.left, Dimension::Auto);
+        let mr_auto = matches!(style.margin.right, Dimension::Auto);
+        let outer = content_width + pad_left + pad_right + border_left + border_right;
+        if ml_auto && mr_auto {
+            let remaining = (container_width - outer).max(0.0);
+            (remaining / 2.0, remaining / 2.0)
+        } else if ml_auto {
+            let remaining = (container_width - outer - mr.unwrap_or(0.0)).max(0.0);
+            (remaining, mr.unwrap_or(0.0))
+        } else if mr_auto {
+            let remaining = (container_width - outer - ml.unwrap_or(0.0)).max(0.0);
+            (ml.unwrap_or(0.0), remaining)
+        } else {
+            (ml.unwrap_or(0.0), mr.unwrap_or(0.0))
+        }
+    };
 
     // ── Margin collapsing state ──
     // CSS §8.3.1: Vertical margins of adjacent block-level boxes collapse.
@@ -173,11 +210,24 @@ pub fn layout_block(
         prev_margin_bottom = Some(child_mar_bottom);
     }
 
-    // Content height is sum of children, or explicit height
-    let content_height = style
+    // Content height: explicit or sum of children
+    let explicit_height = style
         .height
-        .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
-        .unwrap_or(child_y);
+        .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h);
+    let content_height = match (explicit_height, style.box_sizing) {
+        (Some(h), BoxSizing::ContentBox) => h,
+        (Some(h), BoxSizing::BorderBox) => {
+            (h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
+        }
+        (None, _) => child_y,
+    };
+
+    // Apply min-height / max-height constraints
+    let content_height = {
+        let min_h = style.min_height.resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h).unwrap_or(0.0);
+        let max_h = style.max_height.resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h).unwrap_or(f32::INFINITY);
+        content_height.max(min_h).min(max_h)
+    };
 
     // Set geometry
     let content_x = offset_x + mar_left + border_left + pad_left;

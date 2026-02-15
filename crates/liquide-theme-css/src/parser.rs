@@ -80,16 +80,23 @@ impl ThemeParser {
                 }
             }
             CssRule::Media(media) => {
-                // Process nested rules in media queries
+                // Serialize the media query condition for later evaluation
+                let condition = self.to_css_string(&media.query);
+                // Process nested rules, tagging each with the media condition
                 for nested_rule in &media.rules.0 {
-                    self.process_rule(nested_rule, stylesheet)?;
+                    self.process_rule_with_media(nested_rule, stylesheet, Some(&condition))?;
                 }
             }
             CssRule::Supports(supports) => {
-                // Process nested rules in @supports
-                for nested_rule in &supports.rules.0 {
-                    self.process_rule(nested_rule, stylesheet)?;
+                // Serialize the @supports condition
+                let condition_str = self.to_css_string(&supports.condition);
+                // Evaluate simple @supports conditions at parse time
+                if self.evaluate_supports_condition(&condition_str) {
+                    for nested_rule in &supports.rules.0 {
+                        self.process_rule(nested_rule, stylesheet)?;
+                    }
                 }
+                // If the condition doesn't match, the rules are dropped.
             }
             CssRule::Keyframes(keyframes) => {
                 let name = match &keyframes.name {
@@ -159,13 +166,51 @@ impl ThemeParser {
                     }
                 }
 
+                let mut weight: Option<(u16, u16)> = None;
+                let mut style: Option<String> = None;
+                let mut unicode_range: Option<String> = None;
+
+                for prop in &font_face.properties {
+                    match prop {
+                        lightningcss::rules::font_face::FontFaceProperty::FontWeight(w) => {
+                            let w0 = self.to_css_string(&w.0);
+                            let w1 = self.to_css_string(&w.1);
+                            let v0 = match w0.trim() {
+                                "normal" => 400u16,
+                                "bold" => 700,
+                                other => other.parse::<f32>().unwrap_or(400.0) as u16,
+                            };
+                            let v1 = match w1.trim() {
+                                "normal" => 400u16,
+                                "bold" => 700,
+                                other => other.parse::<f32>().unwrap_or(v0 as f32) as u16,
+                            };
+                            weight = Some((v0, v1));
+                        }
+                        lightningcss::rules::font_face::FontFaceProperty::FontStyle(fs) => {
+                            style = Some(self.to_css_string(fs));
+                        }
+                        lightningcss::rules::font_face::FontFaceProperty::UnicodeRange(ranges) => {
+                            let range_strs: Vec<String> = ranges.iter().map(|r| {
+                                if r.start == r.end {
+                                    format!("U+{:X}", r.start)
+                                } else {
+                                    format!("U+{:X}-{:X}", r.start, r.end)
+                                }
+                            }).collect();
+                            unicode_range = Some(range_strs.join(", "));
+                        }
+                        _ => {}
+                    }
+                }
+
                 stylesheet.add_font_face(FontFaceRule {
                     family,
                     src: sources,
-                    weight: None,
-                    style: None,
+                    weight,
+                    style,
                     display: None,
-                    unicode_range: None,
+                    unicode_range,
                 });
             }
             CssRule::Import(import) => {
@@ -176,6 +221,181 @@ impl ThemeParser {
         }
 
         Ok(())
+    }
+
+    /// Process a CSS rule that lives inside an @media block, tagging output rules with the condition.
+    fn process_rule_with_media(
+        &self,
+        rule: &CssRule,
+        stylesheet: &mut StyleSheet,
+        media_condition: Option<&str>,
+    ) -> Result<()> {
+        match rule {
+            CssRule::Style(style_rule) => {
+                for selector in &style_rule.selectors.0 {
+                    let selector_str = self.selector_to_string(selector)?;
+                    let our_selector = Selector::parse(&selector_str)?;
+                    let properties = self.convert_declarations(&style_rule.declarations)?;
+                    if let Some(condition) = media_condition {
+                        stylesheet.add_conditional_rule(our_selector, properties, condition.to_string());
+                    } else {
+                        stylesheet.add_rule(our_selector, properties);
+                    }
+                }
+            }
+            CssRule::Media(media) => {
+                // Nested @media: combine conditions with "and"
+                let inner_condition = self.to_css_string(&media.query);
+                let combined = match media_condition {
+                    Some(outer) => format!("{} and {}", outer, inner_condition),
+                    None => inner_condition,
+                };
+                for nested_rule in &media.rules.0 {
+                    self.process_rule_with_media(nested_rule, stylesheet, Some(&combined))?;
+                }
+            }
+            // For any other rule type inside @media, delegate to normal processing
+            _ => {
+                self.process_rule(rule, stylesheet)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Evaluate a serialized @supports condition.
+    ///
+    /// Returns `true` if the condition is satisfied by our engine's property set.
+    /// Unknown conditions default to `true` so that the rules are included.
+    fn evaluate_supports_condition(&self, condition: &str) -> bool {
+        let condition = condition.trim();
+
+        // Handle "not <condition>"
+        if let Some(inner) = condition.strip_prefix("not ") {
+            return !self.evaluate_supports_condition(inner.trim());
+        }
+
+        // Handle parenthesized declaration: "(property: value)"
+        if condition.starts_with('(') && condition.ends_with(')') {
+            let inner = &condition[1..condition.len() - 1].trim();
+            // Check for and/or inside parens (compound condition)
+            if inner.contains(") and (") || inner.contains(") or (") {
+                // Compound — split on " and " / " or "
+                if let Some(_) = condition.find(") and (") {
+                    return condition
+                        .split(" and ")
+                        .all(|part| self.evaluate_supports_condition(part.trim()));
+                }
+                if let Some(_) = condition.find(") or (") {
+                    return condition
+                        .split(" or ")
+                        .any(|part| self.evaluate_supports_condition(part.trim()));
+                }
+            }
+            // Simple property: value declaration check
+            if let Some(colon_pos) = inner.find(':') {
+                let property = inner[..colon_pos].trim();
+                return Self::is_supported_css_property(property);
+            }
+            // Might be a nested condition
+            return self.evaluate_supports_condition(inner);
+        }
+
+        // If we see " and " at the top level
+        if condition.contains(" and ") {
+            return condition
+                .split(" and ")
+                .all(|part| self.evaluate_supports_condition(part.trim()));
+        }
+        // If we see " or "
+        if condition.contains(" or ") {
+            return condition
+                .split(" or ")
+                .any(|part| self.evaluate_supports_condition(part.trim()));
+        }
+
+        // Default: assume supported
+        true
+    }
+
+    /// Check if a CSS property name is supported by our engine.
+    fn is_supported_css_property(property: &str) -> bool {
+        matches!(
+            property.trim(),
+            "display"
+                | "position"
+                | "width"
+                | "height"
+                | "min-width"
+                | "max-width"
+                | "min-height"
+                | "max-height"
+                | "margin"
+                | "margin-top"
+                | "margin-right"
+                | "margin-bottom"
+                | "margin-left"
+                | "padding"
+                | "padding-top"
+                | "padding-right"
+                | "padding-bottom"
+                | "padding-left"
+                | "color"
+                | "background"
+                | "background-color"
+                | "border"
+                | "border-color"
+                | "border-width"
+                | "border-style"
+                | "border-radius"
+                | "font-size"
+                | "font-weight"
+                | "font-family"
+                | "font-style"
+                | "line-height"
+                | "text-align"
+                | "text-transform"
+                | "text-overflow"
+                | "white-space"
+                | "opacity"
+                | "visibility"
+                | "overflow"
+                | "overflow-x"
+                | "overflow-y"
+                | "flex"
+                | "flex-direction"
+                | "flex-wrap"
+                | "flex-grow"
+                | "flex-shrink"
+                | "flex-basis"
+                | "justify-content"
+                | "align-items"
+                | "align-self"
+                | "align-content"
+                | "gap"
+                | "row-gap"
+                | "column-gap"
+                | "grid-template-columns"
+                | "grid-template-rows"
+                | "grid-auto-flow"
+                | "grid-column"
+                | "grid-row"
+                | "z-index"
+                | "cursor"
+                | "pointer-events"
+                | "box-shadow"
+                | "transform"
+                | "transition"
+                | "box-sizing"
+                | "top"
+                | "right"
+                | "bottom"
+                | "left"
+                | "order"
+                | "letter-spacing"
+                | "word-spacing"
+                | "text-indent"
+                | "word-break"
+        )
     }
 
     /// Convert lightningcss selector to string
@@ -924,7 +1144,8 @@ impl ThemeParser {
             _ => {
                 // For other color types, try to serialize and parse
                 let css_str = self.to_css_string(css_color);
-                if let Ok(color) = Color::from_hex(&css_str) {
+                // Try oklch/oklab/color-mix first, then fall back
+                if let Ok(color) = Color::parse_css(&css_str) {
                     return Some(PropertyValue::Color(color));
                 }
                 None
@@ -1001,8 +1222,36 @@ impl ThemeParser {
                 TokenOrValue::Token(token) => {
                     result.push_str(&self.to_css_string(token));
                 }
+                TokenOrValue::Var(var) => {
+                    // Serialize var() properly: var(--name) or var(--name, fallback)
+                    result.push_str("var(");
+                    result.push_str(&var.name.ident.0);
+                    if let Some(fallback) = &var.fallback {
+                        result.push_str(", ");
+                        result.push_str(&self.to_css_string_from_token_list(fallback));
+                    }
+                    result.push(')');
+                }
+                TokenOrValue::Env(env) => {
+                    result.push_str("env(");
+                    result.push_str(&self.to_css_string(&env.name));
+                    if let Some(fallback) = &env.fallback {
+                        result.push_str(", ");
+                        result.push_str(&self.to_css_string_from_token_list(fallback));
+                    }
+                    result.push(')');
+                }
+                TokenOrValue::Function(func) => {
+                    result.push_str(&func.name);
+                    result.push('(');
+                    result.push_str(&self.to_css_string_from_token_list(&func.arguments));
+                    result.push(')');
+                }
+                TokenOrValue::DashedIdent(ident) => {
+                    result.push_str(&ident.0);
+                }
                 _ => {
-                    // Var, Env, Function, DashedIdent, etc.
+                    // UnresolvedColor, Url, AnimationName, etc.
                     result.push_str(&format!("{:?}", token_or_value));
                 }
             }
@@ -1070,6 +1319,17 @@ impl ThemeParser {
             }
         }
 
+        // Try calc() / min() / max() / clamp() math expressions
+        if s.starts_with("calc(")
+            || s.starts_with("min(")
+            || s.starts_with("max(")
+            || s.starts_with("clamp(")
+        {
+            if let Some(expr) = self.parse_math_expr(s) {
+                return PropertyValue::MathExpr(expr);
+            }
+        }
+
         // Try as length
         if let Some(v) = self.parse_length_value(s) {
             return v;
@@ -1082,6 +1342,178 @@ impl ThemeParser {
 
         // Fall back to keyword / string
         PropertyValue::Keyword(s.to_string())
+    }
+
+    // ── calc() / min() / max() / clamp() parsing ────────────────────
+
+    /// Parse a CSS math expression string into a `CssMathExpr`.
+    fn parse_math_expr(&self, s: &str) -> Option<crate::value::CssMathExpr> {
+        let s = s.trim();
+        if let Some(inner) = Self::strip_function(s, "calc") {
+            return self.parse_calc_expr(inner);
+        }
+        if let Some(inner) = Self::strip_function(s, "min") {
+            let args = Self::split_function_args(inner);
+            let exprs: Option<Vec<_>> = args.iter().map(|a| self.parse_calc_atom(a.trim())).collect();
+            return exprs.map(crate::value::CssMathExpr::Min);
+        }
+        if let Some(inner) = Self::strip_function(s, "max") {
+            let args = Self::split_function_args(inner);
+            let exprs: Option<Vec<_>> = args.iter().map(|a| self.parse_calc_atom(a.trim())).collect();
+            return exprs.map(crate::value::CssMathExpr::Max);
+        }
+        if let Some(inner) = Self::strip_function(s, "clamp") {
+            let args = Self::split_function_args(inner);
+            if args.len() == 3 {
+                let min = self.parse_calc_atom(args[0].trim())?;
+                let pref = self.parse_calc_atom(args[1].trim())?;
+                let max = self.parse_calc_atom(args[2].trim())?;
+                return Some(crate::value::CssMathExpr::Clamp {
+                    min: Box::new(min),
+                    preferred: Box::new(pref),
+                    max: Box::new(max),
+                });
+            }
+        }
+        None
+    }
+
+    /// Parse the inside of a `calc(...)` expression (supports +, -, *, /).
+    fn parse_calc_expr(&self, s: &str) -> Option<crate::value::CssMathExpr> {
+        let s = s.trim();
+        // Try to split on + or - at the top level (outside parens).
+        // Addition/subtraction are the lowest precedence operators.
+        if let Some((left, op, right)) = Self::split_additive(s) {
+            let lhs = self.parse_calc_term(left.trim())?;
+            let rhs = self.parse_calc_term(right.trim())?;
+            return Some(if op == '+' {
+                crate::value::CssMathExpr::Add(Box::new(lhs), Box::new(rhs))
+            } else {
+                crate::value::CssMathExpr::Sub(Box::new(lhs), Box::new(rhs))
+            });
+        }
+        self.parse_calc_term(s)
+    }
+
+    /// Parse a multiplicative term (handles * and /).
+    fn parse_calc_term(&self, s: &str) -> Option<crate::value::CssMathExpr> {
+        let s = s.trim();
+        if let Some((left, op, right)) = Self::split_multiplicative(s) {
+            let lhs = self.parse_calc_atom(left.trim())?;
+            let rhs = self.parse_calc_atom(right.trim())?;
+            return Some(if op == '*' {
+                crate::value::CssMathExpr::Mul(Box::new(lhs), Box::new(rhs))
+            } else {
+                crate::value::CssMathExpr::Div(Box::new(lhs), Box::new(rhs))
+            });
+        }
+        self.parse_calc_atom(s)
+    }
+
+    /// Parse a calc atom: a number, length, parenthesized sub-expression, or nested function.
+    fn parse_calc_atom(&self, s: &str) -> Option<crate::value::CssMathExpr> {
+        let s = s.trim();
+        // Nested function (calc, min, max, clamp)
+        if s.starts_with("calc(") || s.starts_with("min(") || s.starts_with("max(") || s.starts_with("clamp(") {
+            return self.parse_math_expr(s);
+        }
+        // Parenthesized sub-expression
+        if s.starts_with('(') && s.ends_with(')') {
+            return self.parse_calc_expr(&s[1..s.len() - 1]);
+        }
+        // Try as length
+        if let Some(pv) = self.parse_length_value(s) {
+            if let PropertyValue::Length(lu) = pv {
+                return Some(crate::value::CssMathExpr::Value(lu));
+            }
+        }
+        // Try as bare number
+        if let Ok(n) = s.parse::<f32>() {
+            return Some(crate::value::CssMathExpr::Number(n));
+        }
+        None
+    }
+
+    /// Strip a function wrapper: e.g. `calc(100% - 20px)` → `100% - 20px`.
+    fn strip_function<'a>(s: &'a str, name: &str) -> Option<&'a str> {
+        let s = s.trim();
+        if s.starts_with(name)
+            && s[name.len()..].starts_with('(')
+            && s.ends_with(')')
+        {
+            Some(&s[name.len() + 1..s.len() - 1])
+        } else {
+            None
+        }
+    }
+
+    /// Split function arguments by commas at the top level (respecting nested parens).
+    fn split_function_args(s: &str) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut current = String::new();
+        let mut depth = 0;
+        for ch in s.chars() {
+            match ch {
+                '(' => { depth += 1; current.push(ch); }
+                ')' => { depth -= 1; current.push(ch); }
+                ',' if depth == 0 => {
+                    args.push(std::mem::take(&mut current));
+                }
+                _ => current.push(ch),
+            }
+        }
+        if !current.is_empty() {
+            args.push(current);
+        }
+        args
+    }
+
+    /// Split on the *last* top-level `+` or `-` (lowest precedence, left-associative).
+    /// We scan right-to-left, but the `-` must be preceded by a space to differentiate
+    /// from negative numbers (e.g. `-20px`).
+    fn split_additive(s: &str) -> Option<(&str, char, &str)> {
+        let bytes = s.as_bytes();
+        let mut depth: i32 = 0;
+        // Scan right to left
+        let mut i = bytes.len();
+        while i > 0 {
+            i -= 1;
+            match bytes[i] {
+                b')' => depth += 1,
+                b'(' => depth -= 1,
+                b'+' if depth == 0 && i > 0 => {
+                    // Require whitespace around operator for calc
+                    return Some((&s[..i].trim_end(), '+', &s[i + 1..]));
+                }
+                b'-' if depth == 0 && i > 0 && bytes[i - 1] == b' ' => {
+                    return Some((&s[..i].trim_end(), '-', &s[i + 1..]));
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Split on the *last* top-level `*` or `/`.
+    fn split_multiplicative(s: &str) -> Option<(&str, char, &str)> {
+        let bytes = s.as_bytes();
+        let mut depth: i32 = 0;
+        let mut i = bytes.len();
+        while i > 0 {
+            i -= 1;
+            match bytes[i] {
+                b')' => depth += 1,
+                b'(' => depth -= 1,
+                b'*' if depth == 0 => {
+                    return Some((&s[..i], '*', &s[i + 1..]));
+                }
+                b'/' if depth == 0 => {
+                    return Some((&s[..i], '/', &s[i + 1..]));
+                }
+                _ => {}
+            }
+        }
+        None
     }
 }
 

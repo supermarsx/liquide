@@ -36,6 +36,7 @@
 
 pub mod template;
 pub mod types;
+pub mod html_parser;
 pub mod dock;
 pub mod statusbar;
 pub mod launcher;
@@ -44,4 +45,5 @@ pub mod menus;
 
 // Re-export key types
 pub use template::{Component, TemplateNode, TemplateRenderer};
+pub use html_parser::{HtmlParser, HtmlParseError};
 pub use types::*;

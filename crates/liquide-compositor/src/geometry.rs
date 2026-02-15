@@ -272,6 +272,19 @@ impl Affine2D {
         }
     }
 
+    /// A pure skew (angles in radians).
+    #[must_use]
+    pub fn skew(skew_x: f32, skew_y: f32) -> Self {
+        Self {
+            a: 1.0,
+            b: skew_x.tan(),
+            c: skew_y.tan(),
+            d: 1.0,
+            tx: 0.0,
+            ty: 0.0,
+        }
+    }
+
     /// Apply this transform to a point.
     #[must_use]
     pub fn transform_point(&self, p: Point) -> Point {

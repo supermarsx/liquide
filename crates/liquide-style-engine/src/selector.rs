@@ -50,6 +50,25 @@ pub enum PseudoClassSelector {
     ReadWrite,
     Root,
     Empty,
+    Is(Vec<ComplexSelector>),
+    Where(Vec<ComplexSelector>),
+    Has(Box<ComplexSelector>),
+    NthOfType(AnB),
+    NthLastOfType(AnB),
+    LastOfType,
+    OnlyChild,
+    OnlyOfType,
+}
+
+/// A CSS pseudo-element (e.g. `::before`, `::after`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PseudoElement {
+    Before,
+    After,
+    FirstLine,
+    FirstLetter,
+    Placeholder,
+    Selection,
 }
 
 /// `:nth-child(an+b)` parameter.
@@ -117,6 +136,8 @@ pub struct CompoundSelector {
     pub pseudo_classes: Vec<PseudoClassSelector>,
     /// Attribute filters.
     pub attributes: Vec<AttributeSelector>,
+    /// Optional pseudo-element (e.g. `::before`).
+    pub pseudo_element: Option<PseudoElement>,
 }
 
 impl CompoundSelector {
@@ -127,6 +148,7 @@ impl CompoundSelector {
             classes: Vec::new(),
             pseudo_classes: Vec::new(),
             attributes: Vec::new(),
+            pseudo_element: None,
         }
     }
 
@@ -135,19 +157,32 @@ impl CompoundSelector {
         let id = if self.id.is_some() { 1 } else { 0 };
         let mut class = self.classes.len() as u32
             + self.attributes.len() as u32;
+        let mut extra = Specificity::ZERO;
         for pc in &self.pseudo_classes {
             match pc {
                 PseudoClassSelector::Not(inner) => {
-                    // :not() adds the specificity of its argument
-                    let inner_spec = inner.specificity();
-                    return Specificity::new(id, class, if self.tag.is_some() { 1 } else { 0 })
-                        .add(inner_spec);
+                    extra = extra.add(inner.specificity());
+                }
+                PseudoClassSelector::Is(selectors) => {
+                    // :is() adds the specificity of its most specific argument
+                    if let Some(max_spec) = selectors.iter().map(|s| s.specificity()).max() {
+                        extra = extra.add(max_spec);
+                    }
+                }
+                PseudoClassSelector::Where(_) => {
+                    // :where() contributes zero specificity
+                }
+                PseudoClassSelector::Has(inner) => {
+                    extra = extra.add(inner.specificity());
                 }
                 _ => class += 1,
             }
         }
-        let type_sel = if self.tag.is_some() { 1 } else { 0 };
-        Specificity::new(id, class, type_sel)
+        let mut type_sel = if self.tag.is_some() { 1 } else { 0 };
+        if self.pseudo_element.is_some() {
+            type_sel += 1;
+        }
+        Specificity::new(id, class, type_sel).add(extra)
     }
 
     /// Check if this compound matches a given DOM node.
@@ -231,6 +266,94 @@ impl CompoundSelector {
             PseudoClassSelector::Not(inner) => {
                 // :not(S) matches if S does NOT match
                 !inner.matches(doc, node.id)
+            }
+            PseudoClassSelector::Is(selectors) | PseudoClassSelector::Where(selectors) => {
+                selectors.iter().any(|s| s.matches(doc, node.id))
+            }
+            PseudoClassSelector::Has(inner) => {
+                fn check_descendants(doc: &Document, parent: NodeId, sel: &ComplexSelector) -> bool {
+                    for &child_id in doc.children(parent) {
+                        if sel.matches(doc, child_id) {
+                            return true;
+                        }
+                        if check_descendants(doc, child_id, sel) {
+                            return true;
+                        }
+                    }
+                    false
+                }
+                check_descendants(doc, node.id, inner)
+            }
+            PseudoClassSelector::NthOfType(anb) => {
+                if let Some(parent_id) = node.parent {
+                    let my_tag = node.tag_name();
+                    let children = doc.children(parent_id);
+                    let mut type_index = 0i32;
+                    for &c in children {
+                        if let Some(child) = doc.get(c) {
+                            if child.tag_name() == my_tag {
+                                type_index += 1;
+                                if c == node.id {
+                                    return anb.matches(type_index);
+                                }
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            PseudoClassSelector::NthLastOfType(anb) => {
+                if let Some(parent_id) = node.parent {
+                    let my_tag = node.tag_name();
+                    let children = doc.children(parent_id);
+                    let mut type_index = 0i32;
+                    for &c in children.iter().rev() {
+                        if let Some(child) = doc.get(c) {
+                            if child.tag_name() == my_tag {
+                                type_index += 1;
+                                if c == node.id {
+                                    return anb.matches(type_index);
+                                }
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            PseudoClassSelector::LastOfType => {
+                if let Some(parent_id) = node.parent {
+                    let my_tag = node.tag_name();
+                    let children = doc.children(parent_id);
+                    for &c in children.iter().rev() {
+                        if let Some(child) = doc.get(c) {
+                            if child.tag_name() == my_tag {
+                                return c == node.id;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            PseudoClassSelector::OnlyChild => {
+                if let Some(parent_id) = node.parent {
+                    let children = doc.children(parent_id);
+                    let element_children: Vec<_> = children.iter().filter(|&&c| {
+                        doc.get(c).map_or(false, |n| !n.is_text())
+                    }).collect();
+                    return element_children.len() == 1 && *element_children[0] == node.id;
+                }
+                false
+            }
+            PseudoClassSelector::OnlyOfType => {
+                if let Some(parent_id) = node.parent {
+                    let my_tag = node.tag_name();
+                    let children = doc.children(parent_id);
+                    let same_type_count = children.iter().filter(|&&c| {
+                        doc.get(c).map_or(false, |child| child.tag_name() == my_tag)
+                    }).count();
+                    return same_type_count == 1;
+                }
+                false
             }
         }
     }
@@ -528,7 +651,10 @@ fn flush_segment(sel: &mut CompoundSelector, mode: char, value: &str) {
         '.' => sel.classes.push(value.to_string()),
         '#' => sel.id = Some(value.to_string()),
         ':' => {
-            if let Some(pc) = parse_pseudo_class(value) {
+            if let Some(stripped) = value.strip_prefix(':') {
+                // Pseudo-element (::before, ::after, etc.)
+                sel.pseudo_element = parse_pseudo_element(stripped);
+            } else if let Some(pc) = parse_pseudo_class(value) {
                 sel.pseudo_classes.push(pc);
             }
         }
@@ -536,6 +662,18 @@ fn flush_segment(sel: &mut CompoundSelector, mode: char, value: &str) {
             parse_attribute_into(sel, value);
         }
         _ => {}
+    }
+}
+
+fn parse_pseudo_element(name: &str) -> Option<PseudoElement> {
+    match name {
+        "before" => Some(PseudoElement::Before),
+        "after" => Some(PseudoElement::After),
+        "first-line" => Some(PseudoElement::FirstLine),
+        "first-letter" => Some(PseudoElement::FirstLetter),
+        "placeholder" => Some(PseudoElement::Placeholder),
+        "selection" => Some(PseudoElement::Selection),
+        _ => None,
     }
 }
 
@@ -556,6 +694,9 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
         "read-write" => Some(PseudoClassSelector::ReadWrite),
         "root" => Some(PseudoClassSelector::Root),
         "empty" => Some(PseudoClassSelector::Empty),
+        "last-of-type" => Some(PseudoClassSelector::LastOfType),
+        "only-child" => Some(PseudoClassSelector::OnlyChild),
+        "only-of-type" => Some(PseudoClassSelector::OnlyOfType),
         _ if name.starts_with("nth-child(") && name.ends_with(')') => {
             let expr = &name[10..name.len() - 1];
             parse_anb(expr).map(PseudoClassSelector::NthChild)
@@ -563,6 +704,32 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
         _ if name.starts_with("nth-last-child(") && name.ends_with(')') => {
             let expr = &name[15..name.len() - 1];
             parse_anb(expr).map(PseudoClassSelector::NthLastChild)
+        }
+        _ if name.starts_with("is(") && name.ends_with(')') => {
+            let inner = &name[3..name.len() - 1];
+            let selectors: Vec<ComplexSelector> = inner.split(',')
+                .filter_map(|s| ComplexSelector::parse(s.trim()))
+                .collect();
+            if selectors.is_empty() { None } else { Some(PseudoClassSelector::Is(selectors)) }
+        }
+        _ if name.starts_with("where(") && name.ends_with(')') => {
+            let inner = &name[6..name.len() - 1];
+            let selectors: Vec<ComplexSelector> = inner.split(',')
+                .filter_map(|s| ComplexSelector::parse(s.trim()))
+                .collect();
+            if selectors.is_empty() { None } else { Some(PseudoClassSelector::Where(selectors)) }
+        }
+        _ if name.starts_with("has(") && name.ends_with(')') => {
+            let inner = &name[4..name.len() - 1];
+            ComplexSelector::parse(inner.trim()).map(|s| PseudoClassSelector::Has(Box::new(s)))
+        }
+        _ if name.starts_with("nth-of-type(") && name.ends_with(')') => {
+            let expr = &name[12..name.len() - 1];
+            parse_anb(expr).map(PseudoClassSelector::NthOfType)
+        }
+        _ if name.starts_with("nth-last-of-type(") && name.ends_with(')') => {
+            let expr = &name[17..name.len() - 1];
+            parse_anb(expr).map(PseudoClassSelector::NthLastOfType)
         }
         _ => None,
     }

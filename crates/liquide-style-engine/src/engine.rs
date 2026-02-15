@@ -22,6 +22,8 @@ pub struct PreparedRule {
     pub specificity: Specificity,
     pub source_order: u32,
     pub properties: PropertySet,
+    /// Optional media condition string. `None` means the rule is unconditional.
+    pub media_condition: Option<String>,
 }
 
 /// A prepared stylesheet — all rules compiled and ready.
@@ -122,6 +124,7 @@ impl StyleEngine {
                     specificity,
                     source_order: order,
                     properties: rule.properties.clone(),
+                    media_condition: rule.media_condition.clone(),
                 });
                 order += 1;
             }
@@ -159,6 +162,12 @@ impl StyleEngine {
 
         for sheet in &self.sheets {
             for rule in &sheet.rules {
+                // Skip rules whose media condition does not match the viewport
+                if let Some(ref cond) = rule.media_condition {
+                    if !self.evaluate_media_condition(cond) {
+                        continue;
+                    }
+                }
                 if rule.selector.matches(doc, node_id) {
                     let priority = CascadePriority::author(
                         rule.specificity,
@@ -229,6 +238,12 @@ impl StyleEngine {
             // Collect matching rules and add to cascade with proper priority
             for sheet in &self.sheets {
                 for rule in &sheet.rules {
+                    // Skip rules whose media condition does not match the viewport
+                    if let Some(ref cond) = rule.media_condition {
+                        if !self.evaluate_media_condition(cond) {
+                            continue;
+                        }
+                    }
                     if rule.selector.matches(doc, node_id) {
                         let priority = CascadePriority::author(
                             rule.specificity,
@@ -294,6 +309,51 @@ impl StyleEngine {
         val: &liquide_theme_css::value::PropertyValue,
         style: &mut ComputedStyle,
     ) {
+        // ── CSS-wide keywords ──
+        // Check for initial/inherit/unset/revert before normal property handling
+        if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+            match kw.as_str() {
+                "initial" => {
+                    // Reset this property to its initial (default) value
+                    self.reset_property_to_initial(key, style);
+                    return;
+                }
+                "inherit" => {
+                    // Value is inherited — already handled by inherit_from(), so just return
+                    // (the property keeps whatever inherited value it has)
+                    return;
+                }
+                "unset" => {
+                    // If the property is inherited by default, act as inherit
+                    // If not inherited by default, act as initial
+                    if !crate::inheritance::is_inherited(key) {
+                        self.reset_property_to_initial(key, style);
+                    }
+                    // For inherited properties, just keep inherited value (do nothing)
+                    return;
+                }
+                "revert" | "revert-layer" => {
+                    // Revert to the previous cascade origin's value
+                    // For now, simplified: act like unset
+                    if !crate::inheritance::is_inherited(key) {
+                        self.reset_property_to_initial(key, style);
+                    }
+                    return;
+                }
+                _ => {} // Not a CSS-wide keyword, proceed normally
+            }
+        }
+
+        // ── var() resolution ──
+        if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+            if kw.contains("var(") {
+                if let Some(resolved) = self.resolve_var_in_value(kw) {
+                    self.apply_single_property(key, &resolved, style);
+                    return;
+                }
+            }
+        }
+
         match key {
             // Display & position
             "display" => style.display = resolve_display(val),
@@ -2648,6 +2708,250 @@ impl StyleEngine {
             _ => {
                 // Unknown property — silently ignore
             }
+        }
+    }
+
+    // ── var() resolution ────────────────────────────────────────────
+
+    /// Resolve all `var(--name)` / `var(--name, fallback)` references in a value string.
+    ///
+    /// Returns a re-parsed `PropertyValue` with variables substituted, or `None`
+    /// if a referenced variable is missing and no fallback is provided.
+    fn resolve_var_in_value(
+        &self,
+        value: &str,
+    ) -> Option<liquide_theme_css::value::PropertyValue> {
+        let mut result = value.to_string();
+        // Limit iterations to prevent infinite loops from circular references
+        let mut iterations = 0;
+        while let Some(start) = result.find("var(") {
+            iterations += 1;
+            if iterations > 32 {
+                return None; // safety valve
+            }
+            let rest = &result[start + 4..];
+            // Find matching close paren (handle nesting)
+            let mut depth = 1i32;
+            let mut end = 0;
+            for (i, ch) in rest.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if depth != 0 {
+                return None; // unmatched parens
+            }
+
+            let inner = &rest[..end];
+            let (var_name, fallback) = if let Some(comma_pos) = Self::find_top_level_comma(inner) {
+                (inner[..comma_pos].trim(), Some(inner[comma_pos + 1..].trim()))
+            } else {
+                (inner.trim(), None)
+            };
+
+            if let Some(resolved) = self.variables.get(var_name) {
+                let replacement = match resolved {
+                    liquide_theme_css::value::PropertyValue::Color(c) => c.to_hex(),
+                    liquide_theme_css::value::PropertyValue::Length(lu) => {
+                        format!("{}px", lu.to_px(self.base_font_size))
+                    }
+                    liquide_theme_css::value::PropertyValue::Number(n) => format!("{}", n),
+                    liquide_theme_css::value::PropertyValue::Keyword(kw) => kw.clone(),
+                    liquide_theme_css::value::PropertyValue::String(s) => s.clone(),
+                    _ => format!("{}", resolved),
+                };
+                result = format!("{}{}{}", &result[..start], replacement, &rest[end + 1..]);
+            } else if let Some(fb) = fallback {
+                result = format!("{}{}{}", &result[..start], fb, &rest[end + 1..]);
+            } else {
+                return None; // Variable not found, no fallback
+            }
+        }
+
+        // Re-parse the resolved string
+        Some(parse_inline_value(&result))
+    }
+
+    /// Find the first top-level comma (not inside nested parens).
+    fn find_top_level_comma(s: &str) -> Option<usize> {
+        let mut depth = 0i32;
+        for (i, ch) in s.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                ',' if depth == 0 => return Some(i),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    // ── @media condition evaluation ────────────────────────────────
+
+    /// Evaluate a serialized media condition string against the current viewport.
+    ///
+    /// Supports the most common media features:
+    /// - `(prefers-color-scheme: dark|light)`
+    /// - `(min-width: <px>)` / `(max-width: <px>)`
+    /// - `(min-height: <px>)` / `(max-height: <px>)`
+    /// - `all` / `screen` / `print`
+    ///
+    /// Returns `true` (include the rule) for unrecognised conditions.
+    pub fn evaluate_media_condition(&self, condition: &str) -> bool {
+        let condition = condition.trim();
+        if condition.is_empty() || condition == "all" {
+            return true;
+        }
+        // "print" rules never match a screen renderer
+        if condition == "print" || condition == "not all" {
+            return false;
+        }
+
+        // Handle "not <rest>"
+        if let Some(rest) = condition.strip_prefix("not ") {
+            return !self.evaluate_media_condition(rest.trim());
+        }
+
+        // Handle " and " compound
+        if condition.contains(" and ") {
+            return condition
+                .split(" and ")
+                .all(|part| self.evaluate_media_condition(part.trim()));
+        }
+        // Handle ", " (or-list in media)
+        if condition.contains(", ") {
+            return condition
+                .split(", ")
+                .any(|part| self.evaluate_media_condition(part.trim()));
+        }
+
+        // "screen" always matches
+        if condition == "screen" {
+            return true;
+        }
+
+        // Parenthesized feature query
+        if condition.starts_with('(') && condition.ends_with(')') {
+            let inner = &condition[1..condition.len() - 1];
+            return self.evaluate_media_feature(inner);
+        }
+
+        // Unknown — default to include
+        true
+    }
+
+    /// Evaluate a single media feature (the contents between parentheses).
+    fn evaluate_media_feature(&self, feature: &str) -> bool {
+        let feature = feature.trim();
+        if let Some(colon_pos) = feature.find(':') {
+            let name = feature[..colon_pos].trim();
+            let value_str = feature[colon_pos + 1..].trim();
+
+            match name {
+                "min-width" => {
+                    if let Some(px) = Self::parse_px_value(value_str) {
+                        return self.viewport.width >= px;
+                    }
+                }
+                "max-width" => {
+                    if let Some(px) = Self::parse_px_value(value_str) {
+                        return self.viewport.width <= px;
+                    }
+                }
+                "min-height" => {
+                    if let Some(px) = Self::parse_px_value(value_str) {
+                        return self.viewport.height >= px;
+                    }
+                }
+                "max-height" => {
+                    if let Some(px) = Self::parse_px_value(value_str) {
+                        return self.viewport.height <= px;
+                    }
+                }
+                "prefers-color-scheme" => {
+                    // Default to "light"; dark mode support can be wired up later.
+                    return value_str == "light";
+                }
+                _ => {}
+            }
+        }
+        // Unknown feature — include by default
+        true
+    }
+
+    /// Parse a pixel value like "768px" or "1024px".
+    fn parse_px_value(s: &str) -> Option<f32> {
+        let s = s.trim();
+        let num_str = s.strip_suffix("px").unwrap_or(s);
+        num_str.trim().parse::<f32>().ok()
+    }
+
+    /// Reset a single CSS property to its initial (spec-default) value.
+    fn reset_property_to_initial(&self, key: &str, style: &mut ComputedStyle) {
+        let default = ComputedStyle::default();
+        match key {
+            "display" => style.display = default.display,
+            "position" => style.position = default.position,
+            "width" => style.width = default.width,
+            "height" => style.height = default.height,
+            "margin-top" => style.margin.top = default.margin.top,
+            "margin-right" => style.margin.right = default.margin.right,
+            "margin-bottom" => style.margin.bottom = default.margin.bottom,
+            "margin-left" => style.margin.left = default.margin.left,
+            "padding-top" => style.padding.top = default.padding.top,
+            "padding-right" => style.padding.right = default.padding.right,
+            "padding-bottom" => style.padding.bottom = default.padding.bottom,
+            "padding-left" => style.padding.left = default.padding.left,
+            "color" => style.color = default.color,
+            "background-color" | "background" => style.background_color = default.background_color,
+            "font-size" => style.font_size = default.font_size,
+            "font-weight" => style.font_weight = default.font_weight,
+            "font-family" => style.font_family = default.font_family.clone(),
+            "font-style" => style.font_style = default.font_style.clone(),
+            "opacity" => style.opacity = default.opacity,
+            "visibility" => style.visibility = default.visibility,
+            "overflow" | "overflow-x" => style.overflow_x = default.overflow_x,
+            "overflow-y" => style.overflow_y = default.overflow_y,
+            "flex-direction" => style.flex_direction = default.flex_direction,
+            "flex-wrap" => style.flex_wrap = default.flex_wrap,
+            "flex-grow" => style.flex_grow = default.flex_grow,
+            "flex-shrink" => style.flex_shrink = default.flex_shrink,
+            "justify-content" => style.justify_content = default.justify_content,
+            "align-items" => style.align_items = default.align_items,
+            "align-self" => style.align_self = default.align_self,
+            "z-index" => style.z_index = default.z_index,
+            "border-width" => style.border_width = default.border_width,
+            "border-top-width" => style.border_width.top = default.border_width.top,
+            "border-right-width" => style.border_width.right = default.border_width.right,
+            "border-bottom-width" => style.border_width.bottom = default.border_width.bottom,
+            "border-left-width" => style.border_width.left = default.border_width.left,
+            "border-color" => style.border_color = default.border_color,
+            "border-style" => style.border_style = default.border_style,
+            "border-radius" => style.border_radius = default.border_radius,
+            "transform" => style.transform = default.transform.clone(),
+            "text-align" => style.text_align = default.text_align,
+            "text-transform" => style.text_transform = default.text_transform,
+            "white-space" => style.white_space = default.white_space,
+            "cursor" => style.cursor = default.cursor,
+            "pointer-events" => style.pointer_events = default.pointer_events,
+            "box-sizing" => style.box_sizing = default.box_sizing,
+            "min-width" => style.min_width = default.min_width,
+            "max-width" => style.max_width = default.max_width,
+            "min-height" => style.min_height = default.min_height,
+            "max-height" => style.max_height = default.max_height,
+            "top" => style.top = default.top,
+            "right" => style.right = default.right,
+            "bottom" => style.bottom = default.bottom,
+            "left" => style.left = default.left,
+            _ => {} // Unknown property — no reset
         }
     }
 }

@@ -34,6 +34,8 @@ pub enum BoxType {
     Absolute,
     /// Fixed positioned.
     Fixed,
+    /// Sticky positioned.
+    Sticky,
 }
 
 /// A line box within a text layout.

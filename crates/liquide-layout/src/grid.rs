@@ -1,13 +1,23 @@
 //! Grid layout — CSS Grid Level 1 (simplified).
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{Display, TrackSize, Position};
+use liquide_style_engine::computed::{Display, GridLine, TrackSize, Position};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
 use crate::{TextMeasurer, ImageMeasurer};
+
+/// A resolved grid item with its placement coordinates.
+struct GridItem {
+    node_id: NodeId,
+    col_start: usize,
+    col_end: usize,   // exclusive
+    row_start: usize,
+    row_end: usize,    // exclusive
+    box_id: Option<LayoutBoxId>,
+}
 
 /// Perform grid layout.
 pub fn layout_grid(
@@ -64,9 +74,11 @@ pub fn layout_grid(
     let col_tracks = resolve_tracks(&style.grid_template_columns, content_width, gap_col);
     let num_cols = col_tracks.len().max(1);
 
-    // Collect children
+    // Collect children, resolve explicit placement
     let children = doc.children(node_id).to_vec();
-    let mut grid_items: Vec<NodeId> = Vec::new();
+    let mut placed_items: Vec<GridItem> = Vec::new();
+    let mut auto_items: Vec<NodeId> = Vec::new();
+
     for &child_id in &children {
         let child_style = styles.get(child_id).cloned().unwrap_or_default();
         if child_style.display == Display::None {
@@ -75,43 +87,157 @@ pub fn layout_grid(
         if matches!(child_style.position, Position::Absolute | Position::Fixed) {
             continue;
         }
-        grid_items.push(child_id);
+
+        // Resolve explicit grid placement
+        let col_start = match child_style.grid_column.start {
+            GridLine::Line(n) => Some((n - 1).max(0) as usize),
+            _ => None,
+        };
+        let col_end = match child_style.grid_column.end {
+            GridLine::Line(n) => Some((n - 1).max(0) as usize),
+            GridLine::Span(n) => col_start.map(|s| s + n as usize),
+            _ => None,
+        };
+        let row_start = match child_style.grid_row.start {
+            GridLine::Line(n) => Some((n - 1).max(0) as usize),
+            _ => None,
+        };
+        let row_end = match child_style.grid_row.end {
+            GridLine::Line(n) => Some((n - 1).max(0) as usize),
+            GridLine::Span(n) => row_start.map(|s| s + n as usize),
+            _ => None,
+        };
+
+        if col_start.is_some() || row_start.is_some() {
+            // Explicitly placed item
+            let cs = col_start.unwrap_or(0);
+            let ce = col_end.unwrap_or(cs + 1);
+            let rs = row_start.unwrap_or(0);
+            let re = row_end.unwrap_or(rs + 1);
+            placed_items.push(GridItem {
+                node_id: child_id,
+                col_start: cs,
+                col_end: ce,
+                row_start: rs,
+                row_end: re,
+                box_id: None,
+            });
+        } else {
+            auto_items.push(child_id);
+        }
     }
 
-    // Auto-placement
-    let num_rows = (grid_items.len() + num_cols - 1) / num_cols;
+    // Build an occupancy grid for auto-placement
+    let _total_items = placed_items.len() + auto_items.len();
+    let max_explicit_row = placed_items.iter().map(|it| it.row_end).max().unwrap_or(0);
+    let min_auto_rows = (auto_items.len() + num_cols - 1) / num_cols;
+    let mut num_rows = max_explicit_row.max(min_auto_rows).max(1);
+
+    // Occupied cells tracker
+    let mut occupied = vec![vec![false; num_cols]; num_rows];
+    for item in &placed_items {
+        for r in item.row_start..item.row_end.min(num_rows) {
+            for c in item.col_start..item.col_end.min(num_cols) {
+                if r < occupied.len() && c < num_cols {
+                    occupied[r][c] = true;
+                }
+            }
+        }
+    }
+
+    // Auto-place remaining items into unoccupied cells
+    let mut auto_cursor_row: usize = 0;
+    let mut auto_cursor_col: usize = 0;
+    for child_id in auto_items {
+        // Find next unoccupied cell
+        loop {
+            if auto_cursor_row >= num_rows {
+                // Extend the grid
+                num_rows += 1;
+                occupied.push(vec![false; num_cols]);
+            }
+            if !occupied[auto_cursor_row][auto_cursor_col] {
+                break;
+            }
+            auto_cursor_col += 1;
+            if auto_cursor_col >= num_cols {
+                auto_cursor_col = 0;
+                auto_cursor_row += 1;
+            }
+        }
+        occupied[auto_cursor_row][auto_cursor_col] = true;
+        placed_items.push(GridItem {
+            node_id: child_id,
+            col_start: auto_cursor_col,
+            col_end: auto_cursor_col + 1,
+            row_start: auto_cursor_row,
+            row_end: auto_cursor_row + 1,
+            box_id: None,
+        });
+        auto_cursor_col += 1;
+        if auto_cursor_col >= num_cols {
+            auto_cursor_col = 0;
+            auto_cursor_row += 1;
+        }
+    }
+
+    // Recalculate num_rows from all items
+    num_rows = placed_items.iter().map(|it| it.row_end).max().unwrap_or(1).max(1);
+
     let row_tracks = if style.grid_template_rows.is_empty() {
         vec![0.0f32; num_rows] // auto rows
     } else {
         let available_h = style.height
             .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
             .unwrap_or(container_height);
-        resolve_tracks(&style.grid_template_rows, available_h, gap_row)
+        let mut rt = resolve_tracks(&style.grid_template_rows, available_h, gap_row);
+        // Extend with auto rows if needed
+        while rt.len() < num_rows {
+            rt.push(0.0);
+        }
+        rt
     };
 
-    // Layout each item into its cell
+    // Layout each item into its cell (spanning support)
     let mut row_heights: Vec<f32> = vec![0.0; num_rows];
 
-    for (idx, &child_id) in grid_items.iter().enumerate() {
-        let col = idx % num_cols;
-        let row = idx / num_cols;
-        if row >= num_rows {
-            break;
+    for item in &mut placed_items {
+        // Calculate spanned cell width: sum of columns [col_start..col_end] + gaps
+        let span_cols = item.col_end.saturating_sub(item.col_start).max(1);
+        let mut cell_width = 0.0f32;
+        for c in item.col_start..item.col_end.min(num_cols) {
+            cell_width += if c < col_tracks.len() { col_tracks[c] } else { content_width / num_cols as f32 };
         }
-
-        let cell_width = if col < col_tracks.len() { col_tracks[col] } else { content_width / num_cols as f32 };
+        // Add inter-column gaps within the span
+        if span_cols > 1 {
+            cell_width += (span_cols - 1) as f32 * gap_col;
+        }
 
         // Layout child in cell
         let child_box = crate::block::layout_block(
-            doc, child_id, styles, tree, text_measurer, image_measurer,
+            doc, item.node_id, styles, tree, text_measurer, image_measurer,
             cell_width, container_height, 0.0, 0.0,
             viewport_w, viewport_h, base_font_size,
         );
 
         if let Some(cb) = tree.get(child_box) {
-            row_heights[row] = row_heights[row].max(cb.margin_rect.height);
+            // Distribute height across spanned rows (use max for first row)
+            let span_rows = item.row_end.saturating_sub(item.row_start).max(1);
+            let child_h = cb.margin_rect.height;
+            if span_rows == 1 {
+                if item.row_start < num_rows {
+                    row_heights[item.row_start] = row_heights[item.row_start].max(child_h);
+                }
+            } else {
+                // Spread height evenly across spanned rows
+                let per_row = child_h / span_rows as f32;
+                for r in item.row_start..item.row_end.min(num_rows) {
+                    row_heights[r] = row_heights[r].max(per_row);
+                }
+            }
         }
 
+        item.box_id = Some(child_box);
         tree.add_child(box_id, child_box);
     }
 
@@ -138,22 +264,35 @@ pub fn layout_grid(
         cumulative_x += cw + if col < num_cols - 1 { gap_col } else { 0.0 };
     }
 
-    // Update child positions
-    let child_boxes: Vec<LayoutBoxId> = tree.get(box_id)
-        .map(|b| b.children.clone())
-        .unwrap_or_default();
+    // Update child positions using placed_items (supports spanning)
+    for item in &placed_items {
+        let child_box_id = match item.box_id {
+            Some(id) => id,
+            None => continue,
+        };
 
-    for (idx, &child_box_id) in child_boxes.iter().enumerate() {
-        let col = idx % num_cols;
-        let row = idx / num_cols;
-        if row >= num_rows {
-            break;
+        let cell_x = content_x + x_offsets.get(item.col_start).copied().unwrap_or(0.0);
+        let cell_y = content_y + y_offsets.get(item.row_start).copied().unwrap_or(0.0);
+
+        // Width spans multiple columns + inter-column gaps
+        let span_cols = item.col_end.saturating_sub(item.col_start).max(1);
+        let mut cell_w = 0.0f32;
+        for c in item.col_start..item.col_end.min(num_cols) {
+            cell_w += if c < col_tracks.len() { col_tracks[c] } else { content_width / num_cols as f32 };
+        }
+        if span_cols > 1 {
+            cell_w += (span_cols - 1) as f32 * gap_col;
         }
 
-        let cell_x = content_x + x_offsets.get(col).copied().unwrap_or(0.0);
-        let cell_y = content_y + y_offsets.get(row).copied().unwrap_or(0.0);
-        let cell_w = if col < col_tracks.len() { col_tracks[col] } else { content_width / num_cols as f32 };
-        let cell_h = row_heights[row];
+        // Height spans multiple rows + inter-row gaps
+        let span_rows = item.row_end.saturating_sub(item.row_start).max(1);
+        let mut cell_h = 0.0f32;
+        for r in item.row_start..item.row_end.min(num_rows) {
+            cell_h += row_heights[r];
+        }
+        if span_rows > 1 {
+            cell_h += (span_rows - 1) as f32 * gap_row;
+        }
 
         if let Some(b) = tree.get_mut(child_box_id) {
             b.content_rect = Rect::new(cell_x, cell_y, cell_w, cell_h);
@@ -215,11 +354,23 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
             TrackSize::Fr(v) => {
                 fr_total += *v;
             }
+            TrackSize::MinMax(min, max) => {
+                // Use min size initially; will expand toward max during distribution
+                let min_px = resolve_track_px(min, available);
+                let _max_px = resolve_track_px(max, available);
+                sizes[i] = min_px;
+                fixed_total += min_px;
+                // We'll handle expansion below if there's remaining space
+            }
+            TrackSize::FitContent(max_percent) => {
+                // Acts like minmax(auto, max_percent%)
+                let max_px = available * max_percent / 100.0;
+                let track_count = tracks.len().max(1) as f32;
+                sizes[i] = max_px.min(available / track_count);
+                fixed_total += sizes[i];
+            }
             TrackSize::Auto | TrackSize::MinContent | TrackSize::MaxContent => {
                 // Auto tracks get a share of remaining space
-                fr_total += 1.0;
-            }
-            _ => {
                 fr_total += 1.0;
             }
         }
@@ -234,13 +385,30 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
                 TrackSize::Auto | TrackSize::MinContent | TrackSize::MaxContent => {
                     sizes[i] = remaining * (1.0 / fr_total);
                 }
-                TrackSize::Px(_) | TrackSize::Percent(_) => {} // already set
-                _ => sizes[i] = remaining * (1.0 / fr_total),
+                TrackSize::MinMax(_min, max) => {
+                    // Expand toward max if there's remaining space
+                    let max_px = resolve_track_px(max, available);
+                    let grow = (max_px - sizes[i]).max(0.0).min(remaining * (1.0 / fr_total));
+                    sizes[i] += grow;
+                }
+                TrackSize::Px(_) | TrackSize::Percent(_) | TrackSize::FitContent(_) => {} // already set
             }
         }
     }
 
     sizes
+}
+
+/// Resolve a single track size value to pixels.
+fn resolve_track_px(track: &TrackSize, available: f32) -> f32 {
+    match track {
+        TrackSize::Px(v) => *v,
+        TrackSize::Percent(v) => available * v / 100.0,
+        TrackSize::Fr(_) => 0.0,
+        TrackSize::Auto | TrackSize::MinContent | TrackSize::MaxContent => 0.0,
+        TrackSize::MinMax(min, _) => resolve_track_px(min, available),
+        TrackSize::FitContent(pct) => available * pct / 100.0,
+    }
 }
 
 fn resolve_dim(

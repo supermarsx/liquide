@@ -280,6 +280,8 @@ impl DesktopPipeline {
                     scale_x,
                     scale_y,
                     rotate,
+                    skew_x,
+                    skew_y,
                 } => {
                     stack.push(current.clone());
                     let mut xform = Affine2D::identity();
@@ -291,6 +293,9 @@ impl DesktopPipeline {
                     }
                     if *rotate != 0.0 {
                         xform = xform.then(&Affine2D::rotation(*rotate));
+                    }
+                    if *skew_x != 0.0 || *skew_y != 0.0 {
+                        xform = xform.then(&Affine2D::skew(skew_x.to_radians(), skew_y.to_radians()));
                     }
                     current.transform = current.transform.then(&xform);
                 }
@@ -415,6 +420,8 @@ impl DesktopPipeline {
                     scale_x,
                     scale_y,
                     rotate,
+                    skew_x,
+                    skew_y,
                 } => {
                     let parent = *transform_stack.last().unwrap_or(&ROOT_NODE_ID);
                     let mut local = Affine2D::identity();
@@ -426,6 +433,9 @@ impl DesktopPipeline {
                     }
                     if *rotate != 0.0 {
                         local = local.then(&Affine2D::rotation(*rotate));
+                    }
+                    if *skew_x != 0.0 || *skew_y != 0.0 {
+                        local = local.then(&Affine2D::skew(skew_x.to_radians(), skew_y.to_radians()));
                     }
                     let node = TransformNode {
                         parent,

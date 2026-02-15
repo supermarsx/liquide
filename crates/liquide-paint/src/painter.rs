@@ -69,13 +69,15 @@ impl Painter {
 
         // Push transform
         if !style.transform.is_empty() {
-            let (tx, ty, sx, sy, r) = flatten_transforms(&style.transform);
+            let (tx, ty, sx, sy, r, skx, sky) = flatten_transforms(&style.transform);
             list.push(DisplayItem::PushTransform {
                 translate_x: tx,
                 translate_y: ty,
                 scale_x: sx,
                 scale_y: sy,
                 rotate: r,
+                skew_x: skx,
+                skew_y: sky,
             });
         }
 
@@ -128,8 +130,15 @@ impl Painter {
             });
         }
 
-        // Push CSS clip-path (if ComputedStyle has it in the future)
-        let has_clip_path = false;
+        // Push CSS clip-path
+        let has_clip_path = style.clip_path.is_some();
+        if let Some(ref clip_str) = style.clip_path {
+            // Parse common clip-path values into ClipPath shapes
+            let clip = parse_clip_path(clip_str, &layout_box.border_rect);
+            if let Some(path) = clip {
+                list.push(DisplayItem::PushClipPath { path });
+            }
+        }
 
         // Push clipping for overflow
         let needs_clip = matches!(
@@ -169,6 +178,19 @@ impl Painter {
                 color: bg,
                 radius: style.border_radius.clone(),
             });
+        }
+
+        // Paint background gradient (from background-image)
+        if let Some(ref bg_spec) = style.background {
+            if let Some(ref bg_image) = bg_spec.image {
+                use liquide_compositor::scene::BackgroundImage;
+                match bg_image {
+                    BackgroundImage::Gradient(gradient) => {
+                        emit_gradient(list, &layout_box.padding_rect, &style.border_radius, gradient);
+                    }
+                    _ => {} // URL/ImageId handled elsewhere
+                }
+            }
         }
 
         // Paint border
@@ -332,13 +354,15 @@ impl Default for Painter {
     }
 }
 
-/// Flatten a list of transforms into (translate_x, translate_y, scale_x, scale_y, rotate).
-fn flatten_transforms(transforms: &[Transform]) -> (f32, f32, f32, f32, f32) {
+/// Flatten a list of transforms into (translate_x, translate_y, scale_x, scale_y, rotate, skew_x, skew_y).
+fn flatten_transforms(transforms: &[Transform]) -> (f32, f32, f32, f32, f32, f32, f32) {
     let mut tx = 0.0f32;
     let mut ty = 0.0f32;
     let mut sx = 1.0f32;
     let mut sy = 1.0f32;
     let mut r = 0.0f32;
+    let mut skx = 0.0f32;
+    let mut sky = 0.0f32;
 
     for t in transforms {
         match t {
@@ -353,18 +377,39 @@ fn flatten_transforms(transforms: &[Transform]) -> (f32, f32, f32, f32, f32) {
             Transform::Rotate(deg) => {
                 r += deg;
             }
-            Transform::Skew(_, _) => {
-                // Simplified: skip skew
+            Transform::Skew(ax, ay) => {
+                skx += ax;
+                sky += ay;
             }
-            Transform::Matrix(_a, _b, _c, _d, e, f) => {
-                // Simplified: extract translate from affine matrix
+            Transform::Matrix(a, b, c, d, e, f) => {
+                // Simplified decomposition of 2D affine matrix [a b; c d] + translate(e,f)
+                // Extract translation
                 tx += e;
                 ty += f;
+                // Extract scale
+                let sx_m = (a * a + b * b).sqrt();
+                let sy_m = (c * c + d * d).sqrt();
+                if sx_m > 1e-6 {
+                    sx *= sx_m;
+                }
+                if sy_m > 1e-6 {
+                    sy *= sy_m;
+                }
+                // Extract rotation (from the first column)
+                let rot = b.atan2(*a).to_degrees();
+                r += rot;
+                // Extract skew: angle between the two basis vectors minus 90°
+                // skew = atan2(a*c + b*d, sx_m * sy_m) in radians, converted to degrees
+                if sx_m > 1e-6 && sy_m > 1e-6 {
+                    let dot = a * c + b * d;
+                    let skew_rad = (dot / (sx_m * sy_m)).asin();
+                    skx += skew_rad.to_degrees();
+                }
             }
         }
     }
 
-    (tx, ty, sx, sy, r)
+    (tx, ty, sx, sy, r, skx, sky)
 }
 
 /// Convert a CSS `filter` spec to a paint-layer `FilterOp`.
@@ -392,6 +437,151 @@ fn filter_spec_to_op(spec: &FilterSpec) -> Option<FilterOp> {
         },
         FilterSpec::Url(url) => FilterOp::Reference(url.clone()),
     })
+}
+
+/// Parse a CSS `clip-path` string into a `ClipPath` shape.
+fn parse_clip_path(value: &str, bounds: &liquide_layout::Rect) -> Option<crate::display_list::ClipPath> {
+    use crate::display_list::ClipPath;
+    let trimmed = value.trim();
+
+    if trimmed.starts_with("circle(") {
+        // circle(r at cx cy) or circle(r)
+        let inner = trimmed.trim_start_matches("circle(").trim_end_matches(')');
+        let parts: Vec<&str> = inner.split_whitespace().collect();
+        let r = parse_length_or_percent(parts.first().copied().unwrap_or("50%"), bounds.width * 0.5);
+        let (cx, cy) = if parts.len() >= 4 && parts[1] == "at" {
+            (
+                parse_length_or_percent(parts[2], bounds.width) + bounds.x,
+                parse_length_or_percent(parts[3], bounds.height) + bounds.y,
+            )
+        } else {
+            (bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5)
+        };
+        Some(ClipPath::Circle { cx, cy, r })
+    } else if trimmed.starts_with("ellipse(") {
+        let inner = trimmed.trim_start_matches("ellipse(").trim_end_matches(')');
+        let parts: Vec<&str> = inner.split_whitespace().collect();
+        let rx = parse_length_or_percent(parts.first().copied().unwrap_or("50%"), bounds.width * 0.5);
+        let ry = parse_length_or_percent(parts.get(1).copied().unwrap_or("50%"), bounds.height * 0.5);
+        let (cx, cy) = if parts.len() >= 5 && parts[2] == "at" {
+            (
+                parse_length_or_percent(parts[3], bounds.width) + bounds.x,
+                parse_length_or_percent(parts[4], bounds.height) + bounds.y,
+            )
+        } else {
+            (bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5)
+        };
+        Some(ClipPath::Ellipse { cx, cy, rx, ry })
+    } else if trimmed.starts_with("inset(") {
+        let inner = trimmed.trim_start_matches("inset(").trim_end_matches(')');
+        let parts: Vec<&str> = inner.split_whitespace().collect();
+        let top = parse_length_or_percent(parts.first().copied().unwrap_or("0"), bounds.height);
+        let right = parse_length_or_percent(parts.get(1).copied().unwrap_or("0"), bounds.width);
+        let bottom = parse_length_or_percent(parts.get(2).copied().unwrap_or("0"), bounds.height);
+        let left = parse_length_or_percent(parts.get(3).copied().unwrap_or("0"), bounds.width);
+        Some(ClipPath::Inset {
+            top,
+            right,
+            bottom,
+            left,
+            radius: liquide_style_engine::dimension::Corners::all(0.0),
+        })
+    } else if trimmed.starts_with("polygon(") {
+        let inner = trimmed.trim_start_matches("polygon(").trim_end_matches(')');
+        let points: Vec<(f32, f32)> = inner
+            .split(',')
+            .filter_map(|pair| {
+                let coords: Vec<&str> = pair.trim().split_whitespace().collect();
+                if coords.len() == 2 {
+                    Some((
+                        parse_length_or_percent(coords[0], bounds.width) + bounds.x,
+                        parse_length_or_percent(coords[1], bounds.height) + bounds.y,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if points.len() >= 3 {
+            Some(ClipPath::Polygon(points))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Parse a CSS length value (px) or percentage into a pixel value.
+fn parse_length_or_percent(value: &str, reference: f32) -> f32 {
+    let trimmed = value.trim();
+    if let Some(pct) = trimmed.strip_suffix('%') {
+        pct.trim().parse::<f32>().unwrap_or(0.0) / 100.0 * reference
+    } else if let Some(px) = trimmed.strip_suffix("px") {
+        px.trim().parse::<f32>().unwrap_or(0.0)
+    } else {
+        trimmed.parse::<f32>().unwrap_or(0.0)
+    }
+}
+
+/// Emit a gradient display item from a `GradientSpec`.
+fn emit_gradient(
+    list: &mut DisplayList,
+    rect: &liquide_layout::Rect,
+    radius: &liquide_style_engine::dimension::Corners<f32>,
+    gradient: &liquide_compositor::scene::GradientSpec,
+) {
+    use crate::display_list::GradientStop;
+    use liquide_compositor::scene::GradientSpec;
+
+    match gradient {
+        GradientSpec::Linear { start_x, start_y, end_x, end_y, stops } => {
+            // Convert normalized start/end to angle in degrees
+            let dx = end_x - start_x;
+            let dy = end_y - start_y;
+            let angle_deg = dy.atan2(dx).to_degrees();
+            let grad_stops: Vec<GradientStop> = stops
+                .iter()
+                .map(|(offset, color)| GradientStop { offset: *offset, color: *color })
+                .collect();
+            list.push(DisplayItem::LinearGradient {
+                rect: *rect,
+                angle_deg,
+                stops: grad_stops,
+                radius: radius.clone(),
+            });
+        }
+        GradientSpec::Radial { center_x, center_y, radius: grad_radius, stops } => {
+            let grad_stops: Vec<GradientStop> = stops
+                .iter()
+                .map(|(offset, color)| GradientStop { offset: *offset, color: *color })
+                .collect();
+            list.push(DisplayItem::RadialGradient {
+                rect: *rect,
+                center_x: *center_x,
+                center_y: *center_y,
+                radius_x: *grad_radius,
+                radius_y: *grad_radius,
+                stops: grad_stops,
+            });
+        }
+        GradientSpec::Conic { center_x, center_y, start_angle, stops } => {
+            let grad_stops: Vec<GradientStop> = stops
+                .iter()
+                .map(|(offset, color)| GradientStop { offset: *offset, color: *color })
+                .collect();
+            list.push(DisplayItem::ConicGradient {
+                rect: *rect,
+                center_x: *center_x,
+                center_y: *center_y,
+                angle_deg: *start_angle,
+                stops: grad_stops,
+            });
+        }
+        GradientSpec::Mesh { .. } => {
+            // Mesh gradients not yet supported as a display item
+        }
+    }
 }
 
 /// Convert a CSS `backdrop-filter` spec to a paint-layer `FilterOp`.

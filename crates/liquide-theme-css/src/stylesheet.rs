@@ -36,6 +36,10 @@ pub struct StyleRule {
     
     /// Rule specificity (cached)
     specificity: (u32, u32, u32),
+
+    /// Optional media condition string (e.g. "(prefers-color-scheme: dark)").
+    /// When `Some`, the rule only applies if the condition matches the viewport.
+    pub media_condition: Option<String>,
 }
 
 impl StyleRule {
@@ -46,9 +50,16 @@ impl StyleRule {
             selector,
             properties,
             specificity,
+            media_condition: None,
         }
     }
-    
+
+    /// Create a style rule gated on a media condition.
+    pub fn with_media_condition(mut self, condition: String) -> Self {
+        self.media_condition = Some(condition);
+        self
+    }
+
     /// Get specificity
     pub fn specificity(&self) -> (u32, u32, u32) {
         self.specificity
@@ -64,6 +75,18 @@ impl StyleSheet {
     /// Add a rule
     pub fn add_rule(&mut self, selector: Selector, properties: PropertySet) {
         self.rules.push(StyleRule::new(selector, properties));
+    }
+
+    /// Add a rule that is gated on a media condition string.
+    pub fn add_conditional_rule(
+        &mut self,
+        selector: Selector,
+        properties: PropertySet,
+        media_condition: String,
+    ) {
+        self.rules.push(
+            StyleRule::new(selector, properties).with_media_condition(media_condition),
+        );
     }
     
     /// Set a CSS variable
