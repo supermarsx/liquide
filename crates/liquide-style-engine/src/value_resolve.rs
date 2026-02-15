@@ -399,6 +399,106 @@ pub fn resolve_border_style(val: &PropertyValue) -> BorderLineStyle {
     }
 }
 
+/// Parse an origin keyword (center/left/right/top/bottom/percentage/px) into a Dimension.
+pub fn parse_origin_keyword(s: &str) -> Dimension {
+    match s.trim() {
+        "center" => Dimension::Percent(50.0),
+        "left" | "top" => Dimension::Percent(0.0),
+        "right" | "bottom" => Dimension::Percent(100.0),
+        other => {
+            if let Some(v) = other.strip_suffix('%').and_then(|n| n.parse::<f32>().ok()) {
+                Dimension::Percent(v)
+            } else if let Some(v) = other.strip_suffix("px").and_then(|n| n.parse::<f32>().ok()) {
+                Dimension::Px(v)
+            } else if let Ok(v) = other.parse::<f32>() {
+                Dimension::Px(v)
+            } else {
+                Dimension::Percent(50.0) // default center
+            }
+        }
+    }
+}
+
+/// Resolve a scroll-snap-type keyword like "x mandatory", "y proximity", etc.
+pub fn parse_scroll_snap_type(kw: &str) -> ScrollSnapType {
+    let parts: Vec<&str> = kw.split_whitespace().collect();
+    let strictness = match parts.get(1).map(|s| *s) {
+        Some("mandatory") => ScrollSnapStrictness::Mandatory,
+        Some("proximity") => ScrollSnapStrictness::Proximity,
+        _ => ScrollSnapStrictness::Proximity,
+    };
+    match parts.first().map(|s| *s) {
+        Some("x") => ScrollSnapType::X(strictness),
+        Some("y") => ScrollSnapType::Y(strictness),
+        Some("block") => ScrollSnapType::Block(strictness),
+        Some("inline") => ScrollSnapType::Inline(strictness),
+        Some("both") => ScrollSnapType::Both(strictness),
+        _ => ScrollSnapType::None,
+    }
+}
+
+/// Resolve a break/page-break keyword into BreakValue.
+pub fn resolve_break_value(kw: &str) -> BreakValue {
+    match kw {
+        "auto" => BreakValue::Auto,
+        "avoid" => BreakValue::Avoid,
+        "always" | "page" => BreakValue::Always,
+        "left" => BreakValue::Left,
+        "right" => BreakValue::Right,
+        "column" => BreakValue::Column,
+        "avoid-page" => BreakValue::AvoidPage,
+        "avoid-column" => BreakValue::AvoidColumn,
+        _ => BreakValue::Auto,
+    }
+}
+
+/// Parse a CSS blend mode keyword into BlendMode.
+pub fn resolve_blend_mode(kw: &str) -> liquide_compositor::pixel::BlendMode {
+    use liquide_compositor::pixel::BlendMode;
+    match kw {
+        "multiply" => BlendMode::Multiply,
+        "screen" => BlendMode::Screen,
+        "overlay" => BlendMode::Overlay,
+        "darken" => BlendMode::Darken,
+        "lighten" => BlendMode::Lighten,
+        "color-dodge" => BlendMode::ColorDodge,
+        "color-burn" => BlendMode::ColorBurn,
+        "hard-light" => BlendMode::HardLight,
+        "soft-light" => BlendMode::SoftLight,
+        "difference" => BlendMode::Difference,
+        "exclusion" => BlendMode::Exclusion,
+        "hue" => BlendMode::Hue,
+        "saturation" => BlendMode::Saturation,
+        "color" => BlendMode::ColorBlend,
+        "luminosity" => BlendMode::Luminosity,
+        _ => BlendMode::SrcOver,
+    }
+}
+
+/// Parse a grid line value from PropertyValue.
+pub fn parse_grid_line_value(val: &PropertyValue) -> GridLine {
+    match val {
+        PropertyValue::Number(n) => GridLine::Line(*n as i32),
+        PropertyValue::Keyword(kw) => parse_grid_line_str(kw),
+        _ => GridLine::Auto,
+    }
+}
+
+/// Parse a grid line from a string like "auto", "1", "span 2".
+pub fn parse_grid_line_str(s: &str) -> GridLine {
+    let s = s.trim();
+    if s == "auto" {
+        GridLine::Auto
+    } else if let Some(rest) = s.strip_prefix("span") {
+        let n = rest.trim().parse::<u32>().unwrap_or(1);
+        GridLine::Span(n)
+    } else if let Ok(n) = s.parse::<i32>() {
+        GridLine::Line(n)
+    } else {
+        GridLine::Auto
+    }
+}
+
 /// Parse a CSS transform list string like "translateX(10px) rotate(45deg)" into Transform values.
 pub fn parse_transform_list(css: &str) -> Vec<Transform> {
     let mut result = Vec::new();

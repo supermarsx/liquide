@@ -566,14 +566,7 @@ impl StyleEngine {
             // Effects
             "mix-blend-mode" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.mix_blend_mode = match kw.as_str() {
-                        "multiply" => liquide_compositor::pixel::BlendMode::Multiply,
-                        "screen" => liquide_compositor::pixel::BlendMode::Screen,
-                        "overlay" => liquide_compositor::pixel::BlendMode::Overlay,
-                        "darken" => liquide_compositor::pixel::BlendMode::Darken,
-                        "lighten" => liquide_compositor::pixel::BlendMode::Lighten,
-                        _ => liquide_compositor::pixel::BlendMode::SrcOver,
-                    };
+                    style.mix_blend_mode = resolve_blend_mode(kw);
                 }
             }
             "isolation" => {
@@ -903,6 +896,1752 @@ impl StyleEngine {
             "will-change" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     style.will_change = kw.split(',').map(|s| s.trim().to_string()).collect();
+                }
+            }
+
+            // ── Transform extras ──
+            "transform-origin" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let parts: Vec<&str> = kw.split_whitespace().collect();
+                    if let Some(x) = parts.first() {
+                        style.transform_origin.x = parse_origin_keyword(x);
+                    }
+                    if let Some(y) = parts.get(1) {
+                        style.transform_origin.y = parse_origin_keyword(y);
+                    }
+                }
+            }
+            "transform-style" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.transform_style = match kw.as_str() {
+                        "preserve-3d" => TransformStyle::Preserve3d,
+                        _ => TransformStyle::Flat,
+                    };
+                }
+            }
+            "transform-box" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.transform_box = match kw.as_str() {
+                        "content-box" => TransformBox::ContentBox,
+                        "border-box" => TransformBox::BorderBox,
+                        "fill-box" => TransformBox::FillBox,
+                        "stroke-box" => TransformBox::StrokeBox,
+                        _ => TransformBox::ViewBox,
+                    };
+                }
+            }
+            "perspective" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "none" {
+                        style.perspective = Perspective::None;
+                    } else if let Some(px) = kw.strip_suffix("px").and_then(|v| v.parse::<f32>().ok()) {
+                        style.perspective = Perspective::Length(px);
+                    }
+                } else {
+                    let n = resolve_number(val);
+                    if n > 0.0 { style.perspective = Perspective::Length(n); }
+                }
+            }
+            "perspective-origin" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let parts: Vec<&str> = kw.split_whitespace().collect();
+                    if let Some(x) = parts.first() {
+                        style.perspective_origin.x = parse_origin_keyword(x);
+                    }
+                    if let Some(y) = parts.get(1) {
+                        style.perspective_origin.y = parse_origin_keyword(y);
+                    }
+                }
+            }
+            "backface-visibility" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.backface_visibility = match kw.as_str() {
+                        "hidden" => BackfaceVisibility::Hidden,
+                        _ => BackfaceVisibility::Visible,
+                    };
+                }
+            }
+
+            // ── Typography extras ──
+            "overflow-wrap" | "word-wrap" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.overflow_wrap = match kw.as_str() {
+                        "break-word" => OverflowWrap::BreakWord,
+                        "anywhere" => OverflowWrap::Anywhere,
+                        _ => OverflowWrap::Normal,
+                    };
+                }
+            }
+            "hyphens" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.hyphens = match kw.as_str() {
+                        "none" => Hyphens::None,
+                        "auto" => Hyphens::Auto,
+                        _ => Hyphens::Manual,
+                    };
+                }
+            }
+            "text-decoration-line" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_decoration_line = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "text-decoration-style" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_decoration_style = Some(kw.clone());
+                }
+            }
+            "text-decoration-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.text_decoration_color = Some(c);
+                }
+            }
+            "text-decoration-thickness" => {
+                style.text_decoration_thickness = Some(resolve_number(val));
+            }
+            "text-decoration-skip-ink" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_decoration_skip_ink = match kw.as_str() {
+                        "all" => TextDecorationSkipInk::All,
+                        "none" => TextDecorationSkipInk::None,
+                        _ => TextDecorationSkipInk::Auto,
+                    };
+                }
+            }
+            "text-underline-offset" => {
+                style.text_underline_offset = resolve_number(val);
+            }
+            "text-underline-position" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_underline_position = match kw.as_str() {
+                        "under" => TextUnderlinePosition::Under,
+                        "left" => TextUnderlinePosition::Left,
+                        "right" => TextUnderlinePosition::Right,
+                        "from-font" => TextUnderlinePosition::FromFont,
+                        _ => TextUnderlinePosition::Auto,
+                    };
+                }
+            }
+            "text-align-last" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_align_last = match kw.as_str() {
+                        "left" => TextAlignLast::Left,
+                        "right" => TextAlignLast::Right,
+                        "center" => TextAlignLast::Center,
+                        "justify" => TextAlignLast::Justify,
+                        "start" => TextAlignLast::Start,
+                        "end" => TextAlignLast::End,
+                        _ => TextAlignLast::Auto,
+                    };
+                }
+            }
+            "text-justify" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_justify = match kw.as_str() {
+                        "inter-character" => TextJustify::InterCharacter,
+                        "inter-word" => TextJustify::InterWord,
+                        "none" => TextJustify::None,
+                        _ => TextJustify::Auto,
+                    };
+                }
+            }
+            "text-rendering" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_rendering = match kw.as_str() {
+                        "optimizeSpeed" | "optimizespeed" => TextRendering::OptimizeSpeed,
+                        "optimizeLegibility" | "optimizelegibility" => TextRendering::OptimizeLegibility,
+                        "geometricPrecision" | "geometricprecision" => TextRendering::GeometricPrecision,
+                        _ => TextRendering::Auto,
+                    };
+                }
+            }
+            "text-shadow" => {
+                // Text shadow is handled via the existing compositor TextShadow type
+                // Complex parsing would need full shadow parser; for now handle keyword none
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "none" { style.text_shadow.clear(); }
+                }
+            }
+
+            // ── Font extras ──
+            "font-stretch" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_stretch = match kw.as_str() {
+                        "ultra-condensed" => FontStretch::UltraCondensed,
+                        "extra-condensed" => FontStretch::ExtraCondensed,
+                        "condensed" => FontStretch::Condensed,
+                        "semi-condensed" => FontStretch::SemiCondensed,
+                        "semi-expanded" => FontStretch::SemiExpanded,
+                        "expanded" => FontStretch::Expanded,
+                        "extra-expanded" => FontStretch::ExtraExpanded,
+                        "ultra-expanded" => FontStretch::UltraExpanded,
+                        _ => FontStretch::Normal,
+                    };
+                }
+            }
+            "font-kerning" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_kerning = match kw.as_str() {
+                        "normal" => FontKerning::Normal,
+                        "none" => FontKerning::None,
+                        _ => FontKerning::Auto,
+                    };
+                }
+            }
+            "font-variant-caps" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_variant_caps = match kw.as_str() {
+                        "small-caps" => FontVariantCaps::SmallCaps,
+                        "all-small-caps" => FontVariantCaps::AllSmallCaps,
+                        "petite-caps" => FontVariantCaps::PetiteCaps,
+                        "all-petite-caps" => FontVariantCaps::AllPetiteCaps,
+                        "unicase" => FontVariantCaps::Unicase,
+                        "titling-caps" => FontVariantCaps::TitlingCaps,
+                        _ => FontVariantCaps::Normal,
+                    };
+                }
+            }
+            "font-variant-numeric" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_variant_numeric = match kw.as_str() {
+                        "oldstyle-nums" => FontVariantNumeric::OldstyleNums,
+                        "lining-nums" => FontVariantNumeric::LiningNums,
+                        "tabular-nums" => FontVariantNumeric::TabularNums,
+                        "proportional-nums" => FontVariantNumeric::ProportionalNums,
+                        _ => FontVariantNumeric::Normal,
+                    };
+                }
+            }
+            "font-optical-sizing" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_optical_sizing = match kw.as_str() {
+                        "none" => FontOpticalSizing::None,
+                        _ => FontOpticalSizing::Auto,
+                    };
+                }
+            }
+            "font-size-adjust" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "none" {
+                        style.font_size_adjust = FontSizeAdjust::None;
+                    } else if let Ok(n) = kw.parse::<f32>() {
+                        style.font_size_adjust = FontSizeAdjust::Number(n);
+                    }
+                } else if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.font_size_adjust = FontSizeAdjust::Number(*n);
+                }
+            }
+            "font-feature-settings" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_feature_settings = if kw == "normal" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.font_feature_settings = Some(s.clone());
+                }
+            }
+            "font-variation-settings" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_variation_settings = if kw == "normal" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.font_variation_settings = Some(s.clone());
+                }
+            }
+
+            // ── Image rendering ──
+            "image-rendering" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.image_rendering = match kw.as_str() {
+                        "crisp-edges" | "-webkit-optimize-contrast" => ImageRendering::CrispEdges,
+                        "pixelated" => ImageRendering::Pixelated,
+                        "high-quality" => ImageRendering::HighQuality,
+                        "smooth" => ImageRendering::Smooth,
+                        _ => ImageRendering::Auto,
+                    };
+                }
+            }
+
+            // ── Touch action ──
+            "touch-action" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.touch_action = match kw.as_str() {
+                        "none" => TouchAction::none_val(),
+                        "auto" => TouchAction::auto(),
+                        "manipulation" => TouchAction::manipulation_val(),
+                        other => {
+                            let mut ta = TouchAction { pan_x: false, pan_y: false, pinch_zoom: false, manipulation: false, none: false };
+                            for part in other.split_whitespace() {
+                                match part {
+                                    "pan-x" => ta.pan_x = true,
+                                    "pan-y" => ta.pan_y = true,
+                                    "pinch-zoom" => ta.pinch_zoom = true,
+                                    _ => {}
+                                }
+                            }
+                            ta
+                        }
+                    };
+                }
+            }
+
+            // ── Caret & accent color ──
+            "caret-color" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "auto" { style.caret_color = None; }
+                } else if let Some(c) = resolve_color(val) {
+                    style.caret_color = Some(c);
+                }
+            }
+            "accent-color" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "auto" { style.accent_color = None; }
+                } else if let Some(c) = resolve_color(val) {
+                    style.accent_color = Some(c);
+                }
+            }
+
+            // ── Color scheme ──
+            "color-scheme" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.color_scheme = match kw.as_str() {
+                        "light" => ColorScheme::Light,
+                        "dark" => ColorScheme::Dark,
+                        "light dark" | "dark light" => ColorScheme::LightDark,
+                        _ => ColorScheme::Normal,
+                    };
+                }
+            }
+            "forced-color-adjust" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.forced_color_adjust = match kw.as_str() {
+                        "none" => ForcedColorAdjust::None,
+                        _ => ForcedColorAdjust::Auto,
+                    };
+                }
+            }
+            "print-color-adjust" | "-webkit-print-color-adjust" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.print_color_adjust = match kw.as_str() {
+                        "exact" => PrintColorAdjust::Exact,
+                        _ => PrintColorAdjust::Economy,
+                    };
+                }
+            }
+
+            // ── Scroll snap ──
+            "scroll-snap-type" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scroll_snap_type = parse_scroll_snap_type(kw);
+                }
+            }
+            "scroll-snap-align" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scroll_snap_align = match kw.as_str() {
+                        "start" => ScrollSnapAlign::Start,
+                        "end" => ScrollSnapAlign::End,
+                        "center" => ScrollSnapAlign::Center,
+                        _ => ScrollSnapAlign::None,
+                    };
+                }
+            }
+            "scroll-snap-stop" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scroll_snap_stop = match kw.as_str() {
+                        "always" => ScrollSnapStop::Always,
+                        _ => ScrollSnapStop::Normal,
+                    };
+                }
+            }
+            "scroll-padding" => {
+                let d = resolve_dimension(val);
+                style.scroll_padding = Sides::all(d);
+            }
+            "scroll-padding-top" => style.scroll_padding.top = resolve_dimension(val),
+            "scroll-padding-right" => style.scroll_padding.right = resolve_dimension(val),
+            "scroll-padding-bottom" => style.scroll_padding.bottom = resolve_dimension(val),
+            "scroll-padding-left" => style.scroll_padding.left = resolve_dimension(val),
+            "scroll-margin" => {
+                let d = resolve_dimension(val);
+                style.scroll_margin = Sides::all(d);
+            }
+            "scroll-margin-top" => style.scroll_margin.top = resolve_dimension(val),
+            "scroll-margin-right" => style.scroll_margin.right = resolve_dimension(val),
+            "scroll-margin-bottom" => style.scroll_margin.bottom = resolve_dimension(val),
+            "scroll-margin-left" => style.scroll_margin.left = resolve_dimension(val),
+
+            // ── Fragmentation ──
+            "break-before" | "page-break-before" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.break_before = resolve_break_value(kw);
+                }
+            }
+            "break-after" | "page-break-after" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.break_after = resolve_break_value(kw);
+                }
+            }
+            "break-inside" | "page-break-inside" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.break_inside = resolve_break_value(kw);
+                }
+            }
+            "orphans" => {
+                if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.orphans = *n as u32;
+                }
+            }
+            "widows" => {
+                if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.widows = *n as u32;
+                }
+            }
+            "box-decoration-break" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.box_decoration_break = match kw.as_str() {
+                        "clone" => BoxDecorationBreak::Clone,
+                        _ => BoxDecorationBreak::Slice,
+                    };
+                }
+            }
+
+            // ── Column extras ──
+            "column-rule-width" => style.column_rule.width = resolve_number(val),
+            "column-rule-style" => style.column_rule.style = resolve_border_style(val),
+            "column-rule-color" => {
+                if let Some(c) = resolve_color(val) { style.column_rule.color = c; }
+            }
+            "column-rule" => {
+                // Shorthand: width style color
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    for part in kw.split_whitespace() {
+                        if let Ok(w) = part.strip_suffix("px").unwrap_or(part).parse::<f32>() {
+                            style.column_rule.width = w;
+                        } else {
+                            let bs = resolve_border_style(&liquide_theme_css::value::PropertyValue::Keyword(part.to_string()));
+                            if bs != BorderLineStyle::None {
+                                style.column_rule.style = bs;
+                            }
+                        }
+                    }
+                }
+            }
+            "column-fill" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.column_fill = match kw.as_str() {
+                        "auto" => ColumnFill::Auto,
+                        _ => ColumnFill::Balance,
+                    };
+                }
+            }
+            "column-span" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.column_span = match kw.as_str() {
+                        "all" => ColumnSpan::All,
+                        _ => ColumnSpan::None,
+                    };
+                }
+            }
+
+            // ── Background extras ──
+            "background-attachment" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.background_attachment = match kw.as_str() {
+                        "fixed" => BackgroundAttachment::Fixed,
+                        "local" => BackgroundAttachment::Local,
+                        _ => BackgroundAttachment::Scroll,
+                    };
+                }
+            }
+            "background-clip" | "-webkit-background-clip" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.background_clip = match kw.as_str() {
+                        "padding-box" => BackgroundClip::PaddingBox,
+                        "content-box" => BackgroundClip::ContentBox,
+                        "text" => BackgroundClip::Text,
+                        _ => BackgroundClip::BorderBox,
+                    };
+                }
+            }
+            "background-origin" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.background_origin = match kw.as_str() {
+                        "border-box" => BackgroundOrigin::BorderBox,
+                        "content-box" => BackgroundOrigin::ContentBox,
+                        _ => BackgroundOrigin::PaddingBox,
+                    };
+                }
+            }
+            "background-blend-mode" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.background_blend_mode = resolve_blend_mode(kw);
+                }
+            }
+            "background-position" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let parts: Vec<&str> = kw.split_whitespace().collect();
+                    if let Some(x) = parts.first() {
+                        style.background_position_x = parse_origin_keyword(x);
+                    }
+                    if let Some(y) = parts.get(1) {
+                        style.background_position_y = parse_origin_keyword(y);
+                    }
+                }
+            }
+            "background-position-x" => style.background_position_x = resolve_dimension(val),
+            "background-position-y" => style.background_position_y = resolve_dimension(val),
+            "background-size" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.background_size = Some(kw.clone());
+                }
+            }
+            "background-repeat" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.background_repeat = Some(kw.clone());
+                }
+            }
+            "background-image" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.background_image = if kw == "none" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.background_image = Some(s.clone());
+                }
+            }
+
+            // ── Clip path ──
+            "clip-path" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.clip_path = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "clip" => {
+                // Legacy clip: rect(...)
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "auto" { style.clip_path = None; }
+                }
+            }
+
+            // ── Logical properties ──
+            "inline-size" => style.inline_size = resolve_dimension(val),
+            "block-size" => style.block_size = resolve_dimension(val),
+            "min-inline-size" => style.min_inline_size = resolve_dimension(val),
+            "min-block-size" => style.min_block_size = resolve_dimension(val),
+            "max-inline-size" => style.max_inline_size = resolve_dimension(val),
+            "max-block-size" => style.max_block_size = resolve_dimension(val),
+            "margin-inline-start" => style.margin_inline_start = resolve_dimension(val),
+            "margin-inline-end" => style.margin_inline_end = resolve_dimension(val),
+            "margin-block-start" => style.margin_block_start = resolve_dimension(val),
+            "margin-block-end" => style.margin_block_end = resolve_dimension(val),
+            "margin-inline" => {
+                let d = resolve_dimension(val);
+                style.margin_inline_start = d.clone();
+                style.margin_inline_end = d;
+            }
+            "margin-block" => {
+                let d = resolve_dimension(val);
+                style.margin_block_start = d.clone();
+                style.margin_block_end = d;
+            }
+            "padding-inline-start" => style.padding_inline_start = resolve_dimension(val),
+            "padding-inline-end" => style.padding_inline_end = resolve_dimension(val),
+            "padding-block-start" => style.padding_block_start = resolve_dimension(val),
+            "padding-block-end" => style.padding_block_end = resolve_dimension(val),
+            "padding-inline" => {
+                let d = resolve_dimension(val);
+                style.padding_inline_start = d.clone();
+                style.padding_inline_end = d;
+            }
+            "padding-block" => {
+                let d = resolve_dimension(val);
+                style.padding_block_start = d.clone();
+                style.padding_block_end = d;
+            }
+            "inset-inline-start" => style.inset_inline_start = resolve_dimension(val),
+            "inset-inline-end" => style.inset_inline_end = resolve_dimension(val),
+            "inset-block-start" => style.inset_block_start = resolve_dimension(val),
+            "inset-block-end" => style.inset_block_end = resolve_dimension(val),
+            "inset-inline" => {
+                let d = resolve_dimension(val);
+                style.inset_inline_start = d.clone();
+                style.inset_inline_end = d;
+            }
+            "inset-block" => {
+                let d = resolve_dimension(val);
+                style.inset_block_start = d.clone();
+                style.inset_block_end = d;
+            }
+            "border-inline-start-width" => style.border_inline_start_width = resolve_number(val),
+            "border-inline-end-width" => style.border_inline_end_width = resolve_number(val),
+            "border-block-start-width" => style.border_block_start_width = resolve_number(val),
+            "border-block-end-width" => style.border_block_end_width = resolve_number(val),
+            "border-inline-start-style" => style.border_inline_start_style = resolve_border_style(val),
+            "border-inline-end-style" => style.border_inline_end_style = resolve_border_style(val),
+            "border-block-start-style" => style.border_block_start_style = resolve_border_style(val),
+            "border-block-end-style" => style.border_block_end_style = resolve_border_style(val),
+            "border-inline-start-color" => { if let Some(c) = resolve_color(val) { style.border_inline_start_color = c; } }
+            "border-inline-end-color" => { if let Some(c) = resolve_color(val) { style.border_inline_end_color = c; } }
+            "border-block-start-color" => { if let Some(c) = resolve_color(val) { style.border_block_start_color = c; } }
+            "border-block-end-color" => { if let Some(c) = resolve_color(val) { style.border_block_end_color = c; } }
+            "border-inline-width" => {
+                let w = resolve_number(val);
+                style.border_inline_start_width = w;
+                style.border_inline_end_width = w;
+            }
+            "border-block-width" => {
+                let w = resolve_number(val);
+                style.border_block_start_width = w;
+                style.border_block_end_width = w;
+            }
+            "border-inline-style" => {
+                let s = resolve_border_style(val);
+                style.border_inline_start_style = s;
+                style.border_inline_end_style = s;
+            }
+            "border-block-style" => {
+                let s = resolve_border_style(val);
+                style.border_block_start_style = s;
+                style.border_block_end_style = s;
+            }
+            "border-inline-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_inline_start_color = c;
+                    style.border_inline_end_color = c;
+                }
+            }
+            "border-block-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_block_start_color = c;
+                    style.border_block_end_color = c;
+                }
+            }
+
+            // ── Grid extras ──
+            "grid-column-start" => {
+                style.grid_column_start = parse_grid_line_value(val);
+                style.grid_column.start = style.grid_column_start.clone();
+            }
+            "grid-column-end" => {
+                style.grid_column_end = parse_grid_line_value(val);
+                style.grid_column.end = style.grid_column_end.clone();
+            }
+            "grid-row-start" => {
+                style.grid_row_start = parse_grid_line_value(val);
+                style.grid_row.start = style.grid_row_start.clone();
+            }
+            "grid-row-end" => {
+                style.grid_row_end = parse_grid_line_value(val);
+                style.grid_row.end = style.grid_row_end.clone();
+            }
+            "grid-column" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let parts: Vec<&str> = kw.split('/').collect();
+                    if let Some(start) = parts.first() {
+                        style.grid_column_start = parse_grid_line_str(start.trim());
+                        style.grid_column.start = style.grid_column_start.clone();
+                    }
+                    if let Some(end) = parts.get(1) {
+                        style.grid_column_end = parse_grid_line_str(end.trim());
+                        style.grid_column.end = style.grid_column_end.clone();
+                    }
+                }
+            }
+            "grid-row" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let parts: Vec<&str> = kw.split('/').collect();
+                    if let Some(start) = parts.first() {
+                        style.grid_row_start = parse_grid_line_str(start.trim());
+                        style.grid_row.start = style.grid_row_start.clone();
+                    }
+                    if let Some(end) = parts.get(1) {
+                        style.grid_row_end = parse_grid_line_str(end.trim());
+                        style.grid_row.end = style.grid_row_end.clone();
+                    }
+                }
+            }
+            "grid-area" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let parts: Vec<&str> = kw.split('/').collect();
+                    if let Some(rs) = parts.first() {
+                        style.grid_row_start = parse_grid_line_str(rs.trim());
+                        style.grid_row.start = style.grid_row_start.clone();
+                    }
+                    if let Some(cs) = parts.get(1) {
+                        style.grid_column_start = parse_grid_line_str(cs.trim());
+                        style.grid_column.start = style.grid_column_start.clone();
+                    }
+                    if let Some(re) = parts.get(2) {
+                        style.grid_row_end = parse_grid_line_str(re.trim());
+                        style.grid_row.end = style.grid_row_end.clone();
+                    }
+                    if let Some(ce) = parts.get(3) {
+                        style.grid_column_end = parse_grid_line_str(ce.trim());
+                        style.grid_column.end = style.grid_column_end.clone();
+                    }
+                }
+            }
+            "grid-auto-columns" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let tracks = parse_track_list(kw);
+                    if let Some(t) = tracks.into_iter().next() {
+                        style.grid_auto_columns = t;
+                    }
+                }
+            }
+            "grid-auto-rows" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let tracks = parse_track_list(kw);
+                    if let Some(t) = tracks.into_iter().next() {
+                        style.grid_auto_rows = t;
+                    }
+                }
+            }
+            "grid-template-areas" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "none" {
+                        style.grid_template_areas.clear();
+                    } else {
+                        // Parse quoted strings like '"header header" "main sidebar"'
+                        style.grid_template_areas = kw.split('"')
+                            .filter(|s| !s.trim().is_empty())
+                            .map(|s| s.trim().to_string())
+                            .collect();
+                    }
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.grid_template_areas = s.split('"')
+                        .filter(|seg| !seg.trim().is_empty())
+                        .map(|seg| seg.trim().to_string())
+                        .collect();
+                }
+            }
+
+            // ── Content & counters ──
+            "content" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.content = if kw == "normal" || kw == "none" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.content = Some(s.clone());
+                }
+            }
+            "counter-increment" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.counter_increment = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "counter-reset" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.counter_reset = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "counter-set" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.counter_set = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "quotes" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.quotes = if kw == "auto" || kw == "none" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.quotes = Some(s.clone());
+                }
+            }
+
+            // ── SVG / paint order ──
+            "paint-order" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.paint_order = match kw.as_str() {
+                        "fill" => PaintOrder::Fill,
+                        "stroke" => PaintOrder::Stroke,
+                        "markers" => PaintOrder::Markers,
+                        _ => PaintOrder::Normal,
+                    };
+                }
+            }
+
+            // ── Line clamp ──
+            "-webkit-line-clamp" | "line-clamp" => {
+                if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.line_clamp = if *n <= 0.0 { LineClamp::None } else { LineClamp::Count(*n as u32) };
+                } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "none" { style.line_clamp = LineClamp::None; }
+                }
+            }
+
+            // ── Outline individual props ──
+            "outline-width" => {
+                let w = resolve_number(val);
+                if let Some(ref mut o) = style.outline {
+                    o.width = w;
+                } else {
+                    style.outline = Some(liquide_compositor::scene::OutlineSpec {
+                        width: w, style: liquide_compositor::scene::OutlineStyle::Solid,
+                        color: Color { r: 0, g: 0, b: 0, a: 255 }, offset: 0.0,
+                    });
+                }
+            }
+            "outline-style" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let os = match kw.as_str() {
+                        "solid" => liquide_compositor::scene::OutlineStyle::Solid,
+                        "dashed" => liquide_compositor::scene::OutlineStyle::Dashed,
+                        "dotted" => liquide_compositor::scene::OutlineStyle::Dotted,
+                        "double" => liquide_compositor::scene::OutlineStyle::Double,
+                        "groove" => liquide_compositor::scene::OutlineStyle::Groove,
+                        "ridge" => liquide_compositor::scene::OutlineStyle::Ridge,
+                        "inset" => liquide_compositor::scene::OutlineStyle::Inset,
+                        "outset" => liquide_compositor::scene::OutlineStyle::Outset,
+                        _ => liquide_compositor::scene::OutlineStyle::None,
+                    };
+                    if let Some(ref mut o) = style.outline {
+                        o.style = os;
+                    } else {
+                        style.outline = Some(liquide_compositor::scene::OutlineSpec {
+                            width: 0.0, style: os,
+                            color: Color { r: 0, g: 0, b: 0, a: 255 }, offset: 0.0,
+                        });
+                    }
+                }
+            }
+            "outline-color" => {
+                if let Some(c) = resolve_color(val) {
+                    if let Some(ref mut o) = style.outline {
+                        o.color = c;
+                    } else {
+                        style.outline = Some(liquide_compositor::scene::OutlineSpec {
+                            width: 0.0, style: liquide_compositor::scene::OutlineStyle::Solid,
+                            color: c, offset: 0.0,
+                        });
+                    }
+                }
+            }
+            "outline-offset" => {
+                let off = resolve_number(val);
+                if let Some(ref mut o) = style.outline {
+                    o.offset = off;
+                } else {
+                    style.outline = Some(liquide_compositor::scene::OutlineSpec {
+                        width: 0.0, style: liquide_compositor::scene::OutlineStyle::None,
+                        color: Color { r: 0, g: 0, b: 0, a: 255 }, offset: off,
+                    });
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Chromium parity — transition longhands
+            // ═══════════════════════════════════════════════════════════════
+            "transition-property" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.transition_property = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "transition-duration" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.transition_duration = Some(kw.clone());
+                }
+            }
+            "transition-timing-function" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.transition_timing_function = Some(kw.clone());
+                }
+            }
+            "transition-delay" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.transition_delay = Some(kw.clone());
+                }
+            }
+            "transition-behavior" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.transition_behavior = match kw.as_str() {
+                        "allow-discrete" => TransitionBehavior::AllowDiscrete,
+                        _ => TransitionBehavior::Normal,
+                    };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Chromium parity — animation longhands
+            // ═══════════════════════════════════════════════════════════════
+            "animation-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_name = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "animation-duration" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_duration = Some(kw.clone());
+                }
+            }
+            "animation-timing-function" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_timing_function = Some(kw.clone());
+                }
+            }
+            "animation-delay" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_delay = Some(kw.clone());
+                }
+            }
+            "animation-iteration-count" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_iteration_count = match kw.as_str() {
+                        "infinite" => AnimationIterationCount::Infinite,
+                        _ => {
+                            if let Ok(n) = kw.parse::<f32>() {
+                                AnimationIterationCount::Finite(n)
+                            } else {
+                                AnimationIterationCount::default()
+                            }
+                        }
+                    };
+                } else if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.animation_iteration_count = AnimationIterationCount::Finite(*n);
+                }
+            }
+            "animation-direction" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_direction = match kw.as_str() {
+                        "reverse" => AnimationDirection::Reverse,
+                        "alternate" => AnimationDirection::Alternate,
+                        "alternate-reverse" => AnimationDirection::AlternateReverse,
+                        _ => AnimationDirection::Normal,
+                    };
+                }
+            }
+            "animation-fill-mode" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_fill_mode = match kw.as_str() {
+                        "forwards" => AnimationFillMode::Forwards,
+                        "backwards" => AnimationFillMode::Backwards,
+                        "both" => AnimationFillMode::Both,
+                        _ => AnimationFillMode::None,
+                    };
+                }
+            }
+            "animation-play-state" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_play_state = match kw.as_str() {
+                        "paused" => AnimationPlayState::Paused,
+                        _ => AnimationPlayState::Running,
+                    };
+                }
+            }
+            "animation-composition" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_composition = match kw.as_str() {
+                        "add" => AnimationComposition::Add,
+                        "accumulate" => AnimationComposition::Accumulate,
+                        _ => AnimationComposition::Replace,
+                    };
+                }
+            }
+            "animation-timeline" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.animation_timeline = if kw == "auto" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Chromium parity — motion path
+            // ═══════════════════════════════════════════════════════════════
+            "offset-path" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.offset_path = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "offset-distance" => style.offset_distance = resolve_dimension(val),
+            "offset-rotate" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.offset_rotate = Some(kw.clone());
+                }
+            }
+            "offset-anchor" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.offset_anchor = if kw == "auto" { None } else { Some(kw.clone()) };
+                }
+            }
+            "offset-position" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.offset_position = if kw == "auto" || kw == "normal" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Individual transform properties (rotate/scale/translate)
+            // ═══════════════════════════════════════════════════════════════
+            "rotate" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.rotate = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "scale" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scale = if kw == "none" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.scale = Some(n.to_string());
+                }
+            }
+            "translate" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.translate = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Font extras (Chromium parity)
+            // ═══════════════════════════════════════════════════════════════
+            "font-variant-alternates" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_variant_alternates = match kw.as_str() {
+                        "historical-forms" => FontVariantAlternates::HistoricalForms,
+                        _ => FontVariantAlternates::Normal,
+                    };
+                }
+            }
+            "font-variant-east-asian" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_variant_east_asian = match kw.as_str() {
+                        "jis78" => FontVariantEastAsian::Jis78,
+                        "jis83" => FontVariantEastAsian::Jis83,
+                        "jis90" => FontVariantEastAsian::Jis90,
+                        "jis04" => FontVariantEastAsian::Jis04,
+                        "simplified" => FontVariantEastAsian::Simplified,
+                        "traditional" => FontVariantEastAsian::Traditional,
+                        "full-width" => FontVariantEastAsian::FullWidth,
+                        "proportional-width" => FontVariantEastAsian::ProportionalWidth,
+                        "ruby" => FontVariantEastAsian::Ruby,
+                        _ => FontVariantEastAsian::Normal,
+                    };
+                }
+            }
+            "font-variant-ligatures" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_variant_ligatures = match kw.as_str() {
+                        "none" => FontVariantLigatures::None,
+                        "common-ligatures" => FontVariantLigatures::CommonLigatures,
+                        "no-common-ligatures" => FontVariantLigatures::NoCommonLigatures,
+                        "discretionary-ligatures" => FontVariantLigatures::DiscretionaryLigatures,
+                        "no-discretionary-ligatures" => FontVariantLigatures::NoDiscretionaryLigatures,
+                        "historical-ligatures" => FontVariantLigatures::HistoricalLigatures,
+                        "no-historical-ligatures" => FontVariantLigatures::NoHistoricalLigatures,
+                        "contextual" => FontVariantLigatures::Contextual,
+                        "no-contextual" => FontVariantLigatures::NoContextual,
+                        _ => FontVariantLigatures::Normal,
+                    };
+                }
+            }
+            "font-variant-position" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_variant_position = match kw.as_str() {
+                        "sub" => FontVariantPosition::Sub,
+                        "super" => FontVariantPosition::Super,
+                        _ => FontVariantPosition::Normal,
+                    };
+                }
+            }
+            "font-variant-emoji" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_variant_emoji = match kw.as_str() {
+                        "text" => FontVariantEmoji::Text,
+                        "emoji" => FontVariantEmoji::Emoji,
+                        "unicode" => FontVariantEmoji::Unicode,
+                        _ => FontVariantEmoji::Normal,
+                    };
+                }
+            }
+            "font-synthesis-weight" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_synthesis_weight = match kw.as_str() {
+                        "none" => FontSynthesisWeight::None,
+                        _ => FontSynthesisWeight::Auto,
+                    };
+                }
+            }
+            "font-synthesis-style" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_synthesis_style = match kw.as_str() {
+                        "none" => FontSynthesisStyle::None,
+                        _ => FontSynthesisStyle::Auto,
+                    };
+                }
+            }
+            "font-synthesis-small-caps" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_synthesis_small_caps = match kw.as_str() {
+                        "none" => FontSynthesisSmallCaps::None,
+                        _ => FontSynthesisSmallCaps::Auto,
+                    };
+                }
+            }
+            "font-language-override" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_language_override = if kw == "normal" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.font_language_override = Some(s.clone());
+                }
+            }
+            "font-palette" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.font_palette = if kw == "normal" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Text extras (Chromium parity)
+            // ═══════════════════════════════════════════════════════════════
+            "text-emphasis-style" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_emphasis_style = if kw == "none" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.text_emphasis_style = Some(s.clone());
+                }
+            }
+            "text-emphasis-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.text_emphasis_color = Some(c);
+                }
+            }
+            "text-emphasis-position" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_emphasis_position = Some(kw.clone());
+                }
+            }
+            "text-orientation" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_orientation = match kw.as_str() {
+                        "upright" => TextOrientation::Upright,
+                        "sideways" => TextOrientation::Sideways,
+                        _ => TextOrientation::Mixed,
+                    };
+                }
+            }
+            "text-combine-upright" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_combine_upright = match kw.as_str() {
+                        "all" => TextCombineUpright::All,
+                        "none" => TextCombineUpright::None,
+                        _ => TextCombineUpright::None,
+                    };
+                }
+            }
+            "text-wrap" | "text-wrap-mode" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_wrap_mode = match kw.as_str() {
+                        "nowrap" | "no-wrap" => TextWrapMode::NoWrap,
+                        _ => TextWrapMode::Wrap,
+                    };
+                }
+            }
+            "text-wrap-style" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_wrap_style = match kw.as_str() {
+                        "balance" => TextWrapStyle::Balance,
+                        "pretty" => TextWrapStyle::Pretty,
+                        "stable" => TextWrapStyle::Stable,
+                        _ => TextWrapStyle::Auto,
+                    };
+                }
+            }
+            "text-box-trim" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_box_trim = match kw.as_str() {
+                        "trim-start" => TextBoxTrim::TrimStart,
+                        "trim-end" => TextBoxTrim::TrimEnd,
+                        "trim-both" => TextBoxTrim::TrimBoth,
+                        _ => TextBoxTrim::None,
+                    };
+                }
+            }
+            "text-box-edge" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_box_edge = if kw == "auto" || kw == "leading" { None } else { Some(kw.clone()) };
+                }
+            }
+            "text-size-adjust" | "-webkit-text-size-adjust" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_size_adjust = if kw == "auto" { None } else { Some(kw.clone()) };
+                }
+            }
+            "text-spacing-trim" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_spacing_trim = if kw == "normal" { None } else { Some(kw.clone()) };
+                }
+            }
+            "text-autospace" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_autospace = if kw == "normal" { None } else { Some(kw.clone()) };
+                }
+            }
+            "white-space-collapse" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.white_space_collapse = match kw.as_str() {
+                        "preserve" => WhiteSpaceCollapse::Preserve,
+                        "preserve-breaks" => WhiteSpaceCollapse::PreserveBreaks,
+                        "preserve-spaces" => WhiteSpaceCollapse::PreserveSpaces,
+                        "break-spaces" => WhiteSpaceCollapse::BreakSpaces,
+                        _ => WhiteSpaceCollapse::Collapse,
+                    };
+                }
+            }
+            "line-break" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.line_break = match kw.as_str() {
+                        "loose" => LineBreak::Loose,
+                        "normal" => LineBreak::Normal,
+                        "strict" => LineBreak::Strict,
+                        "anywhere" => LineBreak::Anywhere,
+                        _ => LineBreak::Auto,
+                    };
+                }
+            }
+            "hyphenate-character" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.hyphenate_character = if kw == "auto" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.hyphenate_character = Some(s.clone());
+                }
+            }
+            "hyphenate-limit-chars" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.hyphenate_limit_chars = if kw == "auto" { None } else { Some(kw.clone()) };
+                }
+            }
+            "hanging-punctuation" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.hanging_punctuation = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "initial-letter" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.initial_letter = if kw == "normal" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Overflow / scroll extras (Chromium parity)
+            // ═══════════════════════════════════════════════════════════════
+            "overflow-anchor" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.overflow_anchor = match kw.as_str() {
+                        "none" => OverflowAnchor::None,
+                        _ => OverflowAnchor::Auto,
+                    };
+                }
+            }
+            "overflow-clip-margin" => {
+                style.overflow_clip_margin = Some(resolve_number(val));
+            }
+            "scrollbar-width" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scrollbar_width = match kw.as_str() {
+                        "thin" => ScrollbarWidth::Thin,
+                        "none" => ScrollbarWidth::None,
+                        _ => ScrollbarWidth::Auto,
+                    };
+                }
+            }
+            "scrollbar-gutter" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scrollbar_gutter = match kw.as_str() {
+                        "stable" => ScrollbarGutter::Stable,
+                        "stable both-edges" => ScrollbarGutter::StableBothEdges,
+                        _ => ScrollbarGutter::Auto,
+                    };
+                }
+            }
+            "scrollbar-color" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "auto" {
+                        style.scrollbar_color = None;
+                    }
+                    // Complex two-color parsing would go here
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Containment extras (Chromium parity)
+            // ═══════════════════════════════════════════════════════════════
+            "container-type" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.container_type = match kw.as_str() {
+                        "inline-size" => ContainerType::InlineSize,
+                        "size" => ContainerType::Size,
+                        _ => ContainerType::Normal,
+                    };
+                }
+            }
+            "container-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.container_name = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "contain-intrinsic-width" => style.contain_intrinsic_width = resolve_dimension(val),
+            "contain-intrinsic-height" => style.contain_intrinsic_height = resolve_dimension(val),
+            "contain-intrinsic-inline-size" => style.contain_intrinsic_width = resolve_dimension(val),
+            "contain-intrinsic-block-size" => style.contain_intrinsic_height = resolve_dimension(val),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Shape (Chromium parity)
+            // ═══════════════════════════════════════════════════════════════
+            "shape-outside" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.shape_outside = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "shape-margin" => style.shape_margin = resolve_number(val),
+            "shape-image-threshold" => style.shape_image_threshold = resolve_number(val),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Border image longhands
+            // ═══════════════════════════════════════════════════════════════
+            "border-image-source" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.border_image_source = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "border-image-slice" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.border_image_slice = Some(kw.clone());
+                }
+            }
+            "border-image-width" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.border_image_width = Some(kw.clone());
+                }
+            }
+            "border-image-outset" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.border_image_outset = Some(kw.clone());
+                }
+            }
+            "border-image-repeat" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.border_image_repeat = Some(kw.clone());
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Logical border radius
+            // ═══════════════════════════════════════════════════════════════
+            "border-start-start-radius" => style.border_start_start_radius = resolve_number(val),
+            "border-start-end-radius" => style.border_start_end_radius = resolve_number(val),
+            "border-end-start-radius" => style.border_end_start_radius = resolve_number(val),
+            "border-end-end-radius" => style.border_end_end_radius = resolve_number(val),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Mask longhands (Chromium parity)
+            // ═══════════════════════════════════════════════════════════════
+            "mask-image" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_image = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "mask-mode" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_mode = Some(kw.clone());
+                }
+            }
+            "mask-position" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_position = Some(kw.clone());
+                }
+            }
+            "mask-size" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_size = Some(kw.clone());
+                }
+            }
+            "mask-repeat" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_repeat = Some(kw.clone());
+                }
+            }
+            "mask-origin" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_origin = Some(kw.clone());
+                }
+            }
+            "mask-clip" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_clip = Some(kw.clone());
+                }
+            }
+            "mask-composite" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_composite = Some(kw.clone());
+                }
+            }
+            "mask-type" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_type = match kw.as_str() {
+                        "alpha" => MaskType::Alpha,
+                        _ => MaskType::Luminance,
+                    };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Image extras
+            // ═══════════════════════════════════════════════════════════════
+            "image-orientation" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.image_orientation = match kw.as_str() {
+                        "none" => ImageOrientation::None,
+                        _ => ImageOrientation::FromImage,
+                    };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // SVG presentation properties
+            // ═══════════════════════════════════════════════════════════════
+            "fill" => {
+                if let Some(c) = resolve_color(val) {
+                    style.fill = Some(format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a));
+                } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.fill = if kw == "none" { Some("none".into()) } else { Some(kw.clone()) };
+                }
+            }
+            "fill-opacity" => style.fill_opacity = resolve_number(val),
+            "fill-rule" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.fill_rule = match kw.as_str() {
+                        "evenodd" => FillRule::EvenOdd,
+                        _ => FillRule::NonZero,
+                    };
+                }
+            }
+            "stroke" => {
+                if let Some(c) = resolve_color(val) {
+                    style.stroke = Some(format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a));
+                } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.stroke = if kw == "none" { Some("none".into()) } else { Some(kw.clone()) };
+                }
+            }
+            "stroke-width" => style.stroke_width = resolve_dimension(val),
+            "stroke-dasharray" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.stroke_dasharray = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "stroke-dashoffset" => style.stroke_dashoffset = resolve_dimension(val),
+            "stroke-linecap" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.stroke_linecap = match kw.as_str() {
+                        "round" => StrokeLinecap::Round,
+                        "square" => StrokeLinecap::Square,
+                        _ => StrokeLinecap::Butt,
+                    };
+                }
+            }
+            "stroke-linejoin" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.stroke_linejoin = match kw.as_str() {
+                        "round" => StrokeLinejoin::Round,
+                        "bevel" => StrokeLinejoin::Bevel,
+                        _ => StrokeLinejoin::Miter,
+                    };
+                }
+            }
+            "stroke-miterlimit" => style.stroke_miterlimit = resolve_number(val),
+            "stroke-opacity" => style.stroke_opacity = resolve_number(val),
+            "color-interpolation" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.color_interpolation = match kw.as_str() {
+                        "linearRGB" | "linearrgb" => ColorInterpolation::LinearRGB,
+                        "auto" => ColorInterpolation::Auto,
+                        _ => ColorInterpolation::SRGB,
+                    };
+                }
+            }
+            "color-interpolation-filters" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.color_interpolation_filters = match kw.as_str() {
+                        "sRGB" | "srgb" => ColorInterpolation::SRGB,
+                        "auto" => ColorInterpolation::Auto,
+                        _ => ColorInterpolation::LinearRGB,
+                    };
+                }
+            }
+            "flood-color" => { if let Some(c) = resolve_color(val) { style.flood_color = c; } }
+            "flood-opacity" => style.flood_opacity = resolve_number(val),
+            "lighting-color" => { if let Some(c) = resolve_color(val) { style.lighting_color = c; } }
+            "stop-color" => { if let Some(c) = resolve_color(val) { style.stop_color = c; } }
+            "stop-opacity" => style.stop_opacity = resolve_number(val),
+            "dominant-baseline" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.dominant_baseline = match kw.as_str() {
+                        "text-bottom" => DominantBaseline::TextBottom,
+                        "alphabetic" => DominantBaseline::Alphabetic,
+                        "ideographic" => DominantBaseline::Ideographic,
+                        "middle" => DominantBaseline::Middle,
+                        "central" => DominantBaseline::Central,
+                        "mathematical" => DominantBaseline::Mathematical,
+                        "hanging" => DominantBaseline::Hanging,
+                        "text-top" => DominantBaseline::TextTop,
+                        _ => DominantBaseline::Auto,
+                    };
+                }
+            }
+            "alignment-baseline" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.alignment_baseline = match kw.as_str() {
+                        "baseline" => AlignmentBaseline::Baseline,
+                        "text-bottom" => AlignmentBaseline::TextBottom,
+                        "alphabetic" => AlignmentBaseline::Alphabetic,
+                        "ideographic" => AlignmentBaseline::Ideographic,
+                        "middle" => AlignmentBaseline::Middle,
+                        "central" => AlignmentBaseline::Central,
+                        "mathematical" => AlignmentBaseline::Mathematical,
+                        "text-top" => AlignmentBaseline::TextTop,
+                        _ => AlignmentBaseline::Auto,
+                    };
+                }
+            }
+            "baseline-source" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.baseline_source = if kw == "auto" { None } else { Some(kw.clone()) };
+                }
+            }
+            "clip-rule" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.clip_rule = match kw.as_str() {
+                        "evenodd" => ClipRule::EvenOdd,
+                        _ => ClipRule::NonZero,
+                    };
+                }
+            }
+            "shape-rendering" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.shape_rendering = match kw.as_str() {
+                        "optimizeSpeed" | "optimizespeed" => ShapeRendering::OptimizeSpeed,
+                        "crispEdges" | "crispedges" => ShapeRendering::CrispEdges,
+                        "geometricPrecision" | "geometricprecision" => ShapeRendering::GeometricPrecision,
+                        _ => ShapeRendering::Auto,
+                    };
+                }
+            }
+            "text-anchor" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.text_anchor = match kw.as_str() {
+                        "middle" => TextAnchor::Middle,
+                        "end" => TextAnchor::End,
+                        _ => TextAnchor::Start,
+                    };
+                }
+            }
+            "vector-effect" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.vector_effect = match kw.as_str() {
+                        "non-scaling-stroke" => VectorEffect::NonScalingStroke,
+                        _ => VectorEffect::None,
+                    };
+                }
+            }
+            "marker-start" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.marker_start = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "marker-mid" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.marker_mid = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "marker-end" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.marker_end = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "marker" => {
+                // Shorthand for marker-start/mid/end
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let v = if kw == "none" { None } else { Some(kw.clone()) };
+                    style.marker_start = v.clone();
+                    style.marker_mid = v.clone();
+                    style.marker_end = v;
+                }
+            }
+            "d" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.d = if kw == "none" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.d = Some(s.clone());
+                }
+            }
+            "cx" => style.cx = resolve_dimension(val),
+            "cy" => style.cy = resolve_dimension(val),
+            "r" => style.r = resolve_dimension(val),
+            "rx" => style.rx = resolve_dimension(val),
+            "ry" => style.ry = resolve_dimension(val),
+            "x" => style.x = resolve_dimension(val),
+            "y" => style.y = resolve_dimension(val),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Ruby (Chromium parity)
+            // ═══════════════════════════════════════════════════════════════
+            "ruby-position" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.ruby_position = match kw.as_str() {
+                        "under" => RubyPosition::Under,
+                        "alternate" | "alternate over" => RubyPosition::AlternateOver,
+                        "alternate under" => RubyPosition::AlternateUnder,
+                        _ => RubyPosition::Over,
+                    };
+                }
+            }
+            "ruby-align" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.ruby_align = match kw.as_str() {
+                        "center" => RubyAlign::Center,
+                        "start" => RubyAlign::Start,
+                        "space-between" => RubyAlign::SpaceBetween,
+                        _ => RubyAlign::SpaceAround,
+                    };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Anchor positioning
+            // ═══════════════════════════════════════════════════════════════
+            "anchor-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.anchor_name = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "position-anchor" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.position_anchor = if kw == "auto" { None } else { Some(kw.clone()) };
+                }
+            }
+            "position-area" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.position_area = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // View transitions
+            // ═══════════════════════════════════════════════════════════════
+            "view-transition-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_transition_name = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "view-transition-class" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_transition_class = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Scroll timeline
+            // ═══════════════════════════════════════════════════════════════
+            "scroll-timeline-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scroll_timeline_name = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "scroll-timeline-axis" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scroll_timeline_axis = Some(kw.clone());
+                }
+            }
+            "view-timeline-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_timeline_name = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "view-timeline-axis" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_timeline_axis = Some(kw.clone());
+                }
+            }
+            "view-timeline-inset" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_timeline_inset = Some(kw.clone());
+                }
+            }
+            "timeline-scope" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.timeline_scope = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Misc Chromium parity
+            // ═══════════════════════════════════════════════════════════════
+            "page" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.page = if kw == "auto" { None } else { Some(kw.clone()) };
+                }
+            }
+            "zoom" => {
+                if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.zoom = *n;
+                } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "normal" { style.zoom = 1.0; }
+                    else if let Ok(n) = kw.replace('%', "").parse::<f32>() { style.zoom = n / 100.0; }
+                }
+            }
+            "overlay" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.overlay = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "math-depth" => {
+                if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.math_depth = *n as i32;
+                }
+            }
+            "math-style" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.math_style = if kw == "normal" { None } else { Some(kw.clone()) };
+                }
+            }
+            "reading-flow" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.reading_flow = if kw == "normal" { None } else { Some(kw.clone()) };
+                }
+            }
+            "field-sizing" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.field_sizing = if kw == "fixed" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ═══════════════════════════════════════════════════════════════
+            // Scroll margin/padding logical (Chromium parity)
+            // ═══════════════════════════════════════════════════════════════
+            "scroll-margin-block-start" => style.scroll_margin.top = resolve_dimension(val),
+            "scroll-margin-block-end" => style.scroll_margin.bottom = resolve_dimension(val),
+            "scroll-margin-inline-start" => style.scroll_margin.left = resolve_dimension(val),
+            "scroll-margin-inline-end" => style.scroll_margin.right = resolve_dimension(val),
+            "scroll-padding-block-start" => style.scroll_padding.top = resolve_dimension(val),
+            "scroll-padding-block-end" => style.scroll_padding.bottom = resolve_dimension(val),
+            "scroll-padding-inline-start" => style.scroll_padding.left = resolve_dimension(val),
+            "scroll-padding-inline-end" => style.scroll_padding.right = resolve_dimension(val),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Overflow block/inline (logical)
+            // ═══════════════════════════════════════════════════════════════
+            "overflow-block" => style.overflow_y = resolve_overflow(val),
+            "overflow-inline" => style.overflow_x = resolve_overflow(val),
+
+            // ═══════════════════════════════════════════════════════════════
+            // Overscroll-behavior logical
+            // ═══════════════════════════════════════════════════════════════
+            "overscroll-behavior-block" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.overscroll_behavior_y = match kw.as_str() {
+                        "contain" => OverscrollBehavior::Contain,
+                        "none" => OverscrollBehavior::None,
+                        _ => OverscrollBehavior::Auto,
+                    };
+                }
+            }
+            "overscroll-behavior-inline" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.overscroll_behavior_x = match kw.as_str() {
+                        "contain" => OverscrollBehavior::Contain,
+                        "none" => OverscrollBehavior::None,
+                        _ => OverscrollBehavior::Auto,
+                    };
                 }
             }
 

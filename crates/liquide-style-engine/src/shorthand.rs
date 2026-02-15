@@ -78,6 +78,346 @@ pub fn expand_shorthand(name: &str, value: &PropertyValue) -> Option<Expanded> {
         "column-gap" | "row-gap" => None,      // already longhands
         "inset" => Some(expand_inset(value)),
         "border-inline" | "border-block" => Some(expand_border_logical(name, value)),
+
+        // ── New shorthands ──
+        "list-style" => Some(expand_list_style(value)),
+        "columns" => Some(expand_columns(value)),
+        "column-rule" => Some(expand_column_rule(value)),
+        "scroll-padding" => Some(expand_box_shorthand(
+            value,
+            "scroll-padding-top",
+            "scroll-padding-right",
+            "scroll-padding-bottom",
+            "scroll-padding-left",
+        )),
+        "scroll-margin" => Some(expand_box_shorthand(
+            value,
+            "scroll-margin-top",
+            "scroll-margin-right",
+            "scroll-margin-bottom",
+            "scroll-margin-left",
+        )),
+        "overscroll-behavior" => Some(expand_two_value(
+            value,
+            "overscroll-behavior-x",
+            "overscroll-behavior-y",
+        )),
+        "margin-inline" => Some(expand_two_value(value, "margin-inline-start", "margin-inline-end")),
+        "margin-block" => Some(expand_two_value(value, "margin-block-start", "margin-block-end")),
+        "padding-inline" => Some(expand_two_value(value, "padding-inline-start", "padding-inline-end")),
+        "padding-block" => Some(expand_two_value(value, "padding-block-start", "padding-block-end")),
+        "inset-inline" => Some(expand_two_value(value, "inset-inline-start", "inset-inline-end")),
+        "inset-block" => Some(expand_two_value(value, "inset-block-start", "inset-block-end")),
+        "border-inline-width" => Some(expand_two_value(
+            value,
+            "border-inline-start-width",
+            "border-inline-end-width",
+        )),
+        "border-block-width" => Some(expand_two_value(
+            value,
+            "border-block-start-width",
+            "border-block-end-width",
+        )),
+        "border-inline-style" => Some(expand_two_value(
+            value,
+            "border-inline-start-style",
+            "border-inline-end-style",
+        )),
+        "border-block-style" => Some(expand_two_value(
+            value,
+            "border-block-start-style",
+            "border-block-end-style",
+        )),
+        "border-inline-color" => Some(expand_two_value(
+            value,
+            "border-inline-start-color",
+            "border-inline-end-color",
+        )),
+        "border-block-color" => Some(expand_two_value(
+            value,
+            "border-block-start-color",
+            "border-block-end-color",
+        )),
+        "grid-column" => Some(expand_grid_line(value, "grid-column-start", "grid-column-end")),
+        "grid-row" => Some(expand_grid_line(value, "grid-row-start", "grid-row-end")),
+        "grid-area" => Some(expand_grid_area(value)),
+
+        // ═══════════════════════════════════════════════════════════════
+        // Chromium parity — additional shorthands
+        // ═══════════════════════════════════════════════════════════════
+
+        // font-synthesis: weight style small-caps
+        "font-synthesis" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                PropertyValue::String(s) => s.clone(),
+                _ => return None,
+            };
+            if text == "none" {
+                Some(vec![
+                    ("font-synthesis-weight".into(), PropertyValue::Keyword("none".into())),
+                    ("font-synthesis-style".into(), PropertyValue::Keyword("none".into())),
+                    ("font-synthesis-small-caps".into(), PropertyValue::Keyword("none".into())),
+                ])
+            } else {
+                let mut out = Vec::new();
+                // Default to "none" unless listed
+                let w = if text.contains("weight") { "auto" } else { "none" };
+                let s = if text.contains("style") { "auto" } else { "none" };
+                let sc = if text.contains("small-caps") { "auto" } else { "none" };
+                out.push(("font-synthesis-weight".into(), PropertyValue::Keyword(w.into())));
+                out.push(("font-synthesis-style".into(), PropertyValue::Keyword(s.into())));
+                out.push(("font-synthesis-small-caps".into(), PropertyValue::Keyword(sc.into())));
+                Some(out)
+            }
+        }
+
+        // font-variant shorthand (simplified — just broadcasts keyword)
+        "font-variant" => {
+            let kw = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                _ => return None,
+            };
+            Some(vec![
+                ("font-variant-ligatures".into(), PropertyValue::Keyword(kw.clone())),
+                ("font-variant-position".into(), PropertyValue::Keyword(kw.clone())),
+                ("font-variant-east-asian".into(), PropertyValue::Keyword(kw.clone())),
+                ("font-variant-alternates".into(), PropertyValue::Keyword(kw.clone())),
+                ("font-variant-emoji".into(), PropertyValue::Keyword(kw)),
+            ])
+        }
+
+        // text-emphasis: style color
+        "text-emphasis" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                PropertyValue::String(s) => s.clone(),
+                _ => return None,
+            };
+            let parts: Vec<&str> = text.split_whitespace().collect();
+            match parts.len() {
+                0 => None,
+                1 => Some(vec![
+                    ("text-emphasis-style".into(), PropertyValue::Keyword(parts[0].into())),
+                ]),
+                _ => {
+                    let last = *parts.last().unwrap();
+                    // If the last part looks like a color, split it off
+                    let has_color = last.starts_with('#') || last.starts_with("rgb") || last.starts_with("hsl")
+                        || ["red","green","blue","black","white","currentcolor","transparent"].contains(&last);
+                    if has_color {
+                        let style_val = parts[..parts.len()-1].join(" ");
+                        Some(vec![
+                            ("text-emphasis-style".into(), PropertyValue::Keyword(style_val)),
+                            ("text-emphasis-color".into(), PropertyValue::Keyword(last.into())),
+                        ])
+                    } else {
+                        Some(vec![
+                            ("text-emphasis-style".into(), PropertyValue::Keyword(text)),
+                        ])
+                    }
+                }
+            }
+        }
+
+        // text-wrap: mode style
+        "text-wrap" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                _ => return None,
+            };
+            let parts: Vec<&str> = text.split_whitespace().collect();
+            if parts.len() == 2 {
+                Some(vec![
+                    ("text-wrap-mode".into(), PropertyValue::Keyword(parts[0].into())),
+                    ("text-wrap-style".into(), PropertyValue::Keyword(parts[1].into())),
+                ])
+            } else {
+                // Single value: determines mode
+                Some(vec![
+                    ("text-wrap-mode".into(), PropertyValue::Keyword(text)),
+                ])
+            }
+        }
+
+        // text-box: trim edge
+        "text-box" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                _ => return None,
+            };
+            let parts: Vec<&str> = text.split_whitespace().collect();
+            if parts.len() >= 2 {
+                Some(vec![
+                    ("text-box-trim".into(), PropertyValue::Keyword(parts[0].into())),
+                    ("text-box-edge".into(), PropertyValue::Keyword(parts[1..].join(" "))),
+                ])
+            } else {
+                Some(vec![
+                    ("text-box-trim".into(), PropertyValue::Keyword(text)),
+                ])
+            }
+        }
+
+        // offset: path distance rotate / position
+        "offset" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                PropertyValue::String(s) => s.clone(),
+                _ => return None,
+            };
+            if text == "none" {
+                Some(vec![
+                    ("offset-path".into(), PropertyValue::Keyword("none".into())),
+                    ("offset-distance".into(), PropertyValue::Keyword("0".into())),
+                    ("offset-rotate".into(), PropertyValue::Keyword("auto".into())),
+                    ("offset-anchor".into(), PropertyValue::Keyword("auto".into())),
+                    ("offset-position".into(), PropertyValue::Keyword("normal".into())),
+                ])
+            } else {
+                // Simplified: store full value as path
+                Some(vec![
+                    ("offset-path".into(), PropertyValue::Keyword(text)),
+                ])
+            }
+        }
+
+        // container: name / type
+        "container" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                _ => return None,
+            };
+            if let Some((name, ctype)) = text.split_once('/') {
+                Some(vec![
+                    ("container-name".into(), PropertyValue::Keyword(name.trim().into())),
+                    ("container-type".into(), PropertyValue::Keyword(ctype.trim().into())),
+                ])
+            } else {
+                Some(vec![
+                    ("container-name".into(), PropertyValue::Keyword(text)),
+                    ("container-type".into(), PropertyValue::Keyword("normal".into())),
+                ])
+            }
+        }
+
+        // contain-intrinsic-size: width height
+        "contain-intrinsic-size" => Some(expand_two_value(
+            value,
+            "contain-intrinsic-width",
+            "contain-intrinsic-height",
+        )),
+
+        // border-image: source slice width outset repeat
+        "border-image" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                PropertyValue::String(s) => s.clone(),
+                _ => return None,
+            };
+            if text == "none" {
+                Some(vec![
+                    ("border-image-source".into(), PropertyValue::Keyword("none".into())),
+                    ("border-image-slice".into(), PropertyValue::Keyword("100%".into())),
+                    ("border-image-width".into(), PropertyValue::Keyword("1".into())),
+                    ("border-image-outset".into(), PropertyValue::Keyword("0".into())),
+                    ("border-image-repeat".into(), PropertyValue::Keyword("stretch".into())),
+                ])
+            } else {
+                // Simplified: store as source
+                Some(vec![
+                    ("border-image-source".into(), PropertyValue::Keyword(text)),
+                ])
+            }
+        }
+
+        // mask: image mode position/size repeat origin clip composite
+        "mask" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                PropertyValue::String(s) => s.clone(),
+                _ => return None,
+            };
+            if text == "none" {
+                Some(vec![
+                    ("mask-image".into(), PropertyValue::Keyword("none".into())),
+                    ("mask-mode".into(), PropertyValue::Keyword("match-source".into())),
+                    ("mask-position".into(), PropertyValue::Keyword("0% 0%".into())),
+                    ("mask-size".into(), PropertyValue::Keyword("auto".into())),
+                    ("mask-repeat".into(), PropertyValue::Keyword("repeat".into())),
+                    ("mask-origin".into(), PropertyValue::Keyword("border-box".into())),
+                    ("mask-clip".into(), PropertyValue::Keyword("border-box".into())),
+                    ("mask-composite".into(), PropertyValue::Keyword("add".into())),
+                ])
+            } else {
+                Some(vec![
+                    ("mask-image".into(), PropertyValue::Keyword(text)),
+                ])
+            }
+        }
+
+        // scroll-timeline: name axis
+        "scroll-timeline" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                _ => return None,
+            };
+            let parts: Vec<&str> = text.split_whitespace().collect();
+            if parts.len() >= 2 {
+                Some(vec![
+                    ("scroll-timeline-name".into(), PropertyValue::Keyword(parts[0].into())),
+                    ("scroll-timeline-axis".into(), PropertyValue::Keyword(parts[1].into())),
+                ])
+            } else {
+                Some(vec![
+                    ("scroll-timeline-name".into(), PropertyValue::Keyword(text)),
+                    ("scroll-timeline-axis".into(), PropertyValue::Keyword("block".into())),
+                ])
+            }
+        }
+
+        // view-timeline: name axis
+        "view-timeline" => {
+            let text = match value {
+                PropertyValue::Keyword(kw) => kw.clone(),
+                _ => return None,
+            };
+            let parts: Vec<&str> = text.split_whitespace().collect();
+            if parts.len() >= 2 {
+                Some(vec![
+                    ("view-timeline-name".into(), PropertyValue::Keyword(parts[0].into())),
+                    ("view-timeline-axis".into(), PropertyValue::Keyword(parts[1].into())),
+                ])
+            } else {
+                Some(vec![
+                    ("view-timeline-name".into(), PropertyValue::Keyword(text)),
+                    ("view-timeline-axis".into(), PropertyValue::Keyword("block".into())),
+                ])
+            }
+        }
+
+        // scroll-margin-block / scroll-margin-inline
+        "scroll-margin-block" => Some(expand_two_value(
+            value,
+            "scroll-margin-block-start",
+            "scroll-margin-block-end",
+        )),
+        "scroll-margin-inline" => Some(expand_two_value(
+            value,
+            "scroll-margin-inline-start",
+            "scroll-margin-inline-end",
+        )),
+        "scroll-padding-block" => Some(expand_two_value(
+            value,
+            "scroll-padding-block-start",
+            "scroll-padding-block-end",
+        )),
+        "scroll-padding-inline" => Some(expand_two_value(
+            value,
+            "scroll-padding-inline-start",
+            "scroll-padding-inline-end",
+        )),
+
         _ => None,
     }
 }
@@ -525,6 +865,141 @@ fn expand_border_logical(name: &str, value: &PropertyValue) -> Expanded {
     let mut result = expand_border_side(value, side1);
     result.extend(expand_border_side(value, side2));
     result
+}
+
+/// Expand a 2-value shorthand where 1 value → both, 2 values → first/second.
+fn expand_two_value(
+    value: &PropertyValue,
+    first: &'static str,
+    second: &'static str,
+) -> Expanded {
+    if let PropertyValue::List(items) = value {
+        let a = items.first().cloned().unwrap_or(value.clone());
+        let b = items.get(1).cloned().unwrap_or(a.clone());
+        vec![(first, a), (second, b)]
+    } else {
+        vec![(first, value.clone()), (second, value.clone())]
+    }
+}
+
+/// Expand `list-style: <type> <position> <image>`.
+fn expand_list_style(value: &PropertyValue) -> Expanded {
+    if let PropertyValue::Keyword(kw) = value {
+        let mut result = Vec::new();
+        for part in kw.split_whitespace() {
+            match part {
+                "inside" | "outside" => {
+                    result.push(("list-style-position", PropertyValue::Keyword(part.to_string())));
+                }
+                "none" => {
+                    result.push(("list-style-type", PropertyValue::Keyword("none".to_string())));
+                }
+                _ => {
+                    result.push(("list-style-type", PropertyValue::Keyword(part.to_string())));
+                }
+            }
+        }
+        result
+    } else if let PropertyValue::List(items) = value {
+        let mut result = Vec::new();
+        for item in items {
+            result.push(("list-style-type", item.clone()));
+        }
+        result
+    } else {
+        vec![("list-style-type", value.clone())]
+    }
+}
+
+/// Expand `columns: <width> <count>`.
+fn expand_columns(value: &PropertyValue) -> Expanded {
+    if let PropertyValue::List(items) = value {
+        let mut result = Vec::new();
+        for item in items {
+            match item {
+                PropertyValue::Number(n) if *n == (*n as u32 as f32) && *n > 0.0 => {
+                    result.push(("column-count", item.clone()));
+                }
+                PropertyValue::Number(_) | PropertyValue::Length(_) => {
+                    result.push(("column-width", item.clone()));
+                }
+                PropertyValue::Keyword(kw) if kw == "auto" => {
+                    // auto for either
+                }
+                _ => {}
+            }
+        }
+        result
+    } else if let PropertyValue::Number(n) = value {
+        if *n == (*n as u32 as f32) && *n > 0.0 {
+            vec![("column-count", value.clone())]
+        } else {
+            vec![("column-width", value.clone())]
+        }
+    } else {
+        vec![("column-width", value.clone())]
+    }
+}
+
+/// Expand `column-rule: <width> <style> <color>`.
+fn expand_column_rule(value: &PropertyValue) -> Expanded {
+    if let PropertyValue::List(items) = value {
+        let mut result = Vec::new();
+        for item in items {
+            match item {
+                PropertyValue::Number(_) | PropertyValue::Length(_) => {
+                    result.push(("column-rule-width", item.clone()));
+                }
+                PropertyValue::Keyword(kw) if is_border_style_keyword(kw) => {
+                    result.push(("column-rule-style", item.clone()));
+                }
+                PropertyValue::Color(_) => {
+                    result.push(("column-rule-color", item.clone()));
+                }
+                _ => {}
+            }
+        }
+        result
+    } else {
+        vec![("column-rule-width", value.clone())]
+    }
+}
+
+/// Expand `grid-column: start / end` or `grid-row: start / end`.
+fn expand_grid_line(
+    value: &PropertyValue,
+    start_prop: &'static str,
+    end_prop: &'static str,
+) -> Expanded {
+    if let PropertyValue::Keyword(kw) = value {
+        let parts: Vec<&str> = kw.split('/').collect();
+        let start = PropertyValue::Keyword(parts.first().unwrap_or(&"auto").trim().to_string());
+        let end = PropertyValue::Keyword(
+            parts.get(1).unwrap_or(parts.first().unwrap_or(&"auto")).trim().to_string(),
+        );
+        vec![(start_prop, start), (end_prop, end)]
+    } else {
+        vec![(start_prop, value.clone()), (end_prop, value.clone())]
+    }
+}
+
+/// Expand `grid-area: row-start / col-start / row-end / col-end`.
+fn expand_grid_area(value: &PropertyValue) -> Expanded {
+    if let PropertyValue::Keyword(kw) = value {
+        let parts: Vec<&str> = kw.split('/').collect();
+        let row_start = PropertyValue::Keyword(parts.first().unwrap_or(&"auto").trim().to_string());
+        let col_start = PropertyValue::Keyword(parts.get(1).unwrap_or(&"auto").trim().to_string());
+        let row_end = PropertyValue::Keyword(parts.get(2).unwrap_or(&"auto").trim().to_string());
+        let col_end = PropertyValue::Keyword(parts.get(3).unwrap_or(&"auto").trim().to_string());
+        vec![
+            ("grid-row-start", row_start),
+            ("grid-column-start", col_start),
+            ("grid-row-end", row_end),
+            ("grid-column-end", col_end),
+        ]
+    } else {
+        vec![]
+    }
 }
 
 #[cfg(test)]
