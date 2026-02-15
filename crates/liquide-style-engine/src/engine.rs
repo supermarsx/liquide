@@ -512,6 +512,38 @@ impl StyleEngine {
             "blur-radius" | "backdrop-blur-radius" => {
                 style.x_blur_radius = resolve_number(val);
             }
+
+            // Transform
+            "transform" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let parsed = parse_transform_list(kw);
+                    if !parsed.is_empty() {
+                        style.transform = parsed;
+                    }
+                }
+            }
+
+            // Grid templates
+            "grid-template-columns" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.grid_template_columns = parse_track_list(kw);
+                }
+            }
+            "grid-template-rows" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.grid_template_rows = parse_track_list(kw);
+                }
+            }
+            "grid-auto-flow" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.grid_auto_flow = match kw.as_str() {
+                        "column" => GridAutoFlow::Column,
+                        "row dense" | "dense" => GridAutoFlow::RowDense,
+                        "column dense" => GridAutoFlow::ColumnDense,
+                        _ => GridAutoFlow::Row,
+                    };
+                }
+            }
             "glass-tint" => {
                 if let Some(c) = resolve_color(val) {
                     style.x_glass_tint = Some(c);

@@ -333,3 +333,118 @@ pub fn resolve_border_style(val: &PropertyValue) -> BorderLineStyle {
         BorderLineStyle::None
     }
 }
+
+/// Parse a CSS transform list string like "translateX(10px) rotate(45deg)" into Transform values.
+pub fn parse_transform_list(css: &str) -> Vec<Transform> {
+    let mut result = Vec::new();
+    let mut rest = css.trim();
+    while !rest.is_empty() {
+        if let Some(open) = rest.find('(') {
+            let func = rest[..open].trim();
+            if let Some(close) = rest.find(')') {
+                let args = rest[open + 1..close].trim();
+                match func {
+                    "translateX" => {
+                        if let Some(px) = parse_px(args) {
+                            result.push(Transform::Translate(px, 0.0));
+                        }
+                    }
+                    "translateY" => {
+                        if let Some(px) = parse_px(args) {
+                            result.push(Transform::Translate(0.0, px));
+                        }
+                    }
+                    "translate" => {
+                        let parts: Vec<&str> = args.split(',').collect();
+                        let x = parts.first().and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
+                        let y = parts.get(1).and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
+                        result.push(Transform::Translate(x, y));
+                    }
+                    "scale" => {
+                        let parts: Vec<&str> = args.split(',').collect();
+                        let x = parts.first().and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(1.0);
+                        let y = parts.get(1).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(x);
+                        result.push(Transform::Scale(x, y));
+                    }
+                    "scaleX" => {
+                        if let Ok(v) = args.parse::<f32>() {
+                            result.push(Transform::Scale(v, 1.0));
+                        }
+                    }
+                    "scaleY" => {
+                        if let Ok(v) = args.parse::<f32>() {
+                            result.push(Transform::Scale(1.0, v));
+                        }
+                    }
+                    "rotate" => {
+                        if let Some(deg) = parse_degrees(args) {
+                            result.push(Transform::Rotate(deg));
+                        }
+                    }
+                    "skew" | "skewX" => {
+                        let parts: Vec<&str> = args.split(',').collect();
+                        let x = parts.first().and_then(|s| parse_degrees(s.trim())).unwrap_or(0.0);
+                        let y = parts.get(1).and_then(|s| parse_degrees(s.trim())).unwrap_or(0.0);
+                        result.push(Transform::Skew(x, y));
+                    }
+                    "skewY" => {
+                        if let Some(deg) = parse_degrees(args) {
+                            result.push(Transform::Skew(0.0, deg));
+                        }
+                    }
+                    _ => {}
+                }
+                rest = rest[close + 1..].trim();
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    result
+}
+
+fn parse_px(s: &str) -> Option<f32> {
+    let s = s.trim();
+    s.strip_suffix("px")
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .or_else(|| s.parse::<f32>().ok())
+}
+
+fn parse_degrees(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if let Some(v) = s.strip_suffix("deg") {
+        v.trim().parse::<f32>().ok()
+    } else if let Some(v) = s.strip_suffix("rad") {
+        v.trim().parse::<f32>().ok().map(|r| r.to_degrees())
+    } else if let Some(v) = s.strip_suffix("turn") {
+        v.trim().parse::<f32>().ok().map(|t| t * 360.0)
+    } else {
+        s.parse::<f32>().ok()
+    }
+}
+
+/// Parse a CSS grid track list string like "100px 200px" or "1fr 2fr" into TrackSize values.
+pub fn parse_track_list(css: &str) -> Vec<TrackSize> {
+    css.split_whitespace()
+        .filter_map(|token| {
+            let token = token.trim();
+            if let Some(v) = token.strip_suffix("fr") {
+                v.parse::<f32>().ok().map(TrackSize::Fr)
+            } else if let Some(v) = token.strip_suffix("px") {
+                v.parse::<f32>().ok().map(TrackSize::Px)
+            } else if let Some(v) = token.strip_suffix('%') {
+                v.parse::<f32>().ok().map(TrackSize::Percent)
+            } else if token == "auto" {
+                Some(TrackSize::Auto)
+            } else if token == "min-content" {
+                Some(TrackSize::MinContent)
+            } else if token == "max-content" {
+                Some(TrackSize::MaxContent)
+            } else {
+                token.parse::<f32>().ok().map(TrackSize::Px)
+            }
+        })
+        .collect()
+}

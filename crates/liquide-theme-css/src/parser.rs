@@ -493,16 +493,31 @@ impl ThemeParser {
             }
             Property::FontWeight(weight) => {
                 let css_str = self.to_css_string(weight);
-                if let Ok(n) = css_str.trim().parse::<f32>() {
+                let val = match css_str.trim() {
+                    "bold" => Some(700.0),
+                    "normal" => Some(400.0),
+                    "lighter" => Some(300.0),
+                    "bolder" => Some(800.0),
+                    other => other.parse::<f32>().ok(),
+                };
+                if let Some(n) = val {
                     properties.insert("font-weight".into(), PropertyValue::Number(n));
                 }
             }
             Property::LineHeight(lh) => {
                 let css_str = self.to_css_string(lh);
-                if let Some(v) = self.parse_length_value(&css_str) {
+                // Check for bare number FIRST (unitless line-height multiplier)
+                // before parse_length_value which treats bare numbers as px
+                let trimmed = css_str.trim();
+                if let Ok(n) = trimmed.parse::<f32>() {
+                    // Only treat as unitless number if it has no unit suffix
+                    if !trimmed.ends_with("px") && !trimmed.ends_with("em") && !trimmed.ends_with("rem") && !trimmed.ends_with('%') {
+                        properties.insert("line-height".into(), PropertyValue::Number(n));
+                    } else if let Some(v) = self.parse_length_value(&css_str) {
+                        properties.insert("line-height".into(), v);
+                    }
+                } else if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("line-height".into(), v);
-                } else if let Ok(n) = css_str.trim().parse::<f32>() {
-                    properties.insert("line-height".into(), PropertyValue::Number(n));
                 }
             }
             Property::FontFamily(families) => {
@@ -574,6 +589,14 @@ impl ThemeParser {
                 properties.insert("overflow-x".into(), PropertyValue::Keyword(x.clone()));
                 properties.insert("overflow-y".into(), PropertyValue::Keyword(y));
                 properties.insert("overflow".into(), PropertyValue::Keyword(x));
+            }
+            Property::OverflowX(kw) => {
+                let css_str = self.to_css_string(kw);
+                properties.insert("overflow-x".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::OverflowY(kw) => {
+                let css_str = self.to_css_string(kw);
+                properties.insert("overflow-y".into(), PropertyValue::Keyword(css_str));
             }
 
             // ── Flex ────────────────────────────────────────────────────
@@ -710,10 +733,136 @@ impl ThemeParser {
                     properties.insert("letter-spacing".into(), v);
                 }
             }
+            Property::WordSpacing(ws) => {
+                let css_str = self.to_css_string(ws);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("word-spacing".into(), v);
+                }
+            }
+            Property::TextIndent(ti) => {
+                let css_str = self.to_css_string(ti);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("text-indent".into(), v);
+                }
+            }
+            Property::FontStyle(fs) => {
+                let css_str = self.to_css_string(fs);
+                properties.insert("font-style".into(), PropertyValue::Keyword(css_str));
+            }
             Property::Cursor(cursor) => {
                 let css_str = self.to_css_string(cursor);
                 properties.insert("cursor".into(), PropertyValue::Keyword(css_str));
             }
+
+            // ── Border styles (per-side) ────────────────────────────────
+            Property::BorderTopStyle(style) => {
+                properties.insert("border-top-style".into(), self.convert_line_style(style));
+            }
+            Property::BorderRightStyle(style) => {
+                properties.insert("border-right-style".into(), self.convert_line_style(style));
+            }
+            Property::BorderBottomStyle(style) => {
+                properties.insert("border-bottom-style".into(), self.convert_line_style(style));
+            }
+            Property::BorderLeftStyle(style) => {
+                properties.insert("border-left-style".into(), self.convert_line_style(style));
+            }
+            Property::BorderStyle(bs) => {
+                properties.insert("border-top-style".into(), self.convert_line_style(&bs.top));
+                properties.insert("border-right-style".into(), self.convert_line_style(&bs.right));
+                properties.insert("border-bottom-style".into(), self.convert_line_style(&bs.bottom));
+                properties.insert("border-left-style".into(), self.convert_line_style(&bs.left));
+                properties.insert("border-style".into(), self.convert_line_style(&bs.top));
+            }
+
+            // ── Border radius per-corner ────────────────────────────────
+            Property::BorderTopLeftRadius(r, _prefix) => {
+                let css_str = self.to_css_string(r);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("border-top-left-radius".into(), v);
+                }
+            }
+            Property::BorderTopRightRadius(r, _prefix) => {
+                let css_str = self.to_css_string(r);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("border-top-right-radius".into(), v);
+                }
+            }
+            Property::BorderBottomLeftRadius(r, _prefix) => {
+                let css_str = self.to_css_string(r);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("border-bottom-left-radius".into(), v);
+                }
+            }
+            Property::BorderBottomRightRadius(r, _prefix) => {
+                let css_str = self.to_css_string(r);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("border-bottom-right-radius".into(), v);
+                }
+            }
+
+            // ── Border width shorthand ──────────────────────────────────
+            Property::BorderWidth(bw) => {
+                if let Some(v) = self.convert_border_width(&bw.top) {
+                    properties.insert("border-top-width".into(), v);
+                }
+                if let Some(v) = self.convert_border_width(&bw.right) {
+                    properties.insert("border-right-width".into(), v);
+                }
+                if let Some(v) = self.convert_border_width(&bw.bottom) {
+                    properties.insert("border-bottom-width".into(), v);
+                }
+                if let Some(v) = self.convert_border_width(&bw.left) {
+                    properties.insert("border-left-width".into(), v);
+                }
+                if let Some(v) = self.convert_border_width(&bw.top) {
+                    properties.insert("border-width".into(), v);
+                }
+            }
+
+            // ── Flex extras ─────────────────────────────────────────────
+            Property::FlexBasis(fb, _prefix) => {
+                let css_str = self.to_css_string(fb);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("flex-basis".into(), v);
+                }
+            }
+            Property::Order(order, _) => {
+                properties.insert("order".into(), PropertyValue::Number(*order as f32));
+            }
+            Property::Flex(flex, _prefix) => {
+                properties.insert("flex-grow".into(), PropertyValue::Number(flex.grow));
+                properties.insert("flex-shrink".into(), PropertyValue::Number(flex.shrink));
+                let css_str = self.to_css_string(&flex.basis);
+                if let Some(v) = self.parse_length_value(&css_str) {
+                    properties.insert("flex-basis".into(), v);
+                }
+            }
+
+            // ── Grid ────────────────────────────────────────────────────
+            Property::GridTemplateColumns(tracks) => {
+                let css_str = self.to_css_string(tracks);
+                properties.insert("grid-template-columns".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::GridTemplateRows(tracks) => {
+                let css_str = self.to_css_string(tracks);
+                properties.insert("grid-template-rows".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::GridAutoFlow(flow) => {
+                let css_str = self.to_css_string(flow);
+                properties.insert("grid-auto-flow".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::GridColumn(gc) => {
+                let css_str = self.to_css_string(gc);
+                properties.insert("grid-column".into(), PropertyValue::Keyword(css_str));
+            }
+            Property::GridRow(gr) => {
+                let css_str = self.to_css_string(gr);
+                properties.insert("grid-row".into(), PropertyValue::Keyword(css_str));
+            }
+
+            // ── Pointer events ───────────────────────────────────────────
+            // pointer-events is not a lightningcss Property variant; handled via custom parsing if needed
 
             // ── Transform ───────────────────────────────────────────────
             Property::Transform(transforms, _prefix) => {
@@ -866,10 +1015,23 @@ impl ThemeParser {
         let s = s.trim();
         if let Some(v) = s.strip_suffix("px") {
             v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Px(n)))
+        } else if let Some(v) = s.strip_suffix("rem") {
+            // Must check rem before em to avoid false match
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Rem(n)))
         } else if let Some(v) = s.strip_suffix("em") {
             v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Em(n)))
-        } else if let Some(v) = s.strip_suffix("rem") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Rem(n)))
+        } else if let Some(v) = s.strip_suffix("vmin") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Vmin(n)))
+        } else if let Some(v) = s.strip_suffix("vmax") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Vmax(n)))
+        } else if let Some(v) = s.strip_suffix("vw") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Vw(n)))
+        } else if let Some(v) = s.strip_suffix("vh") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Vh(n)))
+        } else if let Some(v) = s.strip_suffix("ch") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Ch(n)))
+        } else if let Some(v) = s.strip_suffix("ex") {
+            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Ex(n)))
         } else if let Some(v) = s.strip_suffix("pt") {
             v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Pt(n)))
         } else if let Some(v) = s.strip_suffix('%') {
