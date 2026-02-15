@@ -831,6 +831,7 @@ impl WidgetThemes {
         }
     }
 
+    #[allow(dead_code)]
     fn clone(&self) -> Self
     where
         Self: Clone,

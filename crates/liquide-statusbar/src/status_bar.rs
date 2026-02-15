@@ -94,6 +94,7 @@ impl StatusBar {
     /// Paint the full status bar.
     ///
     /// Layout: `[ AppName | File Edit View Window Help | ........ | 🌙 🔔 ▂▄▆█ 🔋 14:30 ]`
+    #[allow(unused_assignments)]
     pub fn paint(
         &self,
         painter: &mut Painter,

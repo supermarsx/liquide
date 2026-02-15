@@ -40,6 +40,7 @@ pub enum Script {
 impl Script {
     /// Detect the script of a single Unicode code point.
     #[must_use]
+    #[allow(unreachable_patterns)]
     pub fn from_char(ch: char) -> Self {
         let cp = ch as u32;
         match cp {
