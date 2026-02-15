@@ -6,7 +6,7 @@
 
 use liquide_ui_core::{
     Constraints, Event, EventResponse, LayoutResult, Painter, UiColor, UiTheme, WidgetId,
-    widget::{Widget, WidgetLifecycle, WidgetState},
+    widget::{Widget, WidgetState},
 };
 
 /// Visual variant of a button.

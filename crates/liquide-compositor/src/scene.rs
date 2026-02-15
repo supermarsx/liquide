@@ -648,6 +648,7 @@ pub enum LegacyCursorShape {
 pub type CursorShape = NewCursorShape;
 
 /// Convert legacy cursor shape to new format.
+#[allow(deprecated)]
 impl From<LegacyCursorShape> for NewCursorShape {
     fn from(legacy: LegacyCursorShape) -> Self {
         match legacy {
@@ -681,8 +682,10 @@ impl From<LegacyCursorShape> for NewCursorShape {
     }
 }
 
+#[allow(deprecated)]
 impl Default for LegacyCursorShape {
     fn default() -> Self {
+        #[allow(deprecated)]
         Self::Arrow
     }
 }

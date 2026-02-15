@@ -77,6 +77,7 @@ pub enum TouchGesture {
 pub struct InputManager {
     capture_scope: CaptureScope,
     keyboard_layout: KeyboardLayout,
+    #[allow(dead_code)]
     ime_mode: ImeMode,
     current_preedit: Option<ImePreedit>,
     active_touch_points: u32,

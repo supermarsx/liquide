@@ -3,12 +3,14 @@ use serde::Serialize;
 use crate::cli::OutputFormat;
 
 /// Unified output writer that respects the chosen output format.
+#[allow(dead_code)]
 pub struct Output {
     format: OutputFormat,
     color: bool,
     quiet: bool,
 }
 
+#[allow(dead_code)]
 impl Output {
     pub fn new(format: OutputFormat, color: bool, quiet: bool) -> Self {
         Self {
@@ -102,6 +104,7 @@ impl Output {
 }
 
 /// Trait for types that can render themselves as human-readable text.
+#[allow(dead_code)]
 pub trait TextDisplay {
     fn display_text(&self, color: bool);
 }

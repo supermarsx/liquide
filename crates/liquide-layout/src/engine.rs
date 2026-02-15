@@ -1,11 +1,11 @@
 //! Layout engine — the main entry point for computing layout.
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{Display, Position};
+use liquide_style_engine::computed::Position;
 use liquide_style_engine::StyleMap;
 
 use crate::geometry::{Rect, Size};
-use crate::tree::{LayoutBoxId, LayoutTree};
+use crate::tree::LayoutTree;
 use crate::{ImageMeasurer, TextMeasurer};
 
 /// The layout engine. Computes geometry for all elements in the document.

@@ -25,8 +25,6 @@ mod web;
 mod export;
 mod types;
 
-use collector::TelemetryCollector;
-
 /// Liquide Telemetry Viewer - Monitor desktop performance in real-time.
 #[derive(Parser, Debug)]
 #[command(name = "liquide-telemetry")]

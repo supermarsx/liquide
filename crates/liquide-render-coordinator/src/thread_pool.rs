@@ -1,7 +1,7 @@
 //! Dedicated render thread pool
 
 use crate::error::{RenderError, Result};
-use crate::render_task::{RenderTask, RenderOutput, RenderPriority};
+use crate::render_task::{RenderTask, RenderOutput};
 use crossbeam_channel::{Sender, Receiver, bounded, select};
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
@@ -63,6 +63,7 @@ impl Default for ThreadConfig {
 /// A dedicated render thread
 pub struct RenderThread {
     /// Thread configuration
+    #[allow(dead_code)]
     config: ThreadConfig,
     
     /// Task sender

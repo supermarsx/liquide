@@ -11,9 +11,11 @@ use crate::{UsbError, Result};
 
 /// Central manager for USB device redirection within a session.
 pub struct UsbManager {
+    #[allow(dead_code)]
     config: UsbConfig,
     policy: UsbPolicy,
     devices: HashMap<u32, UsbDevice>,
+    #[allow(dead_code)]
     smartcard_config: SmartCardConfig,
     bandwidth_limiter: BandwidthLimiter,
     next_instance_id: u32,

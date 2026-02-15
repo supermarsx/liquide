@@ -2,7 +2,7 @@
 
 use crate::device::WgpuDevice;
 use crate::shader;
-use crate::{Result, WgpuError};
+use crate::Result;
 
 /// Holds all compiled render and compute pipelines.
 pub struct PipelineCache {

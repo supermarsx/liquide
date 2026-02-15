@@ -56,6 +56,7 @@ pub struct GtkWindow {
     state: WindowState,
     visible: bool,
     /// Opaque handle to the native GtkWindow (would be a pointer in real impl).
+    #[allow(dead_code)]
     native_handle: u64,
 }
 

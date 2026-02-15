@@ -114,6 +114,7 @@ pub struct TabView {
     /// Whether tabs can be reordered by drag.
     pub reorderable: bool,
     /// Tab bar scroll offset (for overflow).
+    #[allow(dead_code)]
     tab_scroll: f32,
     /// Fixed tab width (0 = auto-size).
     pub tab_width: f32,

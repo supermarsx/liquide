@@ -13,7 +13,7 @@ use ratatui::{
     symbols,
     text::{Line, Span},
     widgets::{
-        Axis, Block, Borders, Chart, Dataset, Gauge, List, ListItem, Paragraph, Sparkline,
+        Axis, Block, Borders, Chart, Dataset, List, ListItem, Paragraph,
     },
     Frame, Terminal,
 };

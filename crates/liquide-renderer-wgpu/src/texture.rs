@@ -1,6 +1,6 @@
 //! GPU texture wrapper and atlas management.
 
-use crate::{Result, WgpuError};
+use crate::Result;
 
 /// A GPU-side texture backed by a wgpu texture.
 pub struct GpuTexture {

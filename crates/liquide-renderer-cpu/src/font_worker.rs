@@ -74,6 +74,7 @@ enum WorkerMsg {
 /// Uses TrueType/OpenType fonts via `GlyphRasterizer` when available,
 /// falling back to the built-in 8×16 bitmap font with 4× supersampled
 /// box-filter downsampling.
+#[allow(dead_code)]
 pub(crate) struct FontWorker {
     /// Channel to send requests to the worker thread.
     request_tx: mpsc::Sender<WorkerMsg>,
@@ -118,6 +119,7 @@ impl FontWorker {
     /// Submit a glyph rasterization request.
     ///
     /// If the glyph is already pending, the request is silently skipped.
+    #[allow(dead_code)]
     pub fn request_glyph(&mut self, key: GlyphKey, codepoint: char, target_height: u32) {
         self.request_glyph_with_font(key, codepoint, target_height, String::new(), 400);
     }
@@ -159,11 +161,13 @@ impl FontWorker {
     }
 
     /// Whether a specific glyph is currently pending.
+    #[allow(dead_code)]
     pub fn is_pending(&self, key: &GlyphKey) -> bool {
         self.pending.contains(key)
     }
 
     /// Get a reference to the shared font database.
+    #[allow(dead_code)]
     pub fn font_db(&self) -> &Arc<Mutex<FontDatabase>> {
         &self.font_db
     }

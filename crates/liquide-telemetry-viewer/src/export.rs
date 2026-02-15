@@ -86,8 +86,6 @@ struct TelemetryStats {
 
 /// Compute statistics from snapshots.
 fn compute_statistics(snapshots: &[TelemetrySnapshot]) -> TelemetryStats {
-    use crate::types::HealthStatus;
-    
     let mut frame_times: Vec<f64> = Vec::new();
     let mut fps_values: Vec<f64> = Vec::new();
     let mut health_dist = std::collections::HashMap::new();

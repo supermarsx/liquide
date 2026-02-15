@@ -461,7 +461,7 @@ impl WidgetThemes {
         let surface_hover = UiColor::new(255, 255, 255, 31);
         let surface_active = UiColor::new(255, 255, 255, 41);
         let text = UiColor::new(255, 255, 255, 255);
-        let text_secondary = UiColor::new(255, 255, 255, 179);
+        let _text_secondary = UiColor::new(255, 255, 255, 179);
         let text_disabled = UiColor::new(255, 255, 255, 77);
         let border = UiColor::new(255, 255, 255, 31);
         let border_focus = UiColor::new(0, 122, 255, 128);

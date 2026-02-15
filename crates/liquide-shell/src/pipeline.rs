@@ -14,7 +14,6 @@
 //! 4. **Bridge** — `DisplayList` → `Vec<SceneNode>` (this module)
 
 use liquide_compositor::geometry::Rect as CRect;
-use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
 use liquide_dom::Document;
@@ -23,7 +22,6 @@ use liquide_paint::{DisplayItem, DisplayList, Painter};
 use liquide_style_engine::engine::ViewportSize;
 use liquide_style_engine::{StyleEngine, StyleMap};
 
-use crate::desktop_dom::DesktopDocument;
 use crate::theme_loader;
 
 /// Holds the full pipeline state.

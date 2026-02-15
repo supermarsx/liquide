@@ -154,7 +154,7 @@ pub fn flex_layout(
     let inner_w = container_width - padding.horizontal();
     let inner_h = container_height - padding.vertical();
 
-    let total_main: f32 = children.iter().map(|c| match direction {
+    let _total_main: f32 = children.iter().map(|c| match direction {
         Direction::Horizontal => c.width,
         Direction::Vertical => c.height,
     }).sum::<f32>() + spacing * (children.len().saturating_sub(1)) as f32;

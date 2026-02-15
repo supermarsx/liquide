@@ -7,6 +7,7 @@ pub mod sunset;
 
 /// Available theme preset IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) enum ThemePreset {
     /// Standard Liquid Glass dark theme.
     LiquidGlass,

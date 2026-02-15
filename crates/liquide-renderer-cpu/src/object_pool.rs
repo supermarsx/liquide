@@ -6,6 +6,7 @@
 use std::collections::VecDeque;
 
 /// A generic object pool with configurable capacity.
+#[allow(dead_code)]
 pub struct ObjectPool<T> {
     /// Pool of available objects ready for reuse.
     pool: VecDeque<T>,

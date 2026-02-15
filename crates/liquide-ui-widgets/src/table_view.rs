@@ -175,6 +175,7 @@ pub struct TableView {
     /// Allow multi-select.
     pub multi_select: bool,
     /// Column being resized (index and initial x).
+    #[allow(dead_code)]
     resize_col: Option<(usize, f32)>,
 }
 

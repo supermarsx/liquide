@@ -7,7 +7,7 @@
 use liquide_dom::Document;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Application sandbox isolation level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

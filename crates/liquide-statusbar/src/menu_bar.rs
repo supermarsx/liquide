@@ -154,7 +154,7 @@ impl MenuBar {
         let text_y = bar_y + (bar_h - font_size) / 2.0;
         let mut x = start_x;
 
-        for (i, item) in self.items.iter().enumerate() {
+        for (_i, item) in self.items.iter().enumerate() {
             let label = &item.menu.label;
             let label_w = label.len() as f32 * char_w;
             let item_w = label_w + padding_h * 2.0;

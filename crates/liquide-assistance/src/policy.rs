@@ -9,6 +9,7 @@ use crate::observer::Observer;
 pub struct AssistancePolicy {
     config: AssistanceConfig,
     mode_config: ModeConfig,
+    #[allow(dead_code)]
     stealth_config: StealthConfig,
     permissions_config: PermissionsConfig,
 }

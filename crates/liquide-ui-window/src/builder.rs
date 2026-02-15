@@ -1,6 +1,6 @@
 //! Window builder — fluent API for constructing windows.
 
-use super::window::{Window, WindowFlags, WindowKind, WindowState};
+use super::window::{Window, WindowFlags, WindowKind};
 use super::frame::FrameStyle;
 
 /// Fluent builder for constructing `Window` instances.

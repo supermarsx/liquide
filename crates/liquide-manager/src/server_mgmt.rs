@@ -59,6 +59,7 @@ struct ServerState {
     cpu_percent: f32,
     memory_percent: f32,
     uptime_seconds: u64,
+    #[allow(dead_code)]
     version: String,
     last_poll_timestamp: u64,
 }

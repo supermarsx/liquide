@@ -16,6 +16,7 @@ use crate::{AssistanceError, Result};
 pub struct AssistanceCoordinator {
     config: AssistanceConfig,
     mode_config: ModeConfig,
+    #[allow(dead_code)]
     stealth_config: StealthConfig,
     permissions_config: PermissionsConfig,
     sessions: HashMap<String, ShadowSession>,

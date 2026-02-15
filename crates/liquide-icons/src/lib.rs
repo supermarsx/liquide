@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::pixel::{BlendMode, Color};
+use liquide_compositor::pixel::Color;
 
 // ── Icon Path Commands ───────────────────────────────────────────
 

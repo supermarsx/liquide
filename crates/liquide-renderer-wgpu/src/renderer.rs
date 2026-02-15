@@ -13,6 +13,7 @@ use liquide_compositor::scene::FlatNode;
 /// composites them into a GPU texture using the appropriate shader pipelines.
 pub struct WgpuRenderer {
     gpu: WgpuDevice,
+    #[allow(dead_code)]
     pipelines: PipelineCache,
     output_texture: Option<GpuTexture>,
     width: u32,

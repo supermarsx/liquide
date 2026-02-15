@@ -10,6 +10,7 @@ use crate::session::SessionConfig;
 
 /// Orchestrates hardware encoder sessions across multiple GPUs.
 pub struct HwEncoderManager {
+    #[allow(dead_code)]
     config: HwEncoderConfig,
     queue: EncoderQueueManager,
     fallback: FallbackManager,

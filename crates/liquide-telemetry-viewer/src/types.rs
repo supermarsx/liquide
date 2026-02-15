@@ -84,6 +84,7 @@ pub enum HealthStatus {
 
 impl HealthStatus {
     /// Get a human-readable description.
+    #[allow(dead_code)]
     pub fn description(&self) -> &'static str {
         match self {
             Self::Healthy => "All systems normal",
@@ -94,6 +95,7 @@ impl HealthStatus {
     }
     
     /// Get a color code for display.
+    #[allow(dead_code)]
     pub fn color(&self) -> &'static str {
         match self {
             Self::Healthy => "green",

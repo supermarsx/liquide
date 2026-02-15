@@ -1,7 +1,7 @@
 //! Flex layout — CSS Flexbox Level 1.
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{Display, FlexDirection, FlexWrap, JustifyContent, AlignItems, Position};
+use liquide_style_engine::computed::{Display, FlexDirection, JustifyContent, AlignItems, Position};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
 

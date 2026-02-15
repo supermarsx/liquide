@@ -1,6 +1,6 @@
 //! Window manager — stacking, focus, minimize/maximize state tracking.
 
-use super::window::{Window, WindowState};
+use super::window::WindowState;
 use liquide_ui_core::WidgetId;
 use std::collections::HashMap;
 

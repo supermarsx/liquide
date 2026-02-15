@@ -2,7 +2,7 @@
 
 use liquide_dom::NodeId;
 use liquide_layout::geometry::Point;
-use liquide_layout::tree::{LayoutBox, LayoutBoxId, LayoutTree};
+use liquide_layout::tree::{LayoutBoxId, LayoutTree};
 use liquide_style_engine::computed::PointerEvents;
 use liquide_style_engine::StyleMap;
 

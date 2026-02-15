@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::time;
 use crate::types::TelemetrySnapshot;
 
@@ -78,7 +78,7 @@ impl TelemetryCollector {
     
     /// Collect from remote session via HTTP.
     async fn collect_remote(&self, addr: &str) -> Result<TelemetrySnapshot> {
-        let url = format!("http://{}/telemetry", addr);
+        let _url = format!("http://{}/telemetry", addr);
         
         // In a real implementation, use reqwest or similar to fetch data
         tracing::warn!("remote collection not yet implemented");
@@ -116,6 +116,7 @@ impl TelemetryCollector {
 }
 
 /// Export telemetry data to the standard location for viewers to read.
+#[allow(dead_code)]
 pub fn export_telemetry(snapshot: &TelemetrySnapshot) -> Result<()> {
     let path = TelemetryCollector::default_telemetry_path();
     let json = serde_json::to_string_pretty(snapshot)?;

@@ -35,9 +35,11 @@ pub struct StoredCredential {
 
 /// In-memory credential store with locking support.
 pub struct CredentialStore {
+    #[allow(dead_code)]
     mode: StorageMode,
     credentials: HashMap<String, StoredCredential>,
     locked: bool,
+    #[allow(dead_code)]
     auto_lock_timeout_min: u32,
 }
 

@@ -1,8 +1,8 @@
 //! Painter — walks the layout tree and generates a display list.
 
 use liquide_compositor::pixel::BlendMode;
-use liquide_dom::{Document, NodeData, NodeId};
-use liquide_layout::tree::{BoxType, LayoutBox, LayoutBoxId, LayoutTree};
+use liquide_dom::{Document, NodeData};
+use liquide_layout::tree::{LayoutBoxId, LayoutTree};
 use liquide_style_engine::computed::*;
 use liquide_style_engine::StyleMap;
 
@@ -301,7 +301,7 @@ fn flatten_transforms(transforms: &[Transform]) -> (f32, f32, f32, f32, f32) {
             Transform::Skew(_, _) => {
                 // Simplified: skip skew
             }
-            Transform::Matrix(a, b, c, d, e, f) => {
+            Transform::Matrix(_a, _b, _c, _d, e, f) => {
                 // Simplified: extract translate from affine matrix
                 tx += e;
                 ty += f;

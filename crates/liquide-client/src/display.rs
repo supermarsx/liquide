@@ -64,6 +64,7 @@ pub struct DisplayManager {
     mode: DisplayMode,
     monitors: Vec<MonitorInfo>,
     active_monitor_id: Option<u32>,
+    #[allow(dead_code)]
     fullscreen_monitor_id: Option<u32>,
     seamless_windows: HashMap<u64, SeamlessWindow>,
 }

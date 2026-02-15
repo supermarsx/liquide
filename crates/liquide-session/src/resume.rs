@@ -33,6 +33,7 @@ pub struct ResumeToken {
     /// The user who owns this token.
     user_id: String,
     /// When the token was issued.
+    #[allow(dead_code)]
     issued_at: Instant,
     /// When the token expires.
     expires_at: Instant,

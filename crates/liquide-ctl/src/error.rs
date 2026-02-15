@@ -31,6 +31,7 @@ impl From<ExitCode> for i32 {
 }
 
 /// Typed errors for liquidctl operations.
+#[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum LiquidctlError {
     #[error("Connection error: {0}")]

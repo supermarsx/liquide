@@ -6,10 +6,12 @@ use serde::{Deserialize, Serialize};
 /// Connects via local Unix socket or remote HTTPS API.
 pub struct Client {
     server: String,
+    #[allow(dead_code)]
     api_key: Option<String>,
 }
 
 /// Generic API response wrapper.
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub success: bool,
@@ -31,11 +33,13 @@ impl Client {
     }
 
     /// Whether this client uses a local Unix socket connection.
+    #[allow(dead_code)]
     pub fn is_local(&self) -> bool {
         self.server.starts_with("unix://")
     }
 
     /// Send a GET request to the server API.
+    #[allow(dead_code)]
     pub async fn get<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
         // TODO: Implement actual HTTP/socket communication
         let _ = path;
@@ -48,6 +52,7 @@ impl Client {
     }
 
     /// Send a POST request to the server API.
+    #[allow(dead_code)]
     pub async fn post<B: Serialize, T: for<'de> Deserialize<'de>>(
         &self,
         path: &str,
@@ -63,6 +68,7 @@ impl Client {
     }
 
     /// Send a DELETE request to the server API.
+    #[allow(dead_code)]
     pub async fn delete<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
         let _ = (path, &self.api_key);
         anyhow::bail!(
@@ -73,6 +79,7 @@ impl Client {
     }
 
     /// Send a PUT request to the server API.
+    #[allow(dead_code)]
     pub async fn put<B: Serialize, T: for<'de> Deserialize<'de>>(
         &self,
         path: &str,
@@ -87,6 +94,7 @@ impl Client {
     }
 
     /// Check connectivity to the server.
+    #[allow(dead_code)]
     pub async fn ping(&self) -> Result<()> {
         // TODO: Implement actual health check
         anyhow::bail!("Not yet implemented: ping {}", self.server)

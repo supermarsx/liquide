@@ -4,7 +4,7 @@
 //! Inspired by Qt's QCheckBox and GTK's GtkCheckButton.
 
 use liquide_ui_core::{
-    Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiColor, UiTheme, WidgetId,
+    Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiTheme, WidgetId,
     widget::{Widget, WidgetState},
 };
 

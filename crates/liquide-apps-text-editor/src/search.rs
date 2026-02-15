@@ -18,6 +18,7 @@ pub struct SearchReplace {
     current: usize,
     case_sensitive: bool,
     whole_word: bool,
+    #[allow(dead_code)]
     use_regex: bool,
 }
 

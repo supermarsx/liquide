@@ -5,7 +5,7 @@
 //! GTK's GtkScrolledWindow.
 
 use liquide_ui_core::{
-    Constraints, Event, EventResponse, LayoutResult, Painter, UiColor, UiTheme, WidgetId,
+    Constraints, Event, EventResponse, LayoutResult, Painter, UiTheme, WidgetId,
     widget::{Widget, WidgetState},
 };
 
@@ -34,6 +34,7 @@ pub struct ScrollView {
     scroll_speed: f32,
     /// Whether user is dragging the scrollbar thumb.
     dragging: bool,
+    #[allow(dead_code)]
     drag_start_y: f32,
     drag_scroll_start: f32,
     x: f32,

@@ -99,6 +99,7 @@ impl FontCollection {
 /// Persistent store for font collections.
 pub struct CollectionStore {
     collections: Vec<FontCollection>,
+    #[allow(dead_code)]
     storage_path: PathBuf,
 }
 

@@ -5,7 +5,7 @@ use liquide_style_engine::computed::TextAlign;
 use liquide_style_engine::StyleMap;
 
 use crate::geometry::Rect;
-use crate::tree::{BoxType, LayoutBoxId, LayoutTree, LineBox};
+use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
 use crate::TextMeasurer;
 
 /// Calculate the x-offset for text alignment within a container.

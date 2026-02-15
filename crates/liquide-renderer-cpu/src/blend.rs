@@ -295,7 +295,7 @@ fn set_sat(r: f32, g: f32, b: f32, sat: f32) -> (f32, f32, f32) {
 #[must_use]
 pub fn blend_hue(dst: Color, src: Color) -> Color {
     let (sr, sg, sb) = (src.r as f32 / 255.0, src.g as f32 / 255.0, src.b as f32 / 255.0);
-    let (dr, dg, db) = (dst.r as f32 / 255.0, dst.g as f32 / 255.0, dst.b as f32 / 255.0);
+    let (_dr, _dg, _db) = (dst.r as f32 / 255.0, dst.g as f32 / 255.0, dst.b as f32 / 255.0);
     let s = saturation(dst.r, dst.g, dst.b);
     let l = luminance(dst.r, dst.g, dst.b);
     let (r, g, b) = set_sat(sr, sg, sb, s);

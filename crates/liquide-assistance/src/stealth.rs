@@ -11,6 +11,7 @@ pub struct StealthSession {
     target_session_id: String,
     started_at: u64,
     last_audit_at: u64,
+    #[allow(dead_code)]
     config: StealthConfig,
 }
 

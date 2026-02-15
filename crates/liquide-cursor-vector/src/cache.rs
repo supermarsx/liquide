@@ -1,7 +1,7 @@
 //! Caching for rendered vector cursors
 
 use crate::cursor_set::VectorCursor;
-use crate::error::{Result, VectorCursorError};
+use crate::error::Result;
 use crate::renderer::VectorCursorRenderer;
 use liquide_cursor::CursorShape;
 use std::collections::HashMap;

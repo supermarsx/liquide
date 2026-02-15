@@ -5,7 +5,7 @@
 //! theme values with dynamic CSS-driven styling.
 
 use liquide_compositor::pixel::Color;
-use liquide_renderer_css::{GlassStyle, RenderStyle, StyleResolver};
+use liquide_renderer_css::{RenderStyle, StyleResolver};
 use liquide_theme_css::ThemeEngine;
 use std::sync::Arc;
 

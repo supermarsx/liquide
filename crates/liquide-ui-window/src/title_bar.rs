@@ -1,6 +1,6 @@
 //! Title bar — macOS / Qt-style window title bar with traffic-light buttons.
 
-use liquide_ui_core::{Event, EventResponse, Painter, UiColor, UiTheme, WidgetId};
+use liquide_ui_core::{Painter, UiColor, UiTheme};
 use super::window::WindowFlags;
 
 /// Button kind in the title bar.

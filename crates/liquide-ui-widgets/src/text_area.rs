@@ -5,7 +5,7 @@
 //! and GTK's GtkTextView.
 
 use liquide_ui_core::{
-    Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiColor, UiTheme, WidgetId,
+    Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiTheme, WidgetId,
     widget::{Widget, WidgetState},
 };
 
@@ -144,6 +144,7 @@ impl TextArea {
         self.notify_change();
     }
 
+    #[allow(dead_code)]
     fn ensure_cursor_visible(&mut self, theme: &UiTheme) {
         let lh = Self::line_height(theme);
         let cursor_y = self.cursor_line as f32 * lh;

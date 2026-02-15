@@ -124,6 +124,7 @@ pub struct AnimatedCursorBuilder {
     frames: Vec<CursorFrame>,
 }
 
+#[allow(dead_code)]
 impl AnimatedCursorBuilder {
     /// Create a new builder.
     pub fn new(id: u64, shape: CursorShape) -> Self {

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::scene::{
-    CursorShape, DecorationButtons, DecorationColors, DecorationLayout, NodeProperties,
+    CursorShape, DecorationButtons, NodeProperties,
     ResizeDirection, SceneNode, SceneNodeKind,
 };
 use liquide_input::KeyEvent;
@@ -24,7 +24,6 @@ use crate::launcher::{Launcher, LauncherApp, SearchResultKind};
 use crate::layout::{FloatingLayout, LayoutPolicy};
 use crate::notification::NotificationManager;
 use crate::pipeline::{DesktopPipeline, PipelineConfig};
-use crate::scene_builder;
 use crate::screen_time::ScreenTimeTracker;
 use crate::seamless::SeamlessManager;
 use crate::shortcuts::{ShellAction, ShortcutManager};
@@ -37,7 +36,7 @@ use crate::window::{Window, WindowFlags, WindowId, WindowState};
 use crate::workspace::WorkspaceManager;
 use crate::{Result, ShellError};
 use liquide_dock::Dock;
-use liquide_hit_test::event::{DomEvent, DomEventKind, MouseButton as DomMouseButton, Propagation};
+use liquide_hit_test::event::{DomEventKind, MouseButton as DomMouseButton};
 use liquide_hit_test::{EventDispatcher, HitTestEngine};
 
 /// A configurable item for the session / end-session dialog.
@@ -199,8 +198,10 @@ pub struct Shell {
     hit_test_engine: Option<HitTestEngine>,
     // ── Threading and sandboxing ────────────────────────────
     /// Thread coordinator for shell elements (dock, statusbar, etc.).
+    #[allow(dead_code)]
     thread_coordinator: Option<crate::threading::ShellThreadCoordinator>,
     /// Sandbox manager for application isolation.
+    #[allow(dead_code)]
     sandbox_manager: crate::sandboxing::SandboxManager,
 }
 

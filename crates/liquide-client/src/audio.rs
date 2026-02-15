@@ -27,6 +27,7 @@ pub struct AudioManager {
     playback_volume: u8,
     selected_output: Option<String>,
     selected_input: Option<String>,
+    #[allow(dead_code)]
     codec: Option<String>,
 }
 

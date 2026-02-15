@@ -4,7 +4,7 @@
 //! QComboBox and GTK's GtkComboBox.
 
 use liquide_ui_core::{
-    Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiColor, UiTheme, WidgetId,
+    Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiTheme, WidgetId,
     widget::{Widget, WidgetState},
 };
 
@@ -215,7 +215,7 @@ impl Widget for Dropdown {
                 self.hover_index = None;
                 EventResponse::Consumed
             }
-            Event::MouseDown { x, y, .. } => {
+            Event::MouseDown { x: _, y, .. } => {
                 self.state.pressed = true;
                 if self.open {
                     // Check if click is on an item in the popup

@@ -3,7 +3,6 @@
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{Display, Position};
-use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree};

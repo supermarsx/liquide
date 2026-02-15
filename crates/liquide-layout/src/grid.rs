@@ -1,7 +1,7 @@
 //! Grid layout — CSS Grid Level 1 (simplified).
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{Display, GridAutoFlow, TrackSize, Position};
+use liquide_style_engine::computed::{Display, TrackSize, Position};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
 

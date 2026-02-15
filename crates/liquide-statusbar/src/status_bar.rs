@@ -5,7 +5,7 @@ use crate::config::StatusBarConfig;
 use crate::indicator::SystemIndicator;
 use crate::menu_bar::MenuBar;
 use crate::theme_toggle::ThemeToggle;
-use liquide_ui_core::{Painter, UiColor, UiTheme};
+use liquide_ui_core::{Painter, UiTheme};
 use liquide_ui_core::theme::ThemeMode;
 
 /// The full status bar widget.

@@ -1,6 +1,6 @@
 //! System indicators — clock, battery, WiFi, notifications.
 
-use liquide_ui_core::{Painter, UiColor, UiTheme};
+use liquide_ui_core::{Painter, UiTheme};
 use serde::{Deserialize, Serialize};
 
 /// Indicator type.

@@ -9,7 +9,6 @@ use axum::{
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tower_http::services::ServeDir;
 
 use crate::collector::TelemetryCollector;
 use crate::types::TelemetrySnapshot;

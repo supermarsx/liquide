@@ -5,7 +5,7 @@
 //! and GTK's GtkEntry.
 
 use liquide_ui_core::{
-    Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiColor, UiTheme, WidgetId,
+    Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiTheme, WidgetId,
     widget::{Widget, WidgetState},
 };
 
@@ -15,6 +15,7 @@ pub struct TextInput {
     text: String,
     placeholder: String,
     cursor_pos: usize,
+    #[allow(dead_code)]
     selection_start: Option<usize>,
     read_only: bool,
     max_length: Option<usize>,

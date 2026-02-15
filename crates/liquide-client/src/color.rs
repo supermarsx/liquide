@@ -102,6 +102,7 @@ impl Default for ColorNegotiation {
 /// Manages the active colour pipeline for the client session.
 pub struct ColorPipeline {
     active_mode: ColorMode,
+    #[allow(dead_code)]
     tone_mapper: ToneMapper,
     gamut: DisplayGamut,
 }

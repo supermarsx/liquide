@@ -5,10 +5,8 @@
 //! The main thread coordinates updates and composites the final scene.
 
 use crate::desktop_dom::DesktopDocument;
-use crate::pipeline::DesktopPipeline;
 use liquide_compositor::scene::SceneNode;
 use std::sync::mpsc::{channel, Sender, Receiver};
-use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use tracing::{debug, error, info};
 

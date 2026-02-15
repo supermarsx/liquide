@@ -8,7 +8,6 @@ use liquide_style_engine::computed::{
 };
 use liquide_style_engine::dimension::Corners;
 
-use serde::{Deserialize, Serialize};
 
 /// A single paint command.
 #[derive(Debug, Clone)]

@@ -67,6 +67,7 @@ pub struct QtWindow {
     state: QtWindowState,
     visible: bool,
     /// Unique window ID (maps to `QWidget::winId()`).
+    #[allow(dead_code)]
     win_id: u64,
     /// Actual geometry (may differ from config after WM adjustments).
     actual_x: i32,

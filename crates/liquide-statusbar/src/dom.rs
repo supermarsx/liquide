@@ -6,7 +6,7 @@
 //! resolve styles via CSS instead of the legacy `UiTheme` immediate-mode
 //! painter.
 
-use liquide_dom::{Document, NodeId, PseudoStateFlags};
+use liquide_dom::{Document, NodeId};
 
 use crate::indicator::{IndicatorKind, SystemIndicator};
 use crate::status_bar::StatusBar;
@@ -150,7 +150,7 @@ pub struct StatusBarNodes {
 
 fn indicator_label(ind: &SystemIndicator) -> String {
     match &ind.kind {
-        IndicatorKind::Clock { timestamp_us, format } => {
+        IndicatorKind::Clock { timestamp_us, format: _ } => {
             let total_secs = *timestamp_us / 1_000_000;
             let hours = (total_secs / 3600) % 24;
             let minutes = (total_secs / 60) % 60;
