@@ -21,6 +21,11 @@ pub enum Display {
     InlineFlex,
     Grid,
     InlineGrid,
+    Table,
+    TableRow,
+    TableCell,
+    TableRowGroup,
+    TableCaption,
     None,
     Contents,
 }
@@ -2960,6 +2965,17 @@ impl ComputedStyle {
     /// Is this element a grid container?
     pub fn is_grid_container(&self) -> bool {
         matches!(self.display, Display::Grid | Display::InlineGrid)
+    }
+
+    /// Is this element a table container?
+    pub fn is_table(&self) -> bool {
+        self.display == Display::Table
+    }
+
+    /// Is this element a multi-column container?
+    pub fn is_multicol(&self) -> bool {
+        self.column_count.is_some()
+            || !matches!(self.column_width, Dimension::Auto)
     }
 
     /// Is this element positioned (not static)?

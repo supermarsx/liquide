@@ -7,11 +7,14 @@
 pub mod block;
 pub mod engine;
 pub mod flex;
+pub mod float;
 pub mod geometry;
 pub mod grid;
 pub mod inline;
 pub mod intrinsic;
+pub mod multicol;
 pub mod positioned;
+pub mod table;
 pub mod tree;
 
 pub use engine::LayoutEngine;

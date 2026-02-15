@@ -192,6 +192,18 @@ pub fn layout_block(
                 content_width, container_height, 0.0, child_y,
                 viewport_w, viewport_h, base_font_size,
             )
+        } else if child_style.is_table() {
+            crate::table::layout_table(
+                doc, child_id, styles, tree, text_measurer, image_measurer,
+                content_width, container_height, 0.0, child_y,
+                viewport_w, viewport_h, base_font_size,
+            )
+        } else if child_style.is_multicol() {
+            crate::multicol::layout_multicol(
+                doc, child_id, styles, tree, text_measurer, image_measurer,
+                content_width, container_height, 0.0, child_y,
+                viewport_w, viewport_h, base_font_size,
+            )
         } else {
             layout_block(
                 doc, child_id, styles, tree, text_measurer, image_measurer,

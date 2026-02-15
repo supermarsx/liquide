@@ -191,8 +191,9 @@ impl StyleEngine {
         }
 
         let resolved = cascade.resolve();
+        let empty_scope: std::collections::HashMap<String, liquide_theme_css::value::PropertyValue> = std::collections::HashMap::new();
         for (prop, val) in &resolved {
-            self.apply_single_property(prop, val, &mut style);
+            self.apply_single_property(prop, val, &mut style, &empty_scope);
         }
 
         style
@@ -201,7 +202,8 @@ impl StyleEngine {
     /// Compute styles for the entire document tree.
     pub fn restyle_all(&self, doc: &Document) -> StyleMap {
         let mut map = StyleMap::new();
-        self.restyle_node(doc, doc.root(), None, &mut map);
+        let scope = std::collections::HashMap::new();
+        self.restyle_node(doc, doc.root(), None, &mut map, &scope);
         map
     }
 
@@ -210,7 +212,8 @@ impl StyleEngine {
         let parent_style = doc
             .parent(node_id)
             .and_then(|pid| map.get(pid).cloned());
-        self.restyle_node(doc, node_id, parent_style.as_deref(), map);
+        let scope = std::collections::HashMap::new();
+        self.restyle_node(doc, node_id, parent_style.as_deref(), map, &scope);
     }
 
     fn restyle_node(
@@ -219,6 +222,7 @@ impl StyleEngine {
         node_id: NodeId,
         parent_style: Option<&ComputedStyle>,
         map: &mut StyleMap,
+        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
     ) {
         let node = match doc.get(node_id) {
             Some(n) => n,
@@ -268,18 +272,37 @@ impl StyleEngine {
 
             // Resolve the cascade and apply winners
             let resolved = cascade.resolve();
+
+            // Extract scoped CSS variables from the resolved cascade
+            let mut local_vars = scope_vars.clone();
             for (prop, val) in &resolved {
-                self.apply_single_property(prop, val, &mut style);
+                if prop.starts_with("--") {
+                    local_vars.insert(prop.clone(), val.clone());
+                }
             }
+
+            for (prop, val) in &resolved {
+                self.apply_single_property(prop, val, &mut style, &local_vars);
+            }
+
+            let style = Arc::new(style);
+            map.insert_shared(node_id, style.clone());
+
+            // Recurse into children with scoped variables
+            let children = doc.children(node_id).to_vec();
+            for child_id in children {
+                self.restyle_node(doc, child_id, Some(&style), map, &local_vars);
+            }
+            return;
         }
 
         let style = Arc::new(style);
         map.insert_shared(node_id, style.clone());
 
-        // Recurse into children
+        // Recurse into children (text nodes pass through parent scope)
         let children = doc.children(node_id).to_vec();
         for child_id in children {
-            self.restyle_node(doc, child_id, Some(&style), map);
+            self.restyle_node(doc, child_id, Some(&style), map, scope_vars);
         }
     }
 
@@ -308,6 +331,7 @@ impl StyleEngine {
         key: &str,
         val: &liquide_theme_css::value::PropertyValue,
         style: &mut ComputedStyle,
+        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
     ) {
         // ── CSS-wide keywords ──
         // Check for initial/inherit/unset/revert before normal property handling
@@ -347,8 +371,8 @@ impl StyleEngine {
         // ── var() resolution ──
         if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
             if kw.contains("var(") {
-                if let Some(resolved) = self.resolve_var_in_value(kw) {
-                    self.apply_single_property(key, &resolved, style);
+                if let Some(resolved) = self.resolve_var_in_value(kw, scope_vars) {
+                    self.apply_single_property(key, &resolved, style, scope_vars);
                     return;
                 }
             }
@@ -2720,6 +2744,7 @@ impl StyleEngine {
     fn resolve_var_in_value(
         &self,
         value: &str,
+        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
     ) -> Option<liquide_theme_css::value::PropertyValue> {
         let mut result = value.to_string();
         // Limit iterations to prevent infinite loops from circular references
@@ -2757,7 +2782,7 @@ impl StyleEngine {
                 (inner.trim(), None)
             };
 
-            if let Some(resolved) = self.variables.get(var_name) {
+            if let Some(resolved) = scope_vars.get(var_name).or_else(|| self.variables.get(var_name)) {
                 let replacement = match resolved {
                     liquide_theme_css::value::PropertyValue::Color(c) => c.to_hex(),
                     liquide_theme_css::value::PropertyValue::Length(lu) => {

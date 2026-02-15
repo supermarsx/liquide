@@ -250,10 +250,7 @@ pub fn layout_flex(
             };
 
             if let Some(b) = tree.get_mut(item.box_id) {
-                b.content_rect = Rect::new(x, y, w, h);
-                b.padding_rect = b.content_rect;
-                b.border_rect = b.content_rect;
-                b.margin_rect = b.content_rect;
+                reposition_box(b, x, y, w, h);
             }
 
             main_pos += item.main_size + gap + if i < count - 1 { extra_gap } else { 0.0 };
@@ -285,13 +282,10 @@ pub fn layout_flex(
             for idx in line.start..line.end {
                 if let Some(b) = tree.get_mut(items[idx].box_id) {
                     if is_row {
-                        b.content_rect.y += delta;
+                        shift_box(b, 0.0, delta);
                     } else {
-                        b.content_rect.x += delta;
+                        shift_box(b, delta, 0.0);
                     }
-                    b.padding_rect = b.content_rect;
-                    b.border_rect = b.content_rect;
-                    b.margin_rect = b.content_rect;
                 }
             }
             cross_start += line_cross_sizes[li] + cross_gap + cross_extra;
@@ -321,24 +315,26 @@ pub fn layout_flex(
                     AlignItems::FlexEnd => line_cross - item_cross,
                     AlignItems::Center => (line_cross - item_cross) / 2.0,
                     AlignItems::Stretch => {
-                        if is_row {
-                            b.content_rect.height = line_cross;
-                        } else {
-                            b.content_rect.width = line_cross;
-                        }
+                        let dw = if !is_row { line_cross - b.content_rect.width } else { 0.0 };
+                        let dh = if is_row { line_cross - b.content_rect.height } else { 0.0 };
+                        b.content_rect.width += dw;
+                        b.content_rect.height += dh;
+                        b.padding_rect.width += dw;
+                        b.padding_rect.height += dh;
+                        b.border_rect.width += dw;
+                        b.border_rect.height += dh;
+                        b.margin_rect.width += dw;
+                        b.margin_rect.height += dh;
                         0.0
                     }
                     AlignItems::Baseline => 0.0, // simplified
                 };
 
                 if is_row {
-                    b.content_rect.y += cross_offset_val;
+                    shift_box(b, 0.0, cross_offset_val);
                 } else {
-                    b.content_rect.x += cross_offset_val;
+                    shift_box(b, cross_offset_val, 0.0);
                 }
-                b.padding_rect = b.content_rect;
-                b.border_rect = b.content_rect;
-                b.margin_rect = b.content_rect;
             }
         }
         _line_cross_y += line_cross_sizes[li] + cross_gap;
@@ -402,6 +398,41 @@ struct FlexLine {
 }
 
 // ── Helpers ──
+
+/// Reposition a layout box: move content_rect to (x, y) with size (w, h),
+/// and propagate position/size deltas to padding/border/margin rects.
+fn reposition_box(b: &mut crate::tree::LayoutBox, x: f32, y: f32, w: f32, h: f32) {
+    let dx = x - b.content_rect.x;
+    let dy = y - b.content_rect.y;
+    let dw = w - b.content_rect.width;
+    let dh = h - b.content_rect.height;
+
+    b.content_rect = Rect::new(x, y, w, h);
+    b.padding_rect.x += dx;
+    b.padding_rect.y += dy;
+    b.padding_rect.width += dw;
+    b.padding_rect.height += dh;
+    b.border_rect.x += dx;
+    b.border_rect.y += dy;
+    b.border_rect.width += dw;
+    b.border_rect.height += dh;
+    b.margin_rect.x += dx;
+    b.margin_rect.y += dy;
+    b.margin_rect.width += dw;
+    b.margin_rect.height += dh;
+}
+
+/// Shift all rects of a layout box by a position delta.
+fn shift_box(b: &mut crate::tree::LayoutBox, dx: f32, dy: f32) {
+    b.content_rect.x += dx;
+    b.content_rect.y += dy;
+    b.padding_rect.x += dx;
+    b.padding_rect.y += dy;
+    b.border_rect.x += dx;
+    b.border_rect.y += dy;
+    b.margin_rect.x += dx;
+    b.margin_rect.y += dy;
+}
 
 fn rdim(dim: &Dimension, parent_px: f32, base_font_size: f32, font_size: f32, vw: f32, vh: f32) -> f32 {
     dim.resolve_px(parent_px, base_font_size, font_size, vw, vh)

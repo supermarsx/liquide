@@ -51,6 +51,18 @@ impl LayoutEngine {
                 self.viewport.width, self.viewport.height, 0.0, 0.0,
                 self.viewport.width, self.viewport.height, self.base_font_size,
             )
+        } else if root_style.is_table() {
+            crate::table::layout_table(
+                doc, root, styles, &mut tree, text_measurer, image_measurer,
+                self.viewport.width, self.viewport.height, 0.0, 0.0,
+                self.viewport.width, self.viewport.height, self.base_font_size,
+            )
+        } else if root_style.is_multicol() {
+            crate::multicol::layout_multicol(
+                doc, root, styles, &mut tree, text_measurer, image_measurer,
+                self.viewport.width, self.viewport.height, 0.0, 0.0,
+                self.viewport.width, self.viewport.height, self.base_font_size,
+            )
         } else {
             crate::block::layout_block(
                 doc, root, styles, &mut tree, text_measurer, image_measurer,
