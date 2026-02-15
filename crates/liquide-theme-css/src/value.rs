@@ -104,8 +104,12 @@ impl Color {
     }
 
     fn parse_oklch(input: &str) -> Result<Self> {
-        let inner = input.strip_prefix("oklch(").and_then(|s| s.strip_suffix(')'))
-            .ok_or_else(|| ThemeError::ColorParse(input.to_string(), "invalid oklch".to_string()))?;
+        let inner = input
+            .strip_prefix("oklch(")
+            .and_then(|s| s.strip_suffix(')'))
+            .ok_or_else(|| {
+                ThemeError::ColorParse(input.to_string(), "invalid oklch".to_string())
+            })?;
 
         let (values, alpha) = if let Some((vals, a)) = inner.split_once('/') {
             (vals.trim(), a.trim().parse::<f32>().unwrap_or(1.0))
@@ -115,14 +119,23 @@ impl Color {
 
         let parts: Vec<&str> = values.split_whitespace().collect();
         if parts.len() < 3 {
-            return Err(ThemeError::ColorParse(input.to_string(), "need 3 values".to_string()));
+            return Err(ThemeError::ColorParse(
+                input.to_string(),
+                "need 3 values".to_string(),
+            ));
         }
 
-        let l = parts[0].strip_suffix('%').and_then(|v| v.parse::<f32>().ok())
+        let l = parts[0]
+            .strip_suffix('%')
+            .and_then(|v| v.parse::<f32>().ok())
             .map(|v| v / 100.0)
             .unwrap_or_else(|| parts[0].parse::<f32>().unwrap_or(0.0));
         let c = parts[1].parse::<f32>().unwrap_or(0.0);
-        let h_deg = parts[2].strip_suffix("deg").unwrap_or(parts[2]).parse::<f32>().unwrap_or(0.0);
+        let h_deg = parts[2]
+            .strip_suffix("deg")
+            .unwrap_or(parts[2])
+            .parse::<f32>()
+            .unwrap_or(0.0);
 
         // Convert oklch to sRGB
         let h_rad = h_deg.to_radians();
@@ -145,16 +158,29 @@ impl Color {
         // Gamma correction and clamp
         fn linear_to_srgb(c: f32) -> u8 {
             let c = c.clamp(0.0, 1.0);
-            let s = if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+            let s = if c <= 0.0031308 {
+                c * 12.92
+            } else {
+                1.055 * c.powf(1.0 / 2.4) - 0.055
+            };
             (s * 255.0).round() as u8
         }
 
-        Ok(Color::new(linear_to_srgb(r), linear_to_srgb(g), linear_to_srgb(b), (alpha * 255.0) as u8))
+        Ok(Color::new(
+            linear_to_srgb(r),
+            linear_to_srgb(g),
+            linear_to_srgb(b),
+            (alpha * 255.0) as u8,
+        ))
     }
 
     fn parse_oklab(input: &str) -> Result<Self> {
-        let inner = input.strip_prefix("oklab(").and_then(|s| s.strip_suffix(')'))
-            .ok_or_else(|| ThemeError::ColorParse(input.to_string(), "invalid oklab".to_string()))?;
+        let inner = input
+            .strip_prefix("oklab(")
+            .and_then(|s| s.strip_suffix(')'))
+            .ok_or_else(|| {
+                ThemeError::ColorParse(input.to_string(), "invalid oklab".to_string())
+            })?;
 
         let (values, alpha) = if let Some((vals, a)) = inner.split_once('/') {
             (vals.trim(), a.trim().parse::<f32>().unwrap_or(1.0))
@@ -164,10 +190,15 @@ impl Color {
 
         let parts: Vec<&str> = values.split_whitespace().collect();
         if parts.len() < 3 {
-            return Err(ThemeError::ColorParse(input.to_string(), "need 3 values".to_string()));
+            return Err(ThemeError::ColorParse(
+                input.to_string(),
+                "need 3 values".to_string(),
+            ));
         }
 
-        let l = parts[0].strip_suffix('%').and_then(|v| v.parse::<f32>().ok())
+        let l = parts[0]
+            .strip_suffix('%')
+            .and_then(|v| v.parse::<f32>().ok())
             .map(|v| v / 100.0)
             .unwrap_or_else(|| parts[0].parse::<f32>().unwrap_or(0.0));
         let a_lab = parts[1].parse::<f32>().unwrap_or(0.0);
@@ -188,26 +219,45 @@ impl Color {
 
         fn linear_to_srgb(c: f32) -> u8 {
             let c = c.clamp(0.0, 1.0);
-            let s = if c <= 0.0031308 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+            let s = if c <= 0.0031308 {
+                c * 12.92
+            } else {
+                1.055 * c.powf(1.0 / 2.4) - 0.055
+            };
             (s * 255.0).round() as u8
         }
 
-        Ok(Color::new(linear_to_srgb(r), linear_to_srgb(g), linear_to_srgb(b), (alpha * 255.0) as u8))
+        Ok(Color::new(
+            linear_to_srgb(r),
+            linear_to_srgb(g),
+            linear_to_srgb(b),
+            (alpha * 255.0) as u8,
+        ))
     }
 
     fn parse_color_mix(input: &str) -> Result<Self> {
-        let inner = input.strip_prefix("color-mix(").and_then(|s| s.strip_suffix(')'))
-            .ok_or_else(|| ThemeError::ColorParse(input.to_string(), "invalid color-mix".to_string()))?;
+        let inner = input
+            .strip_prefix("color-mix(")
+            .and_then(|s| s.strip_suffix(')'))
+            .ok_or_else(|| {
+                ThemeError::ColorParse(input.to_string(), "invalid color-mix".to_string())
+            })?;
 
         // Parse: "in srgb, color1 percent%, color2 percent%"
         let parts: Vec<&str> = inner.splitn(2, ',').collect();
         if parts.len() < 2 {
-            return Err(ThemeError::ColorParse(input.to_string(), "need at least 2 args".to_string()));
+            return Err(ThemeError::ColorParse(
+                input.to_string(),
+                "need at least 2 args".to_string(),
+            ));
         }
 
         let color_parts: Vec<&str> = parts[1].splitn(2, ',').collect();
         if color_parts.len() < 2 {
-            return Err(ThemeError::ColorParse(input.to_string(), "need 2 colors".to_string()));
+            return Err(ThemeError::ColorParse(
+                input.to_string(),
+                "need 2 colors".to_string(),
+            ));
         }
 
         let (c1_str, p1) = parse_color_and_percent(color_parts[0].trim());
@@ -224,7 +274,10 @@ impl Color {
 
 fn parse_color_and_percent(s: &str) -> (&str, Option<f32>) {
     if let Some(pos) = s.rfind('%') {
-        let pct_start = s[..pos].rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0);
+        let pct_start = s[..pos]
+            .rfind(char::is_whitespace)
+            .map(|i| i + 1)
+            .unwrap_or(0);
         let pct = s[pct_start..pos].parse::<f32>().ok();
         if pct.is_some() {
             return (s[..pct_start].trim(), pct);
