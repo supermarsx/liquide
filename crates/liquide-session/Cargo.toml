@@ -22,6 +22,7 @@ liquide-transport.workspace = true
 liquide-compositor.workspace = true
 liquide-cursor.workspace = true
 liquide-renderer-cpu.workspace = true
+liquide-font-rasterizer.workspace = true
 liquide-encoder.workspace = true
 liquide-shell.workspace = true
 liquide-plugin-host.workspace = true

@@ -120,6 +120,12 @@ impl DesktopCompositor {
     /// profile.  The shell is initialized with matching screen dimensions.
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
+        // Load TrueType fonts before creating the renderer so that
+        // all text is rendered with the proper typefaces.
+        let mut font_db = liquide_font_rasterizer::FontDatabase::new();
+        let font_count = font_db.load_default_fonts("assets");
+        info!(fonts_loaded = font_count, "loaded TrueType font faces");
+
         let tile_size = 64;
         Self {
             shell: Shell::new(width as f32, height as f32),
@@ -129,7 +135,7 @@ impl DesktopCompositor {
                 tile_size,
                 QualityProfile::Balanced,
             )),
-            renderer: Some(SoftwareRenderer::new()),
+            renderer: Some(SoftwareRenderer::with_font_db(font_db)),
             input_state: InputState::new(),
             width,
             height,

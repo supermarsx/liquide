@@ -37,6 +37,8 @@ use crate::window::{Window, WindowFlags, WindowId, WindowState};
 use crate::workspace::WorkspaceManager;
 use crate::{Result, ShellError};
 use liquide_dock::Dock;
+use liquide_hit_test::event::{DomEvent, DomEventKind, MouseButton as DomMouseButton, Propagation};
+use liquide_hit_test::{EventDispatcher, HitTestEngine};
 
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
@@ -190,6 +192,11 @@ pub struct Shell {
     css_pipeline: DesktopPipeline,
     /// Whether the DOM needs re-sync before the next `build_scene()`.
     dom_dirty: bool,
+    // ── DOM event dispatch ──────────────────────────────────
+    /// DOM event dispatcher for hover, focus, and click events.
+    event_dispatcher: EventDispatcher,
+    /// Hit-test engine backed by the latest layout + styles.
+    hit_test_engine: Option<HitTestEngine>,
     // ── Threading and sandboxing ────────────────────────────
     /// Thread coordinator for shell elements (dock, statusbar, etc.).
     thread_coordinator: Option<crate::threading::ShellThreadCoordinator>,
@@ -299,6 +306,8 @@ impl Shell {
             desktop_dom,
             css_pipeline,
             dom_dirty: true,
+            event_dispatcher: EventDispatcher::new(),
+            hit_test_engine: None,
             thread_coordinator: Some(thread_coordinator),
             sandbox_manager,
         }
@@ -398,6 +407,8 @@ impl Shell {
             desktop_dom,
             css_pipeline,
             dom_dirty: true,
+            event_dispatcher: EventDispatcher::new(),
+            hit_test_engine: None,
             thread_coordinator: Some(thread_coordinator),
             sandbox_manager,
         }
@@ -1524,10 +1535,16 @@ impl Shell {
         self.sync_dom();
 
         // ── Run the CSS pipeline (all shell chrome) ─────────
-        let pipeline_nodes = self.css_pipeline.render_to_scene(
+        let (pipeline_nodes, pipeline_output) = self.css_pipeline.render_to_scene_with_output(
             &self.desktop_dom.doc,
             0, // base z-order
         );
+
+        // ── Update hit-test engine with latest layout + styles ──
+        self.hit_test_engine = Some(HitTestEngine::new(
+            pipeline_output.layout,
+            pipeline_output.styles,
+        ));
 
         let theme = &self.theme;
 
@@ -1856,6 +1873,92 @@ impl Shell {
         }
     }
 
+    // ── DOM event dispatch helpers ──────────────────────────────────
+
+    /// Forward a mouse event to the DOM [`EventDispatcher`], which manages
+    /// hover chain, `:active`/`:focus` pseudo-states, and fires any
+    /// registered Rust event handlers.
+    fn dispatch_dom_mouse_event(&mut self, me: &liquide_input::mouse::MouseEvent) {
+        use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
+        use liquide_layout::geometry::Point as LayoutPoint;
+
+        let hit_test = match self.hit_test_engine.as_ref() {
+            Some(ht) => ht,
+            None => return, // no layout yet
+        };
+
+        match me {
+            MouseEvent::Move { x, y } => {
+                let pos = LayoutPoint::new(*x, *y);
+                self.event_dispatcher
+                    .dispatch_mouse_move(pos, &mut self.desktop_dom.doc, hit_test);
+            }
+            MouseEvent::Button {
+                x,
+                y,
+                button,
+                state,
+            } => {
+                let pos = LayoutPoint::new(*x, *y);
+                let dom_btn = match button {
+                    MouseButton::Left => DomMouseButton::Left,
+                    MouseButton::Right => DomMouseButton::Right,
+                    MouseButton::Middle => DomMouseButton::Middle,
+                    _ => DomMouseButton::Left,
+                };
+                match state {
+                    ButtonState::Pressed => {
+                        self.event_dispatcher.dispatch_mouse_down(
+                            pos,
+                            dom_btn,
+                            &mut self.desktop_dom.doc,
+                            hit_test,
+                        );
+                    }
+                    ButtonState::Released => {
+                        self.event_dispatcher.dispatch_mouse_up(
+                            pos,
+                            dom_btn,
+                            &mut self.desktop_dom.doc,
+                            hit_test,
+                        );
+                    }
+                }
+            }
+            MouseEvent::Scroll { x, y, axis, delta } => {
+                let pos = LayoutPoint::new(*x, *y);
+                let (dx, dy) = match axis {
+                    liquide_input::mouse::ScrollAxis::Horizontal => (*delta, 0.0),
+                    liquide_input::mouse::ScrollAxis::Vertical => (0.0, *delta),
+                };
+                self.event_dispatcher.dispatch_scroll(pos, dx, dy, hit_test);
+            }
+            _ => {}
+        }
+    }
+
+    /// Register an event handler on a DOM node, allowing Rust callbacks
+    /// to be bound to specific event types (click, hover, etc.).
+    pub fn add_event_handler(
+        &mut self,
+        node: liquide_dom::NodeId,
+        kind_filter: Option<DomEventKind>,
+        handler: liquide_hit_test::dispatch::EventHandler,
+    ) {
+        self.event_dispatcher
+            .add_handler(node, kind_filter, handler);
+    }
+
+    /// Get a reference to the DOM event dispatcher.
+    pub fn event_dispatcher(&self) -> &EventDispatcher {
+        &self.event_dispatcher
+    }
+
+    /// Get a mutable reference to the DOM event dispatcher.
+    pub fn event_dispatcher_mut(&mut self) -> &mut EventDispatcher {
+        &mut self.event_dispatcher
+    }
+
     /// Handle a platform event and return any resulting shell action.
     pub fn handle_platform_event(&mut self, event: &PlatformEvent) -> Option<ShellAction> {
         use liquide_input::keyboard::{KeyCode, KeyState};
@@ -1932,6 +2035,9 @@ impl Shell {
                 self.shortcuts.handle_key_event(ke).cloned()
             }
             PlatformEvent::MouseInput { event: me, .. } => {
+                // ── DOM event dispatch (parallel to imperative handling) ──
+                self.dispatch_dom_mouse_event(me);
+
                 match me {
                     MouseEvent::Move { x, y } => {
                         let pt = Point::new(*x, *y);

@@ -227,7 +227,10 @@ impl ContextMenu {
     #[must_use]
     pub fn compute_bounds(&self, screen: Rect) -> Rect {
         let w = self.config.width;
-        let h = self.config.padding * 2.0 + self.items.len() as f32 * self.config.item_height;
+        let raw_h = self.config.padding * 2.0 + self.items.len() as f32 * self.config.item_height;
+        // Cap height to 80% of screen height so long menus don't overflow.
+        let max_h = (screen.height * 0.8).max(100.0);
+        let h = raw_h.min(max_h);
         let x = self.position.x.min(screen.width - w - 4.0).max(0.0);
         let y = self.position.y.min(screen.height - h - 4.0).max(0.0);
         Rect::new(x, y, w, h)
@@ -249,7 +252,12 @@ impl ContextMenu {
             return None;
         }
         let idx = (rel_y / self.config.item_height) as usize;
-        if idx < self.items.len() {
+        // Only allow hitting items that are within the visible (clamped) bounds.
+        let max_visible = ((bounds.height - self.config.padding * 2.0) / self.config.item_height)
+            .floor()
+            .max(0.0) as usize;
+        let visible_count = self.items.len().min(max_visible);
+        if idx < visible_count {
             Some(idx)
         } else {
             None
@@ -335,7 +343,11 @@ impl ContextMenu {
         let item_h = self.config.item_height;
         let item_pad = self.config.item_padding;
 
-        for (i, item) in self.items.iter().enumerate() {
+        // Only render items that fit within the clamped bounds.
+        let max_visible = ((bounds.height - pad * 2.0) / item_h).floor().max(0.0) as usize;
+        let visible_items = self.items.len().min(max_visible);
+
+        for (i, item) in self.items.iter().enumerate().take(visible_items) {
             let iy = pad + i as f32 * item_h;
 
             // Hover highlight (relative to panel)
@@ -383,8 +395,8 @@ impl ContextMenu {
                     text: item.label.clone(),
                     color: label_color,
                     scale: 1,
-                    font_family: String::new(),
-                    font_size: 0.0,
+                    font_family: "Manrope".into(),
+                    font_size: 13.0,
                     font_weight: 400,
                     font_style_italic: false,
                     letter_spacing: 0.0,
@@ -416,8 +428,8 @@ impl ContextMenu {
                         text: hint.clone(),
                         color: hint_color,
                         scale: 1,
-                        font_family: String::new(),
-                        font_size: 0.0,
+                        font_family: "Manrope".into(),
+                        font_size: 12.0,
                         font_weight: 400,
                         font_style_italic: false,
                         letter_spacing: 0.0,

@@ -36,6 +36,10 @@ pub struct DesktopPipeline {
     pub painter: Painter,
     /// Monotonic id counter for scene nodes generated from the pipeline.
     next_scene_id: u64,
+    /// Last computed styles (cached for hit-testing).
+    pub last_styles: Option<StyleMap>,
+    /// Last computed layout tree (cached for hit-testing).
+    pub last_layout: Option<LayoutTree>,
 }
 
 /// Configuration for the pipeline.
@@ -85,6 +89,8 @@ impl DesktopPipeline {
             layout_engine,
             painter: Painter::new(),
             next_scene_id: 1_000_000,
+            last_styles: None,
+            last_layout: None,
         }
     }
 
@@ -138,6 +144,17 @@ impl DesktopPipeline {
     /// property. These are placed *before* the element's normal paint output
     /// so the blur effect renders behind the content.
     pub fn render_to_scene(&mut self, doc: &Document, base_z: u32) -> Vec<SceneNode> {
+        let (nodes, _output) = self.render_to_scene_with_output(doc, base_z);
+        nodes
+    }
+
+    /// Like [`render_to_scene`] but also returns the pipeline output
+    /// (styles + layout) for downstream use (e.g. hit-testing).
+    pub fn render_to_scene_with_output(
+        &mut self,
+        doc: &Document,
+        base_z: u32,
+    ) -> (Vec<SceneNode>, PipelineOutput) {
         let output = self.run(doc);
 
         // Collect Glass nodes from elements with x_blur_radius > 0.
@@ -149,7 +166,7 @@ impl DesktopPipeline {
         let paint_nodes = self.display_list_to_scene(&output.display_list, base_z + glass_count);
         nodes.extend(paint_nodes);
 
-        nodes
+        (nodes, output)
     }
 
     /// Generate Glass SceneNodes for DOM elements that have `x_blur_radius > 0`

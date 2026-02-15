@@ -66,6 +66,9 @@ statusbar-item {
     align-items: center;
     padding-left: 4;
     padding-right: 4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 status-indicator.connected {
@@ -126,6 +129,9 @@ window-title {
     flex-grow: 1;
     text-align: center;
     color: rgba(255, 255, 255, 1.0);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 titlebar-buttons {
@@ -220,6 +226,17 @@ dock-item.active {
 
 dock-item:hover {
     background: rgba(255, 255, 255, 0.12);
+}
+
+/* ── Workspace container ───────────────────────────── */
+
+workspace-container {
+    position: fixed;
+    top: 28;
+    left: 0;
+    width: 100%;
+    bottom: 56;
+    overflow: hidden;
 }
 
 /* ── Notifications ─────────────────────────────────── */
@@ -334,6 +351,8 @@ context-menu {
     border-width: 1;
     blur-radius: 20;
     min-width: 180;
+    max-height: 480;
+    overflow: hidden;
 }
 
 session-menu {
@@ -348,6 +367,8 @@ session-menu {
     border-width: 1;
     blur-radius: 20;
     min-width: 200;
+    max-height: 480;
+    overflow: hidden;
 }
 
 app-menu {
@@ -362,6 +383,8 @@ app-menu {
     border-width: 1;
     blur-radius: 20;
     min-width: 180;
+    max-height: 480;
+    overflow: hidden;
 }
 
 menu-item {
@@ -373,6 +396,9 @@ menu-item {
     border-radius: 6;
     color: rgba(255, 255, 255, 1.0);
     font-size: 13;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 menu-item:hover {

@@ -325,6 +325,9 @@ impl EventDispatcher {
     fn fire_handlers(&self, events: &[DomEvent]) {
         for event in events {
             let event_disc = std::mem::discriminant(&event.kind);
+
+            // Fire handlers on the target node.
+            let mut stopped = false;
             for (node, filter, handler) in &self.handlers {
                 if *node != event.target {
                     continue;
@@ -335,8 +338,48 @@ impl EventDispatcher {
                     }
                 }
                 let result = handler(event);
-                if matches!(result, Propagation::StopImmediate) {
-                    break;
+                match result {
+                    Propagation::StopImmediate => {
+                        stopped = true;
+                        break;
+                    }
+                    Propagation::StopPropagation => {
+                        stopped = true;
+                        break;
+                    }
+                    Propagation::Continue | Propagation::PreventDefault => {}
+                }
+            }
+
+            // Bubble up through ancestors in the hover chain.
+            if !stopped {
+                for &ancestor in &self.hover_chain {
+                    if ancestor == event.target {
+                        continue; // already handled above
+                    }
+                    let mut ancestor_stopped = false;
+                    for (node, filter, handler) in &self.handlers {
+                        if *node != ancestor {
+                            continue;
+                        }
+                        if let Some(f) = filter {
+                            if *f != event_disc {
+                                continue;
+                            }
+                        }
+                        let bubbled = DomEvent::new(ancestor, event.kind.clone());
+                        let result = handler(&bubbled);
+                        match result {
+                            Propagation::StopImmediate | Propagation::StopPropagation => {
+                                ancestor_stopped = true;
+                                break;
+                            }
+                            Propagation::Continue | Propagation::PreventDefault => {}
+                        }
+                    }
+                    if ancestor_stopped {
+                        break;
+                    }
                 }
             }
         }
