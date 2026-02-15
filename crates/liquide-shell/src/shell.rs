@@ -7,8 +7,7 @@ use std::sync::Arc;
 
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::scene::{
-    CursorShape, DecorationButtons, NodeProperties,
-    ResizeDirection, SceneNode, SceneNodeKind,
+    CursorShape, DecorationButtons, NodeProperties, ResizeDirection, SceneNode, SceneNodeKind,
 };
 use liquide_input::KeyEvent;
 use liquide_platform::PlatformEvent;
@@ -1300,10 +1299,7 @@ impl Shell {
                 StatusBarItemKind::Clock { .. } => {
                     // Format current time as HH:MM
                     let now = std::time::SystemTime::now();
-                    let secs = now
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
+                    let secs = now.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
                     let hours = (secs / 3600) % 24;
                     let minutes = (secs / 60) % 60;
                     let time_str = format!("{:02}:{:02}", hours, minutes);

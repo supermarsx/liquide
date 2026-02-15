@@ -1,4 +1,5 @@
 //! Win32 window enumerator — discovers and tracks running applications.
+#![allow(unsafe_op_in_unsafe_fn)]
 
 use std::collections::HashMap;
 

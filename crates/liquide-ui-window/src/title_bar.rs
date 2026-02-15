@@ -31,7 +31,9 @@ pub struct TitleBar {
     pub height: f32,
     pub buttons: Vec<TitleBarButton>,
     pub dragging: bool,
+    #[allow(dead_code)]
     drag_start_x: f32,
+    #[allow(dead_code)]
     drag_start_y: f32,
 }
 

@@ -16,6 +16,8 @@
 
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
+#[cfg(test)]
+use liquide_compositor::pixel::Color;
 use liquide_compositor::pixel::BlendMode;
 
 use crate::blend;

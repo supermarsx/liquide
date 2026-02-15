@@ -19,6 +19,7 @@ pub(crate) enum ThemePreset {
     Midday,
 }
 
+#[allow(dead_code)]
 impl ThemePreset {
     /// Get the CSS string for this theme preset.
     pub fn css(&self) -> &'static str {

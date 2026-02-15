@@ -439,6 +439,7 @@ impl Default for SoftwareRenderer {
 }
 
 impl Renderer for SoftwareRenderer {
+    #[allow(unused_assignments)]
     fn render(
         &mut self,
         nodes: &[FlatNode],
@@ -1142,6 +1143,7 @@ impl SoftwareRenderer {
                 let font_id = (((*font_weight as u32) & 0xFF) << 16) | family_hash;
 
                 let size_px = glyph_height as u16;
+                #[allow(unused_assignments)]
                 let mut pen_x = bounds.x + text_indent;
                 let mut pen_y = bounds.y;
                 let mut all_in_atlas = true;

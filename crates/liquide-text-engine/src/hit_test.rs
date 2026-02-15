@@ -4,6 +4,8 @@
 //! boundary) is closest to a pixel coordinate. Used for click placement,
 //! mouse selection, and touch targeting.
 
+#[cfg(test)]
+use crate::paragraph::PositionedGlyph;
 use crate::paragraph::{LayoutLine, ParagraphLayout};
 use crate::selection::{Affinity, TextOffset};
 

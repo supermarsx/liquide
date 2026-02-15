@@ -442,6 +442,7 @@ pub fn resolve_menu_layout(resolver: &StyleResolver) -> MenuLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use liquide_renderer_css::GlassStyle;
     use liquide_theme_css::ThemeParser;
 
     #[test]

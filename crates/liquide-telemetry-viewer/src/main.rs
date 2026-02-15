@@ -21,9 +21,9 @@ use clap::{Parser, Subcommand};
 
 mod collector;
 mod dashboard;
-mod web;
 mod export;
 mod types;
+mod web;
 
 /// Liquide Telemetry Viewer - Monitor desktop performance in real-time.
 #[derive(Parser, Debug)]
@@ -41,40 +41,40 @@ enum Commands {
         /// Refresh rate in milliseconds.
         #[arg(short, long, default_value = "100")]
         refresh: u64,
-        
+
         /// Connect to remote session via TCP.
         #[arg(short, long)]
         remote: Option<String>,
     },
-    
+
     /// Start web-based viewer.
     Web {
         /// Port to listen on.
         #[arg(short, long, default_value = "8080")]
         port: u16,
-        
+
         /// Bind address.
         #[arg(short, long, default_value = "127.0.0.1")]
         bind: String,
     },
-    
+
     /// Export telemetry data to JSON.
     Export {
         /// Output file path.
         #[arg(short, long)]
         output: String,
-        
+
         /// Duration to collect in seconds.
         #[arg(short, long, default_value = "60")]
         duration: u64,
     },
-    
+
     /// Generate HTML performance report.
     Report {
         /// Output HTML file path.
         #[arg(short, long)]
         output: String,
-        
+
         /// Duration to collect in seconds.
         #[arg(short, long, default_value = "60")]
         duration: u64,

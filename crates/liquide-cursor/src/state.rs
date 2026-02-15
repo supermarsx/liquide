@@ -1,7 +1,7 @@
 //! Cursor state management - position, visibility, and shape tracking.
 
-use serde::{Deserialize, Serialize};
 use crate::shape::CursorShape;
+use serde::{Deserialize, Serialize};
 
 /// Visibility state of the cursor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -25,33 +25,33 @@ impl Default for CursorVisibility {
 pub struct CursorState {
     /// X position in surface coordinates.
     pub x: f32,
-    
+
     /// Y position in surface coordinates.
     pub y: f32,
-    
+
     /// Current cursor shape.
     pub shape: CursorShape,
-    
+
     /// Visibility state.
     pub visibility: CursorVisibility,
-    
+
     /// Custom cursor image data (RGBA8, row-major).
     /// Only used when shape is Custom.
     #[serde(skip)]
     pub custom_image: Option<Vec<u8>>,
-    
+
     /// Width of the custom cursor image in pixels.
     pub custom_width: u32,
-    
+
     /// Height of the custom cursor image in pixels.
     pub custom_height: u32,
-    
+
     /// Hotspot X offset within the custom image.
     pub hotspot_x: u32,
-    
+
     /// Hotspot Y offset within the custom image.
     pub hotspot_y: u32,
-    
+
     /// Scale factor for the cursor (1.0 = normal size).
     pub scale: f32,
 }
@@ -82,13 +82,13 @@ impl CursorState {
             ..Default::default()
         }
     }
-    
+
     /// Set the cursor position.
     pub fn set_position(&mut self, x: f32, y: f32) {
         self.x = x;
         self.y = y;
     }
-    
+
     /// Set the cursor shape.
     pub fn set_shape(&mut self, shape: CursorShape) {
         self.shape = shape;
@@ -99,27 +99,27 @@ impl CursorState {
             self.custom_height = 0;
         }
     }
-    
+
     /// Set the visibility state.
     pub fn set_visibility(&mut self, visibility: CursorVisibility) {
         self.visibility = visibility;
     }
-    
+
     /// Show the cursor.
     pub fn show(&mut self) {
         self.visibility = CursorVisibility::Visible;
     }
-    
+
     /// Hide the cursor.
     pub fn hide(&mut self) {
         self.visibility = CursorVisibility::Hidden;
     }
-    
+
     /// Returns true if the cursor is visible.
     pub fn is_visible(&self) -> bool {
         self.visibility == CursorVisibility::Visible
     }
-    
+
     /// Set a custom cursor image.
     ///
     /// # Errors
@@ -147,7 +147,7 @@ impl CursorState {
                 image_data.len()
             )));
         }
-        
+
         // Validate hotspot
         if hotspot_x >= width || hotspot_y >= height {
             return Err(crate::CursorError::InvalidHotspot {
@@ -157,17 +157,17 @@ impl CursorState {
                 height,
             });
         }
-        
+
         self.shape = CursorShape::Custom { id };
         self.custom_image = Some(image_data);
         self.custom_width = width;
         self.custom_height = height;
         self.hotspot_x = hotspot_x;
         self.hotspot_y = hotspot_y;
-        
+
         Ok(())
     }
-    
+
     /// Get the effective cursor size accounting for scale.
     pub fn effective_size(&self) -> (u32, u32) {
         if self.custom_image.is_some() {
@@ -180,7 +180,7 @@ impl CursorState {
             (size, size)
         }
     }
-    
+
     /// Get the hotspot position accounting for scale.
     pub fn effective_hotspot(&self) -> (f32, f32) {
         let hx = self.hotspot_x as f32 * self.scale;
@@ -204,10 +204,10 @@ mod tests {
     fn test_visibility() {
         let mut state = CursorState::default();
         assert!(state.is_visible());
-        
+
         state.hide();
         assert!(!state.is_visible());
-        
+
         state.show();
         assert!(state.is_visible());
     }
@@ -215,16 +215,16 @@ mod tests {
     #[test]
     fn test_custom_image_validation() {
         let mut state = CursorState::default();
-        
+
         // Invalid size
         let result = state.set_custom_image(1, vec![0; 100], 32, 32, 0, 0);
         assert!(result.is_err());
-        
+
         // Invalid hotspot
         let valid_data = vec![0; 32 * 32 * 4];
         let result = state.set_custom_image(1, valid_data.clone(), 32, 32, 50, 50);
         assert!(result.is_err());
-        
+
         // Valid
         let result = state.set_custom_image(1, valid_data, 32, 32, 16, 16);
         assert!(result.is_ok());
@@ -236,7 +236,7 @@ mod tests {
     fn test_effective_size_with_scale() {
         let mut state = CursorState::default();
         state.scale = 2.0;
-        
+
         let (w, h) = state.effective_size();
         assert_eq!((w, h), (48, 48)); // 24 * 2.0
     }

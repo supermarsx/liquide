@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use liquide_ui_core::WidgetId;
+#[allow(unused_imports)]
 use liquide_ui_core::widget::Widget;
 
 /// How row heights are determined.

@@ -2241,10 +2241,16 @@ mod tests {
         let _ = font.glyph('~');
         // Just below range
         let g = font.glyph('\x1F');
-        assert!(g.iter().all(|&b| b == 0xFF), "below-range should be fallback");
+        assert!(
+            g.iter().all(|&b| b == 0xFF),
+            "below-range should be fallback"
+        );
         // Just above range
         let g = font.glyph('\x7F');
-        assert!(g.iter().all(|&b| b == 0xFF), "above-range should be fallback");
+        assert!(
+            g.iter().all(|&b| b == 0xFF),
+            "above-range should be fallback"
+        );
     }
 
     #[test]

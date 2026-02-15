@@ -33,6 +33,7 @@ statusbar {
     padding-left: 12;
     padding-right: 12;
     align-items: center;
+    justify-content: space-between;
     z-index: 10;
     background: linear-gradient(180deg, rgba(40, 40, 70, 0.92), rgba(25, 25, 50, 0.88));
     border-bottom-color: rgba(255, 255, 255, 0.08);
@@ -48,22 +49,23 @@ statusbar-slot {
     display: flex;
     align-items: center;
     gap: 12;
+    flex-grow: 1;
+    flex-shrink: 1;
+    flex-basis: 0;
 }
 
 statusbar-slot.left {
-    flex-basis: 0;
-    flex-grow: 1;
     justify-content: flex-start;
 }
 
 statusbar-slot.center {
+    flex-grow: 0;
     flex-shrink: 0;
+    flex-basis: auto;
     justify-content: center;
 }
 
 statusbar-slot.right {
-    flex-basis: 0;
-    flex-grow: 1;
     justify-content: flex-end;
 }
 
@@ -86,12 +88,16 @@ statusbar-item:hover {
     background: rgba(255, 255, 255, 0.08);
 }
 
-/* Clock styling - center piece */
+/* Clock styling - center piece, prominent display */
 statusbar-item#clock {
-    font-size: 13;
-    font-weight: 500;
-    letter-spacing: 0.5;
+    font-size: 14;
+    font-weight: 600;
+    letter-spacing: 1;
     color: rgba(255, 255, 255, 1.0);
+    padding-left: 16;
+    padding-right: 16;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 8;
 }
 
 /* ── Logo / brand area ────────────────────────────── */

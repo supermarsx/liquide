@@ -137,6 +137,7 @@ impl<T> PooledObject<T> {
     ///
     /// # Safety
     /// The pool pointer must remain valid for the lifetime of this object.
+    #[allow(dead_code)]
     pub(crate) unsafe fn new(object: T, pool: *mut ObjectPool<T>) -> Self {
         Self {
             object: Some(object),
@@ -192,12 +193,12 @@ mod tests {
     #[test]
     fn test_pool_basic() {
         let mut pool = ObjectPool::new(10);
-        
+
         let obj1 = TestObject { id: 1 };
         pool.release(obj1);
-        
+
         assert_eq!(pool.available(), 1);
-        
+
         let obj = pool.acquire().unwrap();
         assert_eq!(obj.id, 1);
         assert_eq!(pool.available(), 0);
@@ -206,12 +207,12 @@ mod tests {
     #[test]
     fn test_pool_acquire_or_create() {
         let mut pool = ObjectPool::new(10);
-        
+
         let obj = pool.acquire_or_create(|| TestObject { id: 42 });
         assert_eq!(obj.id, 42);
-        
+
         pool.release(obj);
-        
+
         let obj2 = pool.acquire_or_create(|| TestObject { id: 99 });
         assert_eq!(obj2.id, 42); // Should get the pooled object, not create new
     }
@@ -219,31 +220,31 @@ mod tests {
     #[test]
     fn test_pool_capacity_limit() {
         let mut pool = ObjectPool::new(2);
-        
+
         pool.release(TestObject { id: 1 });
         pool.release(TestObject { id: 2 });
         pool.release(TestObject { id: 3 }); // Should be dropped
-        
+
         assert_eq!(pool.available(), 2);
     }
 
     #[test]
     fn test_pool_preallocate() {
         let mut pool = ObjectPool::<TestObject>::new(10);
-        
+
         pool.preallocate(5, || TestObject { id: 0 });
-        
+
         assert_eq!(pool.available(), 5);
     }
 
     #[test]
     fn test_pool_stats() {
         let mut pool = ObjectPool::new(10);
-        
+
         pool.preallocate(5, || TestObject { id: 0 });
         let _obj1 = pool.acquire();
         let _obj2 = pool.acquire();
-        
+
         let stats = pool.stats();
         assert_eq!(stats.available, 3);
         assert_eq!(stats.in_use, 2);
@@ -252,12 +253,12 @@ mod tests {
     #[test]
     fn test_pool_clear() {
         let mut pool = ObjectPool::new(10);
-        
+
         pool.release(TestObject { id: 1 });
         pool.release(TestObject { id: 2 });
-        
+
         pool.clear();
-        
+
         assert_eq!(pool.available(), 0);
         assert_eq!(pool.in_use(), 0);
     }

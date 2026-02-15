@@ -8,16 +8,16 @@ use std::collections::{HashMap, VecDeque};
 pub struct TelemetrySnapshot {
     /// Timestamp when this snapshot was taken.
     pub timestamp: u64,
-    
+
     /// Frame metrics.
     pub frames: FrameMetrics,
-    
+
     /// Per-window metrics.
     pub windows: HashMap<u64, WindowMetrics>,
-    
+
     /// System health status.
     pub health: HealthStatus,
-    
+
     /// Thread pool metrics.
     pub threads: ThreadPoolMetrics,
 }
@@ -27,22 +27,22 @@ pub struct TelemetrySnapshot {
 pub struct FrameMetrics {
     /// Current FPS.
     pub fps: f64,
-    
+
     /// Average frame time (ms).
     pub avg_frame_time: f64,
-    
+
     /// Minimum frame time (ms).
     pub min_frame_time: f64,
-    
+
     /// Maximum frame time (ms).
     pub max_frame_time: f64,
-    
+
     /// 95th percentile frame time (ms).
     pub p95_frame_time: f64,
-    
+
     /// 99th percentile frame time (ms).
     pub p99_frame_time: f64,
-    
+
     /// Frame time history (last 120 frames).
     pub history: VecDeque<f64>,
 }
@@ -52,16 +52,16 @@ pub struct FrameMetrics {
 pub struct WindowMetrics {
     /// Window ID.
     pub window_id: u64,
-    
+
     /// Average render time for this window (ms).
     pub avg_render_time: f64,
-    
+
     /// Number of nodes in this window's scene graph.
     pub node_count: usize,
-    
+
     /// Whether this window is currently being interacted with.
     pub interactive: bool,
-    
+
     /// Render time history.
     pub render_history: VecDeque<f64>,
 }
@@ -71,13 +71,13 @@ pub struct WindowMetrics {
 pub enum HealthStatus {
     /// All metrics within normal ranges (< 16ms).
     Healthy,
-    
+
     /// Some frame drops but generally responsive (16-25ms).
     Degraded,
-    
+
     /// Noticeable lag (25-50ms).
     Slow,
-    
+
     /// Severe performance issues (> 50ms).
     Critical,
 }
@@ -93,7 +93,7 @@ impl HealthStatus {
             Self::Critical => "Severe performance issues",
         }
     }
-    
+
     /// Get a color code for display.
     #[allow(dead_code)]
     pub fn color(&self) -> &'static str {
@@ -111,13 +111,13 @@ impl HealthStatus {
 pub struct ThreadPoolMetrics {
     /// Number of active threads.
     pub active_threads: usize,
-    
+
     /// Number of idle threads.
     pub idle_threads: usize,
-    
+
     /// Average task queue depth.
     pub avg_queue_depth: f64,
-    
+
     /// Tasks completed in last second.
     pub tasks_per_second: u64,
 }

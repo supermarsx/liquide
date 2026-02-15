@@ -620,6 +620,7 @@ fn intersect_rects(a: &CRect, b: &CRect) -> CRect {
 mod tests {
     use super::*;
     use crate::desktop_dom::{DesktopDocument, DockItemInfo};
+    use liquide_compositor::pixel::Color;
 
     #[test]
     fn pipeline_runs_on_desktop_document() {
