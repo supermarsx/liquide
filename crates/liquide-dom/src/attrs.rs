@@ -125,9 +125,7 @@ impl<'a> Iterator for AttributeIter<'a> {
         if let Some(ref mut ov) = self.overflow {
             return ov.next().map(|(k, v)| (k.as_str(), v.as_str()));
         }
-        self.inline
-            .next()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
+        self.inline.next().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 }
 

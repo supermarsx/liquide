@@ -383,6 +383,14 @@ impl RuleEngine {
         );
 
         engine.add_rule(
+            ElementRule::new("statusbar-logo")
+                .description("Brand logo in status bar")
+                .display_one_of(&[Display::Flex], Severity::Warning)
+                .align_items_one_of(&[AlignItems::Center], Severity::Warning)
+                .color_visible(Severity::Warning),
+        );
+
+        engine.add_rule(
             ElementRule::new("statusbar-item")
                 .description("Individual status bar item")
                 .display_one_of(&[Display::Flex, Display::InlineFlex], Severity::Warning)

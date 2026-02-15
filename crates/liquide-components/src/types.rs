@@ -25,6 +25,7 @@ pub struct LauncherItemInfo {
 /// A status bar item's display data.
 #[derive(Debug, Clone)]
 pub enum StatusBarItemData {
+    Logo { name: String },
     Clock { time: String },
     NotificationIndicator { unread_count: usize, dnd: bool },
     ConnectionQuality { connected: bool, degraded: bool },

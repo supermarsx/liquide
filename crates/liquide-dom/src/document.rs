@@ -213,12 +213,7 @@ impl Document {
         self.dirty.mark_style(node_id);
 
         for obs in &mut self.observers {
-            obs.on_attribute_changed(
-                node_id,
-                key,
-                old_value.as_deref(),
-                Some(value),
-            );
+            obs.on_attribute_changed(node_id, key, old_value.as_deref(), Some(value));
         }
     }
 
@@ -284,7 +279,11 @@ impl Document {
 
     /// Get an inline style value.
     pub fn get_inline_style(&self, node_id: NodeId, property: &str) -> Option<String> {
-        self.nodes.get(&node_id)?.inline_styles.get(property).map(String::from)
+        self.nodes
+            .get(&node_id)?
+            .inline_styles
+            .get(property)
+            .map(String::from)
     }
 
     // -----------------------------------------------------------------------
@@ -627,10 +626,18 @@ mod tests {
         let el = doc.create_element("button");
         doc.set_pseudo_state(el, PseudoStateFlags::HOVER, true);
 
-        assert!(doc.get(el).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
+        assert!(
+            doc.get(el)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::HOVER)
+        );
 
         doc.set_pseudo_state(el, PseudoStateFlags::HOVER, false);
-        assert!(!doc.get(el).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
+        assert!(
+            !doc.get(el)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::HOVER)
+        );
     }
 
     #[test]
@@ -644,12 +651,36 @@ mod tests {
         doc.append_child(root, b);
         doc.append_child(root, c);
 
-        assert!(doc.get(a).unwrap().has_pseudo_state(PseudoStateFlags::FIRST_CHILD));
-        assert!(!doc.get(a).unwrap().has_pseudo_state(PseudoStateFlags::LAST_CHILD));
-        assert!(!doc.get(b).unwrap().has_pseudo_state(PseudoStateFlags::FIRST_CHILD));
-        assert!(!doc.get(b).unwrap().has_pseudo_state(PseudoStateFlags::LAST_CHILD));
-        assert!(!doc.get(c).unwrap().has_pseudo_state(PseudoStateFlags::FIRST_CHILD));
-        assert!(doc.get(c).unwrap().has_pseudo_state(PseudoStateFlags::LAST_CHILD));
+        assert!(
+            doc.get(a)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::FIRST_CHILD)
+        );
+        assert!(
+            !doc.get(a)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::LAST_CHILD)
+        );
+        assert!(
+            !doc.get(b)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::FIRST_CHILD)
+        );
+        assert!(
+            !doc.get(b)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::LAST_CHILD)
+        );
+        assert!(
+            !doc.get(c)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::FIRST_CHILD)
+        );
+        assert!(
+            doc.get(c)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::LAST_CHILD)
+        );
     }
 
     #[test]
@@ -745,7 +776,10 @@ mod tests {
         let mut doc = Document::new();
         let el = doc.create_element("img");
         doc.set_attribute(el, "src", "/wallpaper.png");
-        assert_eq!(doc.get_attribute(el, "src"), Some("/wallpaper.png".to_string()));
+        assert_eq!(
+            doc.get_attribute(el, "src"),
+            Some("/wallpaper.png".to_string())
+        );
 
         doc.remove_attribute(el, "src");
         assert_eq!(doc.get_attribute(el, "src"), None);

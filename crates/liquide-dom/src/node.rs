@@ -55,9 +55,7 @@ pub enum NodeData {
         natural_height: Option<u32>,
     },
     /// Sandboxed application surface (rendered externally).
-    Surface {
-        surface_id: u64,
-    },
+    Surface { surface_id: u64 },
     /// Shadow root (for component isolation within the desktop).
     ShadowRoot,
 }

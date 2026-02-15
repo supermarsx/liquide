@@ -29,68 +29,185 @@ statusbar {
     top: 0;
     left: 0;
     width: 100%;
-    height: 28;
-    padding-left: 8;
-    padding-right: 8;
+    height: 32;
+    padding-left: 12;
+    padding-right: 12;
     align-items: center;
     z-index: 10;
-    background: rgba(20, 20, 40, 0.85);
-    border-bottom-color: rgba(255, 255, 255, 0.06);
+    background: linear-gradient(180deg, rgba(40, 40, 70, 0.92), rgba(25, 25, 50, 0.88));
+    border-bottom-color: rgba(255, 255, 255, 0.08);
     border-bottom-width: 1;
-    color: rgba(255, 255, 255, 1.0);
+    color: rgba(255, 255, 255, 0.95);
     font-size: 13;
-    blur-radius: 10;
+    font-weight: 500;
+    blur-radius: 24;
+    box-shadow-color: rgba(0, 0, 0, 0.25);
 }
 
 statusbar-slot {
     display: flex;
     align-items: center;
-    flex-grow: 1;
-    gap: 8;
+    gap: 12;
 }
 
 statusbar-slot.left {
+    flex-basis: 0;
+    flex-grow: 1;
     justify-content: flex-start;
 }
 
 statusbar-slot.center {
+    flex-shrink: 0;
     justify-content: center;
 }
 
 statusbar-slot.right {
+    flex-basis: 0;
+    flex-grow: 1;
     justify-content: flex-end;
 }
+
+/* ── Status bar items ─────────────────────────────── */
 
 statusbar-item {
     display: flex;
     align-items: center;
-    padding-left: 4;
-    padding-right: 4;
+    padding-left: 8;
+    padding-right: 8;
+    height: 22;
+    border-radius: 6;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-weight: 400;
+}
+
+statusbar-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* Clock styling - center piece */
+statusbar-item#clock {
+    font-size: 13;
+    font-weight: 500;
+    letter-spacing: 0.5;
+    color: rgba(255, 255, 255, 1.0);
+}
+
+/* ── Logo / brand area ────────────────────────────── */
+
+statusbar-logo {
+    display: flex;
+    align-items: center;
+    gap: 6;
+    padding-left: 4;
+    padding-right: 8;
+    height: 22;
+    border-radius: 6;
+    font-weight: 600;
+    font-size: 13;
+    color: rgba(100, 210, 255, 1.0);
+}
+
+statusbar-logo:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Status indicators ────────────────────────────── */
+
+status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4;
+    padding-left: 8;
+    padding-right: 8;
+    height: 22;
+    border-radius: 6;
+    font-size: 12;
+    color: rgba(255, 255, 255, 0.70);
+}
+
+status-indicator:hover {
+    background: rgba(255, 255, 255, 0.08);
 }
 
 status-indicator.connected {
-    color: rgb(48, 209, 88);
+    color: rgb(52, 199, 89);
 }
 
 status-indicator.degraded {
-    color: rgb(255, 214, 10);
+    color: rgb(255, 204, 0);
 }
 
-notification-indicator.active {
+status-indicator.disconnected {
     color: rgb(255, 69, 58);
 }
 
+/* ── Notification indicator ───────────────────────── */
+
 notification-indicator {
-    color: rgba(100, 210, 255, 0.60);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22;
+    height: 22;
+    padding-left: 6;
+    padding-right: 6;
+    border-radius: 11;
+    font-size: 11;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.60);
 }
 
+notification-indicator:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+notification-indicator.active {
+    background: rgba(255, 69, 58, 0.20);
+    color: rgb(255, 100, 90);
+}
+
+notification-indicator.dnd {
+    background: rgba(255, 149, 0, 0.20);
+    color: rgb(255, 179, 64);
+}
+
+/* ── System tray ──────────────────────────────────── */
+
 status-tray {
+    display: flex;
+    align-items: center;
+    gap: 4;
+    padding-left: 6;
+    padding-right: 6;
+    height: 22;
+    border-radius: 6;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+status-tray:hover {
     background: rgba(255, 255, 255, 0.10);
-    border-radius: 4;
-    padding: 2;
+}
+
+/* ── Session / user button ────────────────────────── */
+
+session-button {
+    display: flex;
+    align-items: center;
+    gap: 6;
+    padding-left: 8;
+    padding-right: 10;
+    height: 24;
+    border-radius: 12;
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 12;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.90);
+}
+
+session-button:hover {
+    background: rgba(255, 255, 255, 0.14);
 }
 
 /* ── Windows ───────────────────────────────────────── */
@@ -232,7 +349,7 @@ dock-item:hover {
 
 workspace-container {
     position: fixed;
-    top: 28;
+    top: 32;
     left: 0;
     width: 100%;
     bottom: 56;
@@ -245,7 +362,7 @@ notification-area {
     display: flex;
     flex-direction: column;
     position: fixed;
-    top: 36;
+    top: 40;
     right: 12;
     z-index: 20;
     gap: 8;

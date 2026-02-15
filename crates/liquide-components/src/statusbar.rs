@@ -38,6 +38,7 @@ impl StatusBarComponent<'_> {
     /// Determine the correct tag name for a status bar item.
     fn tag_for_kind(item: &StatusBarItemData) -> &'static str {
         match item {
+            StatusBarItemData::Logo { .. } => "statusbar-logo",
             StatusBarItemData::Clock { .. } => "statusbar-item",
             StatusBarItemData::NotificationIndicator { .. } => "notification-indicator",
             StatusBarItemData::ConnectionQuality { .. } => "status-indicator",
@@ -49,6 +50,7 @@ impl StatusBarComponent<'_> {
     /// Generate an ID for an item based on its variant.
     fn id_for_item(item: &StatusBarItemData, _index: usize) -> String {
         match item {
+            StatusBarItemData::Logo { .. } => "logo".to_string(),
             StatusBarItemData::Clock { .. } => "clock".to_string(),
             StatusBarItemData::NotificationIndicator { .. } => "notifications".to_string(),
             StatusBarItemData::ConnectionQuality { .. } => "connection".to_string(),
@@ -86,6 +88,7 @@ impl StatusBarComponent<'_> {
     /// Render the display text for an item.
     fn text_for_item(item: &StatusBarItemData) -> String {
         match item {
+            StatusBarItemData::Logo { name } => name.clone(),
             StatusBarItemData::Clock { time } => time.clone(),
             StatusBarItemData::NotificationIndicator { unread_count, dnd } => {
                 if *dnd {

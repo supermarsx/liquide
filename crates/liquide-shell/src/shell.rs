@@ -1288,17 +1288,24 @@ impl Shell {
         let mut center_items = Vec::new();
         let mut right_items = Vec::new();
 
+        // Add logo to left slot
+        left_items.push(StatusBarItemData::Logo {
+            name: "LiquiDE".into(),
+        });
+
         for item in self.status_bar.items() {
             use crate::status_bar::StatusBarItemKind;
             let component_item = match &item.kind {
                 StatusBarItemKind::Clock { .. } => {
-                    // Format current time
+                    // Format current time as HH:MM
                     let now = std::time::SystemTime::now();
-                    let time_str = format!(
-                        "{:02}:{:02}",
-                        (now.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() / 60) % 60,
-                        now.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 60
-                    );
+                    let secs = now
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    let hours = (secs / 3600) % 24;
+                    let minutes = (secs / 60) % 60;
+                    let time_str = format!("{:02}:{:02}", hours, minutes);
                     StatusBarItemData::Clock { time: time_str }
                 }
                 StatusBarItemKind::NotificationIndicator {
@@ -1316,12 +1323,12 @@ impl Shell {
                 },
                 StatusBarItemKind::TrayArea => StatusBarItemData::TrayArea,
                 StatusBarItemKind::SessionButton => StatusBarItemData::SessionButton {
-                    username: "user".into(),
+                    username: "User".into(),
                 },
                 StatusBarItemKind::Custom { .. } => continue,
             };
 
-            // Distribute to slots (this is simplified - real shell might have slot info)
+            // Distribute to slots
             if matches!(item.kind, StatusBarItemKind::Clock { .. }) {
                 center_items.push(component_item);
             } else {
