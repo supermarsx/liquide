@@ -1,12 +1,15 @@
 //! Painter — walks the layout tree and generates a display list.
 
 use liquide_compositor::pixel::BlendMode;
+use liquide_compositor::property_tree::FilterOp;
+use liquide_compositor::scene::{BackdropFilterSpec, FilterSpec, MaskSpec};
 use liquide_dom::{Document, NodeData};
 use liquide_layout::tree::{LayoutBoxId, LayoutTree};
 use liquide_style_engine::computed::*;
 use liquide_style_engine::StyleMap;
 
 use crate::display_list::{BorderEdge, DisplayItem, DisplayList};
+use crate::icons::icon_id_for_name;
 
 /// The painter walks the layout tree and emits paint commands.
 pub struct Painter;
@@ -82,6 +85,51 @@ impl Painter {
                 mode: style.mix_blend_mode,
             });
         }
+
+        // Push CSS filter
+        let has_filter = !style.filter.is_empty();
+        if has_filter {
+            let ops: Vec<FilterOp> = style
+                .filter
+                .iter()
+                .filter_map(|f| filter_spec_to_op(f))
+                .collect();
+            if !ops.is_empty() {
+                list.push(DisplayItem::PushFilter { filters: ops });
+            }
+        }
+
+        // Push CSS backdrop-filter
+        let has_backdrop = !style.backdrop_filter.is_empty();
+        if has_backdrop {
+            let ops: Vec<FilterOp> = style
+                .backdrop_filter
+                .iter()
+                .filter_map(|f| backdrop_spec_to_op(f))
+                .collect();
+            if !ops.is_empty() {
+                list.push(DisplayItem::PushBackdropFilter {
+                    filters: ops,
+                    bounds: layout_box.padding_rect,
+                });
+            }
+        }
+
+        // Push CSS mask
+        let has_mask = style.mask.is_some();
+        if let Some(ref mask) = style.mask {
+            let mask_image = match mask {
+                MaskSpec::Image { image_id, .. } => format!("mask-image:{}", image_id),
+                MaskSpec::Gradient { .. } => "mask-gradient".to_string(),
+            };
+            list.push(DisplayItem::PushMask {
+                mask_image,
+                rect: layout_box.padding_rect,
+            });
+        }
+
+        // Push CSS clip-path (if ComputedStyle has it in the future)
+        let has_clip_path = false;
 
         // Push clipping for overflow
         let needs_clip = matches!(
@@ -194,41 +242,36 @@ impl Painter {
                         surface_id: *surface_id,
                     });
                 }
+                NodeData::Element => {
+                    // Check for data-icon attribute (dock items, statusbar items)
+                    if let Some(icon_name) = doc.get_attribute(layout_box.node, "data-icon") {
+                        let icon_id = icon_id_for_name(&icon_name);
+                        if icon_id > 0 {
+                            list.push(DisplayItem::Icon {
+                                rect: layout_box.content_rect,
+                                icon_id,
+                                color: style.color,
+                            });
+                        }
+                    }
+                }
                 _ => {}
             }
         }
 
         // Paint outline (after content, outside border)
         if let Some(ref outline) = style.outline {
-            // Paint outline as a border with offset
-            list.push(DisplayItem::Border {
+            list.push(DisplayItem::Outline {
                 rect: liquide_layout::Rect::new(
-                    layout_box.border_rect.x - outline.width,
-                    layout_box.border_rect.y - outline.width,
-                    layout_box.border_rect.width + outline.width * 2.0,
-                    layout_box.border_rect.height + outline.width * 2.0,
+                    layout_box.border_rect.x - outline.width - outline.offset,
+                    layout_box.border_rect.y - outline.width - outline.offset,
+                    layout_box.border_rect.width + (outline.width + outline.offset) * 2.0,
+                    layout_box.border_rect.height + (outline.width + outline.offset) * 2.0,
                 ),
-                top: BorderEdge {
-                    width: outline.width,
-                    style: BorderLineStyle::Solid,
-                    color: outline.color,
-                },
-                right: BorderEdge {
-                    width: outline.width,
-                    style: BorderLineStyle::Solid,
-                    color: outline.color,
-                },
-                bottom: BorderEdge {
-                    width: outline.width,
-                    style: BorderLineStyle::Solid,
-                    color: outline.color,
-                },
-                left: BorderEdge {
-                    width: outline.width,
-                    style: BorderLineStyle::Solid,
-                    color: outline.color,
-                },
-                radius: style.border_radius.clone(),
+                width: outline.width,
+                style: BorderLineStyle::Solid, // Map outline style to border style
+                color: outline.color,
+                offset: outline.offset,
             });
         }
 
@@ -255,6 +298,18 @@ impl Painter {
         // Pop state in reverse order
         if needs_clip {
             list.push(DisplayItem::PopClip);
+        }
+        if has_clip_path {
+            list.push(DisplayItem::PopClip); // clip-path uses the same pop
+        }
+        if has_mask {
+            list.push(DisplayItem::PopMask);
+        }
+        if has_backdrop {
+            list.push(DisplayItem::PopBackdropFilter);
+        }
+        if has_filter {
+            list.push(DisplayItem::PopFilter);
         }
         if style.mix_blend_mode != BlendMode::SrcOver {
             list.push(DisplayItem::PopBlendMode);
@@ -311,6 +366,49 @@ fn flatten_transforms(transforms: &[Transform]) -> (f32, f32, f32, f32, f32) {
 
     (tx, ty, sx, sy, r)
 }
+
+/// Convert a CSS `filter` spec to a paint-layer `FilterOp`.
+fn filter_spec_to_op(spec: &FilterSpec) -> Option<FilterOp> {
+    Some(match spec {
+        FilterSpec::Blur { radius } => FilterOp::Blur(*radius),
+        FilterSpec::Brightness(v) => FilterOp::Brightness(*v),
+        FilterSpec::Contrast(v) => FilterOp::Contrast(*v),
+        FilterSpec::Saturate(v) => FilterOp::Saturate(*v),
+        FilterSpec::HueRotate(v) => FilterOp::HueRotate(*v),
+        FilterSpec::Grayscale(v) => FilterOp::Grayscale(*v),
+        FilterSpec::Sepia(v) => FilterOp::Sepia(*v),
+        FilterSpec::Invert(v) => FilterOp::Invert(*v),
+        FilterSpec::Opacity(v) => FilterOp::Opacity(*v),
+        FilterSpec::DropShadow {
+            offset_x,
+            offset_y,
+            blur,
+            color,
+        } => FilterOp::DropShadow {
+            offset_x: *offset_x,
+            offset_y: *offset_y,
+            blur_radius: *blur,
+            color: *color,
+        },
+        FilterSpec::Url(url) => FilterOp::Reference(url.clone()),
+    })
+}
+
+/// Convert a CSS `backdrop-filter` spec to a paint-layer `FilterOp`.
+fn backdrop_spec_to_op(spec: &BackdropFilterSpec) -> Option<FilterOp> {
+    Some(match spec {
+        BackdropFilterSpec::Blur { radius } => FilterOp::Blur(*radius),
+        BackdropFilterSpec::Brightness(v) => FilterOp::Brightness(*v),
+        BackdropFilterSpec::Contrast(v) => FilterOp::Contrast(*v),
+        BackdropFilterSpec::Saturate(v) => FilterOp::Saturate(*v),
+        BackdropFilterSpec::HueRotate(v) => FilterOp::HueRotate(*v),
+        BackdropFilterSpec::Grayscale(v) => FilterOp::Grayscale(*v),
+        BackdropFilterSpec::Sepia(v) => FilterOp::Sepia(*v),
+        BackdropFilterSpec::Invert(v) => FilterOp::Invert(*v),
+        BackdropFilterSpec::Opacity(v) => FilterOp::Opacity(*v),
+    })
+}
+
 
 #[cfg(test)]
 mod tests {

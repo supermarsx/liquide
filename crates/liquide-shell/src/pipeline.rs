@@ -14,11 +14,16 @@
 //! 4. **Bridge** — `DisplayList` → `Vec<SceneNode>` (this module)
 
 use liquide_compositor::geometry::Rect as CRect;
+use liquide_compositor::property_tree::{
+    ClipNode, EffectNode, PropertyTrees, RenderSurfaceReason,
+    TransformNode, ROOT_NODE_ID,
+};
 use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
 use liquide_dom::Document;
 use liquide_layout::{DefaultTextMeasurer, LayoutEngine, LayoutTree, Size};
 use liquide_paint::{DisplayItem, DisplayList, Painter};
+use liquide_style_engine::computed::BorderLineStyle;
 use liquide_style_engine::engine::ViewportSize;
 use liquide_style_engine::{StyleEngine, StyleMap};
 
@@ -315,6 +320,51 @@ impl DesktopPipeline {
                     }
                 }
 
+                // ── New state ops: filter, backdrop-filter, mask, save/restore ──
+                DisplayItem::PushFilter { .. } => {
+                    stack.push(current.clone());
+                }
+                DisplayItem::PopFilter => {
+                    if let Some(prev) = stack.pop() {
+                        current = prev;
+                    }
+                }
+
+                DisplayItem::PushBackdropFilter { .. } => {
+                    stack.push(current.clone());
+                }
+                DisplayItem::PopBackdropFilter => {
+                    if let Some(prev) = stack.pop() {
+                        current = prev;
+                    }
+                }
+
+                DisplayItem::PushMask { .. } => {
+                    stack.push(current.clone());
+                }
+                DisplayItem::PopMask => {
+                    if let Some(prev) = stack.pop() {
+                        current = prev;
+                    }
+                }
+
+                DisplayItem::PushClipPath { .. } => {
+                    stack.push(current.clone());
+                }
+
+                DisplayItem::SaveLayer { .. } => {
+                    stack.push(current.clone());
+                }
+                DisplayItem::RestoreLayer => {
+                    if let Some(prev) = stack.pop() {
+                        current = prev;
+                    }
+                }
+
+                DisplayItem::Annotate { .. } | DisplayItem::Noop => {
+                    // Non-renderable — skip
+                }
+
                 // ── Renderable items ────────────────────────
                 other => {
                     if let Some(mut node) = self.display_item_to_scene(other, z) {
@@ -337,6 +387,205 @@ impl DesktopPipeline {
         }
 
         nodes
+    }
+
+    /// Build compositor property trees from a pipeline output.
+    ///
+    /// Walks the display list and the layout tree together to produce
+    /// four property trees (Transform, Clip, Effect, Scroll) that model
+    /// the compositing hierarchy. This is needed for:
+    /// - Efficient compositor-side animations (update a transform without re-layout)
+    /// - Correct render surface allocation (filters, opacity, blend modes)
+    /// - Scroll-linked transforms and clip computation
+    pub fn build_property_trees(&self, output: &PipelineOutput) -> PropertyTrees {
+        use liquide_compositor::geometry::Affine2D;
+
+        let mut trees = PropertyTrees::new();
+
+        // Track parent IDs as we walk the display list Push/Pop structure
+        let mut transform_stack: Vec<u32> = vec![ROOT_NODE_ID];
+        let mut clip_stack: Vec<u32> = vec![ROOT_NODE_ID];
+        let mut effect_stack: Vec<u32> = vec![ROOT_NODE_ID];
+
+        for item in &output.display_list.items {
+            match item {
+                DisplayItem::PushTransform {
+                    translate_x,
+                    translate_y,
+                    scale_x,
+                    scale_y,
+                    rotate,
+                } => {
+                    let parent = *transform_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let mut local = Affine2D::identity();
+                    if *translate_x != 0.0 || *translate_y != 0.0 {
+                        local = local.then(&Affine2D::translation(*translate_x, *translate_y));
+                    }
+                    if *scale_x != 1.0 || *scale_y != 1.0 {
+                        local = local.then(&Affine2D::scale(*scale_x, *scale_y));
+                    }
+                    if *rotate != 0.0 {
+                        local = local.then(&Affine2D::rotation(*rotate));
+                    }
+                    let node = TransformNode {
+                        parent,
+                        local,
+                        ..Default::default()
+                    };
+                    let id = trees.transform_tree.insert(node);
+                    transform_stack.push(id);
+                }
+                DisplayItem::PopTransform => {
+                    if transform_stack.len() > 1 {
+                        transform_stack.pop();
+                    }
+                }
+
+                DisplayItem::PushClip { rect, .. } => {
+                    let parent = *clip_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let transform_id = *transform_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let node = ClipNode {
+                        parent,
+                        clip_rect: liquide_compositor::geometry::Rect {
+                            x: rect.x,
+                            y: rect.y,
+                            width: rect.width,
+                            height: rect.height,
+                        },
+                        transform_id,
+                        ..Default::default()
+                    };
+                    let id = trees.clip_tree.insert(node);
+                    clip_stack.push(id);
+                }
+                DisplayItem::PopClip => {
+                    if clip_stack.len() > 1 {
+                        clip_stack.pop();
+                    }
+                }
+
+                DisplayItem::PushOpacity { opacity } => {
+                    let parent = *effect_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let node = EffectNode {
+                        parent,
+                        opacity: *opacity,
+                        render_surface_reason: RenderSurfaceReason::Opacity,
+                        transform_id: *transform_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        clip_id: *clip_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        ..Default::default()
+                    };
+                    let id = trees.effect_tree.insert(node);
+                    effect_stack.push(id);
+                }
+                DisplayItem::PopOpacity => {
+                    if effect_stack.len() > 1 {
+                        effect_stack.pop();
+                    }
+                }
+
+                DisplayItem::PushBlendMode { mode } => {
+                    let parent = *effect_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let node = EffectNode {
+                        parent,
+                        blend_mode: *mode,
+                        render_surface_reason: RenderSurfaceReason::BlendMode,
+                        transform_id: *transform_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        clip_id: *clip_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        ..Default::default()
+                    };
+                    let id = trees.effect_tree.insert(node);
+                    effect_stack.push(id);
+                }
+                DisplayItem::PopBlendMode => {
+                    if effect_stack.len() > 1 {
+                        effect_stack.pop();
+                    }
+                }
+
+                DisplayItem::PushFilter { filters } => {
+                    let parent = *effect_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let node = EffectNode {
+                        parent,
+                        filters: filters.clone(),
+                        render_surface_reason: RenderSurfaceReason::Filter,
+                        transform_id: *transform_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        clip_id: *clip_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        ..Default::default()
+                    };
+                    let id = trees.effect_tree.insert(node);
+                    effect_stack.push(id);
+                }
+                DisplayItem::PopFilter => {
+                    if effect_stack.len() > 1 {
+                        effect_stack.pop();
+                    }
+                }
+
+                DisplayItem::PushBackdropFilter { filters, .. } => {
+                    let parent = *effect_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let node = EffectNode {
+                        parent,
+                        backdrop_filters: filters.clone(),
+                        render_surface_reason: RenderSurfaceReason::BackdropFilter,
+                        transform_id: *transform_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        clip_id: *clip_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        ..Default::default()
+                    };
+                    let id = trees.effect_tree.insert(node);
+                    effect_stack.push(id);
+                }
+                DisplayItem::PopBackdropFilter => {
+                    if effect_stack.len() > 1 {
+                        effect_stack.pop();
+                    }
+                }
+
+                DisplayItem::PushMask { .. } => {
+                    let parent = *effect_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let node = EffectNode {
+                        parent,
+                        render_surface_reason: RenderSurfaceReason::Mask,
+                        transform_id: *transform_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        clip_id: *clip_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        ..Default::default()
+                    };
+                    let id = trees.effect_tree.insert(node);
+                    effect_stack.push(id);
+                }
+                DisplayItem::PopMask => {
+                    if effect_stack.len() > 1 {
+                        effect_stack.pop();
+                    }
+                }
+
+                DisplayItem::PushStackingContext { z_index: _, isolation } => {
+                    let parent = *effect_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let node = EffectNode {
+                        parent,
+                        is_isolated: *isolation == liquide_style_engine::computed::Isolation::Isolate,
+                        transform_id: *transform_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        clip_id: *clip_stack.last().unwrap_or(&ROOT_NODE_ID),
+                        ..Default::default()
+                    };
+                    let id = trees.effect_tree.insert(node);
+                    effect_stack.push(id);
+                }
+                DisplayItem::PopStackingContext => {
+                    if effect_stack.len() > 1 {
+                        effect_stack.pop();
+                    }
+                }
+
+                // Non-structural items don't affect the trees
+                _ => {}
+            }
+        }
+
+        // Compute cached values
+        trees.update_transform_cache();
+        trees.update_clip_cache();
+
+        trees
     }
 
     /// Map a single DisplayItem to a SceneNode.
@@ -504,19 +753,232 @@ impl DesktopPipeline {
                 Some(node)
             }
 
+            DisplayItem::ImageRect { rect, src, fit, .. } => {
+                let bounds = to_compositor_rect(rect);
+                let scene_fit = match fit {
+                    liquide_paint::display_list::ImageFit::Fill => liquide_compositor::scene::ImageFit::Fill,
+                    liquide_paint::display_list::ImageFit::Contain => liquide_compositor::scene::ImageFit::Contain,
+                    liquide_paint::display_list::ImageFit::Cover => liquide_compositor::scene::ImageFit::Cover,
+                    liquide_paint::display_list::ImageFit::ScaleDown | liquide_paint::display_list::ImageFit::None => liquide_compositor::scene::ImageFit::None,
+                };
+                let node = SceneNode::new(
+                    id,
+                    SceneNodeKind::Image {
+                        image_id: hash_string(src),
+                        width: bounds.width as u32,
+                        height: bounds.height as u32,
+                        fit: scene_fit,
+                    },
+                    NodeProperties::new(bounds).with_z_order(z),
+                );
+                Some(node)
+            }
+
+            DisplayItem::LinearGradient { rect, angle_deg, stops, .. } => {
+                let bounds = to_compositor_rect(rect);
+                // Convert angle to start/end points (normalized 0..1)
+                let angle_rad = angle_deg.to_radians();
+                let (start_x, start_y, end_x, end_y) = (
+                    0.5 - 0.5 * angle_rad.sin(),
+                    0.5 + 0.5 * angle_rad.cos(),
+                    0.5 + 0.5 * angle_rad.sin(),
+                    0.5 - 0.5 * angle_rad.cos(),
+                );
+                let gradient = liquide_compositor::scene::GradientSpec::Linear {
+                    start_x, start_y, end_x, end_y,
+                    stops: stops.iter().map(|s| (s.offset, s.color)).collect(),
+                };
+                let node = SceneNode::new(
+                    id,
+                    SceneNodeKind::GradientFill { gradient },
+                    NodeProperties::new(bounds).with_z_order(z),
+                );
+                Some(node)
+            }
+
+            DisplayItem::RadialGradient { rect, center_x, center_y, radius_x, stops, .. } => {
+                let bounds = to_compositor_rect(rect);
+                let gradient = liquide_compositor::scene::GradientSpec::Radial {
+                    center_x: *center_x,
+                    center_y: *center_y,
+                    radius: *radius_x,
+                    stops: stops.iter().map(|s| (s.offset, s.color)).collect(),
+                };
+                let node = SceneNode::new(
+                    id,
+                    SceneNodeKind::GradientFill { gradient },
+                    NodeProperties::new(bounds).with_z_order(z),
+                );
+                Some(node)
+            }
+
+            DisplayItem::ConicGradient { rect, center_x, center_y, angle_deg, stops } => {
+                let bounds = to_compositor_rect(rect);
+                let gradient = liquide_compositor::scene::GradientSpec::Conic {
+                    center_x: *center_x,
+                    center_y: *center_y,
+                    start_angle: *angle_deg,
+                    stops: stops.iter().map(|s| (s.offset, s.color)).collect(),
+                };
+                let node = SceneNode::new(
+                    id,
+                    SceneNodeKind::GradientFill { gradient },
+                    NodeProperties::new(bounds).with_z_order(z),
+                );
+                Some(node)
+            }
+
+            DisplayItem::Outline { rect, width, style, color, offset } => {
+                let bounds = to_compositor_rect(rect);
+                let node = SceneNode::new(
+                    id,
+                    SceneNodeKind::Outline {
+                        outline: liquide_compositor::scene::OutlineSpec {
+                            width: *width,
+                            style: match style {
+                                BorderLineStyle::Dotted => liquide_compositor::scene::OutlineStyle::Dotted,
+                                BorderLineStyle::Dashed => liquide_compositor::scene::OutlineStyle::Dashed,
+                                BorderLineStyle::Double => liquide_compositor::scene::OutlineStyle::Double,
+                                _ => liquide_compositor::scene::OutlineStyle::Solid,
+                            },
+                            color: *color,
+                            offset: *offset,
+                        },
+                    },
+                    NodeProperties::new(bounds).with_z_order(z),
+                );
+                Some(node)
+            }
+
+            DisplayItem::FillRect { rect, color } => {
+                if color.a == 0 {
+                    return None;
+                }
+                let bounds = to_compositor_rect(rect);
+                Some(SceneNode::new(
+                    id,
+                    SceneNodeKind::Background { color: *color },
+                    NodeProperties::new(bounds).with_z_order(z),
+                ))
+            }
+
+            DisplayItem::StrokeRoundedRect { rect, color, width, .. } => {
+                let bounds = to_compositor_rect(rect);
+                let side = liquide_compositor::scene::BorderSide {
+                    width: *width,
+                    style: liquide_compositor::scene::BorderSideStyle::Solid,
+                    color: *color,
+                };
+                Some(SceneNode::new(
+                    id,
+                    SceneNodeKind::Border {
+                        sides: liquide_compositor::scene::BorderSides {
+                            top: side.clone(),
+                            right: side.clone(),
+                            bottom: side.clone(),
+                            left: side,
+                        },
+                        radius: (0.0, 0.0, 0.0, 0.0),
+                    },
+                    NodeProperties::new(bounds).with_z_order(z),
+                ))
+            }
+
+            DisplayItem::Line { x1, y1, x2, y2, color, width } => {
+                let min_x = x1.min(*x2);
+                let min_y = y1.min(*y2);
+                let w = (x1 - x2).abs().max(*width);
+                let h = (y1 - y2).abs().max(*width);
+                let bounds = CRect::new(min_x, min_y, w, h);
+                Some(SceneNode::new(
+                    id,
+                    SceneNodeKind::Background { color: *color },
+                    NodeProperties::new(bounds).with_z_order(z),
+                ))
+            }
+
+            DisplayItem::TextRun { rect, text, color, font_size, font_family, font_weight, .. } => {
+                let bounds = to_compositor_rect(rect);
+                Some(SceneNode::new(
+                    id,
+                    SceneNodeKind::Text {
+                        text: text.clone(),
+                        color: *color,
+                        scale: 1,
+                        font_family: font_family.clone(),
+                        font_size: *font_size,
+                        font_weight: *font_weight,
+                        font_style_italic: false,
+                        letter_spacing: 0.0,
+                        word_spacing: 0.0,
+                        line_height: font_size * 1.2,
+                        text_align: 0,
+                        text_transform: 0,
+                        text_overflow: 0,
+                        white_space: 0,
+                        text_indent: 0.0,
+                        text_decoration: None,
+                        text_shadows: Vec::new(),
+                    },
+                    NodeProperties::new(bounds).with_z_order(z),
+                ))
+            }
+
+            DisplayItem::BorderImage { rect, source, .. } => {
+                let bounds = to_compositor_rect(rect);
+                Some(SceneNode::new(
+                    id,
+                    SceneNodeKind::Image {
+                        image_id: hash_string(source),
+                        width: bounds.width as u32,
+                        height: bounds.height as u32,
+                        fit: liquide_compositor::scene::ImageFit::Fill,
+                    },
+                    NodeProperties::new(bounds).with_z_order(z),
+                ))
+            }
+
             // Push/Pop items are handled by display_list_to_scene's state stack.
             // They should never reach this method.
             DisplayItem::PushClip { .. }
             | DisplayItem::PopClip
+            | DisplayItem::PushClipPath { .. }
             | DisplayItem::PushOpacity { .. }
             | DisplayItem::PopOpacity
             | DisplayItem::PushTransform { .. }
             | DisplayItem::PopTransform
             | DisplayItem::PushBlendMode { .. }
             | DisplayItem::PopBlendMode
+            | DisplayItem::PushFilter { .. }
+            | DisplayItem::PopFilter
+            | DisplayItem::PushBackdropFilter { .. }
+            | DisplayItem::PopBackdropFilter
+            | DisplayItem::PushMask { .. }
+            | DisplayItem::PopMask
             | DisplayItem::PushStackingContext { .. }
-            | DisplayItem::PopStackingContext => {
-                unreachable!("Push/Pop items should be handled by display_list_to_scene")
+            | DisplayItem::PopStackingContext
+            | DisplayItem::SaveLayer { .. }
+            | DisplayItem::RestoreLayer
+            | DisplayItem::Annotate { .. }
+            | DisplayItem::Noop => {
+                None // state ops should be handled by the display_list_to_scene loop
+            }
+
+            DisplayItem::Icon {
+                rect,
+                icon_id,
+                color,
+            } => {
+                let bounds = to_compositor_rect(rect);
+                let node = SceneNode::new(
+                    id,
+                    SceneNodeKind::Icon {
+                        icon_id: *icon_id,
+                        color: *color,
+                    },
+                    NodeProperties::new(bounds).with_z_order(z),
+                );
+                Some(node)
             }
 
             DisplayItem::Surface { rect, surface_id } => {

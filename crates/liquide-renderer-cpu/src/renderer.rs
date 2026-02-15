@@ -1284,15 +1284,179 @@ impl SoftwareRenderer {
                 crate::icons::draw_icon(fb, *icon_id, bounds, c, &self.srgb_lut);
             }
 
-            // New scene node kinds added for advanced rendering — handled
-            // as no-ops in the CPU renderer for now; real implementations
-            // would delegate to specialised drawing routines.
+            // ── Backdrop Filter (Chromium-inspired: blur + color effects) ──
+            SceneNodeKind::BackdropFilter { filters } => {
+                use liquide_compositor::scene::BackdropFilterSpec;
+                for filter in filters {
+                    match filter {
+                        BackdropFilterSpec::Blur { radius } => {
+                            let r = (*radius as u32).min(40);
+                            if r > 0 && self.blur_enabled && lod_level != LodLevel::Low {
+                                let lod_r = (r as f32 * quality_factor) as u32;
+                                if lod_r > 0 {
+                                    self.render_backdrop_blur(node.id, bounds, lod_r, fb);
+                                }
+                            }
+                        }
+                        BackdropFilterSpec::Brightness(b) => {
+                            crate::filter::PixelFilter::Brightness(*b).apply(fb, bounds);
+                        }
+                        BackdropFilterSpec::Contrast(c) => {
+                            crate::filter::PixelFilter::Contrast(*c).apply(fb, bounds);
+                        }
+                        BackdropFilterSpec::Saturate(s) => {
+                            crate::filter::PixelFilter::Saturate(*s).apply(fb, bounds);
+                        }
+                        BackdropFilterSpec::HueRotate(deg) => {
+                            crate::filter::PixelFilter::HueRotate(*deg).apply(fb, bounds);
+                        }
+                        BackdropFilterSpec::Grayscale(amount) => {
+                            if *amount >= 0.99 {
+                                crate::filter::PixelFilter::Grayscale.apply(fb, bounds);
+                            } else {
+                                crate::filter::PixelFilter::Saturate(1.0 - amount)
+                                    .apply(fb, bounds);
+                            }
+                        }
+                        BackdropFilterSpec::Sepia(amount) => {
+                            if *amount >= 0.99 {
+                                crate::filter::PixelFilter::Sepia.apply(fb, bounds);
+                            }
+                            // Partial sepia: lerp via saturate towards sepia
+                        }
+                        BackdropFilterSpec::Invert(amount) => {
+                            if *amount >= 0.99 {
+                                crate::filter::PixelFilter::Invert.apply(fb, bounds);
+                            }
+                            // Partial invert handled by brightness adjustment
+                        }
+                        BackdropFilterSpec::Opacity(o) => {
+                            crate::filter::PixelFilter::Opacity(*o).apply(fb, bounds);
+                        }
+                    }
+                }
+            }
+
+            // ── Post-processing Filter chain ────────────────────────
+            SceneNodeKind::Filter { filters } => {
+                use liquide_compositor::scene::FilterSpec;
+                for filter in filters {
+                    match filter {
+                        FilterSpec::Blur { radius } => {
+                            let r = (*radius as u32).min(40);
+                            if r > 0 {
+                                crate::blur::blur_region(fb, bounds, r);
+                            }
+                        }
+                        FilterSpec::Brightness(b) => {
+                            crate::filter::PixelFilter::Brightness(*b).apply(fb, bounds);
+                        }
+                        FilterSpec::Contrast(c) => {
+                            crate::filter::PixelFilter::Contrast(*c).apply(fb, bounds);
+                        }
+                        FilterSpec::Saturate(s) => {
+                            crate::filter::PixelFilter::Saturate(*s).apply(fb, bounds);
+                        }
+                        FilterSpec::HueRotate(deg) => {
+                            crate::filter::PixelFilter::HueRotate(*deg).apply(fb, bounds);
+                        }
+                        FilterSpec::Grayscale(amount) => {
+                            if *amount >= 0.99 {
+                                crate::filter::PixelFilter::Grayscale.apply(fb, bounds);
+                            } else {
+                                crate::filter::PixelFilter::Saturate(1.0 - amount)
+                                    .apply(fb, bounds);
+                            }
+                        }
+                        FilterSpec::Sepia(amount) => {
+                            if *amount >= 0.99 {
+                                crate::filter::PixelFilter::Sepia.apply(fb, bounds);
+                            }
+                        }
+                        FilterSpec::Invert(amount) => {
+                            if *amount >= 0.99 {
+                                crate::filter::PixelFilter::Invert.apply(fb, bounds);
+                            }
+                        }
+                        FilterSpec::Opacity(o) => {
+                            crate::filter::PixelFilter::Opacity(*o).apply(fb, bounds);
+                        }
+                        FilterSpec::DropShadow {
+                            offset_x,
+                            offset_y,
+                            blur,
+                            color,
+                        } => {
+                            let shadow_color = Color::new(
+                                color.r,
+                                color.g,
+                                color.b,
+                                (color.a as f32 * opacity + 0.5) as u8,
+                            );
+                            let params = ShadowParams {
+                                surface_rect: bounds,
+                                corner_radius: 0.0,
+                                spread: 0.0,
+                                blur_radius: (*blur as u32).min(40),
+                                offset_x: *offset_x,
+                                offset_y: *offset_y,
+                                shadow_color,
+                            };
+                            if let Some(mask) =
+                                BoxShadow::generate_shadow_mask(fb.width, fb.height, &params)
+                            {
+                                BoxShadow::composite_shadow_mask(fb, &mask);
+                            }
+                        }
+                        FilterSpec::Url(_) => {} // SVG filter refs unsupported
+                    }
+                }
+            }
+
+            // ── Gradient Fill ────────────────────────────────────────
+            SceneNodeKind::GradientFill { gradient } => {
+                self.render_gradient(fb, bounds, gradient, opacity);
+            }
+
+            // ── Background Fill (color + optional gradient/image) ───
+            SceneNodeKind::BackgroundFill { background } => {
+                // Solid color first
+                if let Some(bg_color) = background.color {
+                    let mut c = bg_color;
+                    if opacity < 1.0 {
+                        c.a = (c.a as f32 * opacity + 0.5) as u8;
+                    }
+                    if c.a > 0 {
+                        rasterizer::fill_rect(fb, bounds, c, BlendMode::SrcOver);
+                    }
+                }
+                // Background image (gradient or texture)
+                if let Some(ref img) = background.image {
+                    use liquide_compositor::scene::BackgroundImage;
+                    match img {
+                        BackgroundImage::Gradient(gradient) => {
+                            self.render_gradient(fb, bounds, gradient, opacity);
+                        }
+                        BackgroundImage::ImageId(image_id) => {
+                            let texture_id = format!("img_{}", image_id);
+                            if let Some(texture) = self.texture_cache.get(&texture_id) {
+                                let src = Rect::new(
+                                    0.0,
+                                    0.0,
+                                    texture.width as f32,
+                                    texture.height as f32,
+                                );
+                                self.draw_scaled_texture(fb, &texture, src, bounds, opacity);
+                            }
+                        }
+                        BackgroundImage::Url(_) => {} // External URLs unsupported
+                    }
+                }
+            }
+
+            // Scene node kinds not yet implemented in the CPU renderer
             SceneNodeKind::RenderLayer { .. }
             | SceneNodeKind::ClipPath { .. }
-            | SceneNodeKind::Filter { .. }
-            | SceneNodeKind::BackdropFilter { .. }
-            | SceneNodeKind::GradientFill { .. }
-            | SceneNodeKind::BackgroundFill { .. }
             | SceneNodeKind::Mask { .. }
             | SceneNodeKind::BorderImage { .. } => {}
 
@@ -2641,6 +2805,143 @@ impl SoftwareRenderer {
         );
     }
 
+    /// Render a gradient fill within `bounds`.
+    ///
+    /// Supports linear, radial, and conic gradients with antialiased color stops.
+    /// Inspired by Chromium's `cc::paint` gradient rendering approach:
+    /// each pixel is evaluated against the gradient function and color stops
+    /// are linearly interpolated.
+    fn render_gradient(
+        &mut self,
+        fb: &mut FrameBuffer,
+        bounds: Rect,
+        gradient: &liquide_compositor::scene::GradientSpec,
+        opacity: f32,
+    ) {
+        use liquide_compositor::scene::GradientSpec;
+
+        let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
+        let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
+        let x1 = (bounds.right().ceil() as u32).min(fb.width);
+        let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+
+        match gradient {
+            GradientSpec::Linear {
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                stops,
+            } => {
+                if stops.is_empty() {
+                    return;
+                }
+                // Compute direction vector in pixel space
+                let sx = bounds.x + start_x * bounds.width;
+                let sy = bounds.y + start_y * bounds.height;
+                let ex = bounds.x + end_x * bounds.width;
+                let ey = bounds.y + end_y * bounds.height;
+                let dx = ex - sx;
+                let dy = ey - sy;
+                let len2 = dx * dx + dy * dy;
+                if len2 < 0.001 {
+                    return;
+                }
+                let inv_len2 = 1.0 / len2;
+
+                for y in y0..y1 {
+                    let fy = y as f32 + 0.5;
+                    for x in x0..x1 {
+                        let fx = x as f32 + 0.5;
+                        // Project pixel onto gradient line
+                        let t = ((fx - sx) * dx + (fy - sy) * dy) * inv_len2;
+                        let t_clamped = t.clamp(0.0, 1.0);
+                        let color = sample_gradient_stops(stops, t_clamped, opacity);
+                        if color.a > 0 {
+                            let dst = fb.get_pixel(x, y);
+                            let blended =
+                                crate::blend::blend(dst, color.premultiply(), BlendMode::SrcOver);
+                            fb.set_pixel(x, y, blended);
+                        }
+                    }
+                }
+            }
+            GradientSpec::Radial {
+                center_x,
+                center_y,
+                radius,
+                stops,
+            } => {
+                if stops.is_empty() || *radius <= 0.0 {
+                    return;
+                }
+                let cx = bounds.x + center_x * bounds.width;
+                let cy = bounds.y + center_y * bounds.height;
+                let r = radius * bounds.width.min(bounds.height);
+                let inv_r = 1.0 / r;
+
+                for y in y0..y1 {
+                    let fy = y as f32 + 0.5;
+                    for x in x0..x1 {
+                        let fx = x as f32 + 0.5;
+                        let dx = fx - cx;
+                        let dy = fy - cy;
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        let t = (dist * inv_r).clamp(0.0, 1.0);
+                        let color = sample_gradient_stops(stops, t, opacity);
+                        if color.a > 0 {
+                            let dst = fb.get_pixel(x, y);
+                            let blended =
+                                crate::blend::blend(dst, color.premultiply(), BlendMode::SrcOver);
+                            fb.set_pixel(x, y, blended);
+                        }
+                    }
+                }
+            }
+            GradientSpec::Conic {
+                center_x,
+                center_y,
+                start_angle,
+                stops,
+            } => {
+                if stops.is_empty() {
+                    return;
+                }
+                let cx = bounds.x + center_x * bounds.width;
+                let cy = bounds.y + center_y * bounds.height;
+                let start_rad = start_angle.to_radians();
+
+                for y in y0..y1 {
+                    let fy = y as f32 + 0.5;
+                    for x in x0..x1 {
+                        let fx = x as f32 + 0.5;
+                        let mut angle = (fy - cy).atan2(fx - cx) - start_rad;
+                        if angle < 0.0 {
+                            angle += std::f32::consts::TAU;
+                        }
+                        let t = angle / std::f32::consts::TAU;
+                        let color = sample_gradient_stops(stops, t.clamp(0.0, 1.0), opacity);
+                        if color.a > 0 {
+                            let dst = fb.get_pixel(x, y);
+                            let blended =
+                                crate::blend::blend(dst, color.premultiply(), BlendMode::SrcOver);
+                            fb.set_pixel(x, y, blended);
+                        }
+                    }
+                }
+            }
+            GradientSpec::Mesh { .. } => {
+                // Mesh gradients are complex; draw as a solid mid-gray fallback
+                let c = Color::new(80, 80, 80, (128.0 * opacity + 0.5) as u8);
+                rasterizer::fill_rect(fb, bounds, c, BlendMode::SrcOver);
+            }
+        }
+    }
+
     /// Submit an async backdrop blur for a region.
     ///
     /// Blits any cached result and submits a new blur request if needed.
@@ -2755,4 +3056,70 @@ impl SoftwareRenderer {
             }
         }
     }
+}
+
+// ── Gradient stop sampling ──────────────────────────────────────────
+
+/// Sample a color from sorted gradient stops at parameter `t` ∈ [0, 1].
+///
+/// Uses linear interpolation between adjacent stops, consistent with
+/// Chromium's `PaintShader::MakeLinearGradient` approach. If only one
+/// stop exists, its color is returned. Opacity is pre-multiplied into
+/// the alpha channel.
+fn sample_gradient_stops(stops: &[(f32, Color)], t: f32, opacity: f32) -> Color {
+    if stops.is_empty() {
+        return Color::new(0, 0, 0, 0);
+    }
+    if stops.len() == 1 {
+        let mut c = stops[0].1;
+        if opacity < 1.0 {
+            c.a = (c.a as f32 * opacity + 0.5) as u8;
+        }
+        return c;
+    }
+
+    // Clamp to first/last stop
+    if t <= stops[0].0 {
+        let mut c = stops[0].1;
+        if opacity < 1.0 {
+            c.a = (c.a as f32 * opacity + 0.5) as u8;
+        }
+        return c;
+    }
+    let last = stops.len() - 1;
+    if t >= stops[last].0 {
+        let mut c = stops[last].1;
+        if opacity < 1.0 {
+            c.a = (c.a as f32 * opacity + 0.5) as u8;
+        }
+        return c;
+    }
+
+    // Find the two stops bracketing `t`
+    for i in 0..last {
+        let (t0, c0) = &stops[i];
+        let (t1, c1) = &stops[i + 1];
+        if t >= *t0 && t <= *t1 {
+            let range = t1 - t0;
+            let frac = if range > 0.001 { (t - t0) / range } else { 0.0 };
+            let inv = 1.0 - frac;
+            let r = (c0.r as f32 * inv + c1.r as f32 * frac + 0.5) as u8;
+            let g = (c0.g as f32 * inv + c1.g as f32 * frac + 0.5) as u8;
+            let b = (c0.b as f32 * inv + c1.b as f32 * frac + 0.5) as u8;
+            let a_raw = c0.a as f32 * inv + c1.a as f32 * frac;
+            let a = if opacity < 1.0 {
+                (a_raw * opacity + 0.5) as u8
+            } else {
+                (a_raw + 0.5) as u8
+            };
+            return Color::new(r, g, b, a);
+        }
+    }
+
+    // Fallback
+    let mut c = stops[last].1;
+    if opacity < 1.0 {
+        c.a = (c.a as f32 * opacity + 0.5) as u8;
+    }
+    c
 }

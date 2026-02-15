@@ -7,6 +7,7 @@ use liquide_dom::{Document, NodeId};
 use liquide_theme_css::property::PropertySet;
 use liquide_theme_css::ThemeParser;
 
+use crate::cascade::{CascadeDeclaration, CascadeMap, CascadePriority};
 use crate::computed::*;
 use crate::dimension::Sides;
 use crate::selector::ComplexSelector;
@@ -153,26 +154,36 @@ impl StyleEngine {
             return style;
         }
 
-        // Collect matching rules sorted by (specificity, source_order)
-        let mut matching: Vec<&PreparedRule> = Vec::new();
+        // ── Full cascade via CascadeMap ──
+        let mut cascade = CascadeMap::new();
+
         for sheet in &self.sheets {
             for rule in &sheet.rules {
                 if rule.selector.matches(doc, node_id) {
-                    matching.push(rule);
+                    let priority = CascadePriority::author(
+                        rule.specificity,
+                        rule.source_order,
+                    );
+                    cascade.add_properties(&rule.properties, priority);
                 }
             }
         }
 
-        // Sort: lower specificity first, so later (higher) overwrites
-        matching.sort_by(|a, b| {
-            a.specificity
-                .cmp(&b.specificity)
-                .then(a.source_order.cmp(&b.source_order))
-        });
+        // Inline styles
+        let mut inline_order = 0u32;
+        for (prop, value) in node.inline_styles.iter() {
+            let pv = parse_inline_value(value);
+            cascade.add(CascadeDeclaration {
+                property: prop.to_string(),
+                value: pv,
+                priority: CascadePriority::inline(inline_order),
+            });
+            inline_order += 1;
+        }
 
-        // Apply rules in cascade order (lowest specificity first)
-        for rule in &matching {
-            self.apply_properties(&rule.properties, &mut style);
+        let resolved = cascade.resolve();
+        for (prop, val) in &resolved {
+            self.apply_single_property(prop, val, &mut style);
         }
 
         style
@@ -212,27 +223,38 @@ impl StyleEngine {
         }
 
         if !node.is_text() {
-            // Collect matching rules
-            let mut matching: Vec<&PreparedRule> = Vec::new();
+            // ── Full cascade via CascadeMap ──
+            let mut cascade = CascadeMap::new();
+
+            // Collect matching rules and add to cascade with proper priority
             for sheet in &self.sheets {
                 for rule in &sheet.rules {
                     if rule.selector.matches(doc, node_id) {
-                        matching.push(rule);
+                        let priority = CascadePriority::author(
+                            rule.specificity,
+                            rule.source_order,
+                        );
+                        cascade.add_properties(&rule.properties, priority);
                     }
                 }
             }
-            matching.sort_by(|a, b| {
-                a.specificity
-                    .cmp(&b.specificity)
-                    .then(a.source_order.cmp(&b.source_order))
-            });
-            for rule in &matching {
-                self.apply_properties(&rule.properties, &mut style);
+
+            // Add inline styles with highest author priority
+            let mut inline_order = 0u32;
+            for (prop, value) in node.inline_styles.iter() {
+                let pv = parse_inline_value(value);
+                cascade.add(CascadeDeclaration {
+                    property: prop.to_string(),
+                    value: pv,
+                    priority: CascadePriority::inline(inline_order),
+                });
+                inline_order += 1;
             }
 
-            // Apply inline styles (highest specificity — after all CSS rules)
-            for (prop, value) in node.inline_styles.iter() {
-                self.apply_inline_style(prop, value, &mut style);
+            // Resolve the cascade and apply winners
+            let resolved = cascade.resolve();
+            for (prop, val) in &resolved {
+                self.apply_single_property(prop, val, &mut style);
             }
         }
 
@@ -265,20 +287,6 @@ impl StyleEngine {
     }
 
     // ── Private: apply property values to ComputedStyle ──
-
-    fn apply_properties(&self, properties: &PropertySet, style: &mut ComputedStyle) {
-        for (key, val) in properties.iter() {
-            self.apply_single_property(key, val, style);
-        }
-    }
-
-    /// Apply an inline style (string value) directly to computed style.
-    /// Inline styles have highest specificity and override CSS rules.
-    fn apply_inline_style(&self, property: &str, value: &str, style: &mut ComputedStyle) {
-        // Parse value string into a PropertyValue and apply
-        let pv = parse_inline_value(value);
-        self.apply_single_property(property, &pv, style);
-    }
 
     fn apply_single_property(
         &self,
@@ -407,6 +415,64 @@ impl StyleEngine {
             "bottom" => style.bottom = resolve_dimension(val),
             "left" => style.left = resolve_dimension(val),
             "z-index" => style.z_index = Some(resolve_number(val) as i32),
+
+            // Float & clear
+            "float" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.float = match kw.as_str() {
+                        "left" => Float::Left,
+                        "right" => Float::Right,
+                        "inline-start" => Float::InlineStart,
+                        "inline-end" => Float::InlineEnd,
+                        _ => Float::None,
+                    };
+                }
+            }
+            "clear" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.clear = match kw.as_str() {
+                        "left" => Clear::Left,
+                        "right" => Clear::Right,
+                        "both" => Clear::Both,
+                        "inline-start" => Clear::InlineStart,
+                        "inline-end" => Clear::InlineEnd,
+                        _ => Clear::None,
+                    };
+                }
+            }
+
+            // Writing mode
+            "writing-mode" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.writing_mode = match kw.as_str() {
+                        "vertical-rl" => WritingMode::VerticalRl,
+                        "vertical-lr" => WritingMode::VerticalLr,
+                        "sideways-rl" => WritingMode::SidewaysRl,
+                        "sideways-lr" => WritingMode::SidewaysLr,
+                        _ => WritingMode::HorizontalTb,
+                    };
+                }
+            }
+            "direction" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.direction = match kw.as_str() {
+                        "rtl" => Direction::Rtl,
+                        _ => Direction::Ltr,
+                    };
+                }
+            }
+            "unicode-bidi" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.unicode_bidi = match kw.as_str() {
+                        "embed" => UnicodeBidi::Embed,
+                        "isolate" => UnicodeBidi::Isolate,
+                        "bidi-override" => UnicodeBidi::BidiOverride,
+                        "isolate-override" => UnicodeBidi::IsolateOverride,
+                        "plaintext" => UnicodeBidi::Plaintext,
+                        _ => UnicodeBidi::Normal,
+                    };
+                }
+            }
 
             // Typography
             "color" => {
@@ -587,6 +653,256 @@ impl StyleEngine {
                     style.x_custom.push(("titlebar-background".into(), format!(
                         "rgba({},{},{},{})", c.r, c.g, c.b, c.a
                     )));
+                }
+            }
+
+            // ── Layout extras ──
+            "contain" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.contain = match kw.as_str() {
+                        "none" => Contain::none(),
+                        "strict" => Contain::strict(),
+                        "content" => Contain::content(),
+                        other => {
+                            let mut c = Contain::none();
+                            for part in other.split_whitespace() {
+                                match part {
+                                    "size" => c.size = true,
+                                    "layout" => c.layout = true,
+                                    "style" => c.style = true,
+                                    "paint" => c.paint = true,
+                                    "inline-size" => c.inline_size = true,
+                                    _ => {}
+                                }
+                            }
+                            c
+                        }
+                    };
+                }
+            }
+            "content-visibility" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.content_visibility = match kw.as_str() {
+                        "auto" => ContentVisibility::Auto,
+                        "hidden" => ContentVisibility::Hidden,
+                        _ => ContentVisibility::Visible,
+                    };
+                }
+            }
+            "aspect-ratio" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let kw = kw.trim();
+                    if kw == "auto" {
+                        style.aspect_ratio = AspectRatio::Auto;
+                    } else if let Some((w, h)) = kw.split_once('/') {
+                        if let (Ok(w), Ok(h)) = (w.trim().parse::<f32>(), h.trim().parse::<f32>()) {
+                            style.aspect_ratio = AspectRatio::Ratio(w, h);
+                        }
+                    } else if let Ok(n) = kw.parse::<f32>() {
+                        style.aspect_ratio = AspectRatio::Ratio(n, 1.0);
+                    }
+                }
+            }
+            "object-fit" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.object_fit = match kw.as_str() {
+                        "contain" => ObjectFit::Contain,
+                        "cover" => ObjectFit::Cover,
+                        "none" => ObjectFit::None,
+                        "scale-down" => ObjectFit::ScaleDown,
+                        _ => ObjectFit::Fill,
+                    };
+                }
+            }
+            "resize" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.resize = match kw.as_str() {
+                        "both" => Resize::Both,
+                        "horizontal" => Resize::Horizontal,
+                        "vertical" => Resize::Vertical,
+                        "block" => Resize::Block,
+                        "inline" => Resize::Inline,
+                        _ => Resize::None,
+                    };
+                }
+            }
+            "column-count" => {
+                if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.column_count = Some(*n as u32);
+                }
+            }
+            "column-width" => style.column_width = resolve_dimension(val),
+            "column-gap" => {
+                let d = resolve_dimension(val);
+                style.column_gap = d.clone();
+                style.gap.width = d;
+            }
+            "row-gap" => {
+                let d = resolve_dimension(val);
+                style.row_gap = d.clone();
+                style.gap.height = d;
+            }
+
+            // ── Alignment extras ──
+            "justify-items" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.justify_items = match kw.as_str() {
+                        "stretch" => JustifyItems::Stretch,
+                        "center" => JustifyItems::Center,
+                        "start" => JustifyItems::Start,
+                        "end" => JustifyItems::End,
+                        "flex-start" => JustifyItems::FlexStart,
+                        "flex-end" => JustifyItems::FlexEnd,
+                        "left" => JustifyItems::Left,
+                        "right" => JustifyItems::Right,
+                        "legacy" => JustifyItems::Legacy,
+                        _ => JustifyItems::Normal,
+                    };
+                }
+            }
+            "justify-self" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.justify_self = match kw.as_str() {
+                        "normal" => JustifySelf::Normal,
+                        "stretch" => JustifySelf::Stretch,
+                        "center" => JustifySelf::Center,
+                        "start" => JustifySelf::Start,
+                        "end" => JustifySelf::End,
+                        "flex-start" => JustifySelf::FlexStart,
+                        "flex-end" => JustifySelf::FlexEnd,
+                        _ => JustifySelf::Auto,
+                    };
+                }
+            }
+
+            // ── Vertical alignment ──
+            "vertical-align" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.vertical_align = match kw.as_str() {
+                        "sub" => VerticalAlign::Sub,
+                        "super" => VerticalAlign::Super,
+                        "top" => VerticalAlign::Top,
+                        "text-top" => VerticalAlign::TextTop,
+                        "middle" => VerticalAlign::Middle,
+                        "bottom" => VerticalAlign::Bottom,
+                        "text-bottom" => VerticalAlign::TextBottom,
+                        _ => VerticalAlign::Baseline,
+                    };
+                } else {
+                    style.vertical_align = VerticalAlign::Length(resolve_number(val));
+                }
+            }
+            "tab-size" => style.tab_size = resolve_number(val),
+
+            // ── List styling ──
+            "list-style-type" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.list_style_type = match kw.as_str() {
+                        "none" => ListStyleType::None,
+                        "circle" => ListStyleType::Circle,
+                        "square" => ListStyleType::Square,
+                        "decimal" => ListStyleType::Decimal,
+                        "decimal-leading-zero" => ListStyleType::DecimalLeadingZero,
+                        "lower-roman" => ListStyleType::LowerRoman,
+                        "upper-roman" => ListStyleType::UpperRoman,
+                        "lower-alpha" | "lower-latin" => ListStyleType::LowerAlpha,
+                        "upper-alpha" | "upper-latin" => ListStyleType::UpperAlpha,
+                        _ => ListStyleType::Disc,
+                    };
+                }
+            }
+            "list-style-position" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.list_style_position = match kw.as_str() {
+                        "inside" => ListStylePosition::Inside,
+                        _ => ListStylePosition::Outside,
+                    };
+                }
+            }
+
+            // ── Table ──
+            "table-layout" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.table_layout = match kw.as_str() {
+                        "fixed" => TableLayout::Fixed,
+                        _ => TableLayout::Auto,
+                    };
+                }
+            }
+            "border-collapse" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.border_collapse = match kw.as_str() {
+                        "collapse" => BorderCollapse::Collapse,
+                        _ => BorderCollapse::Separate,
+                    };
+                }
+            }
+            "border-spacing" => style.border_spacing = resolve_number(val),
+            "empty-cells" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.empty_cells = match kw.as_str() {
+                        "hide" => EmptyCells::Hide,
+                        _ => EmptyCells::Show,
+                    };
+                }
+            }
+            "caption-side" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.caption_side = match kw.as_str() {
+                        "bottom" => CaptionSide::Bottom,
+                        _ => CaptionSide::Top,
+                    };
+                }
+            }
+
+            // ── User interaction ──
+            "user-select" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.user_select = match kw.as_str() {
+                        "none" => UserSelect::None,
+                        "text" => UserSelect::Text,
+                        "all" => UserSelect::All,
+                        "contain" => UserSelect::Contain,
+                        _ => UserSelect::Auto,
+                    };
+                }
+            }
+            "appearance" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.appearance = match kw.as_str() {
+                        "none" => Appearance::None,
+                        _ => Appearance::Auto,
+                    };
+                }
+            }
+            "scroll-behavior" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scroll_behavior = match kw.as_str() {
+                        "smooth" => ScrollBehavior::Smooth,
+                        _ => ScrollBehavior::Auto,
+                    };
+                }
+            }
+            "overscroll-behavior" | "overscroll-behavior-x" | "overscroll-behavior-y" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    let v = match kw.as_str() {
+                        "contain" => OverscrollBehavior::Contain,
+                        "none" => OverscrollBehavior::None,
+                        _ => OverscrollBehavior::Auto,
+                    };
+                    if key == "overscroll-behavior" || key == "overscroll-behavior-x" {
+                        style.overscroll_behavior_x = v;
+                    }
+                    if key == "overscroll-behavior" || key == "overscroll-behavior-y" {
+                        style.overscroll_behavior_y = v;
+                    }
+                }
+            }
+
+            // ── Will-change ──
+            "will-change" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.will_change = kw.split(',').map(|s| s.trim().to_string()).collect();
                 }
             }
 

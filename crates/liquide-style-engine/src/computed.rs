@@ -384,6 +384,385 @@ impl Default for Isolation {
     }
 }
 
+// ── Float & Clear ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Float {
+    None,
+    Left,
+    Right,
+    InlineStart,
+    InlineEnd,
+}
+
+impl Default for Float {
+    fn default() -> Self {
+        Float::None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Clear {
+    None,
+    Left,
+    Right,
+    Both,
+    InlineStart,
+    InlineEnd,
+}
+
+impl Default for Clear {
+    fn default() -> Self {
+        Clear::None
+    }
+}
+
+// ── Writing mode & direction ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WritingMode {
+    HorizontalTb,
+    VerticalRl,
+    VerticalLr,
+    SidewaysRl,
+    SidewaysLr,
+}
+
+impl Default for WritingMode {
+    fn default() -> Self {
+        WritingMode::HorizontalTb
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Direction {
+    Ltr,
+    Rtl,
+}
+
+impl Default for Direction {
+    fn default() -> Self {
+        Direction::Ltr
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnicodeBidi {
+    Normal,
+    Embed,
+    Isolate,
+    BidiOverride,
+    IsolateOverride,
+    Plaintext,
+}
+
+impl Default for UnicodeBidi {
+    fn default() -> Self {
+        UnicodeBidi::Normal
+    }
+}
+
+// ── Containment ─────────────────────────────────────────────────────────────
+
+/// CSS contain property (bitflags style).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contain {
+    pub size: bool,
+    pub layout: bool,
+    pub style: bool,
+    pub paint: bool,
+    pub inline_size: bool,
+}
+
+impl Default for Contain {
+    fn default() -> Self {
+        Self { size: false, layout: false, style: false, paint: false, inline_size: false }
+    }
+}
+
+impl Contain {
+    pub fn none() -> Self { Self::default() }
+    pub fn strict() -> Self {
+        Self { size: true, layout: true, style: true, paint: true, inline_size: false }
+    }
+    pub fn content() -> Self {
+        Self { size: false, layout: true, style: true, paint: true, inline_size: false }
+    }
+}
+
+// ── Resize ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Resize {
+    None,
+    Both,
+    Horizontal,
+    Vertical,
+    Block,
+    Inline,
+}
+
+impl Default for Resize {
+    fn default() -> Self {
+        Resize::None
+    }
+}
+
+// ── User interaction ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UserSelect {
+    Auto,
+    None,
+    Text,
+    All,
+    Contain,
+}
+
+impl Default for UserSelect {
+    fn default() -> Self {
+        UserSelect::Auto
+    }
+}
+
+// ── Scroll behavior ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScrollBehavior {
+    Auto,
+    Smooth,
+}
+
+impl Default for ScrollBehavior {
+    fn default() -> Self {
+        ScrollBehavior::Auto
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OverscrollBehavior {
+    Auto,
+    Contain,
+    None,
+}
+
+impl Default for OverscrollBehavior {
+    fn default() -> Self {
+        OverscrollBehavior::Auto
+    }
+}
+
+// ── Object fit (for images/replaced elements) ───────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ObjectFit {
+    Fill,
+    Contain,
+    Cover,
+    None,
+    ScaleDown,
+}
+
+impl Default for ObjectFit {
+    fn default() -> Self {
+        ObjectFit::Fill
+    }
+}
+
+// ── List styling ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ListStyleType {
+    None,
+    Disc,
+    Circle,
+    Square,
+    Decimal,
+    DecimalLeadingZero,
+    LowerRoman,
+    UpperRoman,
+    LowerAlpha,
+    UpperAlpha,
+    LowerLatin,
+    UpperLatin,
+}
+
+impl Default for ListStyleType {
+    fn default() -> Self {
+        ListStyleType::Disc
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ListStylePosition {
+    Outside,
+    Inside,
+}
+
+impl Default for ListStylePosition {
+    fn default() -> Self {
+        ListStylePosition::Outside
+    }
+}
+
+// ── Table layout ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TableLayout {
+    Auto,
+    Fixed,
+}
+
+impl Default for TableLayout {
+    fn default() -> Self {
+        TableLayout::Auto
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BorderCollapse {
+    Separate,
+    Collapse,
+}
+
+impl Default for BorderCollapse {
+    fn default() -> Self {
+        BorderCollapse::Separate
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EmptyCells {
+    Show,
+    Hide,
+}
+
+impl Default for EmptyCells {
+    fn default() -> Self {
+        EmptyCells::Show
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CaptionSide {
+    Top,
+    Bottom,
+}
+
+impl Default for CaptionSide {
+    fn default() -> Self {
+        CaptionSide::Top
+    }
+}
+
+// ── Vertical alignment ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum VerticalAlign {
+    Baseline,
+    Sub,
+    Super,
+    Top,
+    TextTop,
+    Middle,
+    Bottom,
+    TextBottom,
+    Length(f32),
+}
+
+impl Default for VerticalAlign {
+    fn default() -> Self {
+        VerticalAlign::Baseline
+    }
+}
+
+// ── Justify items/self ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JustifyItems {
+    Normal,
+    Stretch,
+    Center,
+    Start,
+    End,
+    FlexStart,
+    FlexEnd,
+    SelfStart,
+    SelfEnd,
+    Left,
+    Right,
+    Legacy,
+}
+
+impl Default for JustifyItems {
+    fn default() -> Self {
+        JustifyItems::Normal
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JustifySelf {
+    Auto,
+    Normal,
+    Stretch,
+    Center,
+    Start,
+    End,
+    FlexStart,
+    FlexEnd,
+    SelfStart,
+    SelfEnd,
+}
+
+impl Default for JustifySelf {
+    fn default() -> Self {
+        JustifySelf::Auto
+    }
+}
+
+// ── Appearance ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Appearance {
+    None,
+    Auto,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Appearance::Auto
+    }
+}
+
+// ── Content visibility ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContentVisibility {
+    Visible,
+    Auto,
+    Hidden,
+}
+
+impl Default for ContentVisibility {
+    fn default() -> Self {
+        ContentVisibility::Visible
+    }
+}
+
+// ── Aspect ratio ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AspectRatio {
+    Auto,
+    Ratio(f32, f32),
+}
+
+impl Default for AspectRatio {
+    fn default() -> Self {
+        AspectRatio::Auto
+    }
+}
+
 // ── Border ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -611,6 +990,15 @@ pub struct ComputedStyle {
     pub left: Dimension,
     pub z_index: Option<i32>,
 
+    // ── Float & clear ──
+    pub float: Float,
+    pub clear: Clear,
+
+    // ── Writing mode ──
+    pub writing_mode: WritingMode,
+    pub direction: Direction,
+    pub unicode_bidi: UnicodeBidi,
+
     // ── Typography (inherited) ──
     pub color: Color,
     pub font_family: Vec<String>,
@@ -628,6 +1016,8 @@ pub struct ComputedStyle {
     pub white_space: WhiteSpace,
     pub word_break: WordBreak,
     pub text_indent: f32,
+    pub vertical_align: VerticalAlign,
+    pub tab_size: f32,
 
     // ── Visual ──
     pub background_color: Color,
@@ -639,6 +1029,45 @@ pub struct ComputedStyle {
     pub overflow_y: Overflow,
     pub cursor: Cursor,
     pub pointer_events: PointerEvents,
+
+    // ── Layout extras ──
+    pub contain: Contain,
+    pub content_visibility: ContentVisibility,
+    pub aspect_ratio: AspectRatio,
+    pub object_fit: ObjectFit,
+    pub object_position_x: Dimension,
+    pub object_position_y: Dimension,
+    pub resize: Resize,
+    pub column_count: Option<u32>,
+    pub column_width: Dimension,
+    pub column_gap: Dimension,
+    pub row_gap: Dimension,
+
+    // ── Alignment extras ──
+    pub justify_items: JustifyItems,
+    pub justify_self: JustifySelf,
+    pub place_content: Option<(AlignContent, JustifyContent)>,
+
+    // ── List styling ──
+    pub list_style_type: ListStyleType,
+    pub list_style_position: ListStylePosition,
+
+    // ── Table ──
+    pub table_layout: TableLayout,
+    pub border_collapse: BorderCollapse,
+    pub border_spacing: f32,
+    pub empty_cells: EmptyCells,
+    pub caption_side: CaptionSide,
+
+    // ── User interaction ──
+    pub user_select: UserSelect,
+    pub appearance: Appearance,
+    pub scroll_behavior: ScrollBehavior,
+    pub overscroll_behavior_x: OverscrollBehavior,
+    pub overscroll_behavior_y: OverscrollBehavior,
+
+    // ── Will-change ──
+    pub will_change: Vec<String>,
 
     // ── Effects ──
     pub transform: Vec<Transform>,
@@ -719,6 +1148,15 @@ impl Default for ComputedStyle {
             left: Dimension::Auto,
             z_index: None,
 
+            // Float & clear
+            float: Float::default(),
+            clear: Clear::default(),
+
+            // Writing mode
+            writing_mode: WritingMode::default(),
+            direction: Direction::default(),
+            unicode_bidi: UnicodeBidi::default(),
+
             // Typography
             color: Color {
                 r: 0,
@@ -741,6 +1179,8 @@ impl Default for ComputedStyle {
             white_space: WhiteSpace::default(),
             word_break: WordBreak::default(),
             text_indent: 0.0,
+            vertical_align: VerticalAlign::default(),
+            tab_size: 8.0,
 
             // Visual
             background_color: Color {
@@ -757,6 +1197,45 @@ impl Default for ComputedStyle {
             overflow_y: Overflow::Visible,
             cursor: Cursor::default(),
             pointer_events: PointerEvents::default(),
+
+            // Layout extras
+            contain: Contain::default(),
+            content_visibility: ContentVisibility::default(),
+            aspect_ratio: AspectRatio::default(),
+            object_fit: ObjectFit::default(),
+            object_position_x: Dimension::Percent(50.0),
+            object_position_y: Dimension::Percent(50.0),
+            resize: Resize::default(),
+            column_count: None,
+            column_width: Dimension::Auto,
+            column_gap: Dimension::Auto,
+            row_gap: Dimension::Auto,
+
+            // Alignment extras
+            justify_items: JustifyItems::default(),
+            justify_self: JustifySelf::default(),
+            place_content: None,
+
+            // List styling
+            list_style_type: ListStyleType::default(),
+            list_style_position: ListStylePosition::default(),
+
+            // Table
+            table_layout: TableLayout::default(),
+            border_collapse: BorderCollapse::default(),
+            border_spacing: 0.0,
+            empty_cells: EmptyCells::default(),
+            caption_side: CaptionSide::default(),
+
+            // User interaction
+            user_select: UserSelect::default(),
+            appearance: Appearance::default(),
+            scroll_behavior: ScrollBehavior::default(),
+            overscroll_behavior_x: OverscrollBehavior::default(),
+            overscroll_behavior_y: OverscrollBehavior::default(),
+
+            // Will-change
+            will_change: Vec::new(),
 
             // Effects
             transform: Vec::new(),
@@ -797,9 +1276,21 @@ impl ComputedStyle {
         self.white_space = parent.white_space;
         self.word_break = parent.word_break;
         self.text_indent = parent.text_indent;
-        // Visibility & cursor
+        self.tab_size = parent.tab_size;
+        // Writing mode (inherited)
+        self.writing_mode = parent.writing_mode;
+        self.direction = parent.direction;
+        // Visibility & cursor (inherited)
         self.visibility = parent.visibility;
         self.cursor = parent.cursor;
+        // List styling (inherited)
+        self.list_style_type = parent.list_style_type;
+        self.list_style_position = parent.list_style_position;
+        // Table (inherited)
+        self.border_collapse = parent.border_collapse;
+        self.border_spacing = parent.border_spacing;
+        self.empty_cells = parent.empty_cells;
+        self.caption_side = parent.caption_side;
     }
 
     /// Does this element establish a new stacking context?
@@ -813,6 +1304,10 @@ impl ComputedStyle {
             || self.isolation == Isolation::Isolate
             || self.position == Position::Fixed
             || self.position == Position::Sticky
+            || self.contain.paint
+            || self.contain.layout
+            || !self.will_change.is_empty()
+            || self.content_visibility == ContentVisibility::Auto
     }
 
     /// Is this element visible?

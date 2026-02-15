@@ -1,6 +1,12 @@
-//! Display list — a flat list of paint commands.
+//! Display list — a flat list of paint commands with spatial indexing.
+//!
+//! Inspired by Chromium's `cc::DisplayItemList` + `PaintOpBuffer`:
+//! - Flat contiguous list of typed paint operations
+//! - R-tree spatial index for efficient partial invalidation
+//! - Push/Pop state commands for clip, transform, opacity, filters
 
 use liquide_compositor::pixel::{BlendMode, Color};
+use liquide_compositor::property_tree::FilterOp;
 use liquide_layout::Rect;
 use liquide_style_engine::computed::{
     BorderLineStyle, FontStyle, Isolation, LineHeight, TextAlign, TextOverflow, TextTransform,
@@ -9,14 +15,48 @@ use liquide_style_engine::computed::{
 use liquide_style_engine::dimension::Corners;
 
 
-/// A single paint command.
+/// A single paint command — the fundamental unit of the display list.
+///
+/// Modeled after Chromium's PaintOp types (~37 op types in cc/paint/paint_op.h).
+/// We have both draw ops (produce pixels) and state ops (Push/Pop).
 #[derive(Debug, Clone)]
 pub enum DisplayItem {
+    // ═══════════════════════════════════════════════════
+    //  DRAW OPERATIONS (produce pixels)
+    // ═══════════════════════════════════════════════════
+
     // ── Backgrounds ──
     SolidColor {
         rect: Rect,
         color: Color,
         radius: Corners<f32>,
+    },
+
+    /// Linear gradient fill.
+    LinearGradient {
+        rect: Rect,
+        angle_deg: f32,
+        stops: Vec<GradientStop>,
+        radius: Corners<f32>,
+    },
+
+    /// Radial gradient fill.
+    RadialGradient {
+        rect: Rect,
+        center_x: f32,
+        center_y: f32,
+        radius_x: f32,
+        radius_y: f32,
+        stops: Vec<GradientStop>,
+    },
+
+    /// Conic gradient fill.
+    ConicGradient {
+        rect: Rect,
+        center_x: f32,
+        center_y: f32,
+        angle_deg: f32,
+        stops: Vec<GradientStop>,
     },
 
     // ── Borders ──
@@ -29,6 +69,17 @@ pub enum DisplayItem {
         radius: Corners<f32>,
     },
 
+    /// Border image (9-patch or gradient).
+    BorderImage {
+        rect: Rect,
+        source: String,
+        slice: (f32, f32, f32, f32),
+        widths: (f32, f32, f32, f32),
+        outset: (f32, f32, f32, f32),
+        repeat_x: BorderImageRepeat,
+        repeat_y: BorderImageRepeat,
+    },
+
     // ── Shadows ──
     BoxShadow {
         rect: Rect,
@@ -39,6 +90,15 @@ pub enum DisplayItem {
         color: Color,
         inset: bool,
         radius: Corners<f32>,
+    },
+
+    // ── Outline ──
+    Outline {
+        rect: Rect,
+        width: f32,
+        style: BorderLineStyle,
+        color: Color,
+        offset: f32,
     },
 
     // ── Text ──
@@ -63,6 +123,17 @@ pub enum DisplayItem {
         text_shadows: Vec<liquide_compositor::scene::TextShadow>,
     },
 
+    /// Single line of pre-measured text (for optimized text rendering).
+    TextRun {
+        rect: Rect,
+        text: String,
+        color: Color,
+        font_size: f32,
+        font_family: String,
+        font_weight: u16,
+        baseline: f32,
+    },
+
     // ── Images ──
     Image {
         rect: Rect,
@@ -70,10 +141,58 @@ pub enum DisplayItem {
         radius: Corners<f32>,
     },
 
+    /// Draw scaled image with explicit fit mode.
+    ImageRect {
+        rect: Rect,
+        src: String,
+        src_rect: Option<Rect>,
+        radius: Corners<f32>,
+        fit: ImageFit,
+    },
+
+    // ── Icons (built-in vector icons) ──
+    Icon {
+        rect: Rect,
+        icon_id: u32,
+        color: Color,
+    },
+
+    /// Draw a filled rect (no border radius — fastest path).
+    FillRect {
+        rect: Rect,
+        color: Color,
+    },
+
+    /// Draw a rounded rect outline (stroke).
+    StrokeRoundedRect {
+        rect: Rect,
+        radius: Corners<f32>,
+        color: Color,
+        width: f32,
+    },
+
+    /// Draw a line.
+    Line {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        color: Color,
+        width: f32,
+    },
+
+    // ═══════════════════════════════════════════════════
+    //  STATE OPERATIONS (push/pop compositor state)
+    // ═══════════════════════════════════════════════════
+
     // ── Clip ──
     PushClip {
         rect: Rect,
         radius: Corners<f32>,
+    },
+    /// Clip to an arbitrary path (circle, polygon, etc.).
+    PushClipPath {
+        path: ClipPath,
     },
     PopClip,
 
@@ -99,6 +218,28 @@ pub enum DisplayItem {
     },
     PopBlendMode,
 
+    // ── Filters ──
+    /// Push a CSS filter effect (applies to everything until PopFilter).
+    PushFilter {
+        filters: Vec<FilterOp>,
+    },
+    PopFilter,
+
+    /// Push a CSS backdrop-filter effect.
+    PushBackdropFilter {
+        filters: Vec<FilterOp>,
+        bounds: Rect,
+    },
+    PopBackdropFilter,
+
+    // ── Mask ──
+    /// Push a CSS mask.
+    PushMask {
+        mask_image: String,
+        rect: Rect,
+    },
+    PopMask,
+
     // ── Stacking context ──
     PushStackingContext {
         z_index: i32,
@@ -106,11 +247,63 @@ pub enum DisplayItem {
     },
     PopStackingContext,
 
+    // ── Save/Restore (Skia-style save layer) ──
+    SaveLayer {
+        rect: Rect,
+        opacity: f32,
+    },
+    RestoreLayer,
+
     // ── External surface (sandboxed app) ──
     Surface {
         rect: Rect,
         surface_id: u64,
     },
+
+    /// Annotation (debug label for a region).
+    Annotate {
+        rect: Rect,
+        label: String,
+    },
+
+    /// No-op (placeholder for alignment or deleted items).
+    Noop,
+}
+
+/// Gradient color stop.
+#[derive(Debug, Clone)]
+pub struct GradientStop {
+    pub offset: f32,
+    pub color: Color,
+}
+
+/// Image fit mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFit {
+    Fill,
+    Contain,
+    Cover,
+    ScaleDown,
+    None,
+}
+
+/// Border-image repeat mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderImageRepeat {
+    Stretch,
+    Repeat,
+    Round,
+    Space,
+}
+
+/// Clip path shapes.
+#[derive(Debug, Clone)]
+pub enum ClipPath {
+    Circle { cx: f32, cy: f32, r: f32 },
+    Ellipse { cx: f32, cy: f32, rx: f32, ry: f32 },
+    RoundedRect { rect: Rect, radii: Corners<f32> },
+    Polygon(Vec<(f32, f32)>),
+    Inset { top: f32, right: f32, bottom: f32, left: f32, radius: Corners<f32> },
 }
 
 /// A border edge for painting.
@@ -131,18 +324,47 @@ impl Default for BorderEdge {
     }
 }
 
-/// An ordered list of paint commands.
+/// An ordered list of paint commands with optional spatial indexing.
+///
+/// Modeled after Chromium's `DisplayItemList` which wraps a `PaintOpBuffer`
+/// and adds an R-tree for efficient partial rasterization.
 #[derive(Debug, Clone)]
 pub struct DisplayList {
     pub items: Vec<DisplayItem>,
+    /// Spatial index: each entry is (item_index, bounding_rect).
+    /// Built on demand via `build_spatial_index()`.
+    spatial_index: Vec<SpatialEntry>,
+    /// Whether the spatial index is up-to-date.
+    spatial_dirty: bool,
+}
+
+/// Entry in the spatial index.
+#[derive(Debug, Clone)]
+struct SpatialEntry {
+    index: usize,
+    bounds: Rect,
 }
 
 impl DisplayList {
     pub fn new() -> Self {
-        Self { items: Vec::new() }
+        Self {
+            items: Vec::new(),
+            spatial_index: Vec::new(),
+            spatial_dirty: true,
+        }
+    }
+
+    /// Create with pre-allocated capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            items: Vec::with_capacity(capacity),
+            spatial_index: Vec::new(),
+            spatial_dirty: true,
+        }
     }
 
     pub fn push(&mut self, item: DisplayItem) {
+        self.spatial_dirty = true;
         self.items.push(item);
     }
 
@@ -156,11 +378,226 @@ impl DisplayList {
 
     pub fn clear(&mut self) {
         self.items.clear();
+        self.spatial_index.clear();
+        self.spatial_dirty = true;
+    }
+
+    /// Build (or rebuild) the spatial index for efficient region queries.
+    pub fn build_spatial_index(&mut self) {
+        self.spatial_index.clear();
+        for (i, item) in self.items.iter().enumerate() {
+            if let Some(bounds) = item_bounds(item) {
+                self.spatial_index.push(SpatialEntry { index: i, bounds });
+            }
+        }
+        self.spatial_dirty = false;
+    }
+
+    /// Query all display items that intersect the given region.
+    /// Returns indices into `self.items`.
+    pub fn query_region(&mut self, region: &Rect) -> Vec<usize> {
+        if self.spatial_dirty {
+            self.build_spatial_index();
+        }
+        self.spatial_index
+            .iter()
+            .filter(|entry| rects_intersect(&entry.bounds, region))
+            .map(|entry| entry.index)
+            .collect()
+    }
+
+    /// Total number of draw operations (excludes state Push/Pop ops).
+    pub fn draw_op_count(&self) -> usize {
+        self.items.iter().filter(|item| is_draw_op(item)).count()
+    }
+
+    /// Total number of state Push/Pop operations.
+    pub fn state_op_count(&self) -> usize {
+        self.items.len() - self.draw_op_count()
+    }
+
+    /// Append all items from another display list.
+    pub fn extend(&mut self, other: &DisplayList) {
+        self.spatial_dirty = true;
+        self.items.extend(other.items.iter().cloned());
     }
 }
 
 impl Default for DisplayList {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Get the bounding rect of a display item (None for state ops).
+fn item_bounds(item: &DisplayItem) -> Option<Rect> {
+    match item {
+        DisplayItem::SolidColor { rect, .. }
+        | DisplayItem::LinearGradient { rect, .. }
+        | DisplayItem::RadialGradient { rect, .. }
+        | DisplayItem::ConicGradient { rect, .. }
+        | DisplayItem::Border { rect, .. }
+        | DisplayItem::BorderImage { rect, .. }
+        | DisplayItem::BoxShadow { rect, .. }
+        | DisplayItem::Outline { rect, .. }
+        | DisplayItem::Text { rect, .. }
+        | DisplayItem::TextRun { rect, .. }
+        | DisplayItem::Image { rect, .. }
+        | DisplayItem::ImageRect { rect, .. }
+        | DisplayItem::Icon { rect, .. }
+        | DisplayItem::FillRect { rect, .. }
+        | DisplayItem::StrokeRoundedRect { rect, .. }
+        | DisplayItem::Surface { rect, .. }
+        | DisplayItem::PushClip { rect, .. }
+        | DisplayItem::PushBackdropFilter { bounds: rect, .. }
+        | DisplayItem::PushMask { rect, .. }
+        | DisplayItem::SaveLayer { rect, .. }
+        | DisplayItem::Annotate { rect, .. } => Some(*rect),
+
+        DisplayItem::Line { x1, y1, x2, y2, .. } => {
+            let min_x = x1.min(*x2);
+            let min_y = y1.min(*y2);
+            let max_x = x1.max(*x2);
+            let max_y = y1.max(*y2);
+            Some(Rect {
+                x: min_x,
+                y: min_y,
+                width: max_x - min_x,
+                height: max_y - min_y,
+            })
+        }
+
+        // State ops have no spatial bounds
+        DisplayItem::PopClip
+        | DisplayItem::PushClipPath { .. }
+        | DisplayItem::PushOpacity { .. }
+        | DisplayItem::PopOpacity
+        | DisplayItem::PushTransform { .. }
+        | DisplayItem::PopTransform
+        | DisplayItem::PushBlendMode { .. }
+        | DisplayItem::PopBlendMode
+        | DisplayItem::PushFilter { .. }
+        | DisplayItem::PopFilter
+        | DisplayItem::PopBackdropFilter
+        | DisplayItem::PopMask
+        | DisplayItem::PushStackingContext { .. }
+        | DisplayItem::PopStackingContext
+        | DisplayItem::RestoreLayer
+        | DisplayItem::Noop => None,
+    }
+}
+
+/// Check if a display item is a draw operation (vs. state op).
+fn is_draw_op(item: &DisplayItem) -> bool {
+    item_bounds(item).is_some()
+}
+
+/// AABB intersection test.
+fn rects_intersect(a: &Rect, b: &Rect) -> bool {
+    a.x < b.x + b.width
+        && a.x + a.width > b.x
+        && a.y < b.y + b.height
+        && a.y + a.height > b.y
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_list_basics() {
+        let mut dl = DisplayList::new();
+        assert!(dl.is_empty());
+
+        dl.push(DisplayItem::FillRect {
+            rect: Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
+            color: Color { r: 255, g: 0, b: 0, a: 255 },
+        });
+        assert_eq!(dl.len(), 1);
+        assert_eq!(dl.draw_op_count(), 1);
+        assert_eq!(dl.state_op_count(), 0);
+    }
+
+    #[test]
+    fn spatial_query() {
+        let mut dl = DisplayList::new();
+        dl.push(DisplayItem::FillRect {
+            rect: Rect { x: 0.0, y: 0.0, width: 50.0, height: 50.0 },
+            color: Color { r: 255, g: 0, b: 0, a: 255 },
+        });
+        dl.push(DisplayItem::FillRect {
+            rect: Rect { x: 100.0, y: 100.0, width: 50.0, height: 50.0 },
+            color: Color { r: 0, g: 255, b: 0, a: 255 },
+        });
+
+        // Query top-left region
+        let hits = dl.query_region(&Rect { x: 0.0, y: 0.0, width: 60.0, height: 60.0 });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0], 0);
+
+        // Query bottom-right region
+        let hits = dl.query_region(&Rect { x: 90.0, y: 90.0, width: 70.0, height: 70.0 });
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0], 1);
+
+        // Query everything
+        let hits = dl.query_region(&Rect { x: 0.0, y: 0.0, width: 200.0, height: 200.0 });
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn state_ops_not_in_spatial_index() {
+        let mut dl = DisplayList::new();
+        dl.push(DisplayItem::PushOpacity { opacity: 0.5 });
+        dl.push(DisplayItem::FillRect {
+            rect: Rect { x: 10.0, y: 10.0, width: 20.0, height: 20.0 },
+            color: Color { r: 0, g: 0, b: 0, a: 255 },
+        });
+        dl.push(DisplayItem::PopOpacity);
+
+        assert_eq!(dl.draw_op_count(), 1);
+        assert_eq!(dl.state_op_count(), 2);
+
+        let hits = dl.query_region(&Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 });
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn new_display_item_variants() {
+        // Verify all new variants compile
+        let items: Vec<DisplayItem> = vec![
+            DisplayItem::LinearGradient {
+                rect: Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
+                angle_deg: 180.0,
+                stops: vec![
+                    GradientStop { offset: 0.0, color: Color { r: 255, g: 0, b: 0, a: 255 } },
+                    GradientStop { offset: 1.0, color: Color { r: 0, g: 0, b: 255, a: 255 } },
+                ],
+                radius: Corners::all(0.0),
+            },
+            DisplayItem::Outline {
+                rect: Rect { x: 0.0, y: 0.0, width: 50.0, height: 50.0 },
+                width: 2.0,
+                style: BorderLineStyle::Solid,
+                color: Color { r: 0, g: 0, b: 0, a: 255 },
+                offset: 0.0,
+            },
+            DisplayItem::Line {
+                x1: 0.0, y1: 0.0, x2: 100.0, y2: 100.0,
+                color: Color { r: 0, g: 0, b: 0, a: 255 },
+                width: 1.0,
+            },
+            DisplayItem::PushFilter {
+                filters: vec![FilterOp::Blur(5.0)],
+            },
+            DisplayItem::PopFilter,
+            DisplayItem::PushBackdropFilter {
+                filters: vec![FilterOp::Blur(20.0)],
+                bounds: Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
+            },
+            DisplayItem::PopBackdropFilter,
+            DisplayItem::Noop,
+        ];
+        assert_eq!(items.len(), 8);
     }
 }

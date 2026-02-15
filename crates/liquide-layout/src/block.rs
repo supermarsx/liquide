@@ -58,8 +58,21 @@ pub fn layout_block(
 
     let content_width = width - pad_left - pad_right - border_left - border_right;
 
-    // Layout children
+    // ── Margin collapsing state ──
+    // CSS §8.3.1: Vertical margins of adjacent block-level boxes collapse.
+    // The collapsed margin is the max of the two adjoining margins.
+    // Negative margins: the collapsed margin = max(positive) - abs(max(negative)).
     let mut child_y = 0.0f32;
+    let mut prev_margin_bottom: Option<f32> = None;
+
+    // Parent-child margin collapsing: if no top border/padding, the parent's
+    // top margin collapses with the first child's top margin. We track this
+    // but apply a simplified version (just collapse between siblings here).
+    // BFC detection — used to prevent parent-child margin collapsing
+    let _parent_establishes_bfc = style.is_flex_container()
+        || style.is_grid_container()
+        || matches!(style.position, Position::Absolute | Position::Fixed);
+
     let children = doc.children(node_id).to_vec();
 
     for &child_id in &children {
@@ -88,7 +101,6 @@ pub fn layout_block(
                         Some(content_width),
                         &text_props,
                     );
-                    // Apply text-align offset within the content area
                     let text_x = crate::inline::align_offset(
                         child_style.text_align,
                         content_width,
@@ -104,12 +116,33 @@ pub fn layout_block(
                     }
                     tree.add_child(box_id, text_box);
                     child_y += metrics.height;
+                    // Text nodes break margin collapsing sequence
+                    prev_margin_bottom = None;
                     continue;
                 }
             }
         }
 
-        // Recurse for element children
+        // Resolve child top/bottom margins for collapse calculation
+        let child_mar_top = resolve_dim(
+            &child_style.margin.top, container_width, base_font_size,
+            child_style.font_size, viewport_w, viewport_h,
+        );
+        let child_mar_bottom = resolve_dim(
+            &child_style.margin.bottom, container_width, base_font_size,
+            child_style.font_size, viewport_w, viewport_h,
+        );
+
+        // Collapse adjacent margins: instead of prev_margin_bottom + child_margin_top,
+        // use the larger of the two (for positive margins) or the more negative.
+        if let Some(prev_mb) = prev_margin_bottom {
+            let collapsed = collapse_margins(prev_mb, child_mar_top);
+            // We already added prev_margin_bottom to child_y when we advanced
+            // past the previous child. Remove it and replace with collapsed.
+            child_y = child_y - prev_mb + collapsed;
+        }
+
+        // Recurse for element children — pass 0.0 as offset, we position after
         let child_box = if child_style.is_flex_container() {
             crate::flex::layout_flex(
                 doc, child_id, styles, tree, text_measurer, image_measurer,
@@ -135,6 +168,9 @@ pub fn layout_block(
         if let Some(cb) = tree.get(child_box) {
             child_y += cb.margin_rect.height;
         }
+
+        // Track this child's bottom margin for collapsing with next sibling
+        prev_margin_bottom = Some(child_mar_bottom);
     }
 
     // Content height is sum of children, or explicit height
@@ -182,4 +218,19 @@ fn resolve_dim(
 ) -> f32 {
     dim.resolve_px(parent_px, base_font_size, font_size, vw, vh)
         .unwrap_or(0.0)
+}
+
+/// CSS margin collapsing: when two vertical margins meet, they collapse into one.
+/// For positive margins: the collapsed margin = max of the two.
+/// For negative margins: the collapsed margin = min of the two (most negative).
+/// For mixed: collapsed = max(positive) + min(negative).
+fn collapse_margins(a: f32, b: f32) -> f32 {
+    if a >= 0.0 && b >= 0.0 {
+        a.max(b)
+    } else if a < 0.0 && b < 0.0 {
+        a.min(b)
+    } else {
+        // Mixed: add them (larger positive + negative = net)
+        a + b
+    }
 }

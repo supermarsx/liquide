@@ -7,6 +7,7 @@
 //! that can be fed into the compositor or rendered directly.
 
 pub mod display_list;
+pub mod icons;
 pub mod painter;
 
 pub use display_list::{DisplayItem, DisplayList};

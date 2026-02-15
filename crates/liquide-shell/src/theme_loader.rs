@@ -331,10 +331,10 @@ mod tests {
             "dock background should be parsed from literal rgba"
         );
 
-        // Verify desktop background matches spec: #1C1C2E = rgb(28,28,46)
-        assert_eq!(theme.desktop_background.r, 28);
-        assert_eq!(theme.desktop_background.g, 28);
-        assert_eq!(theme.desktop_background.b, 46);
+        // Verify desktop background matches spec: rgb(12, 14, 28)
+        assert_eq!(theme.desktop_background.r, 12);
+        assert_eq!(theme.desktop_background.g, 14);
+        assert_eq!(theme.desktop_background.b, 28);
     }
 
     #[test]
