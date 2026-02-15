@@ -97,6 +97,12 @@ impl AttributeMap {
         self.len() == 0
     }
 
+    /// Clear all entries.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.overflow = None;
+    }
+
     /// Iterate over all (key, value) pairs.
     pub fn iter(&self) -> AttributeIter<'_> {
         AttributeIter {

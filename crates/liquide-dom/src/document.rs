@@ -248,6 +248,46 @@ impl Document {
     }
 
     // -----------------------------------------------------------------------
+    // Inline style manipulation
+    // -----------------------------------------------------------------------
+
+    /// Set an inline CSS style property on a node.
+    /// Inline styles have the highest specificity, overriding CSS rules.
+    pub fn set_inline_style(&mut self, node_id: NodeId, property: &str, value: &str) {
+        if let Some(node) = self.nodes.get_mut(&node_id) {
+            node.inline_styles.set(property, value);
+            node.dirty.mark_style_dirty();
+        }
+        self.dirty.mark_style(node_id);
+    }
+
+    /// Remove an inline style property.
+    pub fn remove_inline_style(&mut self, node_id: NodeId, property: &str) {
+        if let Some(node) = self.nodes.get_mut(&node_id) {
+            if node.inline_styles.remove(property).is_some() {
+                node.dirty.mark_style_dirty();
+            }
+        }
+        self.dirty.mark_style(node_id);
+    }
+
+    /// Clear all inline styles from a node.
+    pub fn clear_inline_styles(&mut self, node_id: NodeId) {
+        if let Some(node) = self.nodes.get_mut(&node_id) {
+            if !node.inline_styles.is_empty() {
+                node.inline_styles.clear();
+                node.dirty.mark_style_dirty();
+            }
+        }
+        self.dirty.mark_style(node_id);
+    }
+
+    /// Get an inline style value.
+    pub fn get_inline_style(&self, node_id: NodeId, property: &str) -> Option<String> {
+        self.nodes.get(&node_id)?.inline_styles.get(property).map(String::from)
+    }
+
+    // -----------------------------------------------------------------------
     // Class manipulation
     // -----------------------------------------------------------------------
 

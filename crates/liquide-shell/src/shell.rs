@@ -1448,6 +1448,7 @@ impl Shell {
                 menu_id: "ctx-shell",
                 items: &infos,
                 hover_index: self.context_menu_hover_index,
+                position: Some((self.context_menu_pos.x, self.context_menu_pos.y)),
             };
             let root = self.desktop_dom.doc.root();
             let template = ctx_comp.render();

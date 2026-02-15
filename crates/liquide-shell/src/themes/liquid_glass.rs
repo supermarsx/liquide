@@ -345,12 +345,14 @@ context-menu {
     position: fixed;
     z-index: 25;
     padding: 4;
-    border-radius: 10;
-    background: rgba(30, 30, 50, 0.85);
-    border-color: rgba(255, 255, 255, 0.10);
+    border-radius: 8;
+    background: rgba(30, 30, 50, 0.92);
+    border-color: rgba(255, 255, 255, 0.15);
     border-width: 1;
+    border-style: solid;
     blur-radius: 20;
-    min-width: 180;
+    min-width: 140;
+    max-width: 220;
     max-height: 480;
     overflow: hidden;
 }
@@ -361,12 +363,14 @@ session-menu {
     position: fixed;
     z-index: 25;
     padding: 4;
-    border-radius: 10;
-    background: rgba(30, 30, 50, 0.85);
-    border-color: rgba(255, 255, 255, 0.10);
+    border-radius: 8;
+    background: rgba(30, 30, 50, 0.92);
+    border-color: rgba(255, 255, 255, 0.15);
     border-width: 1;
+    border-style: solid;
     blur-radius: 20;
-    min-width: 200;
+    min-width: 160;
+    max-width: 220;
     max-height: 480;
     overflow: hidden;
 }
@@ -377,12 +381,14 @@ app-menu {
     position: fixed;
     z-index: 25;
     padding: 4;
-    border-radius: 10;
-    background: rgba(30, 30, 50, 0.85);
-    border-color: rgba(255, 255, 255, 0.10);
+    border-radius: 8;
+    background: rgba(30, 30, 50, 0.92);
+    border-color: rgba(255, 255, 255, 0.15);
     border-width: 1;
+    border-style: solid;
     blur-radius: 20;
-    min-width: 180;
+    min-width: 140;
+    max-width: 220;
     max-height: 480;
     overflow: hidden;
 }

@@ -8,6 +8,71 @@ use liquide_theme_css::value::PropertyValue;
 use crate::computed::*;
 use crate::dimension::Dimension;
 
+/// Parse an inline style string value into a PropertyValue.
+///
+/// Supports common inline patterns like "100", "100px", "auto", "#rgb".
+pub fn parse_inline_value(value: &str) -> PropertyValue {
+    let value = value.trim();
+    
+    // Try numeric (with optional unit)
+    if let Some(px) = try_parse_px(value) {
+        return PropertyValue::Number(px);
+    }
+    
+    // Try color
+    if value.starts_with('#') || value.starts_with("rgb") || value.starts_with("rgba") {
+        if let Some(c) = try_parse_color(value) {
+            return PropertyValue::Color(liquide_theme_css::value::Color {
+                r: c.r,
+                g: c.g,
+                b: c.b,
+                a: c.a,
+            });
+        }
+    }
+    
+    // Keyword fallback
+    PropertyValue::Keyword(value.to_string())
+}
+
+/// Try to parse a px value like "100" or "100px" or "50.5".
+fn try_parse_px(value: &str) -> Option<f32> {
+    let v = value.strip_suffix("px").unwrap_or(value);
+    v.parse::<f32>().ok()
+}
+
+/// Try to parse a color value.
+fn try_parse_color(value: &str) -> Option<Color> {
+    // #rrggbb or #rgb
+    if value.starts_with('#') {
+        let hex = &value[1..];
+        let (r, g, b, a) = match hex.len() {
+            3 => {
+                let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
+                let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
+                let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
+                (r, g, b, 255)
+            }
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                (r, g, b, 255)
+            }
+            8 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+                (r, g, b, a)
+            }
+            _ => return None,
+        };
+        return Some(Color { r, g, b, a });
+    }
+    None
+}
+
 /// Resolve a PropertyValue to a Dimension.
 pub fn resolve_dimension(val: &PropertyValue) -> Dimension {
     match val {

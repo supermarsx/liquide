@@ -62,6 +62,8 @@ pub struct TemplateNode {
     pub classes: Vec<String>,
     /// HTML attributes.
     pub attrs: Vec<(String, String)>,
+    /// Inline CSS styles (property, value) — applied with highest specificity.
+    pub inline_styles: Vec<(String, String)>,
     /// Pseudo-state flags to set.
     pub pseudo_states: PseudoStateFlags,
     /// Reconciliation key (maps to `data-key` attribute).
@@ -83,6 +85,7 @@ impl TemplateNode {
             element_id: None,
             classes: Vec::new(),
             attrs: Vec::new(),
+            inline_styles: Vec::new(),
             pseudo_states: PseudoStateFlags::empty(),
             key: None,
             children: Vec::new(),
@@ -97,6 +100,7 @@ impl TemplateNode {
             element_id: None,
             classes: Vec::new(),
             attrs: Vec::new(),
+            inline_styles: Vec::new(),
             pseudo_states: PseudoStateFlags::empty(),
             key: None,
             children: Vec::new(),
@@ -109,6 +113,13 @@ impl TemplateNode {
     /// Set the element id.
     pub fn id(mut self, id: &str) -> Self {
         self.element_id = Some(id.to_string());
+        self
+    }
+
+    /// Add an inline CSS style property.
+    /// These are applied with the highest specificity, overriding selectors.
+    pub fn style(mut self, property: &str, value: &str) -> Self {
+        self.inline_styles.push((property.to_string(), value.to_string()));
         self
     }
 
@@ -310,6 +321,9 @@ impl TemplateRenderer {
         // ── Patch attributes ────────────────────────────────
         Self::patch_attributes(doc, node_id, &template.attrs);
 
+        // ── Patch inline styles ─────────────────────────────
+        Self::patch_inline_styles(doc, node_id, &template.inline_styles);
+
         // ── Patch pseudo-states ─────────────────────────────
         Self::patch_pseudo_states(doc, node_id, template.pseudo_states);
 
@@ -369,6 +383,38 @@ impl TemplateRenderer {
                 .map_or(true, |v| v != *value);
             if needs_set {
                 doc.set_attribute(node_id, key, value);
+            }
+        }
+    }
+
+    /// Patch inline CSS styles: set new/changed, remove stale.
+    fn patch_inline_styles(doc: &mut Document, node_id: NodeId, desired: &[(String, String)]) {
+        // Collect current inline style keys
+        let current_keys: Vec<String> = doc
+            .get(node_id)
+            .map(|n| n.inline_styles.iter().map(|(k, _)| k.to_string()).collect())
+            .unwrap_or_default();
+
+        // Build desired map for easy lookup
+        let desired_map: std::collections::HashMap<&str, &str> = desired
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        // Remove styles not in desired
+        for key in &current_keys {
+            if !desired_map.contains_key(key.as_str()) {
+                doc.remove_inline_style(node_id, key);
+            }
+        }
+
+        // Set all desired inline styles
+        for (prop, value) in desired {
+            let needs_set = doc
+                .get_inline_style(node_id, prop)
+                .map_or(true, |v| v != *value);
+            if needs_set {
+                doc.set_inline_style(node_id, prop, value);
             }
         }
     }

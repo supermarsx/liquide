@@ -13,7 +13,7 @@ use crate::inheritance;
 use crate::selector::ComplexSelector;
 use crate::specificity::Specificity;
 use crate::style_map::StyleMap;
-use crate::value_resolve::*;
+use crate::value_resolve::{*, parse_inline_value};
 
 /// A prepared stylesheet rule ready for matching.
 #[derive(Debug)]
@@ -230,6 +230,11 @@ impl StyleEngine {
             for rule in &matching {
                 self.apply_properties(&rule.properties, &mut style);
             }
+
+            // Apply inline styles (highest specificity — after all CSS rules)
+            for (prop, value) in node.inline_styles.iter() {
+                self.apply_inline_style(prop, value, &mut style);
+            }
         }
 
         let style = Arc::new(style);
@@ -266,6 +271,14 @@ impl StyleEngine {
         for (key, val) in properties.iter() {
             self.apply_single_property(key, val, style);
         }
+    }
+
+    /// Apply an inline style (string value) directly to computed style.
+    /// Inline styles have highest specificity and override CSS rules.
+    fn apply_inline_style(&self, property: &str, value: &str, style: &mut ComputedStyle) {
+        // Parse value string into a PropertyValue and apply
+        let pv = parse_inline_value(value);
+        self.apply_single_property(property, &pv, style);
     }
 
     fn apply_single_property(

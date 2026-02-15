@@ -11,7 +11,7 @@ use crate::template::{Component, TemplateNode};
 ///
 /// Produces:
 /// ```text
-/// <context-menu id="ctx-shell">
+/// <context-menu id="ctx-shell" style="left: 100; top: 200">
 ///   <menu-item data-key="0" data-index="0">Copy</menu-item>
 ///   <menu-separator />
 ///   <menu-item data-key="2" class="disabled" :disabled>Paste</menu-item>
@@ -21,36 +21,46 @@ pub struct ContextMenuComponent<'a> {
     pub menu_id: &'a str,
     pub items: &'a [ContextMenuItemInfo],
     pub hover_index: Option<usize>,
+    /// Position (left, top) in logical pixels. If None, uses CSS defaults.
+    pub position: Option<(f32, f32)>,
 }
 
 impl Component for ContextMenuComponent<'_> {
     fn render(&self) -> TemplateNode {
         let mut item_idx = 0usize;
 
-        TemplateNode::el("context-menu")
-            .id(self.menu_id)
-            .children(self.items.iter().enumerate().map(|(i, item)| {
-                match item {
-                    ContextMenuItemInfo::Item(item) => {
-                        let current_idx = item_idx;
-                        item_idx += 1;
-                        TemplateNode::el("menu-item")
-                            .key(&i.to_string())
-                            .attr("data-index", &i.to_string())
-                            .class_if("disabled", item.disabled)
-                            .pseudo_if(PseudoStateFlags::DISABLED, item.disabled)
-                            .pseudo_if(
-                                PseudoStateFlags::HOVER,
-                                self.hover_index == Some(current_idx),
-                            )
-                            .child(TemplateNode::text(&item.label))
-                    }
-                    ContextMenuItemInfo::Separator => {
-                        TemplateNode::el("menu-separator")
-                            .key(&format!("sep-{i}"))
-                    }
+        let mut menu = TemplateNode::el("context-menu")
+            .id(self.menu_id);
+
+        // Apply inline position styles if provided
+        if let Some((x, y)) = self.position {
+            menu = menu
+                .style("left", &format!("{x}"))
+                .style("top", &format!("{y}"));
+        }
+
+        menu.children(self.items.iter().enumerate().map(|(i, item)| {
+            match item {
+                ContextMenuItemInfo::Item(item) => {
+                    let current_idx = item_idx;
+                    item_idx += 1;
+                    TemplateNode::el("menu-item")
+                        .key(&i.to_string())
+                        .attr("data-index", &i.to_string())
+                        .class_if("disabled", item.disabled)
+                        .pseudo_if(PseudoStateFlags::DISABLED, item.disabled)
+                        .pseudo_if(
+                            PseudoStateFlags::HOVER,
+                            self.hover_index == Some(current_idx),
+                        )
+                        .child(TemplateNode::text(&item.label))
                 }
-            }))
+                ContextMenuItemInfo::Separator => {
+                    TemplateNode::el("menu-separator")
+                        .key(&format!("sep-{i}"))
+                }
+            }
+        }))
     }
 
     fn mount_point(&self) -> &str {
@@ -182,6 +192,7 @@ mod tests {
             menu_id: "ctx-1",
             items: &items,
             hover_index: Some(0),
+            position: None,
         };
         let tree = comp.render();
 

@@ -24,6 +24,8 @@ pub struct Node {
     pub children: Vec<NodeId>,
     /// HTML-style attributes.
     pub attrs: AttributeMap,
+    /// Inline CSS styles (property: value pairs, highest specificity).
+    pub inline_styles: AttributeMap,
     /// CSS class list.
     pub classes: ClassList,
     /// Element `id` attribute (for `#id` selectors).
@@ -69,6 +71,7 @@ impl Node {
             parent: None,
             children: Vec::new(),
             attrs: AttributeMap::new(),
+            inline_styles: AttributeMap::new(),
             classes: ClassList::new(),
             element_id: None,
             pseudo_states: PseudoStateFlags::empty(),
@@ -85,6 +88,7 @@ impl Node {
             parent: None,
             children: Vec::new(),
             attrs: AttributeMap::new(),
+            inline_styles: AttributeMap::new(),
             classes: ClassList::new(),
             element_id: None,
             pseudo_states: PseudoStateFlags::empty(),
