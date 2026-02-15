@@ -1076,8 +1076,15 @@ impl SoftwareRenderer {
                 font_family,
                 font_size,
                 font_weight,
+                font_style_italic: _,
                 letter_spacing,
-                line_height: _line_height,
+                word_spacing,
+                line_height,
+                text_align,
+                text_transform,
+                text_overflow,
+                white_space: _,
+                text_indent,
                 text_decoration: _,
                 text_shadows: _,
             } => {
@@ -1085,6 +1092,30 @@ impl SoftwareRenderer {
                 if opacity < 1.0 {
                     c.a = (c.a as f32 * opacity + 0.5) as u8;
                 }
+
+                // Apply text-transform before rendering
+                let transformed: std::borrow::Cow<'_, str> = match text_transform {
+                    2 => std::borrow::Cow::Owned(text.to_uppercase()),
+                    3 => std::borrow::Cow::Owned(text.to_lowercase()),
+                    1 => {
+                        let mut result = String::with_capacity(text.len());
+                        let mut cap_next = true;
+                        for ch in text.chars() {
+                            if ch.is_whitespace() {
+                                cap_next = true;
+                                result.push(ch);
+                            } else if cap_next {
+                                result.extend(ch.to_uppercase());
+                                cap_next = false;
+                            } else {
+                                result.push(ch);
+                            }
+                        }
+                        std::borrow::Cow::Owned(result)
+                    }
+                    _ => std::borrow::Cow::Borrowed(text.as_str()),
+                };
+                let render_text = &*transformed;
 
                 // Determine effective glyph height:
                 //  - If font_size > 0, use that directly as the pixel height.
@@ -1111,14 +1142,19 @@ impl SoftwareRenderer {
                 let font_id = (((*font_weight as u32) & 0xFF) << 16) | family_hash;
 
                 let size_px = glyph_height as u16;
-                let mut pen_x = bounds.x;
-                let pen_y = bounds.y;
+                let mut pen_x = bounds.x + text_indent;
+                let mut pen_y = bounds.y;
                 let mut all_in_atlas = true;
+                let line_h = if *line_height > 0.0 {
+                    *line_height
+                } else {
+                    glyph_height as f32 * 1.2
+                };
 
                 // First pass: check which glyphs are in the atlas, request
                 // missing ones from the font worker (with font family/weight
                 // so the worker can use real TrueType rasterization).
-                for ch in text.chars() {
+                for ch in render_text.chars() {
                     if ch == '\n' || ch == '\r' {
                         continue;
                     }
@@ -1142,31 +1178,94 @@ impl SoftwareRenderer {
                 }
 
                 if all_in_atlas {
-                    // Render using antialiased atlas glyphs.
-                    for ch in text.chars() {
-                        if ch == '\n' || ch == '\r' {
-                            continue;
+                    // Split text into lines and apply text-align per line
+                    let lines: Vec<&str> = render_text.split('\n').collect();
+                    let mut is_first_line = true;
+                    for line_text in &lines {
+                        // Measure line width for alignment
+                        let mut line_width = 0.0f32;
+                        if is_first_line {
+                            line_width += text_indent;
                         }
-                        let key = GlyphKey {
-                            font_id,
-                            glyph_id: ch as u32,
-                            size_px,
-                            subpixel: false,
+                        for ch in line_text.chars() {
+                            if ch == '\r' {
+                                continue;
+                            }
+                            let key = GlyphKey {
+                                font_id,
+                                glyph_id: ch as u32,
+                                size_px,
+                                subpixel: false,
+                            };
+                            if let Some(cached) = self.glyph_atlas.get(&key) {
+                                let extra = if ch == ' ' { *word_spacing } else { 0.0 };
+                                line_width += cached.advance + *letter_spacing + extra;
+                            }
+                        }
+
+                        // Text-align offset: 0=left, 1=center, 2=right, 3=justify
+                        let align_x = match text_align {
+                            1 => ((bounds.width - line_width) / 2.0).max(0.0),
+                            2 => (bounds.width - line_width).max(0.0),
+                            _ => 0.0,
                         };
-                        if let Some(cached) = self.glyph_atlas.get(&key).cloned() {
-                            let pos = liquide_compositor::geometry::Point::new(
-                                pen_x,
-                                pen_y + glyph_height as f32,
-                            );
-                            self.glyph_atlas.blit_glyph(fb, &cached, pos, c);
-                            pen_x += cached.advance + *letter_spacing;
+
+                        pen_x = bounds.x + align_x;
+                        if is_first_line {
+                            pen_x += text_indent;
                         }
+
+                        // Text overflow: ellipsis (1) — check if line overflows bounds
+                        let max_x = bounds.x + bounds.width;
+                        let use_ellipsis = *text_overflow == 1 && line_width > bounds.width;
+
+                        for ch in line_text.chars() {
+                            if ch == '\r' {
+                                continue;
+                            }
+
+                            // Ellipsis check: if we're about to overflow, draw "…" instead
+                            if use_ellipsis && pen_x + glyph_height as f32 * 0.6 > max_x {
+                                let ellipsis_key = GlyphKey {
+                                    font_id,
+                                    glyph_id: '…' as u32,
+                                    size_px,
+                                    subpixel: false,
+                                };
+                                if let Some(cached) = self.glyph_atlas.get(&ellipsis_key).cloned() {
+                                    let pos = liquide_compositor::geometry::Point::new(
+                                        pen_x,
+                                        pen_y + glyph_height as f32,
+                                    );
+                                    self.glyph_atlas.blit_glyph(fb, &cached, pos, c);
+                                }
+                                break;
+                            }
+
+                            let key = GlyphKey {
+                                font_id,
+                                glyph_id: ch as u32,
+                                size_px,
+                                subpixel: false,
+                            };
+                            if let Some(cached) = self.glyph_atlas.get(&key).cloned() {
+                                let pos = liquide_compositor::geometry::Point::new(
+                                    pen_x,
+                                    pen_y + glyph_height as f32,
+                                );
+                                self.glyph_atlas.blit_glyph(fb, &cached, pos, c);
+                                let extra = if ch == ' ' { *word_spacing } else { 0.0 };
+                                pen_x += cached.advance + *letter_spacing + extra;
+                            }
+                        }
+                        pen_y += line_h;
+                        is_first_line = false;
                     }
                 } else {
                     // Fallback: use 1-bit bitmap font while atlas is being populated.
                     crate::bitmap_font::draw_text(
                         fb,
-                        text,
+                        render_text,
                         bounds.x as i32,
                         bounds.y as i32,
                         c,

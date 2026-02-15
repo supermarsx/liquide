@@ -292,12 +292,14 @@ fn layout_children_in_positioned(
             if let Some(child_node) = doc.get(child_id) {
                 if child_node.is_text() {
                     if let Some(text) = child_node.text_content() {
+                        let text_props = crate::TextProperties::from_style(&child_style);
                         let metrics = text_measurer.measure(
                             text,
                             child_style.font_size,
                             &child_style.font_family,
                             child_style.font_weight,
                             Some(content_w),
+                            &text_props,
                         );
                         let text_box = tree.alloc(
                             child_id,

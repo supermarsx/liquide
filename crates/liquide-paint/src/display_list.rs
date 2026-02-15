@@ -2,7 +2,10 @@
 
 use liquide_compositor::pixel::{BlendMode, Color};
 use liquide_layout::Rect;
-use liquide_style_engine::computed::{BorderLineStyle, Isolation};
+use liquide_style_engine::computed::{
+    BorderLineStyle, FontStyle, Isolation, LineHeight, TextAlign, TextOverflow, TextTransform,
+    WhiteSpace, WordBreak,
+};
 use liquide_style_engine::dimension::Corners;
 
 use serde::{Deserialize, Serialize};
@@ -47,6 +50,16 @@ pub enum DisplayItem {
         font_size: f32,
         font_family: Vec<String>,
         font_weight: u16,
+        font_style: FontStyle,
+        letter_spacing: f32,
+        word_spacing: f32,
+        line_height: LineHeight,
+        text_align: TextAlign,
+        text_transform: TextTransform,
+        text_overflow: TextOverflow,
+        white_space: WhiteSpace,
+        word_break: WordBreak,
+        text_indent: f32,
         text_decoration: Option<liquide_compositor::scene::TextDecoration>,
         text_shadows: Vec<liquide_compositor::scene::TextShadow>,
     },

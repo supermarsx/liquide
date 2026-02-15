@@ -752,10 +752,24 @@ pub enum SceneNodeKind {
         font_size: f32,
         /// Font weight (100–900, 400 = Regular, 700 = Bold).
         font_weight: u16,
+        /// Whether the text is italic.
+        font_style_italic: bool,
         /// Letter-spacing adjustment in pixels.
         letter_spacing: f32,
-        /// Line-height multiplier (1.0 = tight, 1.5 = comfortable).
+        /// Word-spacing adjustment in pixels.
+        word_spacing: f32,
+        /// Line-height in pixels.
         line_height: f32,
+        /// Text alignment: 0=start/left, 1=center, 2=right/end, 3=justify.
+        text_align: u8,
+        /// Text transform: 0=none, 1=capitalize, 2=uppercase, 3=lowercase.
+        text_transform: u8,
+        /// Text overflow: 0=clip, 1=ellipsis.
+        text_overflow: u8,
+        /// White-space handling: 0=normal, 1=nowrap, 2=pre, 3=pre-wrap, 4=pre-line, 5=break-spaces.
+        white_space: u8,
+        /// Text indent in pixels (first line).
+        text_indent: f32,
         /// Optional text decoration (underline/strikethrough etc.).
         text_decoration: Option<TextDecoration>,
         /// Optional text shadows.

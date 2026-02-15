@@ -1,11 +1,24 @@
 //! Inline layout — simplified inline formatting context.
 
 use liquide_dom::{Document, NodeId};
+use liquide_style_engine::computed::TextAlign;
 use liquide_style_engine::StyleMap;
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree, LineBox};
 use crate::TextMeasurer;
+
+/// Calculate the x-offset for text alignment within a container.
+pub fn align_offset(align: TextAlign, container_width: f32, content_width: f32) -> f32 {
+    if content_width >= container_width {
+        return 0.0;
+    }
+    match align {
+        TextAlign::Center => (container_width - content_width) / 2.0,
+        TextAlign::Right | TextAlign::End => container_width - content_width,
+        TextAlign::Left | TextAlign::Start | TextAlign::Justify => 0.0,
+    }
+}
 
 /// Layout an inline element (simplified — wraps text content).
 pub fn layout_inline(
@@ -41,16 +54,20 @@ pub fn layout_inline(
     }
 
     if !text.is_empty() {
+        let text_props = crate::TextProperties::from_style(&style);
         let metrics = text_measurer.measure(
             &text,
             style.font_size,
             &style.font_family,
             style.font_weight,
             Some(max_width),
+            &text_props,
         );
+        // Apply text-align offset
+        let text_x = offset_x + align_offset(style.text_align, max_width, metrics.width);
 
         if let Some(b) = tree.get_mut(box_id) {
-            b.content_rect = Rect::new(offset_x, offset_y, metrics.width, metrics.height);
+            b.content_rect = Rect::new(text_x, offset_y, metrics.width, metrics.height);
             b.padding_rect = b.content_rect;
             b.border_rect = b.content_rect;
             b.margin_rect = b.content_rect;

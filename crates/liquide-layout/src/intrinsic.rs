@@ -3,7 +3,7 @@
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
 
-use crate::TextMeasurer;
+use crate::{TextMeasurer, TextProperties};
 
 /// Calculate the min-content width for a node.
 ///
@@ -19,6 +19,7 @@ pub fn min_content_width(
 
     if let Some(node) = doc.get(node_id) {
         if let Some(text) = node.text_content() {
+            let text_props = TextProperties::from_style(&style);
             // Min-content width = width of the longest word
             let mut max_word_width = 0.0f32;
             for word in text.split_whitespace() {
@@ -28,6 +29,7 @@ pub fn min_content_width(
                     &style.font_family,
                     style.font_weight,
                     None,
+                    &text_props,
                 );
                 max_word_width = max_word_width.max(m.width);
             }
@@ -57,12 +59,14 @@ pub fn max_content_width(
 
     if let Some(node) = doc.get(node_id) {
         if let Some(text) = node.text_content() {
+            let text_props = TextProperties::from_style(&style);
             let m = text_measurer.measure(
                 text,
                 style.font_size,
                 &style.font_family,
                 style.font_weight,
                 None,
+                &text_props,
             );
             return m.width;
         }

@@ -79,16 +79,24 @@ pub fn layout_block(
         if let Some(child_node) = doc.get(child_id) {
             if child_node.is_text() {
                 if let Some(text) = child_node.text_content() {
+                    let text_props = crate::TextProperties::from_style(&child_style);
                     let metrics = text_measurer.measure(
                         text,
                         child_style.font_size,
                         &child_style.font_family,
                         child_style.font_weight,
                         Some(content_width),
+                        &text_props,
+                    );
+                    // Apply text-align offset within the content area
+                    let text_x = crate::inline::align_offset(
+                        child_style.text_align,
+                        content_width,
+                        metrics.width,
                     );
                     let text_box = tree.alloc(child_id, BoxType::Text { line_boxes: Vec::new() });
                     if let Some(tb) = tree.get_mut(text_box) {
-                        tb.content_rect = Rect::new(0.0, child_y, metrics.width, metrics.height);
+                        tb.content_rect = Rect::new(text_x, child_y, metrics.width, metrics.height);
                         tb.padding_rect = tb.content_rect;
                         tb.border_rect = tb.content_rect;
                         tb.margin_rect = tb.content_rect;
