@@ -220,11 +220,12 @@ pub fn layout_table(
     }
 
     // Position captions above the grid; compute total caption height.
+    // Captions use LOCAL coordinates relative to the table's content area.
     let mut caption_y = 0.0f32;
     for cap in &captions {
-        let (dx, dy) = if let Some(b) = tree.get_mut(cap.box_id) {
-            let dx = content_x - b.content_rect.x;
-            let dy = (content_y + caption_y) - b.content_rect.y;
+        if let Some(b) = tree.get_mut(cap.box_id) {
+            let dx = 0.0 - b.content_rect.x;
+            let dy = caption_y - b.content_rect.y;
             b.content_rect.x += dx;
             b.content_rect.y += dy;
             b.padding_rect.x += dx;
@@ -233,19 +234,6 @@ pub fn layout_table(
             b.border_rect.y += dy;
             b.margin_rect.x += dx;
             b.margin_rect.y += dy;
-            (dx, dy)
-        } else {
-            (0.0, 0.0)
-        };
-        // Propagate position change to caption descendants
-        if dx != 0.0 || dy != 0.0 {
-            let child_ids: Vec<crate::tree::LayoutBoxId> = tree
-                .get(cap.box_id)
-                .map(|b| b.children.clone())
-                .unwrap_or_default();
-            for cid in child_ids {
-                crate::positioned::offset_box_recursive(tree, cid, dx, dy);
-            }
         }
         caption_y += cap.height;
     }
@@ -604,11 +592,12 @@ pub fn layout_table(
                 cell_h += (end_row - ri - 1) as f32 * border_spacing;
             }
 
-            let cell_x = content_x + col_x_positions[gc];
-            let cell_y = content_y + caption_y + row_y_positions[ri];
+            // Cell position is LOCAL to the table's content area
+            let cell_x = col_x_positions[gc];
+            let cell_y = caption_y + row_y_positions[ri];
 
             // Reposition the cell box
-            let (dx, dy) = if let Some(b) = tree.get_mut(cell.box_id) {
+            if let Some(b) = tree.get_mut(cell.box_id) {
                 let dx = cell_x - b.content_rect.x;
                 let dy = cell_y - b.content_rect.y;
                 let dw = cell_w - b.content_rect.width;
@@ -630,19 +619,6 @@ pub fn layout_table(
                 b.margin_rect.y += dy;
                 b.margin_rect.width += dw;
                 b.margin_rect.height += dh;
-                (dx, dy)
-            } else {
-                (0.0, 0.0)
-            };
-            // Propagate position change to cell descendants
-            if dx != 0.0 || dy != 0.0 {
-                let child_ids: Vec<crate::tree::LayoutBoxId> = tree
-                    .get(cell.box_id)
-                    .map(|b| b.children.clone())
-                    .unwrap_or_default();
-                for cid in child_ids {
-                    crate::positioned::offset_box_recursive(tree, cid, dx, dy);
-                }
             }
         }
     }

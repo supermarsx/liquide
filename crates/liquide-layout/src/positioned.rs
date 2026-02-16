@@ -209,25 +209,15 @@ pub fn layout_positioned(
     // If we already did intrinsic layout, steal children from that box.
     // Otherwise, do a proper child layout now.
     if let Some(intrinsic_id) = intrinsic_box {
-        // Intrinsic layout already laid out children; relocate them.
+        // Intrinsic layout already laid out children in local coords.
+        // Just re-parent them into the positioned box — no offset needed
+        // because in the local coordinate model, children are always
+        // positioned relative to their parent's content area.
         let child_ids: Vec<LayoutBoxId> = tree
             .get(intrinsic_id)
             .map(|b| b.children.clone())
             .unwrap_or_default();
-        // Children are already at their local absolute positions (block.rs offset them).
-        // Compute the remaining delta: target content origin minus the intrinsic content origin.
-        let intrinsic_cx = tree
-            .get(intrinsic_id)
-            .map(|b| b.content_rect.x)
-            .unwrap_or(0.0);
-        let intrinsic_cy = tree
-            .get(intrinsic_id)
-            .map(|b| b.content_rect.y)
-            .unwrap_or(0.0);
-        let dx = content_x - intrinsic_cx;
-        let dy = content_y - intrinsic_cy;
         for child_id in child_ids {
-            offset_box_recursive(tree, child_id, dx, dy);
             tree.add_child(box_id, child_id);
         }
     } else {
@@ -242,8 +232,8 @@ pub fn layout_positioned(
             image_measurer,
             content_w,
             content_h,
-            content_x,
-            content_y,
+            0.0,  // children use local coords (0,0 = content origin)
+            0.0,
             viewport_w,
             viewport_h,
             base_font_size,
@@ -393,33 +383,5 @@ fn layout_children_in_positioned(
                 child_y += cb.margin_rect.height;
             }
         }
-    }
-}
-
-/// Recursively offset all boxes by (dx, dy).
-pub fn offset_box_recursive(tree: &mut LayoutTree, box_id: LayoutBoxId, dx: f32, dy: f32) {
-    if let Some(b) = tree.get_mut(box_id) {
-        b.content_rect.x += dx;
-        b.content_rect.y += dy;
-        b.padding_rect.x += dx;
-        b.padding_rect.y += dy;
-        b.border_rect.x += dx;
-        b.border_rect.y += dy;
-        b.margin_rect.x += dx;
-        b.margin_rect.y += dy;
-        // Also offset line boxes inside Text nodes
-        if let BoxType::Text { ref mut line_boxes } = b.box_type {
-            for lb in line_boxes.iter_mut() {
-                lb.rect.x += dx;
-                lb.rect.y += dy;
-            }
-        }
-    }
-    let children: Vec<LayoutBoxId> = tree
-        .get(box_id)
-        .map(|b| b.children.clone())
-        .unwrap_or_default();
-    for child in children {
-        offset_box_recursive(tree, child, dx, dy);
     }
 }

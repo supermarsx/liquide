@@ -306,10 +306,10 @@ pub fn layout_multicol(
     for segment in &segments {
         match segment {
             Segment::Spanner(spanner_box_id, spanner_h) => {
-                // Position the spanner at full width
-                let (dx, dy) = if let Some(b) = tree.get_mut(*spanner_box_id) {
-                    let dx = content_x - b.content_rect.x;
-                    let dy = (content_y + overall_y) - b.content_rect.y;
+                // Position the spanner at full width (LOCAL coordinates)
+                if let Some(b) = tree.get_mut(*spanner_box_id) {
+                    let dx = 0.0 - b.content_rect.x;
+                    let dy = overall_y - b.content_rect.y;
                     b.content_rect.x += dx;
                     b.content_rect.y += dy;
                     b.padding_rect.x += dx;
@@ -318,18 +318,6 @@ pub fn layout_multicol(
                     b.border_rect.y += dy;
                     b.margin_rect.x += dx;
                     b.margin_rect.y += dy;
-                    (dx, dy)
-                } else {
-                    (0.0, 0.0)
-                };
-                if dx != 0.0 || dy != 0.0 {
-                    let child_ids: Vec<crate::tree::LayoutBoxId> = tree
-                        .get(*spanner_box_id)
-                        .map(|b| b.children.clone())
-                        .unwrap_or_default();
-                    for cid in child_ids {
-                        crate::positioned::offset_box_recursive(tree, cid, dx, dy);
-                    }
                 }
                 overall_y += spanner_h;
                 if overall_y > max_col_height {
@@ -361,10 +349,11 @@ pub fn layout_multicol(
                         col_y = 0.0;
                     }
 
-                    let col_x = content_x + current_col as f32 * (col_width + column_gap);
-                    let target_y = content_y + overall_y + col_y;
+                    // LOCAL positions within the multicol container's content area
+                    let col_x = current_col as f32 * (col_width + column_gap);
+                    let target_y = overall_y + col_y;
 
-                    let (dx, dy) = if let Some(b) = tree.get_mut(child_box_id) {
+                    if let Some(b) = tree.get_mut(child_box_id) {
                         let dx = col_x - b.content_rect.x;
                         let dy = target_y - b.content_rect.y;
                         b.content_rect.x += dx;
@@ -375,18 +364,6 @@ pub fn layout_multicol(
                         b.border_rect.y += dy;
                         b.margin_rect.x += dx;
                         b.margin_rect.y += dy;
-                        (dx, dy)
-                    } else {
-                        (0.0, 0.0)
-                    };
-                    if dx != 0.0 || dy != 0.0 {
-                        let child_ids: Vec<crate::tree::LayoutBoxId> = tree
-                            .get(child_box_id)
-                            .map(|b| b.children.clone())
-                            .unwrap_or_default();
-                        for cid in child_ids {
-                            crate::positioned::offset_box_recursive(tree, cid, dx, dy);
-                        }
                     }
 
                     col_y += child_h;

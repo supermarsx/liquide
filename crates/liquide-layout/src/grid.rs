@@ -450,8 +450,9 @@ pub fn layout_grid(
             None => continue,
         };
 
-        let cell_x = content_x + x_offsets.get(item.col_start).copied().unwrap_or(0.0);
-        let cell_y = content_y + y_offsets.get(item.row_start).copied().unwrap_or(0.0);
+        // Cell position is LOCAL to the grid container's content area
+        let cell_x = x_offsets.get(item.col_start).copied().unwrap_or(0.0);
+        let cell_y = y_offsets.get(item.row_start).copied().unwrap_or(0.0);
 
         // Width spans multiple columns + inter-column gaps
         let span_cols = item.col_end.saturating_sub(item.col_start).max(1);
@@ -478,24 +479,10 @@ pub fn layout_grid(
         }
 
         if let Some(b) = tree.get_mut(child_box_id) {
-            let old_x = b.content_rect.x;
-            let old_y = b.content_rect.y;
             b.content_rect = Rect::new(cell_x, cell_y, cell_w, cell_h);
             b.padding_rect = b.content_rect;
             b.border_rect = b.content_rect;
             b.margin_rect = b.content_rect;
-            let dx = cell_x - old_x;
-            let dy = cell_y - old_y;
-            // Propagate position change to all descendants
-            if dx != 0.0 || dy != 0.0 {
-                let child_ids: Vec<crate::tree::LayoutBoxId> = tree
-                    .get(child_box_id)
-                    .map(|b| b.children.clone())
-                    .unwrap_or_default();
-                for cid in child_ids {
-                    crate::positioned::offset_box_recursive(tree, cid, dx, dy);
-                }
-            }
         }
     }
 

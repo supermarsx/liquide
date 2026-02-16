@@ -50,6 +50,11 @@ pub struct LineBox {
 }
 
 /// A single layout box — represents one element's geometry.
+///
+/// All rects use **parent-local coordinates**: the (x, y) position is
+/// relative to the parent box's content area origin, matching Blink's
+/// PhysicalOffset model.  The painter and hit-tester accumulate absolute
+/// offsets during tree traversal.
 #[derive(Debug, Clone)]
 pub struct LayoutBox {
     /// Unique ID within the tree.
@@ -58,16 +63,18 @@ pub struct LayoutBox {
     pub node: NodeId,
     /// Kind of layout.
     pub box_type: BoxType,
-    /// Content area (inside padding).
+    /// Content area (inside padding) — parent-local.
     pub content_rect: Rect,
-    /// Content + padding.
+    /// Content + padding — parent-local.
     pub padding_rect: Rect,
-    /// Content + padding + border.
+    /// Content + padding + border — parent-local.
     pub border_rect: Rect,
-    /// Content + padding + border + margin.
+    /// Content + padding + border + margin — parent-local.
     pub margin_rect: Rect,
     /// Children.
     pub children: Vec<LayoutBoxId>,
+    /// Parent box (None for root).
+    pub parent: Option<LayoutBoxId>,
     /// First baseline for flex alignment.
     pub baseline: Option<f32>,
     /// Scrollable content size (if overflow).
@@ -86,6 +93,7 @@ impl LayoutBox {
             border_rect: Rect::zero(),
             margin_rect: Rect::zero(),
             children: Vec::new(),
+            parent: None,
             baseline: None,
             scroll_size: None,
         }
@@ -130,6 +138,9 @@ impl LayoutTree {
         if let Some(p) = self.boxes.get_mut(parent) {
             p.children.push(child);
         }
+        if let Some(c) = self.boxes.get_mut(child) {
+            c.parent = Some(parent);
+        }
     }
 
     /// Remove a child from a parent box's children list.
@@ -147,6 +158,88 @@ impl LayoutTree {
     /// Total number of boxes.
     pub fn box_count(&self) -> usize {
         self.boxes.len()
+    }
+
+    /// Compute the **absolute** content rect for a box by accumulating
+    /// parent content-area offsets up to the root.  This implements the
+    /// screen-space mapping that Blink performs inside
+    /// `MapLocalToAncestor`.
+    pub fn absolute_content_rect(&self, box_id: LayoutBoxId) -> Rect {
+        let b = match self.get(box_id) {
+            Some(b) => b,
+            None => return Rect::zero(),
+        };
+        let (ox, oy) = self.accumulated_offset(box_id);
+        Rect::new(
+            b.content_rect.x + ox,
+            b.content_rect.y + oy,
+            b.content_rect.width,
+            b.content_rect.height,
+        )
+    }
+
+    /// Compute the **absolute** border rect for a box.
+    pub fn absolute_border_rect(&self, box_id: LayoutBoxId) -> Rect {
+        let b = match self.get(box_id) {
+            Some(b) => b,
+            None => return Rect::zero(),
+        };
+        let (ox, oy) = self.accumulated_offset(box_id);
+        Rect::new(
+            b.border_rect.x + ox,
+            b.border_rect.y + oy,
+            b.border_rect.width,
+            b.border_rect.height,
+        )
+    }
+
+    /// Compute the **absolute** padding rect for a box.
+    pub fn absolute_padding_rect(&self, box_id: LayoutBoxId) -> Rect {
+        let b = match self.get(box_id) {
+            Some(b) => b,
+            None => return Rect::zero(),
+        };
+        let (ox, oy) = self.accumulated_offset(box_id);
+        Rect::new(
+            b.padding_rect.x + ox,
+            b.padding_rect.y + oy,
+            b.padding_rect.width,
+            b.padding_rect.height,
+        )
+    }
+
+    /// Compute the **absolute** margin rect for a box.
+    pub fn absolute_margin_rect(&self, box_id: LayoutBoxId) -> Rect {
+        let b = match self.get(box_id) {
+            Some(b) => b,
+            None => return Rect::zero(),
+        };
+        let (ox, oy) = self.accumulated_offset(box_id);
+        Rect::new(
+            b.margin_rect.x + ox,
+            b.margin_rect.y + oy,
+            b.margin_rect.width,
+            b.margin_rect.height,
+        )
+    }
+
+    /// Walk ancestors to accumulate the paint offset for a box.
+    /// Each ancestor contributes its `content_rect.(x,y)` since children
+    /// are positioned relative to the parent's content area.
+    fn accumulated_offset(&self, box_id: LayoutBoxId) -> (f32, f32) {
+        let mut ox = 0.0f32;
+        let mut oy = 0.0f32;
+        let mut current = self.get(box_id).and_then(|b| b.parent);
+        while let Some(pid) = current {
+            if let Some(p) = self.get(pid) {
+                ox += p.content_rect.x;
+                oy += p.content_rect.y;
+                current = p.parent;
+            } else {
+                break;
+            }
+        }
+        (ox, oy)
     }
 }
 

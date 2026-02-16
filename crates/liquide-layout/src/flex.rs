@@ -525,27 +525,18 @@ pub fn layout_flex(
 
         for (i, idx) in (line.start..line.end).enumerate() {
             let item = &mut items[idx];
-            // (x, y) is the desired margin-edge position for this item
+            // (x, y) is the desired LOCAL margin-edge position within the
+            // flex container's content area (offsets from 0,0).
             let (x, y) = if is_row {
-                (content_x + main_pos, content_y + cross_offset)
+                (main_pos, cross_offset)
             } else {
-                (content_x + cross_offset, content_y + main_pos)
+                (cross_offset, main_pos)
             };
 
             if let Some(b) = tree.get_mut(item.box_id) {
                 let dx = x - b.margin_rect.x;
                 let dy = y - b.margin_rect.y;
                 shift_box(b, dx, dy);
-                // Propagate position change to all descendants
-                if dx != 0.0 || dy != 0.0 {
-                    let child_ids: Vec<LayoutBoxId> = tree
-                        .get(item.box_id)
-                        .map(|b| b.children.clone())
-                        .unwrap_or_default();
-                    for cid in child_ids {
-                        crate::positioned::offset_box_recursive(tree, cid, dx, dy);
-                    }
-                }
             }
 
             main_pos += item.main_size + gap + if i < count - 1 { extra_gap } else { 0.0 };
@@ -590,15 +581,6 @@ pub fn layout_flex(
                 let (dx, dy) = if is_row { (0.0, delta) } else { (delta, 0.0) };
                 if let Some(b) = tree.get_mut(bid) {
                     shift_box(b, dx, dy);
-                }
-                if dx != 0.0 || dy != 0.0 {
-                    let child_ids: Vec<LayoutBoxId> = tree
-                        .get(bid)
-                        .map(|b| b.children.clone())
-                        .unwrap_or_default();
-                    for cid in child_ids {
-                        crate::positioned::offset_box_recursive(tree, cid, dx, dy);
-                    }
                 }
             }
             cross_start += line_cross_sizes[li] + cross_gap + cross_extra;
@@ -659,21 +641,6 @@ pub fn layout_flex(
                 shift_box(b, dx, dy);
             } else {
                 cross_offset_val = 0.0;
-            }
-            // Propagate cross-axis alignment shift to descendants
-            let (dx, dy) = if is_row {
-                (0.0, cross_offset_val)
-            } else {
-                (cross_offset_val, 0.0)
-            };
-            if dx != 0.0 || dy != 0.0 {
-                let child_ids: Vec<LayoutBoxId> = tree
-                    .get(item.box_id)
-                    .map(|b| b.children.clone())
-                    .unwrap_or_default();
-                for cid in child_ids {
-                    crate::positioned::offset_box_recursive(tree, cid, dx, dy);
-                }
             }
         }
         _line_cross_y += line_cross_sizes[li] + cross_gap;

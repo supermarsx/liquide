@@ -494,20 +494,6 @@ pub fn layout_block(
         );
     }
 
-    // ── Offset children from parent-local to absolute coordinates ──
-    // Children were laid out at offset_x=0.0, so their positions are relative
-    // to this block's content area origin. Shift them by (content_x, content_y)
-    // so all boxes in the tree use absolute screen-space coordinates.
-    if content_x != 0.0 || content_y != 0.0 {
-        let child_ids: Vec<LayoutBoxId> = tree
-            .get(box_id)
-            .map(|b| b.children.clone())
-            .unwrap_or_default();
-        for cid in child_ids {
-            crate::positioned::offset_box_recursive(tree, cid, content_x, content_y);
-        }
-    }
-
     box_id
 }
 

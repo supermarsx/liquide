@@ -232,10 +232,10 @@ pub fn layout_block_with_floats(
                 FloatSide::Right => float_ctx.place_right(fw, fh, block_y),
             };
 
-            // Reposition float box to its placed position (margin edge)
-            let (dx, dy) = if let Some(b) = tree.get_mut(float_box) {
-                let dx = (content_x + placed.x) - b.margin_rect.x;
-                let dy = (content_y + placed.y) - b.margin_rect.y;
+            // Reposition float box to LOCAL coordinates (relative to parent content area)
+            if let Some(b) = tree.get_mut(float_box) {
+                let dx = placed.x - b.margin_rect.x;
+                let dy = placed.y - b.margin_rect.y;
                 b.content_rect.x += dx;
                 b.content_rect.y += dy;
                 b.padding_rect.x += dx;
@@ -244,19 +244,6 @@ pub fn layout_block_with_floats(
                 b.border_rect.y += dy;
                 b.margin_rect.x += dx;
                 b.margin_rect.y += dy;
-                (dx, dy)
-            } else {
-                (0.0, 0.0)
-            };
-            // Propagate position change to float descendants
-            if dx != 0.0 || dy != 0.0 {
-                let child_ids: Vec<crate::tree::LayoutBoxId> = tree
-                    .get(float_box)
-                    .map(|b| b.children.clone())
-                    .unwrap_or_default();
-                for cid in child_ids {
-                    crate::positioned::offset_box_recursive(tree, cid, dx, dy);
-                }
             }
 
             tree.add_child(parent_box_id, float_box);

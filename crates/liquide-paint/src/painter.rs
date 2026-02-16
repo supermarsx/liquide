@@ -27,7 +27,7 @@ impl Painter {
         styles: &StyleMap,
     ) -> DisplayList {
         let mut list = DisplayList::new();
-        self.paint_box(doc, layout, styles, layout.root, &mut list);
+        self.paint_box(doc, layout, styles, layout.root, (0.0, 0.0), &mut list);
         list
     }
 
@@ -37,6 +37,7 @@ impl Painter {
         layout: &LayoutTree,
         styles: &StyleMap,
         box_id: LayoutBoxId,
+        paint_offset: (f32, f32),
         list: &mut DisplayList,
     ) {
         let layout_box = match layout.get(box_id) {
@@ -45,6 +46,13 @@ impl Painter {
         };
 
         let style = styles.get(layout_box.node).cloned().unwrap_or_default();
+
+        // Compute absolute rects by applying accumulated paint offset
+        let (ox, oy) = paint_offset;
+        let abs_content = layout_box.content_rect.offset(ox, oy);
+        let abs_padding = layout_box.padding_rect.offset(ox, oy);
+        let abs_border = layout_box.border_rect.offset(ox, oy);
+        let _abs_margin = layout_box.margin_rect.offset(ox, oy);
 
         // Skip invisible elements
         if !style.is_visible() {
@@ -112,7 +120,7 @@ impl Painter {
             if !ops.is_empty() {
                 list.push(DisplayItem::PushBackdropFilter {
                     filters: ops,
-                    bounds: layout_box.padding_rect,
+                    bounds: abs_padding,
                 });
             }
         }
@@ -126,7 +134,7 @@ impl Painter {
             };
             list.push(DisplayItem::PushMask {
                 mask_image,
-                rect: layout_box.padding_rect,
+                rect: abs_padding,
             });
         }
 
@@ -134,7 +142,7 @@ impl Painter {
         let has_clip_path = style.clip_path.is_some();
         if let Some(ref clip_str) = style.clip_path {
             // Parse common clip-path values into ClipPath shapes
-            let clip = parse_clip_path(clip_str, &layout_box.border_rect);
+            let clip = parse_clip_path(clip_str, &abs_border);
             if let Some(path) = clip {
                 list.push(DisplayItem::PushClipPath { path });
             }
@@ -151,7 +159,7 @@ impl Painter {
 
         if needs_clip {
             list.push(DisplayItem::PushClip {
-                rect: layout_box.padding_rect,
+                rect: abs_padding,
                 radius: style.border_radius.clone(),
             });
         }
@@ -159,7 +167,7 @@ impl Painter {
         // Paint box shadows (outer, before background)
         for shadow in &style.box_shadow {
             list.push(DisplayItem::BoxShadow {
-                rect: layout_box.border_rect,
+                rect: abs_border,
                 offset_x: shadow.offset_x,
                 offset_y: shadow.offset_y,
                 blur_radius: shadow.blur_radius,
@@ -174,7 +182,7 @@ impl Painter {
         let bg = style.background_color;
         if bg.a > 0 {
             list.push(DisplayItem::SolidColor {
-                rect: layout_box.padding_rect,
+                rect: abs_padding,
                 color: bg,
                 radius: style.border_radius.clone(),
             });
@@ -186,7 +194,7 @@ impl Painter {
                 use liquide_compositor::scene::BackgroundImage;
                 match bg_image {
                     BackgroundImage::Gradient(gradient) => {
-                        emit_gradient(list, &layout_box.padding_rect, &style.border_radius, gradient);
+                        emit_gradient(list, &abs_padding, &style.border_radius, gradient);
                     }
                     _ => {} // URL/ImageId handled elsewhere
                 }
@@ -201,7 +209,7 @@ impl Painter {
 
         if has_border {
             list.push(DisplayItem::Border {
-                rect: layout_box.border_rect,
+                rect: abs_border,
                 top: BorderEdge {
                     width: style.border_width.top,
                     style: style.border_style.top,
@@ -231,7 +239,7 @@ impl Painter {
             match &node.data {
                 NodeData::Text(text) => {
                     list.push(DisplayItem::Text {
-                        rect: layout_box.content_rect,
+                        rect: abs_content,
                         text: text.clone(),
                         color: style.color,
                         font_size: style.font_size,
@@ -253,14 +261,14 @@ impl Painter {
                 }
                 NodeData::Image { src, .. } => {
                     list.push(DisplayItem::Image {
-                        rect: layout_box.content_rect,
+                        rect: abs_content,
                         src: src.clone(),
                         radius: style.border_radius.clone(),
                     });
                 }
                 NodeData::Surface { surface_id } => {
                     list.push(DisplayItem::Surface {
-                        rect: layout_box.content_rect,
+                        rect: abs_content,
                         surface_id: *surface_id,
                     });
                 }
@@ -270,7 +278,7 @@ impl Painter {
                         let icon_id = icon_id_for_name(&icon_name);
                         if icon_id > 0 {
                             list.push(DisplayItem::Icon {
-                                rect: layout_box.content_rect,
+                                rect: abs_content,
                                 icon_id,
                                 color: style.color,
                             });
@@ -285,10 +293,10 @@ impl Painter {
         if let Some(ref outline) = style.outline {
             list.push(DisplayItem::Outline {
                 rect: liquide_layout::Rect::new(
-                    layout_box.border_rect.x - outline.width - outline.offset,
-                    layout_box.border_rect.y - outline.width - outline.offset,
-                    layout_box.border_rect.width + (outline.width + outline.offset) * 2.0,
-                    layout_box.border_rect.height + (outline.width + outline.offset) * 2.0,
+                    abs_border.x - outline.width - outline.offset,
+                    abs_border.y - outline.width - outline.offset,
+                    abs_border.width + (outline.width + outline.offset) * 2.0,
+                    abs_border.height + (outline.width + outline.offset) * 2.0,
                 ),
                 width: outline.width,
                 style: BorderLineStyle::Solid, // Map outline style to border style
@@ -297,9 +305,13 @@ impl Painter {
             });
         }
 
-        // Paint children
+        // Paint children — accumulate offset through content area origin
         // Collect and sort by z-index for proper stacking order
         let children = layout_box.children.clone();
+        let child_offset = (
+            ox + layout_box.content_rect.x,
+            oy + layout_box.content_rect.y,
+        );
         let mut sorted_children: Vec<(LayoutBoxId, i32)> = children
             .iter()
             .map(|&child_id| {
@@ -314,7 +326,7 @@ impl Painter {
         sorted_children.sort_by_key(|&(_, z)| z);
 
         for (child_id, _) in sorted_children {
-            self.paint_box(doc, layout, styles, child_id, list);
+            self.paint_box(doc, layout, styles, child_id, child_offset, list);
         }
 
         // Pop state in reverse order

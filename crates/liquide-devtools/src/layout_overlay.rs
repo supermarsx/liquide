@@ -113,14 +113,15 @@ impl LayoutOverlay {
             Some(b) => b,
             None => return vec![],
         };
+        let box_id = layout_box.id;
 
         let _style = styles.get(node_id);
 
-        // Extract box model dimensions from the layout box.
-        let content_rect = to_scene_rect(&layout_box.content_rect);
-        let padding_rect = to_scene_rect(&layout_box.padding_rect);
-        let border_rect = to_scene_rect(&layout_box.border_rect);
-        let margin_rect = to_scene_rect(&layout_box.margin_rect);
+        // Extract box model dimensions using absolute rects (local → screen coords).
+        let content_rect = to_scene_rect(&layout.absolute_content_rect(box_id));
+        let padding_rect = to_scene_rect(&layout.absolute_padding_rect(box_id));
+        let border_rect = to_scene_rect(&layout.absolute_border_rect(box_id));
+        let margin_rect = to_scene_rect(&layout.absolute_margin_rect(box_id));
 
         let mut nodes = Vec::with_capacity(12);
         let mut next_id: u64 = 900_000;

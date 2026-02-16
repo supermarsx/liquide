@@ -158,6 +158,11 @@ impl DesktopPipeline {
         doc: &Document,
         base_z: u32,
     ) -> (Vec<SceneNode>, PipelineOutput) {
+        // Reset scene ID counter each frame so glass/blur nodes get stable IDs.
+        // Without this, the blur_worker cache grows unbounded since each frame
+        // generates new IDs that never match old cache entries.
+        self.next_scene_id = 1_000_000;
+
         let output = self.run(doc);
 
         // Collect Glass nodes from elements with x_blur_radius > 0.
@@ -181,7 +186,8 @@ impl DesktopPipeline {
         for layout_box in &output.layout.boxes {
             if let Some(style) = output.styles.get(layout_box.node) {
                 if style.x_blur_radius > 0.0 {
-                    let rect = to_compositor_rect(&layout_box.border_rect);
+                    let abs_border = output.layout.absolute_border_rect(layout_box.id);
+                    let rect = to_compositor_rect(&abs_border);
                     // Skip zero-area boxes
                     if rect.width <= 0.0 || rect.height <= 0.0 {
                         continue;

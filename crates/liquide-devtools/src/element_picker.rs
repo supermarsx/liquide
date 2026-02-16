@@ -122,7 +122,7 @@ impl ElementPicker {
                 }
 
                 if let Some(lb) = layout.find_by_node(node_id) {
-                    let r = to_scene_rect(&lb.border_rect);
+                    let r = to_scene_rect(&layout.absolute_border_rect(lb.id));
                     parts.push(format!("  {:.0}×{:.0}", r.width, r.height));
                 }
 
@@ -176,7 +176,7 @@ impl ElementPicker {
             None => return vec![],
         };
 
-        let rect = to_scene_rect(&layout_box.border_rect);
+        let rect = to_scene_rect(&layout.absolute_border_rect(layout_box.id));
         let w = self.highlight_width;
         let color = self.highlight_color;
         let mut nodes = Vec::with_capacity(6);

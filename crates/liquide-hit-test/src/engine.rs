@@ -49,21 +49,30 @@ impl HitTestEngine {
 
     /// Hit test a single point. Returns the topmost matching node.
     pub fn hit_test(&self, point: Point) -> Option<HitTestResult> {
-        self.hit_test_box(self.layout.root, point)
+        self.hit_test_box(self.layout.root, point, (0.0, 0.0))
     }
 
     /// Hit test all overlapping nodes at a point (front to back).
     pub fn hit_test_all(&self, point: Point) -> Vec<HitTestResult> {
         let mut results = Vec::new();
-        self.hit_test_box_all(self.layout.root, point, &mut results);
+        self.hit_test_box_all(self.layout.root, point, (0.0, 0.0), &mut results);
         results
     }
 
-    fn hit_test_box(&self, box_id: LayoutBoxId, point: Point) -> Option<HitTestResult> {
+    fn hit_test_box(
+        &self,
+        box_id: LayoutBoxId,
+        point: Point,
+        paint_offset: (f32, f32),
+    ) -> Option<HitTestResult> {
         let layout_box = self.layout.get(box_id)?;
+        let (ox, oy) = paint_offset;
 
-        // Check if point is within the border box
-        if !layout_box.border_rect.contains(point) {
+        // Compute absolute border rect for containment check
+        let abs_border = layout_box.border_rect.offset(ox, oy);
+
+        // Check if point is within the absolute border box
+        if !abs_border.contains(point) {
             return None;
         }
 
@@ -74,18 +83,25 @@ impl HitTestEngine {
             }
         }
 
+        // Child paint offset = parent offset + parent content area origin
+        let child_offset = (
+            ox + layout_box.content_rect.x,
+            oy + layout_box.content_rect.y,
+        );
+
         // Test children in reverse order (topmost first, z-order)
         let children = layout_box.children.clone();
         for &child_id in children.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, point) {
+            if let Some(result) = self.hit_test_box(child_id, point, child_offset) {
                 return Some(result);
             }
         }
 
         // No child matched — this box is the target
+        let abs_content = layout_box.content_rect.offset(ox, oy);
         let point_in_node = Point::new(
-            point.x - layout_box.content_rect.x,
-            point.y - layout_box.content_rect.y,
+            point.x - abs_content.x,
+            point.y - abs_content.y,
         );
 
         // Build ancestor chain
@@ -110,14 +126,18 @@ impl HitTestEngine {
         &self,
         box_id: LayoutBoxId,
         point: Point,
+        paint_offset: (f32, f32),
         results: &mut Vec<HitTestResult>,
     ) {
         let layout_box = match self.layout.get(box_id) {
             Some(b) => b,
             None => return,
         };
+        let (ox, oy) = paint_offset;
 
-        if !layout_box.border_rect.contains(point) {
+        let abs_border = layout_box.border_rect.offset(ox, oy);
+
+        if !abs_border.contains(point) {
             return;
         }
 
@@ -127,10 +147,11 @@ impl HitTestEngine {
             }
         }
 
-        // Add this box
+        // Add this box with absolute point-in-node
+        let abs_content = layout_box.content_rect.offset(ox, oy);
         let point_in_node = Point::new(
-            point.x - layout_box.content_rect.x,
-            point.y - layout_box.content_rect.y,
+            point.x - abs_content.x,
+            point.y - abs_content.y,
         );
         results.push(HitTestResult {
             node: layout_box.node,
@@ -138,10 +159,14 @@ impl HitTestEngine {
             ancestors: Vec::new(), // simplified for all-results mode
         });
 
-        // Recurse children
+        // Recurse children with accumulated offset
+        let child_offset = (
+            ox + layout_box.content_rect.x,
+            oy + layout_box.content_rect.y,
+        );
         let children = layout_box.children.clone();
         for &child_id in children.iter().rev() {
-            self.hit_test_box_all(child_id, point, results);
+            self.hit_test_box_all(child_id, point, child_offset, results);
         }
     }
 }

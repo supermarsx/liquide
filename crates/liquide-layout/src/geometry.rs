@@ -94,6 +94,17 @@ impl Rect {
             && point.y < self.bottom()
     }
 
+    /// Return a copy of this rect with the origin shifted by `(dx, dy)`.
+    #[inline]
+    pub fn offset(&self, dx: f32, dy: f32) -> Self {
+        Self {
+            x: self.x + dx,
+            y: self.y + dy,
+            width: self.width,
+            height: self.height,
+        }
+    }
+
     pub fn intersects(&self, other: &Rect) -> bool {
         self.x < other.right()
             && self.right() > other.x

@@ -635,22 +635,27 @@ impl DebugConsole {
 
     fn cmd_layout_box(&mut self, layout: &LayoutTree, node_id: NodeId) {
         if let Some(b) = layout.find_by_node(node_id) {
+            let box_id = b.id;
+            let ac = layout.absolute_content_rect(box_id);
+            let ap = layout.absolute_padding_rect(box_id);
+            let ab = layout.absolute_border_rect(box_id);
+            let am = layout.absolute_margin_rect(box_id);
             self.push_output(format!("Layout for node #{}:", node_id));
             self.push_output(format!(
                 "  Content:  ({:.1}, {:.1}) {:.1} × {:.1}",
-                b.content_rect.x, b.content_rect.y, b.content_rect.width, b.content_rect.height
+                ac.x, ac.y, ac.width, ac.height
             ));
             self.push_output(format!(
                 "  Padding:  ({:.1}, {:.1}) {:.1} × {:.1}",
-                b.padding_rect.x, b.padding_rect.y, b.padding_rect.width, b.padding_rect.height
+                ap.x, ap.y, ap.width, ap.height
             ));
             self.push_output(format!(
                 "  Border:   ({:.1}, {:.1}) {:.1} × {:.1}",
-                b.border_rect.x, b.border_rect.y, b.border_rect.width, b.border_rect.height
+                ab.x, ab.y, ab.width, ab.height
             ));
             self.push_output(format!(
                 "  Margin:   ({:.1}, {:.1}) {:.1} × {:.1}",
-                b.margin_rect.x, b.margin_rect.y, b.margin_rect.width, b.margin_rect.height
+                am.x, am.y, am.width, am.height
             ));
             self.push_output(format!("  Box type: {:?}", b.box_type));
             self.push_output(format!("  Children: {}", b.children.len()));

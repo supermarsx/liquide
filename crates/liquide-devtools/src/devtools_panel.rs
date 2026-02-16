@@ -1908,7 +1908,7 @@ impl DevToolsPanel {
         if self.visible && self.active_tab == DevToolsTab::Elements {
             if let Some(hovered_id) = self.inspector.hovered() {
                 if let Some(layout_box) = layout.find_by_node(hovered_id) {
-                    let lr = &layout_box.border_rect;
+                    let lr = layout.absolute_border_rect(layout_box.id);
                     let rect = Rect::new(lr.x, lr.y, lr.width, lr.height);
                     nodes.push(SceneNode::new(
                         915_000,
@@ -1931,7 +1931,7 @@ impl DevToolsPanel {
                 let is_hovered = self.inspector.hovered() == Some(sel_id);
                 if !is_hovered {
                     if let Some(layout_box) = layout.find_by_node(sel_id) {
-                        let lr = &layout_box.border_rect;
+                        let lr = layout.absolute_border_rect(layout_box.id);
                         let rect = Rect::new(lr.x, lr.y, lr.width, lr.height);
                         nodes.push(SceneNode::new(
                             915_010,
