@@ -2987,15 +2987,14 @@ impl Shell {
     /// The template will be rendered by the CSS pipeline on the next
     /// `build_scene()` call. Uses keyed reconciliation so repeated calls
     /// efficiently patch the existing subtree.
-    pub fn mount_template(&mut self, element_id: &str, template: &liquide_components::TemplateNode) {
+    pub fn mount_template(
+        &mut self,
+        element_id: &str,
+        template: &liquide_components::TemplateNode,
+    ) {
         use crate::TemplateRenderer;
         let root = self.desktop_dom.doc.root();
-        TemplateRenderer::apply_or_create(
-            &mut self.desktop_dom.doc,
-            root,
-            element_id,
-            template,
-        );
+        TemplateRenderer::apply_or_create(&mut self.desktop_dom.doc, root, element_id, template);
     }
 
     /// Remove a previously mounted external template from the DOM.

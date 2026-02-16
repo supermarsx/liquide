@@ -35,7 +35,7 @@ pub mod scene_graph;
 pub mod style_editor;
 pub mod style_panel;
 
-pub use console::DebugConsole;
+pub use console::{ConsoleAction, DebugConsole};
 pub use context_menu::{ContextAction, ContextMenu};
 pub use devtools_panel::{DevToolsPanel, DevToolsConfig, DevToolsTab, SideTab, DockPosition, FrameSnapshot};
 pub use dom_serializer::DomSerializer;

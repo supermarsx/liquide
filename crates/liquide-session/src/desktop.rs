@@ -180,7 +180,8 @@ impl DesktopCompositor {
             self.devtools = Some(panel);
 
             // Load devtools structural CSS into the pipeline.
-            static DEVTOOLS_CSS: &str = include_str!("../../../assets/themes/components/devtools.css");
+            static DEVTOOLS_CSS: &str =
+                include_str!("../../../assets/themes/components/devtools.css");
             self.shell.add_stylesheet(DEVTOOLS_CSS);
 
             info!("devtools panel initialized (F12 to toggle)");
@@ -418,13 +419,10 @@ impl DesktopCompositor {
                 let devtools = self.devtools.as_ref().unwrap();
                 let doc = self.shell.document();
                 match (self.shell.layout_tree(), self.shell.style_map()) {
-                    (Some(layout), Some(styles)) => {
-                        devtools.render_template(doc, layout, styles)
-                    }
+                    (Some(layout), Some(styles)) => devtools.render_template(doc, layout, styles),
                     _ => {
                         // First frame — minimal stub so the pipeline has something.
-                        liquide_devtools::TemplateNode::el("devtools-panel")
-                            .id("devtools-panel")
+                        liquide_devtools::TemplateNode::el("devtools-panel").id("devtools-panel")
                     }
                 }
             };

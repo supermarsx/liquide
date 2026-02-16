@@ -226,6 +226,8 @@ pub struct DevToolsPanel {
     pub scene_debugger: SceneGraphDebugger,
     /// Live style editor.
     pub style_editor: StyleEditor,
+    /// Queued style edits waiting to be applied to the document.
+    style_edit_queue: Vec<crate::style_editor::StyleEdit>,
     /// Context menu.
     pub context_menu: ContextMenu,
     /// Currently selected node (shared across panels).
@@ -276,6 +278,7 @@ impl DevToolsPanel {
             console: DebugConsole::new(),
             scene_debugger: SceneGraphDebugger::new(),
             style_editor: StyleEditor::new(),
+            style_edit_queue: Vec::new(),
             context_menu: ContextMenu::new(),
             selected_node: None,
             screen_width: 1920.0,
@@ -406,6 +409,8 @@ impl DevToolsPanel {
         self.inspector.select(node_id);
         self.style_inspector.inspect(node_id, styles);
         self.layout_overlay.set_target(Some(node_id));
+        self.console.set_selected_node(Some(node_id));
+        self.style_editor.set_target(Some(node_id));
     }
 
     /// Clear the current selection.
@@ -413,6 +418,8 @@ impl DevToolsPanel {
         self.selected_node = None;
         self.style_inspector.clear();
         self.layout_overlay.set_target(None);
+        self.console.set_selected_node(None);
+        self.style_editor.set_target(None);
     }
 
     /// Get the currently selected node.
@@ -479,6 +486,58 @@ impl DevToolsPanel {
                 return true;
             }
             _ => {}
+        }
+
+        // If the style editor is actively editing a property, route keys there.
+        if self.style_editor.editing_property().is_some() {
+            match key {
+                "Escape" => {
+                    self.style_editor.cancel_edit();
+                    return true;
+                }
+                "Enter" | "Return" => {
+                    // Confirm edit — returns a StyleEdit that we should apply.
+                    if let Some(edit) = self.style_editor.confirm_edit() {
+                        // Queue the edit — the host will apply it via
+                        // apply_pending_style_edits() on the next frame.
+                        self.style_edit_queue.push(edit);
+                    }
+                    return true;
+                }
+                "Backspace" => { self.style_editor.backspace(); return true; }
+                "ArrowLeft" | "Left" => { self.style_editor.cursor_left(); return true; }
+                "ArrowRight" | "Right" => { self.style_editor.cursor_right(); return true; }
+                "Tab" => {
+                    // Confirm current and move focus to next property (if any).
+                    if let Some(edit) = self.style_editor.confirm_edit() {
+                        self.style_edit_queue.push(edit);
+                    }
+                    return true;
+                }
+                _ if key.len() == 1 && !ctrl => {
+                    if let Some(c) = key.chars().next() {
+                        self.style_editor.insert_char(c);
+                        // Auto-apply: queue the edit immediately if enabled.
+                        if self.style_editor.auto_apply() {
+                            if let (Some(node_id), Some(prop)) = (
+                                self.style_editor.target(),
+                                self.style_editor.editing_property().map(|s| s.to_string()),
+                            ) {
+                                let value = self.style_editor.editing_value().to_string();
+                                self.style_edit_queue.push(crate::style_editor::StyleEdit {
+                                    node_id,
+                                    property: prop,
+                                    original_value: String::new(),
+                                    new_value: value,
+                                    applied: false,
+                                });
+                            }
+                        }
+                    }
+                    return true;
+                }
+                _ => {}
+            }
         }
 
         // If console is focused, route keys there (except global shortcuts above).
@@ -733,7 +792,22 @@ impl DevToolsPanel {
                                     return true;
                                 }
                                 row += 1;
-                                row += props.len();
+                                // Check if click is on a property row's value area.
+                                for prop in props {
+                                    if row == line_idx {
+                                        // Click on a property — start editing its value.
+                                        // Right half of the row is the value area.
+                                        let value_col_x = side_left + (side_w * 0.45);
+                                        if x >= value_col_x {
+                                            if let Some(node_id) = self.selected_node {
+                                                self.style_editor.set_target(Some(node_id));
+                                            }
+                                            self.style_editor.start_edit(&prop.name, &prop.value);
+                                            return true;
+                                        }
+                                    }
+                                    row += 1;
+                                }
                             }
                         }
                         return true;
@@ -1887,6 +1961,26 @@ impl DevToolsPanel {
     // See template_elements(), template_console(), etc. above.
 
     // ─── Public APIs ──────────────────────────────────────────
+
+    /// Apply all queued style edits to the document as inline styles.
+    ///
+    /// Returns the number of edits applied.  The host should call this
+    /// once per frame after `handle_key()` / `on_panel_click()`.
+    pub fn apply_pending_style_edits(&mut self, doc: &mut Document) -> usize {
+        let edits: Vec<crate::style_editor::StyleEdit> = self.style_edit_queue.drain(..).collect();
+        let count = edits.len();
+        for edit in &edits {
+            doc.set_inline_style(edit.node_id, &edit.property, &edit.new_value);
+            self.style_editor.mark_applied(edit.node_id, &edit.property);
+        }
+        count
+    }
+
+    /// Drain any console action (reload, restart, inspect) produced by
+    /// the last console submit.
+    pub fn take_console_action(&mut self) -> Option<crate::console::ConsoleAction> {
+        self.console.take_pending_action()
+    }
 
     /// Whether the panel is requesting to be detached into a separate window.
     pub fn detach_requested(&self) -> bool {

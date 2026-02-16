@@ -284,33 +284,67 @@ impl DebugConsole {
         layout: &LayoutTree,
         styles: &StyleMap,
     ) {
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        match parts.first().copied() {
-            Some("help") => {
-                self.push_output("Available commands:".into());
-                self.push_output("  help              — Show this help".into());
-                self.push_output("  clear             — Clear console".into());
-                self.push_output("  dom.stats         — Document statistics".into());
-                self.push_output("  dom.query <sel>   — Query nodes by tag/id/class".into());
-                self.push_output("  dom.node <id>     — Inspect a specific node".into());
-                self.push_output("  dom.children <id> — List children of a node".into());
-                self.push_output("  dom.text <id>     — Get text content of a node".into());
-                self.push_output("  layout.box <id>   — Show layout box for node".into());
-                self.push_output("  layout.stats      — Layout tree statistics".into());
-                self.push_output("  style.get <id>    — Show computed styles".into());
-                self.push_output("  style.prop <id> <name> — Get a specific property".into());
+        // Expand $0 to the currently selected node ID.
+        let expanded = if cmd.contains("$0") {
+            if let Some(sel) = self.selected_node {
+                cmd.replace("$0", &sel.to_string())
+            } else {
+                self.push_error("$0: no element selected (select one in Elements panel)".into());
+                return;
             }
-            Some("clear") => {
+        } else {
+            cmd.to_string()
+        };
+
+        let parts: Vec<&str> = expanded.split_whitespace().collect();
+        match parts.first().copied() {
+            // ── Help ──
+            Some("help") => {
+                self.push_output("─── DOM ───".into());
+                self.push_output("  dom.stats             — Document statistics".into());
+                self.push_output("  dom.query <sel>       — Query nodes by tag/#id/.class".into());
+                self.push_output("  dom.node <id>         — Inspect a node".into());
+                self.push_output("  dom.children <id>     — List children".into());
+                self.push_output("  dom.parent <id>       — Show ancestor chain".into());
+                self.push_output("  dom.text <id>         — Get text content".into());
+                self.push_output("  dom.tree [id] [depth] — Print subtree (default root, depth 3)".into());
+                self.push_output("  dom.attrs <id>        — Show all attributes".into());
+                self.push_output("  dom.classes <id>      — Show CSS classes".into());
+                self.push_output("  dom.find <text>       — Search text content across all nodes".into());
+                self.push_output("─── Layout ───".into());
+                self.push_output("  layout.box <id>       — Show layout box".into());
+                self.push_output("  layout.stats          — Layout tree statistics".into());
+                self.push_output("  layout.overflow       — List nodes with overflow".into());
+                self.push_output("─── Style ───".into());
+                self.push_output("  style.get <id>        — Show computed styles".into());
+                self.push_output("  style.prop <id> <p>   — Single property value".into());
+                self.push_output("  style.search <value>  — Find nodes with a property value".into());
+                self.push_output("─── Actions ───".into());
+                self.push_output("  inspect <id>          — Select node in Elements panel".into());
+                self.push_output("  reload                — Reload stylesheets & re-render".into());
+                self.push_output("  restart               — Full UI restart".into());
+                self.push_output("─── Misc ───".into());
+                self.push_output("  clear / cls           — Clear console".into());
+                self.push_output("  version               — Engine version info".into());
+                self.push_output("  uptime                — Console session uptime".into());
+                self.push_output("  history               — Show command history".into());
+                self.push_output("  $0                    — Alias for selected element ID".into());
+            }
+
+            // ── Clear ──
+            Some("clear") | Some("cls") => {
                 self.entries.clear();
                 self.push_info("Console cleared.".into());
             }
-            Some("dom.stats") => {
-                self.cmd_dom_stats(doc);
-            }
+
+            // ── DOM commands ──
+            Some("dom.stats") => self.cmd_dom_stats(doc),
+
             Some("dom.query") if parts.len() >= 2 => {
                 let selector = parts[1..].join(" ");
                 self.cmd_dom_query(doc, &selector);
             }
+
             Some("dom.node") if parts.len() >= 2 => {
                 if let Ok(id) = parts[1].parse::<NodeId>() {
                     self.cmd_dom_node(doc, id);
@@ -318,6 +352,7 @@ impl DebugConsole {
                     self.push_error(format!("Invalid node ID: {}", parts[1]));
                 }
             }
+
             Some("dom.children") if parts.len() >= 2 => {
                 if let Ok(id) = parts[1].parse::<NodeId>() {
                     self.cmd_dom_children(doc, id);
@@ -325,6 +360,15 @@ impl DebugConsole {
                     self.push_error(format!("Invalid node ID: {}", parts[1]));
                 }
             }
+
+            Some("dom.parent") if parts.len() >= 2 => {
+                if let Ok(id) = parts[1].parse::<NodeId>() {
+                    self.cmd_dom_parent(doc, id);
+                } else {
+                    self.push_error(format!("Invalid node ID: {}", parts[1]));
+                }
+            }
+
             Some("dom.text") if parts.len() >= 2 => {
                 if let Ok(id) = parts[1].parse::<NodeId>() {
                     self.cmd_dom_text(doc, id);
@@ -332,6 +376,39 @@ impl DebugConsole {
                     self.push_error(format!("Invalid node ID: {}", parts[1]));
                 }
             }
+
+            Some("dom.tree") => {
+                let node_id = parts.get(1)
+                    .and_then(|s| s.parse::<NodeId>().ok())
+                    .unwrap_or_else(|| doc.root());
+                let depth = parts.get(2)
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(3);
+                self.cmd_dom_tree(doc, node_id, depth);
+            }
+
+            Some("dom.attrs") if parts.len() >= 2 => {
+                if let Ok(id) = parts[1].parse::<NodeId>() {
+                    self.cmd_dom_attrs(doc, id);
+                } else {
+                    self.push_error(format!("Invalid node ID: {}", parts[1]));
+                }
+            }
+
+            Some("dom.classes") if parts.len() >= 2 => {
+                if let Ok(id) = parts[1].parse::<NodeId>() {
+                    self.cmd_dom_classes(doc, id);
+                } else {
+                    self.push_error(format!("Invalid node ID: {}", parts[1]));
+                }
+            }
+
+            Some("dom.find") if parts.len() >= 2 => {
+                let needle = parts[1..].join(" ");
+                self.cmd_dom_find(doc, &needle);
+            }
+
+            // ── Layout commands ──
             Some("layout.box") if parts.len() >= 2 => {
                 if let Ok(id) = parts[1].parse::<NodeId>() {
                     self.cmd_layout_box(layout, id);
@@ -339,9 +416,12 @@ impl DebugConsole {
                     self.push_error(format!("Invalid node ID: {}", parts[1]));
                 }
             }
-            Some("layout.stats") => {
-                self.cmd_layout_stats(layout);
-            }
+
+            Some("layout.stats") => self.cmd_layout_stats(layout),
+
+            Some("layout.overflow") => self.cmd_layout_overflow(layout),
+
+            // ── Style commands ──
             Some("style.get") if parts.len() >= 2 => {
                 if let Ok(id) = parts[1].parse::<NodeId>() {
                     self.cmd_style_get(styles, id);
@@ -349,6 +429,7 @@ impl DebugConsole {
                     self.push_error(format!("Invalid node ID: {}", parts[1]));
                 }
             }
+
             Some("style.prop") if parts.len() >= 3 => {
                 if let Ok(id) = parts[1].parse::<NodeId>() {
                     self.cmd_style_prop(styles, id, parts[2]);
@@ -356,8 +437,78 @@ impl DebugConsole {
                     self.push_error(format!("Invalid node ID: {}", parts[1]));
                 }
             }
+
+            Some("style.search") if parts.len() >= 2 => {
+                let value = parts[1..].join(" ");
+                self.cmd_style_search(styles, doc, &value);
+            }
+
+            // ── Action commands ──
+            Some("inspect") if parts.len() >= 2 => {
+                if let Ok(id) = parts[1].parse::<NodeId>() {
+                    if doc.get(id).is_some() {
+                        self.pending_action = Some(ConsoleAction::InspectNode(id));
+                        self.push_info(format!("Inspecting node #{}", id));
+                    } else {
+                        self.push_error(format!("Node #{} not found", id));
+                    }
+                } else {
+                    self.push_error(format!("Invalid node ID: {}", parts[1]));
+                }
+            }
+
+            Some("reload") => {
+                self.pending_action = Some(ConsoleAction::ReloadStyles);
+                self.push_info("Stylesheet reload requested.".into());
+            }
+
+            Some("restart") => {
+                self.pending_action = Some(ConsoleAction::RestartUI);
+                self.push_warning("Full UI restart requested.".into());
+            }
+
+            // ── Misc commands ──
+            Some("version") => {
+                self.push_output("LiquiDE Engine v0.1.0".into());
+                self.push_output(format!("  DOM nodes: {}", doc.node_count()));
+                self.push_output(format!("  Layout boxes: {}", layout.box_count()));
+                self.push_output(format!("  Console entries: {}", self.entries.len()));
+            }
+
+            Some("uptime") => {
+                let elapsed = self.start.elapsed();
+                let secs = elapsed.as_secs();
+                let mins = secs / 60;
+                let hrs = mins / 60;
+                if hrs > 0 {
+                    self.push_output(format!("Uptime: {}h {}m {}s", hrs, mins % 60, secs % 60));
+                } else if mins > 0 {
+                    self.push_output(format!("Uptime: {}m {}s", mins, secs % 60));
+                } else {
+                    self.push_output(format!("Uptime: {}s", secs));
+                }
+            }
+
+            Some("history") => {
+                if self.history.is_empty() {
+                    self.push_output("No command history.".into());
+                } else {
+                    let count = self.history.len();
+                    let lines: Vec<String> = self.history.iter().enumerate()
+                        .map(|(i, h)| format!("  [{}] {}", i, h))
+                        .collect();
+                    self.push_output(format!("History ({} entries):", count));
+                    for line in lines {
+                        self.push_output(line);
+                    }
+                }
+            }
+
             Some(unknown) => {
-                self.push_error(format!("Unknown command: '{}'. Type 'help' for available commands.", unknown));
+                self.push_error(format!(
+                    "Unknown command: '{}'. Type 'help' for available commands.",
+                    unknown
+                ));
             }
             None => {}
         }
@@ -543,6 +694,207 @@ impl DebugConsole {
             self.push_output(format!("{}: {}", p.name, p.value));
         } else {
             self.push_error(format!("Property '{}' not found for node #{}", prop_name, node_id));
+        }
+    }
+
+    // ── New command implementations ──
+
+    fn cmd_dom_parent(&mut self, doc: &Document, node_id: NodeId) {
+        if doc.get(node_id).is_none() {
+            self.push_error(format!("Node #{} not found", node_id));
+            return;
+        }
+        let ancestors = doc.ancestors(node_id);
+        if ancestors.is_empty() {
+            self.push_output(format!("Node #{} has no parent (root)", node_id));
+        } else {
+            self.push_output(format!("Ancestor chain for #{}:", node_id));
+            for (depth, anc) in ancestors.iter().enumerate() {
+                if let Some(node) = doc.get(*anc) {
+                    let tag = node.tag_name();
+                    let eid = node
+                        .element_id
+                        .as_deref()
+                        .map(|e| format!(" id=\"{}\"", e))
+                        .unwrap_or_default();
+                    self.push_output(format!(
+                        "  {}<{}{}> #{}",
+                        "  ".repeat(depth),
+                        tag,
+                        eid,
+                        anc
+                    ));
+                }
+            }
+        }
+    }
+
+    fn cmd_dom_tree(&mut self, doc: &Document, root: NodeId, max_depth: usize) {
+        self.push_output(format!("DOM tree from #{} (depth {}):", root, max_depth));
+        self.dom_tree_walk(doc, root, 0, max_depth);
+    }
+
+    fn dom_tree_walk(&mut self, doc: &Document, node_id: NodeId, depth: usize, max_depth: usize) {
+        if depth > max_depth {
+            return;
+        }
+        if let Some(node) = doc.get(node_id) {
+            let tag = node.tag_name();
+            let eid = node
+                .element_id
+                .as_deref()
+                .map(|e| format!(" id=\"{}\"", e))
+                .unwrap_or_default();
+            let cls = if node.classes.is_empty() {
+                String::new()
+            } else {
+                let names: Vec<&str> = node.classes.iter().collect();
+                format!(" .{}", names.join("."))
+            };
+            let indent = "  ".repeat(depth + 1);
+            self.push_output(format!("{}<{}{}{}> #{}", indent, tag, eid, cls, node_id));
+
+            let children = doc.children(node_id);
+            if children.len() > 50 && depth < max_depth {
+                // Too many children — summarise
+                for child in children.iter().take(10) {
+                    self.dom_tree_walk(doc, *child, depth + 1, max_depth);
+                }
+                self.push_output(format!(
+                    "{}... and {} more children",
+                    "  ".repeat(depth + 2),
+                    children.len() - 10
+                ));
+            } else {
+                for child in children {
+                    self.dom_tree_walk(doc, *child, depth + 1, max_depth);
+                }
+            }
+        }
+    }
+
+    fn cmd_dom_attrs(&mut self, doc: &Document, node_id: NodeId) {
+        if let Some(node) = doc.get(node_id) {
+            if node.attrs.is_empty() {
+                self.push_output(format!("Node #{} has no attributes", node_id));
+            } else {
+                self.push_output(format!("Attributes of #{} ({}):", node_id, node.attrs.len()));
+                for (k, v) in node.attrs.iter() {
+                    self.push_output(format!("  {}=\"{}\"", k, v));
+                }
+            }
+        } else {
+            self.push_error(format!("Node #{} not found", node_id));
+        }
+    }
+
+    fn cmd_dom_classes(&mut self, doc: &Document, node_id: NodeId) {
+        if let Some(node) = doc.get(node_id) {
+            if node.classes.is_empty() {
+                self.push_output(format!("Node #{} has no CSS classes", node_id));
+            } else {
+                let cls: Vec<&str> = node.classes.iter().collect();
+                self.push_output(format!("Classes of #{}: {}", node_id, cls.join(", ")));
+            }
+        } else {
+            self.push_error(format!("Node #{} not found", node_id));
+        }
+    }
+
+    fn cmd_dom_find(&mut self, doc: &Document, needle: &str) {
+        let lower = needle.to_lowercase();
+        let root = doc.root();
+        let all_ids = doc.descendants(root);
+        let mut found = Vec::new();
+
+        for id in std::iter::once(root).chain(all_ids) {
+            if let Some(node) = doc.get(id) {
+                if let Some(text) = node.text_content() {
+                    if text.to_lowercase().contains(&lower) {
+                        let preview = if text.len() > 60 {
+                            format!("{}...", &text[..60])
+                        } else {
+                            text.to_string()
+                        };
+                        found.push((id, node.tag_name().to_string(), preview));
+                    }
+                }
+            }
+        }
+
+        if found.is_empty() {
+            self.push_output(format!("No text nodes containing '{}'", needle));
+        } else {
+            self.push_output(format!("Found {} node(s) containing '{}':", found.len(), needle));
+            for (id, tag, preview) in found.iter().take(20) {
+                self.push_output(format!("  #{} <{}> \"{}\"", id, tag, preview));
+            }
+            if found.len() > 20 {
+                self.push_output(format!("  ... and {} more", found.len() - 20));
+            }
+        }
+    }
+
+    fn cmd_layout_overflow(&mut self, layout: &LayoutTree) {
+        let mut overflow_nodes = Vec::new();
+        for b in &layout.boxes {
+            if let Some(ref sz) = b.scroll_size {
+                let exceeds_w = sz.width > b.content_rect.width + 1.0;
+                let exceeds_h = sz.height > b.content_rect.height + 1.0;
+                if exceeds_w || exceeds_h {
+                    overflow_nodes.push((
+                        b.node,
+                        b.content_rect.width,
+                        b.content_rect.height,
+                        sz.width,
+                        sz.height,
+                    ));
+                }
+            }
+        }
+
+        if overflow_nodes.is_empty() {
+            self.push_output("No boxes with scroll overflow detected.".into());
+        } else {
+            self.push_output(format!("{} box(es) with overflow:", overflow_nodes.len()));
+            for (nid, cw, ch, sw, sh) in overflow_nodes.iter().take(20) {
+                self.push_output(format!(
+                    "  node #{}: content {:.0}×{:.0}, scroll {:.0}×{:.0}",
+                    nid, cw, ch, sw, sh
+                ));
+            }
+        }
+    }
+
+    fn cmd_style_search(&mut self, styles: &StyleMap, doc: &Document, value: &str) {
+        use crate::style_panel::StyleInspector;
+        let lower = value.to_lowercase();
+        let root = doc.root();
+        let all_ids = doc.descendants(root);
+        let mut found = Vec::new();
+
+        for id in std::iter::once(root).chain(all_ids) {
+            let mut inspector = StyleInspector::new();
+            inspector.inspect(id, styles);
+            for prop in inspector.visible_properties() {
+                if prop.value.to_lowercase().contains(&lower)
+                    || prop.name.to_lowercase().contains(&lower)
+                {
+                    found.push((id, prop.name.clone(), prop.value.clone()));
+                }
+            }
+        }
+
+        if found.is_empty() {
+            self.push_output(format!("No properties matching '{}'", value));
+        } else {
+            self.push_output(format!("Found {} match(es) for '{}':", found.len(), value));
+            for (id, name, val) in found.iter().take(30) {
+                self.push_output(format!("  #{}: {} = {}", id, name, val));
+            }
+            if found.len() > 30 {
+                self.push_output(format!("  ... and {} more", found.len() - 30));
+            }
         }
     }
 
