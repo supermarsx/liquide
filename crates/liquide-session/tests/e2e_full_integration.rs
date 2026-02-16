@@ -59,12 +59,13 @@ fn full_workflow_app_window_dock_devtools() {
         "DOM tree should have children"
     );
 
-    // --- Step 6: DevTools scene nodes should be generated ---
+    // --- Step 6: DevTools template should be generated ---
     let layout = shell.layout_tree().expect("layout after build_scene");
     let styles = shell.style_map().expect("styles after build_scene");
-    let dt_nodes = devtools.build_scene(doc, layout, styles);
-    assert!(
-        !dt_nodes.is_empty(),
+    let template = devtools.render_template(doc, layout, styles);
+    assert_eq!(
+        template.tag.as_str(),
+        "devtools-panel",
         "visible devtools should produce scene nodes"
     );
 
@@ -168,14 +169,14 @@ fn devtools_full_navigation_flow() {
     assert!(devtools.is_visible());
 
     // Set a specific tab
-    devtools.set_tab(DevToolsTab::DomTree);
-    assert!(matches!(devtools.active_tab(), DevToolsTab::DomTree));
+    devtools.set_tab(DevToolsTab::Sources);
+    assert!(matches!(devtools.active_tab(), DevToolsTab::Sources));
 
-    devtools.set_tab(DevToolsTab::Styles);
-    assert!(matches!(devtools.active_tab(), DevToolsTab::Styles));
+    devtools.set_tab(DevToolsTab::Performance);
+    assert!(matches!(devtools.active_tab(), DevToolsTab::Performance));
 
-    devtools.set_tab(DevToolsTab::Layout);
-    assert!(matches!(devtools.active_tab(), DevToolsTab::Layout));
+    devtools.set_tab(DevToolsTab::Scene);
+    assert!(matches!(devtools.active_tab(), DevToolsTab::Scene));
 
     devtools.set_tab(DevToolsTab::Mutations);
     assert!(matches!(devtools.active_tab(), DevToolsTab::Mutations));
@@ -228,9 +229,9 @@ fn tiling_works_while_devtools_visible() {
     let layout = shell.layout_tree().unwrap();
     let styles = shell.style_map().unwrap();
 
-    let dt_nodes = devtools.build_scene(doc, layout, styles);
+    let template = devtools.render_template(doc, layout, styles);
     assert!(
-        !dt_nodes.is_empty(),
+        !template.children.is_empty(),
         "devtools should still produce scene nodes while windows are tiled"
     );
 }

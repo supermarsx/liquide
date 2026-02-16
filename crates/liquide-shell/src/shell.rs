@@ -2979,4 +2979,35 @@ impl Shell {
     pub fn css_variable_count(&self) -> usize {
         self.css_pipeline.style_engine.variable_count()
     }
+
+    // ─── External template mounting (for devtools, extensions, etc.) ──
+
+    /// Mount an external template into the desktop DOM.
+    ///
+    /// The template will be rendered by the CSS pipeline on the next
+    /// `build_scene()` call. Uses keyed reconciliation so repeated calls
+    /// efficiently patch the existing subtree.
+    pub fn mount_template(&mut self, element_id: &str, template: &liquide_components::TemplateNode) {
+        use crate::TemplateRenderer;
+        let root = self.desktop_dom.doc.root();
+        TemplateRenderer::apply_or_create(
+            &mut self.desktop_dom.doc,
+            root,
+            element_id,
+            template,
+        );
+    }
+
+    /// Remove a previously mounted external template from the DOM.
+    pub fn unmount_template(&mut self, element_id: &str) {
+        use crate::TemplateRenderer;
+        TemplateRenderer::unmount(&mut self.desktop_dom.doc, element_id);
+    }
+
+    /// Dynamically load an additional stylesheet into the CSS pipeline.
+    /// Returns `true` if the sheet was added (always succeeds currently).
+    pub fn add_stylesheet(&mut self, css: &str) -> bool {
+        self.css_pipeline.add_stylesheet(css);
+        true
+    }
 }

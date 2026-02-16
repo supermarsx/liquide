@@ -227,10 +227,14 @@ fn visible_devtools_produces_scene_nodes() {
     let layout = shell.layout_tree().expect("layout should exist");
     let styles = shell.style_map().expect("styles should exist");
 
-    let nodes = panel.build_scene(doc, layout, styles);
-    assert!(
-        !nodes.is_empty(),
-        "visible devtools should produce scene nodes"
+    // The panel is now template-rendered via the CSS pipeline; build_scene()
+    // only returns overlay nodes (picker, hover, selection highlights).
+    // Verify the template produces a non-trivial tree instead.
+    let template = panel.render_template(doc, layout, styles);
+    assert_eq!(
+        template.tag.as_str(),
+        "devtools-panel",
+        "visible devtools should produce a devtools-panel template"
     );
 }
 
@@ -269,13 +273,14 @@ fn devtools_scene_contains_panel_nodes() {
     let layout = shell.layout_tree().unwrap();
     let styles = shell.style_map().unwrap();
 
-    let nodes = panel.build_scene(doc, layout, styles);
-
-    // DevTools scene nodes should have IDs in the 920_000+ range
-    let has_devtools_nodes = nodes.iter().any(|n| n.id >= 920_000);
+    // The panel itself is now rendered via render_template() → CSS pipeline,
+    // so build_scene() only produces overlay nodes.  Verify that
+    // render_template() returns a non-trivial devtools-panel tree.
+    let template = panel.render_template(doc, layout, styles);
+    let has_children = !template.children.is_empty();
     assert!(
-        has_devtools_nodes || !nodes.is_empty(),
-        "devtools scene should contain panel nodes"
+        has_children,
+        "devtools template should contain child nodes (toolbar, content, statusbar)"
     );
 }
 

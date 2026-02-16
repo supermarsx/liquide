@@ -3,26 +3,19 @@
    Structural styles + default dark-theme colors for the
    built-in developer tools panel.
 
-   Custom elements:
-     devtools-panel, devtools-toolbar, devtools-tabs,
-     devtools-tab, devtools-actions, devtools-btn,
-     devtools-content, devtools-tab-panel, devtools-statusbar,
-     devtools-tree, devtools-tree-row, devtools-tree-arrow,
-     devtools-tree-tag, devtools-tree-attr, devtools-tree-text,
-     devtools-style-section, devtools-section-header,
-     devtools-prop, devtools-prop-name, devtools-prop-value,
-     devtools-box-model, devtools-box-margin, devtools-box-border,
-     devtools-box-padding, devtools-box-content,
-     devtools-console-log, devtools-console-entry,
-     devtools-console-input, devtools-console-prompt,
-     devtools-console-field, devtools-row, devtools-label,
-     devtools-value, devtools-heading, devtools-separator,
-     devtools-bar, devtools-bar-fill, devtools-statusbar,
-     devtools-status-text
+   The layout engine does NOT support scroll containers,
+   so all scrollable areas use virtual scrolling: the Rust
+   template renderer emits only the rows that fit within
+   the available height.  overflow: hidden on content
+   containers tells the painter to clip any partial rows.
 
-   Theme overrides:
-     Themes can target these elements to recolor devtools.
-     The Night/Sunset/Midday themes can add devtools rules.
+   Tabs:
+     Elements — DOM tree + side-panel (Styles / Layout / Computed)
+     Console  — interactive command console
+     Sources  — document / file overview
+     Performance — pipeline stats, frame timing
+     Mutations — DOM mutation log
+     Scene    — scene graph debugger
    ═══════════════════════════════════════════════════════ */
 
 /* ── Panel container ─────────────────────────────────── */
@@ -36,7 +29,7 @@ devtools-panel {
     right: 0;
     height: 320px;
     z-index: 9900;
-    background: rgba(30, 30, 30, 0.96);
+    background: rgba(30, 30, 30, 0.97);
     border-top-width: 1px;
     border-top-style: solid;
     border-top-color: rgba(60, 60, 60, 1.0);
@@ -50,7 +43,7 @@ devtools-panel.dock-right {
     left: auto;
     right: 0;
     top: 0;
-    width: 420px;
+    width: 480px;
     height: auto;
     border-top-width: 0;
     border-left-width: 1px;
@@ -63,7 +56,7 @@ devtools-panel.dock-left {
     left: 0;
     right: auto;
     top: 0;
-    width: 420px;
+    width: 480px;
     height: auto;
     border-top-width: 0;
     border-right-width: 1px;
@@ -77,14 +70,15 @@ devtools-toolbar {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 32px;
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
     background: rgba(37, 37, 38, 1.0);
     border-bottom-width: 1px;
     border-bottom-style: solid;
     border-bottom-color: rgba(60, 60, 60, 1.0);
     padding-left: 4px;
     padding-right: 4px;
-    flex-shrink: 0;
 }
 
 devtools-tabs {
@@ -100,17 +94,16 @@ devtools-tab {
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 32px;
+    height: 30px;
     padding-left: 10px;
     padding-right: 10px;
-    font-size: 12px;
+    font-size: 11px;
     color: rgba(160, 160, 160, 1.0);
     cursor: pointer;
     white-space: nowrap;
     border-bottom-width: 2px;
     border-bottom-style: solid;
     border-bottom-color: transparent;
-    transition: color 0.1s ease, border-bottom-color 0.1s ease;
 }
 
 devtools-tab:hover {
@@ -127,7 +120,6 @@ devtools-actions {
     flex-direction: row;
     align-items: center;
     gap: 2px;
-    flex-shrink: 0;
     padding-left: 8px;
 }
 
@@ -138,10 +130,9 @@ devtools-btn {
     width: 24px;
     height: 24px;
     border-radius: 4px;
-    color: rgba(160, 160, 160, 1.0);
-    font-size: 14px;
+    color: rgba(140, 140, 140, 1.0);
+    font-size: 13px;
     cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease;
 }
 
 devtools-btn:hover {
@@ -167,12 +158,85 @@ devtools-tab-panel {
     display: none;
     flex-direction: column;
     flex-grow: 1;
-    overflow-y: auto;
-    padding: 6px 8px;
+    overflow: hidden;
 }
 
 devtools-tab-panel.active {
     display: flex;
+}
+
+/* ── Elements tab: split pane ────────────────────────── */
+
+devtools-split {
+    display: flex;
+    flex-direction: row;
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+devtools-main-pane {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    flex-basis: 0;
+    overflow: hidden;
+    min-width: 200px;
+}
+
+devtools-side-pane {
+    display: flex;
+    flex-direction: column;
+    width: 260px;
+    min-width: 200px;
+    max-width: 320px;
+    overflow: hidden;
+    border-left-width: 1px;
+    border-left-style: solid;
+    border-left-color: rgba(50, 50, 50, 1.0);
+    background: rgba(28, 28, 28, 1.0);
+}
+
+devtools-side-tabs {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+    min-height: 24px;
+    max-height: 24px;
+    background: rgba(37, 37, 38, 1.0);
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+    border-bottom-color: rgba(50, 50, 50, 1.0);
+}
+
+devtools-side-tab {
+    display: flex;
+    align-items: center;
+    height: 24px;
+    padding-left: 8px;
+    padding-right: 8px;
+    font-size: 10px;
+    color: rgba(140, 140, 140, 1.0);
+    cursor: pointer;
+}
+
+devtools-side-tab:hover {
+    color: rgba(212, 212, 212, 1.0);
+}
+
+devtools-side-tab.active {
+    color: rgba(255, 255, 255, 1.0);
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+    border-bottom-color: rgba(0, 122, 204, 1.0);
+}
+
+devtools-side-body {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    overflow: hidden;
+    padding: 4px 6px;
 }
 
 /* ── Status bar ──────────────────────────────────────── */
@@ -181,16 +245,22 @@ devtools-statusbar {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 22px;
+    height: 20px;
+    min-height: 20px;
+    max-height: 20px;
     padding-left: 8px;
     padding-right: 8px;
     background: rgba(37, 37, 38, 1.0);
     border-top-width: 1px;
     border-top-style: solid;
     border-top-color: rgba(50, 50, 50, 1.0);
-    flex-shrink: 0;
-    font-size: 11px;
-    color: rgba(140, 140, 140, 1.0);
+    font-size: 10px;
+    color: rgba(120, 120, 120, 1.0);
+}
+
+devtools-status-text {
+    display: flex;
+    flex-grow: 1;
 }
 
 /* ── Elements tree ───────────────────────────────────── */
@@ -198,6 +268,7 @@ devtools-statusbar {
 devtools-tree {
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
     font-size: 12px;
 }
@@ -207,10 +278,10 @@ devtools-tree-row {
     flex-direction: row;
     align-items: center;
     height: 20px;
-    padding-left: 4px;
+    min-height: 20px;
+    max-height: 20px;
     padding-right: 4px;
     cursor: pointer;
-    transition: background 0.06s ease;
 }
 
 devtools-tree-row:hover {
@@ -231,9 +302,8 @@ devtools-tree-arrow {
     justify-content: center;
     width: 14px;
     height: 14px;
-    font-size: 10px;
+    font-size: 9px;
     color: rgba(140, 140, 140, 1.0);
-    flex-shrink: 0;
 }
 
 devtools-tree-tag {
@@ -252,36 +322,33 @@ devtools-tree-value {
 }
 
 devtools-tree-text {
-    color: rgba(212, 212, 212, 1.0);
+    color: rgba(212, 212, 212, 0.7);
     white-space: nowrap;
     overflow: hidden;
 }
 
-devtools-tree-closing {
-    color: rgba(86, 156, 214, 0.5);
-    white-space: nowrap;
-}
-
-/* ── Style inspector ─────────────────────────────────── */
+/* ── Style inspector (side pane) ─────────────────────── */
 
 devtools-style-section {
     display: flex;
     flex-direction: column;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 
 devtools-section-header {
     display: flex;
     align-items: center;
-    height: 22px;
+    height: 20px;
+    min-height: 20px;
+    max-height: 20px;
     padding-left: 4px;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: bold;
-    color: rgba(200, 200, 200, 1.0);
+    color: rgba(180, 180, 180, 1.0);
     cursor: pointer;
     border-bottom-width: 1px;
     border-bottom-style: solid;
-    border-bottom-color: rgba(50, 50, 50, 1.0);
+    border-bottom-color: rgba(45, 45, 45, 1.0);
 }
 
 devtools-section-header:hover {
@@ -292,61 +359,78 @@ devtools-prop {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 18px;
-    padding-left: 16px;
+    height: 16px;
+    min-height: 16px;
+    max-height: 16px;
+    padding-left: 12px;
 }
 
 devtools-prop-name {
     color: rgba(156, 220, 254, 1.0);
     font-family: "Cascadia Code", "Fira Code", monospace;
-    font-size: 11px;
-    margin-right: 6px;
+    font-size: 10px;
+    margin-right: 4px;
     white-space: nowrap;
 }
 
 devtools-prop-value {
     color: rgba(206, 145, 120, 1.0);
     font-family: "Cascadia Code", "Fira Code", monospace;
-    font-size: 11px;
+    font-size: 10px;
     white-space: nowrap;
+    flex-grow: 1;
+}
+
+devtools-prop-value.editable {
+    cursor: pointer;
+}
+
+devtools-prop-value.editable:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 2px;
 }
 
 devtools-prop.inherited {
     opacity: 0.5;
 }
 
-/* ── Layout box model visualization ──────────────────── */
+devtools-prop.editing {
+    background: rgba(0, 122, 204, 0.1);
+}
+
+/* ── Box model visualization ─────────────────────────── */
 
 devtools-box-model {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 16px;
+    padding: 8px;
+    min-height: 80px;
+    max-height: 120px;
 }
 
 devtools-box-margin {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(251, 169, 73, 0.15);
+    background: rgba(251, 169, 73, 0.12);
     border-width: 1px;
     border-style: dashed;
-    border-color: rgba(251, 169, 73, 0.4);
-    padding: 12px 20px;
-    position: relative;
-    min-width: 200px;
-    min-height: 100px;
+    border-color: rgba(251, 169, 73, 0.35);
+    padding: 8px 14px;
+    min-width: 140px;
+    min-height: 60px;
 }
 
 devtools-box-border {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(253, 216, 53, 0.15);
+    background: rgba(253, 216, 53, 0.12);
     border-width: 1px;
     border-style: solid;
-    border-color: rgba(253, 216, 53, 0.5);
-    padding: 12px 20px;
+    border-color: rgba(253, 216, 53, 0.4);
+    padding: 6px 12px;
     width: 100%;
     height: 100%;
 }
@@ -355,11 +439,11 @@ devtools-box-padding {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(102, 187, 106, 0.15);
+    background: rgba(102, 187, 106, 0.12);
     border-width: 1px;
     border-style: dashed;
-    border-color: rgba(102, 187, 106, 0.4);
-    padding: 12px 20px;
+    border-color: rgba(102, 187, 106, 0.35);
+    padding: 6px 12px;
     width: 100%;
     height: 100%;
 }
@@ -368,29 +452,22 @@ devtools-box-content {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(66, 165, 245, 0.15);
+    background: rgba(66, 165, 245, 0.12);
     border-width: 1px;
     border-style: solid;
-    border-color: rgba(66, 165, 245, 0.4);
-    padding: 8px 16px;
-    min-width: 60px;
-    min-height: 30px;
+    border-color: rgba(66, 165, 245, 0.35);
+    padding: 4px 10px;
+    min-width: 40px;
+    min-height: 18px;
     color: rgba(66, 165, 245, 1.0);
-    font-size: 11px;
-    font-family: "Cascadia Code", monospace;
-}
-
-devtools-box-label {
-    position: absolute;
     font-size: 10px;
-    color: rgba(160, 160, 160, 1.0);
     font-family: "Cascadia Code", monospace;
 }
 
 devtools-layout-props {
     display: flex;
     flex-direction: column;
-    padding: 8px;
+    padding: 4px 6px;
 }
 
 /* ── Console ─────────────────────────────────────────── */
@@ -399,20 +476,24 @@ devtools-console-log {
     display: flex;
     flex-direction: column;
     flex-grow: 1;
-    overflow-y: auto;
-    padding: 4px 0;
+    overflow: hidden;
+    padding: 2px 0;
 }
 
 devtools-console-entry {
     display: flex;
     flex-direction: row;
-    align-items: flex-start;
-    padding: 2px 8px;
+    align-items: center;
+    height: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    padding-left: 8px;
+    padding-right: 8px;
     font-family: "Cascadia Code", "Fira Code", monospace;
-    font-size: 12px;
+    font-size: 11px;
     border-bottom-width: 1px;
     border-bottom-style: solid;
-    border-bottom-color: rgba(40, 40, 40, 1.0);
+    border-bottom-color: rgba(38, 38, 38, 1.0);
 }
 
 devtools-console-entry.info {
@@ -421,82 +502,96 @@ devtools-console-entry.info {
 
 devtools-console-entry.warn {
     color: rgba(255, 204, 0, 1.0);
-    background: rgba(255, 204, 0, 0.05);
+    background: rgba(255, 204, 0, 0.04);
 }
 
 devtools-console-entry.error {
     color: rgba(244, 71, 71, 1.0);
-    background: rgba(244, 71, 71, 0.05);
+    background: rgba(244, 71, 71, 0.04);
 }
 
 devtools-console-entry.log {
     color: rgba(212, 212, 212, 1.0);
 }
 
+devtools-console-entry.system {
+    color: rgba(0, 122, 204, 1.0);
+}
+
+devtools-console-entry.result {
+    color: rgba(181, 206, 168, 1.0);
+}
+
 devtools-console-input {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 28px;
+    height: 26px;
+    min-height: 26px;
+    max-height: 26px;
     border-top-width: 1px;
     border-top-style: solid;
     border-top-color: rgba(60, 60, 60, 1.0);
     padding-left: 8px;
-    flex-shrink: 0;
     background: rgba(25, 25, 25, 1.0);
 }
 
 devtools-console-prompt {
     color: rgba(0, 122, 204, 1.0);
     font-family: "Cascadia Code", monospace;
-    font-size: 12px;
-    margin-right: 6px;
-    flex-shrink: 0;
+    font-size: 11px;
+    margin-right: 4px;
 }
 
 devtools-console-field {
     color: rgba(212, 212, 212, 1.0);
     font-family: "Cascadia Code", monospace;
-    font-size: 12px;
+    font-size: 11px;
     flex-grow: 1;
 }
 
-/* ── Generic rows (used by Fonts, Animations, Files, Debugger, etc.) ── */
+devtools-console-help {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 8px;
+    font-size: 10px;
+    color: rgba(120, 120, 120, 1.0);
+}
+
+/* ── Generic rows (Fonts, Animations, Sources, Performance, etc.) ── */
 
 devtools-heading {
     display: flex;
     align-items: center;
-    height: 22px;
-    font-size: 11px;
+    height: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    font-size: 10px;
     font-weight: bold;
-    color: rgba(200, 200, 200, 1.0);
-    margin-top: 8px;
-    margin-bottom: 2px;
+    color: rgba(180, 180, 180, 1.0);
+    margin-top: 4px;
     padding-bottom: 2px;
     border-bottom-width: 1px;
     border-bottom-style: solid;
-    border-bottom-color: rgba(50, 50, 50, 1.0);
-}
-
-devtools-heading:first-child {
-    margin-top: 0;
+    border-bottom-color: rgba(45, 45, 45, 1.0);
 }
 
 devtools-row {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 18px;
-    padding-left: 8px;
+    height: 16px;
+    min-height: 16px;
+    max-height: 16px;
+    padding-left: 6px;
     font-family: "Cascadia Code", "Fira Code", monospace;
-    font-size: 11px;
+    font-size: 10px;
 }
 
 devtools-label {
     color: rgba(156, 220, 254, 1.0);
-    margin-right: 6px;
+    margin-right: 4px;
     white-space: nowrap;
-    flex-shrink: 0;
 }
 
 devtools-value {
@@ -505,7 +600,7 @@ devtools-value {
 }
 
 devtools-value.dim {
-    color: rgba(120, 120, 120, 1.0);
+    color: rgba(100, 100, 100, 1.0);
 }
 
 devtools-value.ok {
@@ -533,29 +628,33 @@ devtools-value.purple {
 }
 
 devtools-separator {
-    display: block;
+    display: flex;
     height: 1px;
-    background: rgba(50, 50, 50, 1.0);
-    margin-top: 6px;
-    margin-bottom: 6px;
+    min-height: 1px;
+    max-height: 1px;
+    background: rgba(45, 45, 45, 1.0);
+    margin-top: 4px;
+    margin-bottom: 4px;
 }
 
-/* ── Bar chart (sparkline, timing curves) ────────────── */
+/* ── Bar chart (sparkline) ───────────────────────────── */
 
 devtools-bar-chart {
     display: flex;
     flex-direction: row;
     align-items: flex-end;
     gap: 1px;
-    height: 40px;
-    padding: 4px 0;
+    height: 32px;
+    min-height: 32px;
+    max-height: 32px;
+    padding: 2px 0;
 }
 
 devtools-bar {
     display: flex;
     flex-grow: 1;
     min-width: 2px;
-    max-width: 4px;
+    max-width: 3px;
     background: rgba(78, 201, 176, 1.0);
     border-radius: 1px;
     align-self: flex-end;
@@ -574,16 +673,18 @@ devtools-bar.error {
 devtools-scene-list {
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     font-family: "Cascadia Code", monospace;
-    font-size: 11px;
+    font-size: 10px;
 }
 
 devtools-scene-entry {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 18px;
-    padding-left: 4px;
+    height: 16px;
+    min-height: 16px;
+    max-height: 16px;
     cursor: pointer;
 }
 
@@ -601,16 +702,19 @@ devtools-editor-list {
     display: flex;
     flex-direction: column;
     flex-grow: 1;
+    overflow: hidden;
 }
 
 devtools-editor-entry {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 20px;
-    padding-left: 8px;
+    height: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    padding-left: 6px;
     font-family: "Cascadia Code", monospace;
-    font-size: 11px;
+    font-size: 10px;
 }
 
 devtools-editor-entry.applied {
@@ -625,14 +729,16 @@ devtools-editor-input {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 28px;
+    height: 26px;
+    min-height: 26px;
+    max-height: 26px;
     border-top-width: 1px;
     border-top-style: solid;
     border-top-color: rgba(60, 60, 60, 1.0);
     padding-left: 8px;
     background: rgba(25, 25, 25, 1.0);
     font-family: "Cascadia Code", monospace;
-    font-size: 12px;
+    font-size: 11px;
     color: rgba(212, 212, 212, 1.0);
 }
 
@@ -641,36 +747,19 @@ devtools-editor-input {
 devtools-mutations-list {
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     font-family: "Cascadia Code", monospace;
-    font-size: 11px;
+    font-size: 10px;
 }
 
 devtools-mutation-entry {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 18px;
+    height: 16px;
+    min-height: 16px;
+    max-height: 16px;
     padding-left: 4px;
-}
-
-devtools-mutation-entry.added {
-    color: rgba(78, 201, 176, 1.0);
-}
-
-devtools-mutation-entry.removed {
-    color: rgba(244, 71, 71, 1.0);
-}
-
-devtools-mutation-entry.attribute {
-    color: rgba(86, 156, 214, 1.0);
-}
-
-devtools-mutation-entry.text {
-    color: rgba(206, 145, 120, 1.0);
-}
-
-devtools-mutation-entry.style {
-    color: rgba(198, 120, 221, 1.0);
 }
 
 /* ── DOM JSON ────────────────────────────────────────── */
@@ -678,26 +767,11 @@ devtools-mutation-entry.style {
 devtools-dom-json {
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     font-family: "Cascadia Code", monospace;
-    font-size: 11px;
+    font-size: 10px;
     white-space: pre;
-    padding: 4px;
-}
-
-devtools-json-key {
-    color: rgba(86, 156, 214, 1.0);
-}
-
-devtools-json-string {
-    color: rgba(206, 145, 120, 1.0);
-}
-
-devtools-json-number {
-    color: rgba(181, 206, 168, 1.0);
-}
-
-devtools-json-bool {
-    color: rgba(86, 156, 214, 1.0);
+    padding: 2px 4px;
 }
 
 /* ── Context menu ────────────────────────────────────── */
@@ -715,16 +789,15 @@ devtools-context-menu {
     padding-top: 4px;
     padding-bottom: 4px;
     min-width: 160px;
-    backdrop-filter: blur(12px);
 }
 
 devtools-context-item {
     display: flex;
     align-items: center;
-    height: 24px;
+    height: 22px;
     padding-left: 12px;
     padding-right: 12px;
-    font-size: 12px;
+    font-size: 11px;
     color: rgba(212, 212, 212, 1.0);
     cursor: pointer;
 }
@@ -734,52 +807,25 @@ devtools-context-item:hover {
 }
 
 devtools-context-separator {
-    display: block;
+    display: flex;
     height: 1px;
-    background: rgba(60, 60, 60, 1.0);
+    min-height: 1px;
+    max-height: 1px;
+    background: rgba(55, 55, 55, 1.0);
     margin-top: 2px;
     margin-bottom: 2px;
     margin-left: 8px;
     margin-right: 8px;
 }
 
-/* ── Pipeline stage indicators ───────────────────────── */
+/* ── Scrollbar indicator ─────────────────────────────── */
 
-devtools-pipeline-stage {
+devtools-scrollbar {
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    height: 20px;
-    padding-left: 8px;
-    gap: 6px;
-}
-
-devtools-stage-indicator {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    font-size: 10px;
-}
-
-devtools-stage-indicator.ok {
-    background: rgba(78, 201, 176, 0.2);
-    color: rgba(78, 201, 176, 1.0);
-}
-
-devtools-stage-indicator.warn {
-    background: rgba(255, 204, 0, 0.2);
-    color: rgba(255, 204, 0, 1.0);
-}
-
-devtools-stage-indicator.error {
-    background: rgba(244, 71, 71, 0.2);
-    color: rgba(244, 71, 71, 1.0);
-}
-
-devtools-stage-label {
-    font-size: 11px;
-    color: rgba(180, 180, 180, 1.0);
+    position: absolute;
+    right: 0;
+    width: 6px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+    min-height: 12px;
 }

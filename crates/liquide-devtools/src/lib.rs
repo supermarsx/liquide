@@ -37,7 +37,7 @@ pub mod style_panel;
 
 pub use console::DebugConsole;
 pub use context_menu::{ContextAction, ContextMenu};
-pub use devtools_panel::{DevToolsPanel, DevToolsConfig, DevToolsTab, DockPosition, FrameSnapshot};
+pub use devtools_panel::{DevToolsPanel, DevToolsConfig, DevToolsTab, SideTab, DockPosition, FrameSnapshot};
 pub use dom_serializer::DomSerializer;
 pub use element_picker::ElementPicker;
 pub use inspector::ElementTreeInspector;
@@ -47,3 +47,7 @@ pub use mutation_log::{MutationLog, MutationRecord};
 pub use scene_graph::SceneGraphDebugger;
 pub use style_editor::StyleEditor;
 pub use style_panel::StyleInspector;
+
+// Re-export TemplateNode so consumers can build devtools templates without
+// depending on liquide-components directly.
+pub use liquide_components::TemplateNode;

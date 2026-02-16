@@ -178,8 +178,15 @@ impl DesktopCompositor {
             let mut panel = DevToolsPanel::with_defaults();
             panel.set_screen_size(self.width as f32, self.height as f32);
             self.devtools = Some(panel);
+
+            // Load devtools structural CSS into the pipeline.
+            static DEVTOOLS_CSS: &str = include_str!("../../../assets/themes/components/devtools.css");
+            self.shell.add_stylesheet(DEVTOOLS_CSS);
+
             info!("devtools panel initialized (F12 to toggle)");
         } else if !enabled {
+            // Unmount devtools from the DOM when disabling.
+            self.shell.unmount_template("devtools-panel");
             self.devtools = None;
         }
     }
@@ -390,6 +397,43 @@ impl DesktopCompositor {
         root
     }
 
+    /// Synchronise the devtools template into the shell DOM.
+    ///
+    /// Must be called **before** `shell.build_scene()` so the CSS pipeline
+    /// can lay out and paint the devtools panel.  Uses the previous frame's
+    /// layout / style data (one-frame-behind is expected for dev tools).
+    fn sync_devtools_template(&mut self) {
+        if !self.dev_mode {
+            return;
+        }
+
+        // Determine visibility first with a shared borrow.
+        let visible = self.devtools.as_ref().map_or(false, |d| d.is_visible());
+
+        if visible {
+            // Build the template from (previous frame's) data.
+            // We clone just the TemplateNode out so all shared borrows are dropped
+            // before the mutable mount call.
+            let template = {
+                let devtools = self.devtools.as_ref().unwrap();
+                let doc = self.shell.document();
+                match (self.shell.layout_tree(), self.shell.style_map()) {
+                    (Some(layout), Some(styles)) => {
+                        devtools.render_template(doc, layout, styles)
+                    }
+                    _ => {
+                        // First frame — minimal stub so the pipeline has something.
+                        liquide_devtools::TemplateNode::el("devtools-panel")
+                            .id("devtools-panel")
+                    }
+                }
+            };
+            self.shell.mount_template("devtools-panel", &template);
+        } else {
+            self.shell.unmount_template("devtools-panel");
+        }
+    }
+
     /// Run one frame synchronously: build scene, render, present.
     ///
     /// Used only for the loading screen before the render thread is spawned.
@@ -400,6 +444,8 @@ impl DesktopCompositor {
         let mut scene = if self.loading {
             self.build_loading_scene()
         } else {
+            // Mount devtools template before the CSS pipeline runs.
+            self.sync_devtools_template();
             self.shell.build_scene()
         };
 
@@ -508,6 +554,7 @@ impl DesktopCompositor {
         }
 
         // Build the scene graph (lightweight tree construction).
+        self.sync_devtools_template();
         let mut scene = self.shell.build_scene();
 
         // Overlay devtools panel scene nodes (if active).

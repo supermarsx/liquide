@@ -12,6 +12,18 @@ use liquide_layout::tree::LayoutTree;
 use liquide_style_engine::StyleMap;
 use serde::{Deserialize, Serialize};
 
+/// An action requested by a console command that must be handled by
+/// the host (e.g. the desktop shell or session controller).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConsoleAction {
+    /// Reload all stylesheets and re-run the CSS pipeline.
+    ReloadStyles,
+    /// Full UI restart — tear down and recreate the shell/session.
+    RestartUI,
+    /// Select the given node in the Elements panel.
+    InspectNode(NodeId),
+}
+
 /// A single entry in the console output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsoleEntry {
@@ -54,6 +66,10 @@ pub struct DebugConsole {
     history_idx: Option<usize>,
     /// Start time for timestamps.
     start: Instant,
+    /// Action requested by the last command — caller should drain this.
+    pending_action: Option<ConsoleAction>,
+    /// Currently selected node (set externally by the Elements panel).
+    selected_node: Option<NodeId>,
 }
 
 impl DebugConsole {
@@ -67,6 +83,8 @@ impl DebugConsole {
             history: Vec::new(),
             history_idx: None,
             start: Instant::now(),
+            pending_action: None,
+            selected_node: None,
         };
         console.push_info("LiquiDE DevTools Console v0.1".to_string());
         console.push_info("Type 'help' for available commands.".to_string());
@@ -99,6 +117,16 @@ impl DebugConsole {
     /// Push an error message.
     pub fn push_error(&mut self, text: String) {
         self.push_entry(text, ConsoleEntryKind::Error);
+    }
+
+    /// Take any pending action requested by the last command.
+    pub fn take_pending_action(&mut self) -> Option<ConsoleAction> {
+        self.pending_action.take()
+    }
+
+    /// Set the currently selected node (called by Elements panel).
+    pub fn set_selected_node(&mut self, node: Option<NodeId>) {
+        self.selected_node = node;
     }
 
     /// Push output text.
@@ -243,6 +271,7 @@ impl DebugConsole {
         self.cursor_pos = 0;
 
         // Execute command.
+        self.pending_action = None;
         self.execute(&input, doc, layout, styles);
         true
     }

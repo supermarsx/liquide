@@ -54,64 +54,77 @@ use crate::style_panel::StyleInspector;
 /// Which tab is currently active in the devtools panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DevToolsTab {
-    /// Element tree + styles (like Chrome's "Elements" tab).
+    /// Element tree + side-panel (Styles / Layout / Computed / Fonts / Anim).
     Elements,
-    /// Computed style properties.
-    Styles,
-    /// Layout box model visualization (like Firefox's Layout tab).
-    Layout,
     /// Interactive debug console.
     Console,
-    /// Scene graph debugger.
-    SceneGraph,
-    /// Live style editor.
-    StyleEditor,
-    /// Fonts used by the selected element.
-    Fonts,
-    /// Animations on the selected element.
-    Animations,
+    /// Document overview + DOM tree + source files.
+    Sources,
+    /// Pipeline metrics, frame timing, CSS engine stats.
+    Performance,
     /// DOM mutation log.
     Mutations,
-    /// DOM tree JSON export.
-    DomTree,
-    /// Source files browser.
-    Files,
-    /// Debugger / breakpoints.
-    Debugger,
+    /// Scene graph debugger + live style editor.
+    Scene,
 }
 
 impl DevToolsTab {
     /// All available tabs in order.
     pub const ALL: &'static [DevToolsTab] = &[
         DevToolsTab::Elements,
-        DevToolsTab::Styles,
-        DevToolsTab::Layout,
         DevToolsTab::Console,
-        DevToolsTab::SceneGraph,
-        DevToolsTab::StyleEditor,
-        DevToolsTab::Fonts,
-        DevToolsTab::Animations,
+        DevToolsTab::Sources,
+        DevToolsTab::Performance,
         DevToolsTab::Mutations,
-        DevToolsTab::DomTree,
-        DevToolsTab::Files,
-        DevToolsTab::Debugger,
+        DevToolsTab::Scene,
     ];
 
     /// Human-readable label for the tab.
     pub fn label(&self) -> &'static str {
         match self {
             DevToolsTab::Elements => "Elements",
-            DevToolsTab::Styles => "Styles",
-            DevToolsTab::Layout => "Layout",
             DevToolsTab::Console => "Console",
-            DevToolsTab::SceneGraph => "Scene",
-            DevToolsTab::StyleEditor => "Editor",
-            DevToolsTab::Fonts => "Fonts",
-            DevToolsTab::Animations => "Anim",
+            DevToolsTab::Sources => "Sources",
+            DevToolsTab::Performance => "Performance",
             DevToolsTab::Mutations => "Mutations",
-            DevToolsTab::DomTree => "DOM",
-            DevToolsTab::Files => "Files",
-            DevToolsTab::Debugger => "Debug",
+            DevToolsTab::Scene => "Scene",
+        }
+    }
+}
+
+/// Which sub-tab is active in the Elements side panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SideTab {
+    /// Computed CSS properties grouped by category.
+    Styles,
+    /// Box model + layout properties.
+    Layout,
+    /// Computed final values.
+    Computed,
+    /// Font properties and rendering info.
+    Fonts,
+    /// Transitions and CSS animations.
+    Animations,
+}
+
+impl SideTab {
+    /// All side-panel sub-tabs.
+    pub const ALL: &'static [SideTab] = &[
+        SideTab::Styles,
+        SideTab::Layout,
+        SideTab::Computed,
+        SideTab::Fonts,
+        SideTab::Animations,
+    ];
+
+    /// Human-readable label.
+    pub fn label(&self) -> &'static str {
+        match self {
+            SideTab::Styles => "Styles",
+            SideTab::Layout => "Layout",
+            SideTab::Computed => "Computed",
+            SideTab::Fonts => "Fonts",
+            SideTab::Animations => "Anim",
         }
     }
 }
@@ -191,6 +204,8 @@ pub struct DevToolsPanel {
     visible: bool,
     /// Active tab.
     active_tab: DevToolsTab,
+    /// Active sub-tab in the Elements side panel.
+    side_tab: SideTab,
     /// Configuration.
     config: DevToolsConfig,
     /// Element tree inspector.
@@ -223,6 +238,7 @@ pub struct DevToolsPanel {
     /// Whether the panel is requesting detach into a separate window.
     detach_requested: bool,
     /// Tab bar scroll offset (horizontal, for when many tabs exceed width).
+    #[allow(dead_code)]
     tab_scroll: f32,
     /// Whether the console input is focused for keyboard capture.
     console_focused: bool,
@@ -249,6 +265,7 @@ impl DevToolsPanel {
         Self {
             visible,
             active_tab: DevToolsTab::Elements,
+            side_tab: SideTab::Styles,
             config,
             inspector: ElementTreeInspector::new(),
             style_inspector: StyleInspector::new(),
@@ -343,6 +360,42 @@ impl DevToolsPanel {
         let tabs = DevToolsTab::ALL;
         let cur = tabs.iter().position(|t| *t == self.active_tab).unwrap_or(0);
         self.active_tab = tabs[(cur + tabs.len() - 1) % tabs.len()];
+    }
+
+    /// Get the active side tab.
+    pub fn side_tab(&self) -> SideTab {
+        self.side_tab
+    }
+
+    /// Set the active side tab.
+    pub fn set_side_tab(&mut self, tab: SideTab) {
+        self.side_tab = tab;
+    }
+
+    // ─── Virtual scroll helpers ───────────────────────────────
+
+    /// Compute the available content height (panel height minus toolbar and
+    /// status bar) in pixels.
+    fn content_height(&self) -> f32 {
+        let bounds = self.panel_bounds();
+        let toolbar_h = 30.0;
+        let statusbar_h = 20.0;
+        let borders = 2.0; // top + bottom border
+        (bounds.height - toolbar_h - statusbar_h - borders).max(0.0)
+    }
+
+    /// Given a fixed `row_height`, return `(first_visible_index, count)` for
+    /// virtual scrolling so that only visible rows are emitted.
+    fn visible_row_range(&self, total_rows: usize, row_height: f32) -> (usize, usize) {
+        let ch = self.content_height();
+        if ch <= 0.0 || total_rows == 0 {
+            return (0, 0);
+        }
+        let first = (self.scroll_offset / row_height).floor() as usize;
+        let count = (ch / row_height).ceil() as usize + 1; // +1 for partial row
+        let first = first.min(total_rows.saturating_sub(1));
+        let count = count.min(total_rows - first);
+        (first, count)
     }
 
     // ─── Element selection ────────────────────────────────────
@@ -505,7 +558,7 @@ impl DevToolsPanel {
                 && y <= bounds.y + bounds.height - 22.0
                 && self.active_tab == DevToolsTab::Elements
             {
-                let line_h: f32 = 18.0;
+                let line_h: f32 = 20.0;
                 // Account for scroll offset when determining which line is hovered.
                 let scroll_y = (y - content_y) + self.scroll_offset;
                 let line_idx = (scroll_y / line_h).floor() as usize;
@@ -584,7 +637,7 @@ impl DevToolsPanel {
         // ── Tab bar click ──
         if y >= tab_bar_top && y < tab_bar_bottom {
             // Check toolbar buttons (right side of tab bar).
-            // Layout mirrors build_scene: [picker][dock-bottom][dock-right][close]
+            // Layout mirrors toolbar: [picker][detach][dock-bottom][dock-right][close]
             // from right to left.
             let btn_size = 20.0;
             let btn_gap = 2.0;
@@ -614,6 +667,14 @@ impl DevToolsPanel {
             }
             btn_right = db_left - btn_gap;
 
+            // Detach button
+            let det_left = btn_right - btn_size;
+            if x >= det_left && x < btn_right {
+                self.toggle_detach();
+                return true;
+            }
+            btn_right = det_left - btn_gap;
+
             // Picker toggle button
             let pk_left = btn_right - btn_size;
             if x >= pk_left && x < btn_right {
@@ -640,8 +701,46 @@ impl DevToolsPanel {
         if y >= content_y && y < status_y {
             match self.active_tab {
                 DevToolsTab::Elements => {
-                    let line_h: f32 = 18.0;
-                    // Account for scroll offset.
+                    // Check if click is in the side panel region (right 260px).
+                    let side_w = 260.0f32;
+                    let side_left = bounds.x + bounds.width - side_w;
+
+                    if x >= side_left {
+                        // Side panel — check sub-tab bar (top 24px of side pane).
+                        let side_tab_bottom = content_y + 24.0;
+                        if y < side_tab_bottom {
+                            // Side tab click.
+                            let mut stab_x = side_left + 4.0;
+                            for stab in SideTab::ALL {
+                                let tw = stab.label().len() as f32 * 6.5 + 16.0;
+                                if x >= stab_x && x < stab_x + tw {
+                                    self.side_tab = *stab;
+                                    return true;
+                                }
+                                stab_x += tw;
+                            }
+                        }
+                        // Otherwise, side panel content click — handle in Styles sub-tab.
+                        if self.side_tab == SideTab::Styles {
+                            let side_content_y = content_y + 24.0;
+                            let line_h: f32 = 17.0;
+                            let line_idx = ((y - side_content_y) / line_h).floor() as usize;
+                            let groups = self.style_inspector.grouped_properties();
+                            let mut row = 0;
+                            for (cat, props) in &groups {
+                                if row == line_idx {
+                                    self.style_inspector.toggle_category(*cat);
+                                    return true;
+                                }
+                                row += 1;
+                                row += props.len();
+                            }
+                        }
+                        return true;
+                    }
+
+                    // Main pane — DOM tree click.
+                    let line_h: f32 = 20.0;
                     let scroll_y = (y - content_y) + self.scroll_offset;
                     let line_idx = (scroll_y / line_h).floor() as usize;
                     let visible = self.inspector.visible_nodes();
@@ -650,37 +749,18 @@ impl DevToolsPanel {
                         let indent_px: f32 = 16.0;
                         let arrow_x = bounds.x + 8.0 + (node.depth as f32) * indent_px;
 
-                        // Click on the arrow region (first ~16px) → toggle expand.
                         if x < arrow_x + 16.0 && node.child_count > 0 {
                             self.inspector.toggle_expand(node_id);
                         } else {
-                            // Click on the node text → select it.
                             self.select_node(node_id, styles);
                         }
                         return true;
                     }
                 }
-                DevToolsTab::Styles => {
-                    // Click on a category header toggles collapse.
-                    let line_h: f32 = 17.0;
-                    let line_idx = ((y - content_y) / line_h).floor() as usize;
-                    let groups = self.style_inspector.grouped_properties();
-                    let mut row = 0;
-                    for (cat, props) in &groups {
-                        if row == line_idx {
-                            self.style_inspector.toggle_category(*cat);
-                            return true;
-                        }
-                        row += 1;
-                        row += props.len();
-                    }
-                }
                 DevToolsTab::Console => {
-                    // Click in console area focuses the input.
                     self.console_focused = true;
                 }
-                DevToolsTab::SceneGraph => {
-                    // Click on a scene graph entry selects it.
+                DevToolsTab::Scene => {
                     let line_h: f32 = 16.0;
                     let scroll_y = (y - content_y) + self.scroll_offset;
                     let line_idx = (scroll_y / line_h).floor() as usize;
@@ -688,7 +768,7 @@ impl DevToolsPanel {
                 }
                 _ => {}
             }
-            return true; // consumed
+            return true;
         }
 
         true // click inside panel, always consume
@@ -726,47 +806,28 @@ impl DevToolsPanel {
         // Compute total content height based on active tab.
         let total_content = match self.active_tab {
             DevToolsTab::Elements => {
-                let line_h: f32 = 18.0;
+                let line_h: f32 = 20.0;
                 self.inspector.visible_nodes().len() as f32 * line_h
             }
-            DevToolsTab::DomTree => {
+            DevToolsTab::Sources => {
                 let line_h: f32 = 16.0;
-                10_000.0 * line_h
-            }
-            DevToolsTab::Styles => {
-                let line_h: f32 = 17.0;
-                let groups = self.style_inspector.grouped_properties();
-                let mut rows = 0usize;
-                for (_cat, props) in &groups {
-                    rows += 1 + props.len();
-                }
-                rows as f32 * line_h
+                10_000.0 * line_h // DOM JSON can be very long
             }
             DevToolsTab::Mutations => {
                 let line_h: f32 = 17.0;
                 (1 + self.mutation_log.len()) as f32 * line_h
             }
             DevToolsTab::Console => {
-                let line_h: f32 = 16.0;
-                // entries + 2 lines for input prompt
+                let line_h: f32 = 18.0;
                 (self.console.entries().len() + 2) as f32 * line_h
             }
-            DevToolsTab::SceneGraph => {
+            DevToolsTab::Scene => {
                 let line_h: f32 = 16.0;
                 self.scene_debugger.entries().len() as f32 * line_h
             }
-            DevToolsTab::StyleEditor => {
-                let line_h: f32 = 17.0;
-                (self.style_editor.pending_edits().len() + 10) as f32 * line_h
-            }
-            DevToolsTab::Layout => {
-                let line_h: f32 = 18.0;
-                // Estimate: up to ~40 lines in enhanced layout view.
-                40.0 * line_h
-            }
-            DevToolsTab::Fonts | DevToolsTab::Animations
-            | DevToolsTab::Files | DevToolsTab::Debugger => {
-                return false;
+            DevToolsTab::Performance => {
+                let line_h: f32 = 16.0;
+                40.0 * line_h // performance tab is relatively short
             }
         };
 
@@ -837,23 +898,15 @@ impl DevToolsPanel {
         if let Some(sel_id) = self.selected_node {
             let visible = self.inspector.visible_nodes();
             if let Some(idx) = visible.iter().position(|n| n.id == sel_id) {
-                let line_h: f32 = 18.0;
+                let line_h: f32 = 20.0;
                 let target_y = idx as f32 * line_h;
+                let content_h = self.content_height();
 
-                let bounds = self.panel_bounds();
-                let tab_bar_h = 28.0;
-                let status_h = 22.0;
-                let content_h = bounds.height - tab_bar_h - 2.0 - status_h - 16.0;
-
-                // If target is above viewport, scroll up.
                 if target_y < self.scroll_offset {
                     self.scroll_offset = target_y;
-                }
-                // If target is below viewport, scroll down.
-                else if target_y + line_h > self.scroll_offset + content_h {
+                } else if target_y + line_h > self.scroll_offset + content_h {
                     self.scroll_offset = target_y + line_h - content_h;
                 }
-
                 if self.scroll_offset < 0.0 {
                     self.scroll_offset = 0.0;
                 }
@@ -943,17 +996,11 @@ impl DevToolsPanel {
     fn tab_data_id(&self) -> &'static str {
         match self.active_tab {
             DevToolsTab::Elements => "elements",
-            DevToolsTab::Styles => "styles",
-            DevToolsTab::Layout => "layout",
             DevToolsTab::Console => "console",
-            DevToolsTab::SceneGraph => "scene",
-            DevToolsTab::StyleEditor => "editor",
-            DevToolsTab::Fonts => "fonts",
-            DevToolsTab::Animations => "anim",
+            DevToolsTab::Sources => "sources",
+            DevToolsTab::Performance => "perf",
             DevToolsTab::Mutations => "mutations",
-            DevToolsTab::DomTree => "dom",
-            DevToolsTab::Files => "files",
-            DevToolsTab::Debugger => "debug",
+            DevToolsTab::Scene => "scene",
         }
     }
 
@@ -963,17 +1010,11 @@ impl DevToolsPanel {
             DevToolsTab::ALL.iter().map(|tab| {
                 let id = match tab {
                     DevToolsTab::Elements => "elements",
-                    DevToolsTab::Styles => "styles",
-                    DevToolsTab::Layout => "layout",
                     DevToolsTab::Console => "console",
-                    DevToolsTab::SceneGraph => "scene",
-                    DevToolsTab::StyleEditor => "editor",
-                    DevToolsTab::Fonts => "fonts",
-                    DevToolsTab::Animations => "anim",
+                    DevToolsTab::Sources => "sources",
+                    DevToolsTab::Performance => "perf",
                     DevToolsTab::Mutations => "mutations",
-                    DevToolsTab::DomTree => "dom",
-                    DevToolsTab::Files => "files",
-                    DevToolsTab::Debugger => "debug",
+                    DevToolsTab::Scene => "scene",
                 };
                 TemplateNode::el("devtools-tab")
                     .key(&format!("tab-{}", id))
@@ -990,6 +1031,13 @@ impl DevToolsPanel {
                     .attr("data-action", "picker")
                     .class_if("active", self.element_picker.is_active())
                     .child(TemplateNode::text("\u{2295}")), // ⊕
+            )
+            .child(
+                TemplateNode::el("devtools-btn")
+                    .key("btn-detach")
+                    .attr("data-action", "detach")
+                    .class_if("active", self.config.dock_position == DockPosition::Detached)
+                    .child(TemplateNode::text("\u{29C9}")), // ⧉ detach icon
             )
             .child(
                 TemplateNode::el("devtools-btn")
@@ -1025,20 +1073,13 @@ impl DevToolsPanel {
         styles: &StyleMap,
         active_tab: &str,
     ) -> TemplateNode {
-        // Build all tab panels — only active one gets .active class.
         let tab_defs: &[(&str, fn(&Self, &Document, &LayoutTree, &StyleMap) -> Vec<TemplateNode>)] = &[
             ("elements", Self::template_elements),
-            ("styles", Self::template_styles),
-            ("layout", Self::template_layout),
             ("console", Self::template_console),
-            ("scene", Self::template_scene_graph),
-            ("editor", Self::template_style_editor),
-            ("fonts", Self::template_fonts),
-            ("anim", Self::template_animations),
+            ("sources", Self::template_sources),
+            ("perf", Self::template_performance),
             ("mutations", Self::template_mutations),
-            ("dom", Self::template_dom_tree),
-            ("files", Self::template_files),
-            ("debug", Self::template_debugger),
+            ("scene", Self::template_scene),
         ];
 
         TemplateNode::el("devtools-content")
@@ -1048,7 +1089,6 @@ impl DevToolsPanel {
                     .key(&format!("panel-{}", id))
                     .attr("data-tab", id)
                     .class_if("active", is_active);
-                // Only render children for the active tab (performance).
                 if is_active {
                     panel = panel.children(render_fn(self, doc, layout, styles));
                 }
@@ -1076,273 +1116,250 @@ impl DevToolsPanel {
 
     // ─── Per-tab template renderers ─────────────────────────────
 
-    /// Elements tab: DOM tree with expand/collapse arrows, tags, attributes.
+    /// Elements tab: split pane with DOM tree (left) and side panel (right).
+    ///
+    /// The side-panel has sub-tabs: Styles, Layout, Computed, Fonts, Anim.
+    /// The DOM tree uses virtual scrolling — only visible rows are emitted.
     fn template_elements(
-        &self,
-        _doc: &Document,
-        _layout: &LayoutTree,
-        _styles: &StyleMap,
-    ) -> Vec<TemplateNode> {
-        let visible = self.inspector.visible_nodes();
-        if visible.is_empty() {
-            return vec![
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("No elements \u{2014} run refresh_inspector(doc) first"))),
-            ];
-        }
-
-        let selected = self.inspector.selected();
-        let hovered = self.inspector.hovered();
-
-        let mut nodes = Vec::with_capacity(visible.len());
-        let tree = TemplateNode::el("devtools-tree").children(
-            visible.iter().map(|node| {
-                let is_selected = selected == Some(node.id);
-                let is_hovered = hovered == Some(node.id);
-
-                let mut row = TemplateNode::el("devtools-tree-row")
-                    .key(&format!("n-{}", node.id))
-                    .attr("data-node", &node.id.to_string())
-                    .attr("data-depth", &node.depth.to_string())
-                    .style("padding-left", &format!("{}px", node.depth as u32 * 16 + 4))
-                    .class_if("selected", is_selected)
-                    .class_if("hovered", is_hovered);
-
-                if node.is_text {
-                    let text = node.text.as_deref().unwrap_or("");
-                    let truncated = if text.len() > 60 { &text[..60] } else { text };
-                    row = row.child(
-                        TemplateNode::el("devtools-tree-text")
-                            .child(TemplateNode::text(&format!("\"{}\"", truncated))),
-                    );
-                } else {
-                    // Arrow
-                    let arrow = if node.child_count > 0 {
-                        if node.children.is_empty() { "\u{25B6}" } else { "\u{25BC}" }
-                    } else {
-                        ""
-                    };
-
-                    if node.child_count > 0 {
-                        row = row
-                            .class_if("expanded", !node.children.is_empty())
-                            .class_if("collapsed", node.children.is_empty())
-                            .child(
-                                TemplateNode::el("devtools-tree-arrow")
-                                    .child(TemplateNode::text(arrow)),
-                            );
-                    }
-
-                    // Tag
-                    let mut tag_text = format!("<{}", node.tag);
-                    row = row.child(
-                        TemplateNode::el("devtools-tree-tag")
-                            .child(TemplateNode::text(&format!("<{}", node.tag))),
-                    );
-
-                    // Attributes
-                    if let Some(ref eid) = node.element_id {
-                        row = row.child(
-                            TemplateNode::el("devtools-tree-attr")
-                                .child(TemplateNode::text(&format!(" id=\"{}\"", eid))),
-                        );
-                    }
-                    if !node.classes.is_empty() {
-                        row = row.child(
-                            TemplateNode::el("devtools-tree-attr")
-                                .child(TemplateNode::text(&format!(" class=\"{}\"", node.classes.join(" ")))),
-                        );
-                    }
-                    for (k, v) in &node.attributes {
-                        row = row.child(
-                            TemplateNode::el("devtools-tree-attr")
-                                .child(TemplateNode::text(&format!(" {}=\"{}\"", k, v))),
-                        );
-                    }
-
-                    row = row.child(
-                        TemplateNode::el("devtools-tree-tag")
-                            .child(TemplateNode::text(">")),
-                    );
-                }
-
-                row
-            }),
-        );
-
-        vec![tree]
-    }
-
-    /// Styles tab: computed CSS properties grouped by category.
-    fn template_styles(
-        &self,
-        _doc: &Document,
-        _layout: &LayoutTree,
-        styles: &StyleMap,
-    ) -> Vec<TemplateNode> {
-        let Some(id) = self.selected_node else {
-            return vec![
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("Select an element to view styles"))),
-            ];
-        };
-
-        let computed = match styles.get(id) {
-            Some(c) => c,
-            None => {
-                return vec![
-                    TemplateNode::el("devtools-row")
-                        .child(TemplateNode::el("devtools-value").class("dim")
-                            .child(TemplateNode::text("No computed styles for this node"))),
-                ];
-            }
-        };
-
-        let mut sections = Vec::new();
-        for (cat_label, props) in self.style_inspector.categorized_properties(computed) {
-            let is_open = self.style_inspector.is_category_open(&cat_label);
-            let mut section = TemplateNode::el("devtools-style-section")
-                .key(&cat_label)
-                .class_if("section-open", is_open)
-                .child(
-                    TemplateNode::el("devtools-section-header")
-                        .child(TemplateNode::text(&format!(
-                            "{} {}",
-                            if is_open { "\u{25BC}" } else { "\u{25B6}" },
-                            cat_label
-                        ))),
-                );
-
-            if is_open {
-                for (name, value, _inherited) in &props {
-                    section = section.child(
-                        TemplateNode::el("devtools-prop")
-                            .key(name)
-                            .class_if("inherited", *_inherited)
-                            .child(
-                                TemplateNode::el("devtools-prop-name")
-                                    .child(TemplateNode::text(&format!("{}:", name))),
-                            )
-                            .child(
-                                TemplateNode::el("devtools-prop-value")
-                                    .child(TemplateNode::text(value)),
-                            ),
-                    );
-                }
-            }
-
-            sections.push(section);
-        }
-
-        sections
-    }
-
-    /// Layout tab: box model + layout properties.
-    fn template_layout(
         &self,
         _doc: &Document,
         layout: &LayoutTree,
         styles: &StyleMap,
     ) -> Vec<TemplateNode> {
-        let Some(id) = self.selected_node else {
-            return vec![
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("Select an element to view layout"))),
-            ];
+        // ── Left pane: DOM tree with virtual scrolling ──
+        let main_pane = {
+            let visible = self.inspector.visible_nodes();
+            let row_h: f32 = 20.0;
+            let (first, count) = self.visible_row_range(visible.len(), row_h);
+
+            let selected = self.inspector.selected();
+            let hovered = self.inspector.hovered();
+
+            if visible.is_empty() {
+                TemplateNode::el("devtools-main-pane")
+                    .child(TemplateNode::el("devtools-tree")
+                        .child(TemplateNode::el("devtools-row")
+                            .child(TemplateNode::el("devtools-value").class("dim")
+                                .child(TemplateNode::text("No elements \u{2014} run refresh_inspector(doc)")))))
+            } else {
+                let tree = TemplateNode::el("devtools-tree").children(
+                    visible[first..first + count].iter().map(|node| {
+                        let is_selected = selected == Some(node.id);
+                        let is_hovered = hovered == Some(node.id);
+
+                        let mut row = TemplateNode::el("devtools-tree-row")
+                            .key(&format!("n-{}", node.id))
+                            .attr("data-node", &node.id.to_string())
+                            .style("padding-left", &format!("{}px", node.depth as u32 * 16 + 4))
+                            .class_if("selected", is_selected)
+                            .class_if("hovered", is_hovered);
+
+                        if node.is_text {
+                            let text = node.text.as_deref().unwrap_or("");
+                            let truncated = if text.len() > 60 { &text[..60] } else { text };
+                            row = row.child(
+                                TemplateNode::el("devtools-tree-text")
+                                    .child(TemplateNode::text(&format!("\"{}\"", truncated))),
+                            );
+                        } else {
+                            let arrow = if node.child_count > 0 {
+                                if node.children.is_empty() { "\u{25B6}" } else { "\u{25BC}" }
+                            } else { "" };
+
+                            if node.child_count > 0 {
+                                row = row.child(
+                                    TemplateNode::el("devtools-tree-arrow")
+                                        .child(TemplateNode::text(arrow)),
+                                );
+                            }
+
+                            row = row.child(
+                                TemplateNode::el("devtools-tree-tag")
+                                    .child(TemplateNode::text(&format!("<{}", node.tag))),
+                            );
+
+                            if let Some(ref eid) = node.element_id {
+                                row = row.child(
+                                    TemplateNode::el("devtools-tree-attr")
+                                        .child(TemplateNode::text(&format!(" id=\"{}\"", eid))),
+                                );
+                            }
+                            if !node.classes.is_empty() {
+                                row = row.child(
+                                    TemplateNode::el("devtools-tree-attr")
+                                        .child(TemplateNode::text(&format!(" class=\"{}\"", node.classes.join(" ")))),
+                                );
+                            }
+                            for (k, v) in &node.attributes {
+                                row = row.child(
+                                    TemplateNode::el("devtools-tree-attr")
+                                        .child(TemplateNode::text(&format!(" {}=\"{}\"", k, v))),
+                                );
+                            }
+                            row = row.child(
+                                TemplateNode::el("devtools-tree-tag")
+                                    .child(TemplateNode::text(">")),
+                            );
+                        }
+                        row
+                    }),
+                );
+                TemplateNode::el("devtools-main-pane").child(tree)
+            }
         };
 
+        // ── Right pane: side panel with sub-tabs ──
+        let side_pane = {
+            // Sub-tab bar.
+            let side_tabs = TemplateNode::el("devtools-side-tabs").children(
+                SideTab::ALL.iter().map(|st| {
+                    TemplateNode::el("devtools-side-tab")
+                        .key(&format!("st-{}", st.label()))
+                        .class_if("active", *st == self.side_tab)
+                        .child(TemplateNode::text(st.label()))
+                }),
+            );
+
+            // Sub-tab content.
+            let body_children = match self.side_tab {
+                SideTab::Styles => self.side_styles(styles),
+                SideTab::Layout => self.side_layout(layout, styles),
+                SideTab::Computed => self.side_computed(styles),
+                SideTab::Fonts => self.side_fonts(styles),
+                SideTab::Animations => self.side_animations(styles),
+            };
+
+            TemplateNode::el("devtools-side-pane")
+                .child(side_tabs)
+                .child(TemplateNode::el("devtools-side-body").children(body_children))
+        };
+
+        let split = TemplateNode::el("devtools-split")
+            .child(main_pane)
+            .child(side_pane);
+
+        vec![split]
+    }
+
+    // ── Side panel sub-tab content ──────────────────────────────
+
+    /// Side: Styles — computed CSS properties grouped by category.
+    fn side_styles(&self, styles: &StyleMap) -> Vec<TemplateNode> {
+        let Some(id) = self.selected_node else {
+            return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("Select an element")))];
+        };
+        if styles.get(id).is_none() {
+            return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("No styles")))];
+        }
+
+        let mut sections = Vec::new();
+        for (cat, props) in self.style_inspector.grouped_properties() {
+            let cat_label = format!("{:?}", cat);
+            let mut section = TemplateNode::el("devtools-style-section")
+                .key(&cat_label)
+                .child(
+                    TemplateNode::el("devtools-section-header")
+                        .child(TemplateNode::text(&format!("\u{25BC} {}", cat_label))),
+                );
+            for prop in &props {
+                let is_editing = self.style_editor.editing_property() == Some(prop.name.as_str());
+                section = section.child(
+                    TemplateNode::el("devtools-prop")
+                        .key(&prop.name)
+                        .class_if("inherited", prop.inherited)
+                        .class_if("editing", is_editing)
+                        .child(
+                            TemplateNode::el("devtools-prop-name")
+                                .child(TemplateNode::text(&format!("{}:", prop.name))),
+                        )
+                        .child(
+                            TemplateNode::el("devtools-prop-value")
+                                .class("editable")
+                                .child(TemplateNode::text(
+                                    if is_editing { self.style_editor.editing_value() } else { &prop.value }
+                                )),
+                        ),
+                );
+            }
+            sections.push(section);
+        }
+        sections
+    }
+
+    /// Side: Layout — box model + layout properties.
+    fn side_layout(&self, layout: &LayoutTree, styles: &StyleMap) -> Vec<TemplateNode> {
+        let Some(id) = self.selected_node else {
+            return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("Select an element")))];
+        };
         let layout_box = match layout.find_by_node(id) {
             Some(b) => b,
-            None => {
-                return vec![
-                    TemplateNode::el("devtools-row")
-                        .child(TemplateNode::el("devtools-value").class("dim")
-                            .child(TemplateNode::text("No layout box for this node"))),
-                ];
-            }
+            None => return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("No layout box")))],
         };
 
         let mut nodes = Vec::new();
 
-        // Box model visualization.
+        // Box model.
         let mr = &layout_box.margin_rect;
         let br = &layout_box.border_rect;
         let pr = &layout_box.padding_rect;
         let cr = &layout_box.content_rect;
 
         let margin_t = br.y - mr.y;
-        let margin_r = (mr.x + mr.width) - (br.x + br.width);
+        let margin_r_val = (mr.x + mr.width) - (br.x + br.width);
         let margin_b = (mr.y + mr.height) - (br.y + br.height);
         let margin_l = br.x - mr.x;
 
         let border_t = pr.y - br.y;
-        let border_r = (br.x + br.width) - (pr.x + pr.width);
+        let border_r_val = (br.x + br.width) - (pr.x + pr.width);
         let border_b = (br.y + br.height) - (pr.y + pr.height);
         let border_l = pr.x - br.x;
 
         let padding_t = cr.y - pr.y;
-        let padding_r = (pr.x + pr.width) - (cr.x + cr.width);
+        let padding_r_val = (pr.x + pr.width) - (cr.x + cr.width);
         let padding_b = (pr.y + pr.height) - (cr.y + cr.height);
         let padding_l = cr.x - pr.x;
 
-        let box_model = TemplateNode::el("devtools-box-model")
-            .child(
-                TemplateNode::el("devtools-box-margin")
-                    .attr("data-label", &format!(
-                        "margin: {:.0} {:.0} {:.0} {:.0}",
-                        margin_t, margin_r, margin_b, margin_l
-                    ))
-                    .child(
-                        TemplateNode::el("devtools-box-border")
-                            .attr("data-label", &format!(
-                                "border: {:.0} {:.0} {:.0} {:.0}",
-                                border_t, border_r, border_b, border_l
-                            ))
-                            .child(
-                                TemplateNode::el("devtools-box-padding")
-                                    .attr("data-label", &format!(
-                                        "padding: {:.0} {:.0} {:.0} {:.0}",
-                                        padding_t, padding_r, padding_b, padding_l
-                                    ))
-                                    .child(
-                                        TemplateNode::el("devtools-box-content")
-                                            .child(TemplateNode::text(&format!(
-                                                "{:.0} \u{00D7} {:.0}",
-                                                cr.width, cr.height
-                                            ))),
-                                    ),
-                            ),
-                    ),
-            );
-        nodes.push(box_model);
+        nodes.push(
+            TemplateNode::el("devtools-box-model")
+                .child(
+                    TemplateNode::el("devtools-box-margin")
+                        .attr("data-label", &format!("m: {:.0} {:.0} {:.0} {:.0}", margin_t, margin_r_val, margin_b, margin_l))
+                        .child(TemplateNode::el("devtools-box-border")
+                            .attr("data-label", &format!("b: {:.0} {:.0} {:.0} {:.0}", border_t, border_r_val, border_b, border_l))
+                            .child(TemplateNode::el("devtools-box-padding")
+                                .attr("data-label", &format!("p: {:.0} {:.0} {:.0} {:.0}", padding_t, padding_r_val, padding_b, padding_l))
+                                .child(TemplateNode::el("devtools-box-content")
+                                    .child(TemplateNode::text(&format!("{:.0}\u{00D7}{:.0}", cr.width, cr.height)))))),
+                ),
+        );
 
         // Layout properties.
-        let mut props = TemplateNode::el("devtools-layout-props");
-
         if let Some(computed) = styles.get(id) {
             let prop_list = [
                 ("position", format!("{:?}", computed.position)),
                 ("display", format!("{:?}", computed.display)),
                 ("box-sizing", format!("{:?}", computed.box_sizing)),
-                ("overflow", format!("{:?}", computed.overflow)),
+                ("overflow-x", format!("{:?}", computed.overflow_x)),
+                ("overflow-y", format!("{:?}", computed.overflow_y)),
                 ("float", format!("{:?}", computed.float)),
                 ("clear", format!("{:?}", computed.clear)),
             ];
-
             for (name, value) in &prop_list {
-                props = props.child(
-                    TemplateNode::el("devtools-row")
-                        .key(name)
-                        .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&format!("{}:", name))))
-                        .child(TemplateNode::el("devtools-value").child(TemplateNode::text(value))),
-                );
+                nodes.push(TemplateNode::el("devtools-row").key(name)
+                    .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&format!("{}:", name))))
+                    .child(TemplateNode::el("devtools-value").child(TemplateNode::text(value))));
             }
 
-            // Flex / grid properties if applicable.
             if format!("{:?}", computed.display).contains("Flex") {
+                nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Flexbox")));
                 let flex_props = [
                     ("flex-direction", format!("{:?}", computed.flex_direction)),
                     ("flex-wrap", format!("{:?}", computed.flex_wrap)),
@@ -1351,21 +1368,161 @@ impl DevToolsPanel {
                     ("align-content", format!("{:?}", computed.align_content)),
                     ("gap", format!("{:?}", computed.gap)),
                 ];
-                props = props.child(TemplateNode::el("devtools-heading").child(TemplateNode::text("Flexbox")));
                 for (name, value) in &flex_props {
-                    props = props.child(
-                        TemplateNode::el("devtools-row")
-                            .key(name)
-                            .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&format!("{}:", name))))
-                            .child(TemplateNode::el("devtools-value").child(TemplateNode::text(value))),
-                    );
+                    nodes.push(TemplateNode::el("devtools-row").key(name)
+                        .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&format!("{}:", name))))
+                        .child(TemplateNode::el("devtools-value").child(TemplateNode::text(value))));
                 }
             }
         }
-
-        nodes.push(props);
         nodes
     }
+
+    /// Side: Computed — all visible (filtered) properties as a flat list.
+    fn side_computed(&self, styles: &StyleMap) -> Vec<TemplateNode> {
+        let Some(id) = self.selected_node else {
+            return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("Select an element")))];
+        };
+        if styles.get(id).is_none() {
+            return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("No styles")))];
+        }
+
+        let props = self.style_inspector.visible_properties();
+        props.iter().map(|prop| {
+            TemplateNode::el("devtools-prop")
+                .key(&prop.name)
+                .class_if("inherited", prop.inherited)
+                .child(
+                    TemplateNode::el("devtools-prop-name")
+                        .child(TemplateNode::text(&format!("{}:", prop.name))),
+                )
+                .child(
+                    TemplateNode::el("devtools-prop-value")
+                        .child(TemplateNode::text(&prop.value)),
+                )
+        }).collect()
+    }
+
+    /// Side: Fonts — font properties from computed style.
+    fn side_fonts(&self, styles: &StyleMap) -> Vec<TemplateNode> {
+        let Some(id) = self.selected_node else {
+            return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("Select an element")))];
+        };
+        let computed = match styles.get(id) {
+            Some(c) => c,
+            None => return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("No styles")))],
+        };
+
+        let mut nodes = Vec::new();
+        let families: Vec<String> = computed.font_family.iter().map(|f| format!("\"{}\"", f)).collect();
+        let primary_props = [
+            ("font-family", families.join(", ")),
+            ("font-size", format!("{:.1}px", computed.font_size)),
+            ("font-weight", format!("{}", computed.font_weight)),
+            ("font-style", format!("{:?}", computed.font_style)),
+            ("line-height", format!("{:?}", computed.line_height)),
+            ("letter-spacing", format!("{:?}", computed.letter_spacing)),
+            ("word-spacing", format!("{:?}", computed.word_spacing)),
+        ];
+        for (name, value) in &primary_props {
+            nodes.push(TemplateNode::el("devtools-row").key(name)
+                .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&format!("{}:", name))))
+                .child(TemplateNode::el("devtools-value").child(TemplateNode::text(value))));
+        }
+
+        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Typography")));
+        let typo_props = [
+            ("text-align", format!("{:?}", computed.text_align)),
+            ("text-transform", format!("{:?}", computed.text_transform)),
+            ("white-space", format!("{:?}", computed.white_space)),
+            ("word-break", format!("{:?}", computed.word_break)),
+        ];
+        for (name, value) in &typo_props {
+            nodes.push(TemplateNode::el("devtools-row").key(&format!("f-{}", name))
+                .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&format!("{}:", name))))
+                .child(TemplateNode::el("devtools-value").child(TemplateNode::text(value))));
+        }
+
+        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Rendered Font")));
+        for (i, family) in computed.font_family.iter().enumerate() {
+            let marker = if i == 0 { "\u{25B6}" } else { "\u{2003}\u{25B7}" };
+            nodes.push(TemplateNode::el("devtools-row").key(&format!("rf-{}", i))
+                .child(TemplateNode::el("devtools-value")
+                    .class_if("teal", i == 0)
+                    .class_if("dim", i > 0)
+                    .child(TemplateNode::text(&format!("{} \"{}\" \u{2014} {:.0}px, wt {}", marker, family, computed.font_size, computed.font_weight)))));
+        }
+        nodes
+    }
+
+    /// Side: Animations — transitions and CSS animations.
+    fn side_animations(&self, styles: &StyleMap) -> Vec<TemplateNode> {
+        let Some(id) = self.selected_node else {
+            return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("Select an element")))];
+        };
+        let computed = match styles.get(id) {
+            Some(c) => c,
+            None => return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("No styles")))],
+        };
+
+        let mut nodes = Vec::new();
+        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Transitions")));
+        if computed.transition.is_empty() {
+            nodes.push(TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim").child(TemplateNode::text("none"))));
+        } else {
+            for (i, tr) in computed.transition.iter().enumerate() {
+                let timing_str = format_timing_function(&tr.timing_function);
+                nodes.push(TemplateNode::el("devtools-row").key(&format!("tr-{}", i))
+                    .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&tr.property)))
+                    .child(TemplateNode::el("devtools-value").child(TemplateNode::text(
+                        &format!("{}ms {} delay {}ms", tr.duration_ms, timing_str, tr.delay_ms)))));
+            }
+        }
+
+        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("CSS Animations")));
+        if computed.animation.is_empty() {
+            nodes.push(TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim").child(TemplateNode::text("none"))));
+        } else {
+            for (i, anim) in computed.animation.iter().enumerate() {
+                let timing_str = format_timing_function(&anim.timing_function);
+                nodes.push(TemplateNode::el("devtools-row").key(&format!("an-{}", i))
+                    .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&anim.name)))
+                    .child(TemplateNode::el("devtools-value").child(TemplateNode::text(
+                        &format!("{}ms {} x{:?} {:?} {:?}", anim.duration_ms, timing_str, anim.iteration_count, anim.direction, anim.fill_mode)))));
+            }
+        }
+
+        if !computed.transform.is_empty() || computed.opacity < 1.0 {
+            nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Related")));
+            if !computed.transform.is_empty() {
+                nodes.push(TemplateNode::el("devtools-row").key("rp-transform")
+                    .child(TemplateNode::el("devtools-label").child(TemplateNode::text("transform:")))
+                    .child(TemplateNode::el("devtools-value").child(TemplateNode::text(&format!("{:?}", computed.transform)))));
+            }
+            if computed.opacity < 1.0 {
+                nodes.push(TemplateNode::el("devtools-row").key("rp-opacity")
+                    .child(TemplateNode::el("devtools-label").child(TemplateNode::text("opacity:")))
+                    .child(TemplateNode::el("devtools-value").child(TemplateNode::text(&format!("{:.2}", computed.opacity)))));
+            }
+        }
+        nodes
+    }
+
+    // ── Main tab content renderers ──────────────────────────────
 
     /// Console tab: log entries + input line.
     fn template_console(
@@ -1376,8 +1533,16 @@ impl DevToolsPanel {
     ) -> Vec<TemplateNode> {
         let entries = self.console.entries();
 
+        // Virtual scroll the console log entries.
+        let entry_h: f32 = 18.0;
+        // Reserve 26px for the input bar.
+        let avail = (self.content_height() - 26.0).max(0.0);
+        let max_visible = (avail / entry_h).ceil() as usize + 1;
+        let total = entries.len();
+        let first = if total > max_visible { total - max_visible } else { 0 };
+
         let log = TemplateNode::el("devtools-console-log").children(
-            entries.iter().enumerate().map(|(i, entry)| {
+            entries.iter().enumerate().skip(first).map(|(i, entry)| {
                 let kind_class = match entry.kind {
                     crate::console::ConsoleEntryKind::Input => "info",
                     crate::console::ConsoleEntryKind::Output => "log",
@@ -1395,338 +1560,14 @@ impl DevToolsPanel {
         let input_text = self.console.input_buffer().to_string();
         let input = TemplateNode::el("devtools-console-input")
             .class_if("focused", self.console_focused)
-            .child(
-                TemplateNode::el("devtools-console-prompt")
-                    .child(TemplateNode::text(">")),
-            )
-            .child(
-                TemplateNode::el("devtools-console-field")
-                    .child(TemplateNode::text(&input_text)),
-            );
+            .child(TemplateNode::el("devtools-console-prompt").child(TemplateNode::text(">")))
+            .child(TemplateNode::el("devtools-console-field").child(TemplateNode::text(&input_text)));
 
         vec![log, input]
     }
 
-    /// Scene Graph tab.
-    fn template_scene_graph(
-        &self,
-        _doc: &Document,
-        _layout: &LayoutTree,
-        _styles: &StyleMap,
-    ) -> Vec<TemplateNode> {
-        let entries = self.scene_debugger.entries();
-        if entries.is_empty() {
-            return vec![
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("No scene graph captured"))),
-            ];
-        }
-
-        let selected = self.scene_debugger.selected_index();
-
-        vec![TemplateNode::el("devtools-scene-list").children(
-            entries.iter().enumerate().map(|(i, entry)| {
-                TemplateNode::el("devtools-scene-entry")
-                    .key(&format!("sg-{}", i))
-                    .class_if("selected", selected == Some(i))
-                    .style("padding-left", &format!("{}px", entry.depth * 12 + 4))
-                    .child(TemplateNode::text(&entry.label))
-            }),
-        )]
-    }
-
-    /// Style Editor tab.
-    fn template_style_editor(
-        &self,
-        _doc: &Document,
-        _layout: &LayoutTree,
-        _styles: &StyleMap,
-    ) -> Vec<TemplateNode> {
-        let edits = self.style_editor.pending_edits();
-        let mut nodes = Vec::new();
-
-        if edits.is_empty() {
-            nodes.push(
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("No style edits \u{2014} type property: value"))),
-            );
-        } else {
-            let list = TemplateNode::el("devtools-editor-list").children(
-                edits.iter().enumerate().map(|(i, edit)| {
-                    TemplateNode::el("devtools-editor-entry")
-                        .key(&format!("ed-{}", i))
-                        .class_if("applied", edit.applied)
-                        .class_if("pending", !edit.applied)
-                        .child(TemplateNode::text(&format!(
-                            "{} {}: {}",
-                            if edit.applied { "\u{2713}" } else { "\u{25CB}" },
-                            edit.property,
-                            edit.value
-                        )))
-                }),
-            );
-            nodes.push(list);
-        }
-
-        let input_text = self.style_editor.input_buffer().to_string();
-        nodes.push(
-            TemplateNode::el("devtools-editor-input")
-                .child(TemplateNode::text(&format!("> {}", input_text))),
-        );
-
-        nodes
-    }
-
-    /// Fonts tab: font properties from computed style.
-    fn template_fonts(
-        &self,
-        _doc: &Document,
-        _layout: &LayoutTree,
-        styles: &StyleMap,
-    ) -> Vec<TemplateNode> {
-        let Some(id) = self.selected_node else {
-            return vec![
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("Select an element to view fonts"))),
-            ];
-        };
-
-        let computed = match styles.get(id) {
-            Some(c) => c,
-            None => {
-                return vec![
-                    TemplateNode::el("devtools-row")
-                        .child(TemplateNode::el("devtools-value").class("dim")
-                            .child(TemplateNode::text("No computed styles"))),
-                ];
-            }
-        };
-
-        let mut nodes = Vec::new();
-
-        // Primary font properties.
-        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Primary Font Properties")));
-
-        let families: Vec<String> = computed.font_family.iter().map(|f| format!("\"{}\"", f)).collect();
-        let primary_props = [
-            ("font-family", families.join(", ")),
-            ("font-size", format!("{:.1}px", computed.font_size)),
-            ("font-weight", format!("{}", computed.font_weight)),
-            ("font-style", format!("{:?}", computed.font_style)),
-            ("line-height", format!("{:?}", computed.line_height)),
-            ("letter-spacing", format!("{:?}", computed.letter_spacing)),
-            ("word-spacing", format!("{:?}", computed.word_spacing)),
-        ];
-        for (name, value) in &primary_props {
-            nodes.push(
-                TemplateNode::el("devtools-row")
-                    .key(name)
-                    .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&format!("{}:", name))))
-                    .child(TemplateNode::el("devtools-value").child(TemplateNode::text(value))),
-            );
-        }
-
-        // Typography.
-        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Typography")));
-        let typo_props = [
-            ("text-align", format!("{:?}", computed.text_align)),
-            ("text-transform", format!("{:?}", computed.text_transform)),
-            ("white-space", format!("{:?}", computed.white_space)),
-            ("word-break", format!("{:?}", computed.word_break)),
-        ];
-        for (name, value) in &typo_props {
-            nodes.push(
-                TemplateNode::el("devtools-row")
-                    .key(&format!("f-{}", name))
-                    .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&format!("{}:", name))))
-                    .child(TemplateNode::el("devtools-value").child(TemplateNode::text(value))),
-            );
-        }
-
-        // Rendered font fallback chain.
-        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Rendered Font")));
-        for (i, family) in computed.font_family.iter().enumerate() {
-            let marker = if i == 0 { "\u{25B6}" } else { "\u{2003}\u{25B7}" };
-            nodes.push(
-                TemplateNode::el("devtools-row")
-                    .key(&format!("rf-{}", i))
-                    .child(TemplateNode::el("devtools-value")
-                        .class_if("teal", i == 0)
-                        .class_if("dim", i > 0)
-                        .child(TemplateNode::text(&format!(
-                            "{} \"{}\" \u{2014} {:.0}px, weight {}",
-                            marker, family, computed.font_size, computed.font_weight
-                        )))),
-            );
-        }
-
-        nodes
-    }
-
-    /// Animations tab: transitions and CSS animations.
-    fn template_animations(
-        &self,
-        _doc: &Document,
-        _layout: &LayoutTree,
-        styles: &StyleMap,
-    ) -> Vec<TemplateNode> {
-        let Some(id) = self.selected_node else {
-            return vec![
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("Select an element to view animations"))),
-            ];
-        };
-
-        let computed = match styles.get(id) {
-            Some(c) => c,
-            None => {
-                return vec![
-                    TemplateNode::el("devtools-row")
-                        .child(TemplateNode::el("devtools-value").class("dim")
-                            .child(TemplateNode::text("No computed styles"))),
-                ];
-            }
-        };
-
-        let mut nodes = Vec::new();
-
-        // Transitions.
-        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Transitions")));
-        if computed.transitions.is_empty() {
-            nodes.push(
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("none"))),
-            );
-        } else {
-            for (i, tr) in computed.transitions.iter().enumerate() {
-                let timing_str = format_timing_function(&tr.timing_function);
-                nodes.push(
-                    TemplateNode::el("devtools-row")
-                        .key(&format!("tr-{}", i))
-                        .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&tr.property)))
-                        .child(TemplateNode::el("devtools-value").child(TemplateNode::text(
-                            &format!("{}ms {} delay {}ms", tr.duration_ms, timing_str, tr.delay_ms),
-                        ))),
-                );
-            }
-        }
-
-        // CSS Animations.
-        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("CSS Animations")));
-        if computed.animations.is_empty() {
-            nodes.push(
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("none"))),
-            );
-        } else {
-            for (i, anim) in computed.animations.iter().enumerate() {
-                let timing_str = format_timing_function(&anim.timing_function);
-                nodes.push(
-                    TemplateNode::el("devtools-row")
-                        .key(&format!("an-{}", i))
-                        .child(TemplateNode::el("devtools-label").child(TemplateNode::text(&anim.name)))
-                        .child(TemplateNode::el("devtools-value").child(TemplateNode::text(
-                            &format!(
-                                "{}ms {} x{} {:?} {:?}",
-                                anim.duration_ms, timing_str, anim.iteration_count,
-                                anim.direction, anim.fill_mode
-                            ),
-                        ))),
-                );
-            }
-        }
-
-        // Related properties.
-        if !computed.transform.is_empty() || computed.opacity < 1.0 {
-            nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Related Properties")));
-            if !computed.transform.is_empty() {
-                nodes.push(
-                    TemplateNode::el("devtools-row")
-                        .key("rp-transform")
-                        .child(TemplateNode::el("devtools-label").child(TemplateNode::text("transform:")))
-                        .child(TemplateNode::el("devtools-value").child(TemplateNode::text(
-                            &format!("{:?}", computed.transform),
-                        ))),
-                );
-            }
-            if computed.opacity < 1.0 {
-                nodes.push(
-                    TemplateNode::el("devtools-row")
-                        .key("rp-opacity")
-                        .child(TemplateNode::el("devtools-label").child(TemplateNode::text("opacity:")))
-                        .child(TemplateNode::el("devtools-value").child(TemplateNode::text(
-                            &format!("{:.2}", computed.opacity),
-                        ))),
-                );
-            }
-        }
-
-        nodes
-    }
-
-    /// Mutations tab: mutation log entries.
-    fn template_mutations(
-        &self,
-        _doc: &Document,
-        _layout: &LayoutTree,
-        _styles: &StyleMap,
-    ) -> Vec<TemplateNode> {
-        let records = self.mutation_log.records();
-        if records.is_empty() {
-            return vec![
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("No mutations recorded"))),
-            ];
-        }
-
-        let mut nodes = Vec::new();
-        nodes.push(
-            TemplateNode::el("devtools-heading")
-                .child(TemplateNode::text(&format!("Mutations ({})", records.len()))),
-        );
-
-        let list = TemplateNode::el("devtools-mutations-list").children(
-            records.iter().enumerate().map(|(i, record)| {
-                let kind_class = mutation_class(&record.kind);
-                TemplateNode::el("devtools-mutation-entry")
-                    .key(&format!("mut-{}", i))
-                    .class(kind_class)
-                    .child(TemplateNode::text(&format_mutation_record(record)))
-            }),
-        );
-        nodes.push(list);
-        nodes
-    }
-
-    /// DOM Tree tab: JSON serialization.
-    fn template_dom_tree(
-        &self,
-        doc: &Document,
-        _layout: &LayoutTree,
-        _styles: &StyleMap,
-    ) -> Vec<TemplateNode> {
-        let json = self.dom_serializer.serialize(doc, self.selected_node);
-        let lines: Vec<&str> = json.lines().collect();
-
-        vec![TemplateNode::el("devtools-dom-json").children(
-            lines.iter().enumerate().map(|(i, line)| {
-                TemplateNode::el("devtools-row")
-                    .key(&format!("dj-{}", i))
-                    .child(TemplateNode::el("devtools-value").class("teal")
-                        .child(TemplateNode::text(line)))
-            }),
-        )]
-    }
-
-    /// Files tab: document overview with real DOM/layout stats.
-    fn template_files(
+    /// Sources tab: document overview + DOM JSON.
+    fn template_sources(
         &self,
         doc: &Document,
         layout: &LayoutTree,
@@ -1736,7 +1577,6 @@ impl DevToolsPanel {
 
         nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Document Overview")));
 
-        // Count node types.
         let total_nodes = doc.node_count();
         let total_boxes = layout.box_count();
         let styled_count = styles.len();
@@ -1745,7 +1585,6 @@ impl DevToolsPanel {
         nodes.push(row_kv("Layout boxes", &total_boxes.to_string(), "teal"));
         nodes.push(row_kv("Styled elements", &styled_count.to_string(), "teal"));
 
-        // Node type breakdown.
         let mut element_count = 0u32;
         let mut text_count = 0u32;
         for descendant in doc.descendants(doc.root()) {
@@ -1781,11 +1620,29 @@ impl DevToolsPanel {
             }
         }
 
+        // DOM JSON (virtual scrolled).
+        nodes.push(TemplateNode::el("devtools-separator"));
+        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("DOM Tree (JSON)")));
+
+        let json = self.dom_serializer.to_json(doc);
+        let lines: Vec<&str> = json.lines().collect();
+        let line_h: f32 = 16.0;
+        let (first, count) = self.visible_row_range(lines.len(), line_h);
+
+        let json_block = TemplateNode::el("devtools-dom-json").children(
+            lines[first..first + count].iter().enumerate().map(|(i, line)| {
+                TemplateNode::el("devtools-row")
+                    .key(&format!("dj-{}", first + i))
+                    .child(TemplateNode::el("devtools-value").class("teal").child(TemplateNode::text(line)))
+            }),
+        );
+        nodes.push(json_block);
+
         nodes
     }
 
-    /// Debugger tab: pipeline metrics and frame stats.
-    fn template_debugger(
+    /// Performance tab: pipeline metrics, frame timing, CSS engine stats.
+    fn template_performance(
         &self,
         doc: &Document,
         layout: &LayoutTree,
@@ -1804,20 +1661,17 @@ impl DevToolsPanel {
             nodes.push(row_kv_class("Avg frame time", &format!("{:.2}ms", snap.avg_frame_ms), frame_class));
             nodes.push(row_kv_class("Viewport", &format!("{:.0}\u{00D7}{:.0}", snap.viewport_w, snap.viewport_h), "dim"));
         } else {
-            nodes.push(
-                TemplateNode::el("devtools-row")
-                    .child(TemplateNode::el("devtools-value").class("dim")
-                        .child(TemplateNode::text("Waiting for frame data..."))),
-            );
+            nodes.push(TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("Waiting for frame data..."))));
         }
 
         // Frame time sparkline.
         if self.frame_times.len() > 1 {
             nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Frame Times")));
-
             let chart = TemplateNode::el("devtools-bar-chart").children(
                 self.frame_times.iter().enumerate().map(|(i, &ms)| {
-                    let height_frac = (ms / 50.0).min(1.0); // normalize to 50ms max
+                    let height_frac = (ms / 50.0).min(1.0);
                     let bar_class = if ms < 16.7 { "ok" } else if ms < 33.3 { "warn" } else { "error" };
                     TemplateNode::el("devtools-bar")
                         .key(&format!("ft-{}", i))
@@ -1844,6 +1698,108 @@ impl DevToolsPanel {
         nodes
     }
 
+    /// Mutations tab: mutation log entries with virtual scrolling.
+    fn template_mutations(
+        &self,
+        _doc: &Document,
+        _layout: &LayoutTree,
+        _styles: &StyleMap,
+    ) -> Vec<TemplateNode> {
+        let records: Vec<_> = self.mutation_log.iter().collect();
+        if records.is_empty() {
+            return vec![TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("No mutations recorded")))];
+        }
+
+        let mut nodes = Vec::new();
+        nodes.push(TemplateNode::el("devtools-heading")
+            .child(TemplateNode::text(&format!("Mutations ({})", records.len()))));
+
+        let row_h: f32 = 16.0;
+        let (first, count) = self.visible_row_range(records.len(), row_h);
+
+        let list = TemplateNode::el("devtools-mutations-list").children(
+            records[first..first + count].iter().enumerate().map(|(i, record)| {
+                let kind_class = mutation_class(&record.kind);
+                TemplateNode::el("devtools-mutation-entry")
+                    .key(&format!("mut-{}", first + i))
+                    .class(kind_class)
+                    .child(TemplateNode::text(&format_mutation_record(record)))
+            }),
+        );
+        nodes.push(list);
+        nodes
+    }
+
+    /// Scene tab: scene graph debugger + live style editor.
+    fn template_scene(
+        &self,
+        _doc: &Document,
+        _layout: &LayoutTree,
+        _styles: &StyleMap,
+    ) -> Vec<TemplateNode> {
+        let mut nodes = Vec::new();
+
+        // Scene graph entries.
+        let entries = self.scene_debugger.entries();
+        if entries.is_empty() {
+            nodes.push(TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("No scene graph captured"))));
+        } else {
+            let selected = self.scene_debugger.selected();
+            let row_h: f32 = 16.0;
+            let (first, count) = self.visible_row_range(entries.len(), row_h);
+
+            nodes.push(TemplateNode::el("devtools-heading")
+                .child(TemplateNode::text(&format!("Scene Graph ({} nodes)", entries.len()))));
+
+            let list = TemplateNode::el("devtools-scene-list").children(
+                entries[first..first + count].iter().enumerate().map(|(i, entry)| {
+                    TemplateNode::el("devtools-scene-entry")
+                        .key(&format!("sg-{}", first + i))
+                        .class_if("selected", selected == Some(first + i))
+                        .style("padding-left", &format!("{}px", entry.depth * 12 + 4))
+                        .child(TemplateNode::text(&entry.kind))
+                }),
+            );
+            nodes.push(list);
+        }
+
+        // Style editor section.
+        nodes.push(TemplateNode::el("devtools-separator"));
+        nodes.push(TemplateNode::el("devtools-heading").child(TemplateNode::text("Live Style Editor")));
+
+        let edits = self.style_editor.pending_edits();
+        if edits.is_empty() {
+            nodes.push(TemplateNode::el("devtools-row")
+                .child(TemplateNode::el("devtools-value").class("dim")
+                    .child(TemplateNode::text("No style edits \u{2014} type property: value"))));
+        } else {
+            let list = TemplateNode::el("devtools-editor-list").children(
+                edits.iter().enumerate().map(|(i, edit)| {
+                    TemplateNode::el("devtools-editor-entry")
+                        .key(&format!("ed-{}", i))
+                        .class_if("applied", edit.applied)
+                        .class_if("pending", !edit.applied)
+                        .child(TemplateNode::text(&format!(
+                            "{} {}: {}",
+                            if edit.applied { "\u{2713}" } else { "\u{25CB}" },
+                            edit.property, edit.new_value
+                        )))
+                }),
+            );
+            nodes.push(list);
+        }
+
+        let input_text = self.style_editor.editing_value().to_string();
+        nodes.push(TemplateNode::el("devtools-editor-input")
+            .child(TemplateNode::text(&format!("> {}", input_text))));
+
+        nodes
+    }
+
     // ─── Scene-node overlays ─────────────────────────────────────
 
     /// Build the devtools panel scene nodes.
@@ -1852,7 +1808,7 @@ impl DevToolsPanel {
     /// Uses scene node IDs in the 920_000+ range.
     pub fn build_scene(
         &self,
-        doc: &Document,
+        _doc: &Document,
         layout: &LayoutTree,
         styles: &StyleMap,
     ) -> Vec<SceneNode> {
@@ -1928,7 +1884,7 @@ impl DevToolsPanel {
     }
 
     // Old per-tab scene-node renderers removed — now using render_template() + CSS pipeline.
-    // See template_elements(), template_styles(), etc. above.
+    // See template_elements(), template_console(), etc. above.
 
     // ─── Public APIs ──────────────────────────────────────────
 
@@ -1984,7 +1940,7 @@ impl DevToolsPanel {
         if self.active_tab == DevToolsTab::Elements {
             let tab_bar_h = 28.0;
             let content_y = bounds.y + 1.0 + tab_bar_h + 1.0 + 8.0;
-            let line_h: f32 = 18.0;
+            let line_h: f32 = 20.0;
             let scroll_y = (y - content_y) + self.scroll_offset;
             let line_idx = (scroll_y / line_h).floor() as usize;
             let visible = self.inspector.visible_nodes();
@@ -2011,10 +1967,11 @@ impl DevToolsPanel {
             }
             ContextAction::ShowLayout => {
                 self.select_node(node_id, styles);
-                self.set_tab(DevToolsTab::Layout);
+                self.set_tab(DevToolsTab::Elements);
+                self.side_tab = SideTab::Layout;
             }
             ContextAction::ShowInSceneGraph => {
-                self.set_tab(DevToolsTab::SceneGraph);
+                self.set_tab(DevToolsTab::Scene);
             }
             ContextAction::LogToConsole => {
                 self.console.push_output(format!("Logged node #{}", node_id));
@@ -2253,7 +2210,7 @@ mod tests {
         let mut panel = DevToolsPanel::with_defaults();
         assert_eq!(panel.active_tab(), DevToolsTab::Elements);
         panel.next_tab();
-        assert_eq!(panel.active_tab(), DevToolsTab::Styles);
+        assert_eq!(panel.active_tab(), DevToolsTab::Console);
         panel.prev_tab();
         assert_eq!(panel.active_tab(), DevToolsTab::Elements);
     }
