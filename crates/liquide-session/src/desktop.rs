@@ -887,28 +887,70 @@ impl DesktopCompositor {
                                 KeyCode::Y => Some(if ke.modifiers.shift() { "Y" } else { "y" }),
                                 KeyCode::Z => Some(if ke.modifiers.shift() { "Z" } else { "z" }),
                                 // Digits / shifted symbols.
-                                KeyCode::Digit0 => Some(if ke.modifiers.shift() { ")" } else { "0" }),
-                                KeyCode::Digit1 => Some(if ke.modifiers.shift() { "!" } else { "1" }),
-                                KeyCode::Digit2 => Some(if ke.modifiers.shift() { "@" } else { "2" }),
-                                KeyCode::Digit3 => Some(if ke.modifiers.shift() { "#" } else { "3" }),
-                                KeyCode::Digit4 => Some(if ke.modifiers.shift() { "$" } else { "4" }),
-                                KeyCode::Digit5 => Some(if ke.modifiers.shift() { "%" } else { "5" }),
-                                KeyCode::Digit6 => Some(if ke.modifiers.shift() { "^" } else { "6" }),
-                                KeyCode::Digit7 => Some(if ke.modifiers.shift() { "&" } else { "7" }),
-                                KeyCode::Digit8 => Some(if ke.modifiers.shift() { "*" } else { "8" }),
-                                KeyCode::Digit9 => Some(if ke.modifiers.shift() { "(" } else { "9" }),
+                                KeyCode::Digit0 => {
+                                    Some(if ke.modifiers.shift() { ")" } else { "0" })
+                                }
+                                KeyCode::Digit1 => {
+                                    Some(if ke.modifiers.shift() { "!" } else { "1" })
+                                }
+                                KeyCode::Digit2 => {
+                                    Some(if ke.modifiers.shift() { "@" } else { "2" })
+                                }
+                                KeyCode::Digit3 => {
+                                    Some(if ke.modifiers.shift() { "#" } else { "3" })
+                                }
+                                KeyCode::Digit4 => {
+                                    Some(if ke.modifiers.shift() { "$" } else { "4" })
+                                }
+                                KeyCode::Digit5 => {
+                                    Some(if ke.modifiers.shift() { "%" } else { "5" })
+                                }
+                                KeyCode::Digit6 => {
+                                    Some(if ke.modifiers.shift() { "^" } else { "6" })
+                                }
+                                KeyCode::Digit7 => {
+                                    Some(if ke.modifiers.shift() { "&" } else { "7" })
+                                }
+                                KeyCode::Digit8 => {
+                                    Some(if ke.modifiers.shift() { "*" } else { "8" })
+                                }
+                                KeyCode::Digit9 => {
+                                    Some(if ke.modifiers.shift() { "(" } else { "9" })
+                                }
                                 // Punctuation.
-                                KeyCode::Period => Some(if ke.modifiers.shift() { ">" } else { "." }),
-                                KeyCode::Comma => Some(if ke.modifiers.shift() { "<" } else { "," }),
-                                KeyCode::Slash => Some(if ke.modifiers.shift() { "?" } else { "/" }),
-                                KeyCode::Semicolon => Some(if ke.modifiers.shift() { ":" } else { ";" }),
-                                KeyCode::Quote => Some(if ke.modifiers.shift() { "\"" } else { "'" }),
-                                KeyCode::BracketLeft => Some(if ke.modifiers.shift() { "{" } else { "[" }),
-                                KeyCode::BracketRight => Some(if ke.modifiers.shift() { "}" } else { "]" }),
-                                KeyCode::Backslash => Some(if ke.modifiers.shift() { "|" } else { "\\" }),
-                                KeyCode::Minus => Some(if ke.modifiers.shift() { "_" } else { "-" }),
-                                KeyCode::Equal => Some(if ke.modifiers.shift() { "+" } else { "=" }),
-                                KeyCode::Grave => Some(if ke.modifiers.shift() { "~" } else { "`" }),
+                                KeyCode::Period => {
+                                    Some(if ke.modifiers.shift() { ">" } else { "." })
+                                }
+                                KeyCode::Comma => {
+                                    Some(if ke.modifiers.shift() { "<" } else { "," })
+                                }
+                                KeyCode::Slash => {
+                                    Some(if ke.modifiers.shift() { "?" } else { "/" })
+                                }
+                                KeyCode::Semicolon => {
+                                    Some(if ke.modifiers.shift() { ":" } else { ";" })
+                                }
+                                KeyCode::Quote => {
+                                    Some(if ke.modifiers.shift() { "\"" } else { "'" })
+                                }
+                                KeyCode::BracketLeft => {
+                                    Some(if ke.modifiers.shift() { "{" } else { "[" })
+                                }
+                                KeyCode::BracketRight => {
+                                    Some(if ke.modifiers.shift() { "}" } else { "]" })
+                                }
+                                KeyCode::Backslash => {
+                                    Some(if ke.modifiers.shift() { "|" } else { "\\" })
+                                }
+                                KeyCode::Minus => {
+                                    Some(if ke.modifiers.shift() { "_" } else { "-" })
+                                }
+                                KeyCode::Equal => {
+                                    Some(if ke.modifiers.shift() { "+" } else { "=" })
+                                }
+                                KeyCode::Grave => {
+                                    Some(if ke.modifiers.shift() { "~" } else { "`" })
+                                }
                                 _ => None,
                             };
                             if let Some(k) = key_str {
@@ -967,7 +1009,12 @@ impl DesktopCompositor {
                             }
                         }
                     }
-                    MouseEvent::Button { x, y, button, state } => {
+                    MouseEvent::Button {
+                        x,
+                        y,
+                        button,
+                        state,
+                    } => {
                         self.cursor_x = *x;
                         self.cursor_y = *y;
                         // Only react on button press, not release.
@@ -983,10 +1030,12 @@ impl DesktopCompositor {
                                             needs_redraw = true;
                                         } else if devtools.on_click(styles) {
                                             needs_redraw = true;
-                                        } else if let Some(hit_test) = self.shell.hit_test_engine() {
+                                        } else if let Some(hit_test) = self.shell.hit_test_engine()
+                                        {
                                             // Click-to-inspect: clicking outside the panel
                                             // selects the element under the cursor.
-                                            if devtools.on_viewport_click(*x, *y, hit_test, styles) {
+                                            if devtools.on_viewport_click(*x, *y, hit_test, styles)
+                                            {
                                                 needs_redraw = true;
                                             }
                                         }
