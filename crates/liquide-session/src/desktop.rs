@@ -24,7 +24,7 @@ use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::{Color, PixelFormat};
 use liquide_compositor::scene::{CursorShape, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_compositor::{Compositor, CompositorContract};
-use liquide_devtools::DevToolsPanel;
+use liquide_devtools::{DevToolsPanel, FrameSnapshot};
 use liquide_input::InputState;
 use liquide_input::event::InputEvent;
 use liquide_input::keyboard::{KeyCode, KeyState};
@@ -405,11 +405,31 @@ impl DesktopCompositor {
 
         // 1b. Overlay devtools panel scene nodes (if active).
         if !self.loading && self.dev_mode {
-            if let Some(ref devtools) = self.devtools {
+            if let Some(ref mut devtools) = self.devtools {
                 let doc = self.shell.document();
+                // Refresh inspector tree from live DOM so the Elements tab is populated.
+                devtools.refresh_inspector(doc);
+
+                // Push pipeline stats for the Debugger tab.
+                if let Ok(tel) = self.telemetry.read() {
+                    let fm = tel.frame_metrics();
+                    devtools.push_frame_snapshot(FrameSnapshot {
+                        frame_number: self.frame_count,
+                        fps: fm.current_fps,
+                        avg_frame_ms: fm.avg_frame_ms,
+                        css_rule_count: self.shell.css_rule_count(),
+                        css_variable_count: self.shell.css_variable_count(),
+                        stylesheet_count: self.shell.stylesheet_count(),
+                        viewport_w: self.width as f32,
+                        viewport_h: self.height as f32,
+                    });
+                }
+
                 if let (Some(layout), Some(styles)) =
                     (self.shell.layout_tree(), self.shell.style_map())
                 {
+                    // Refresh scene graph debugger from the current scene.
+                    devtools.scene_debugger.snapshot(&scene);
                     for node in devtools.build_scene(doc, layout, styles) {
                         scene.add_child(node);
                     }
@@ -492,11 +512,29 @@ impl DesktopCompositor {
 
         // Overlay devtools panel scene nodes (if active).
         if self.dev_mode {
-            if let Some(ref devtools) = self.devtools {
+            if let Some(ref mut devtools) = self.devtools {
                 let doc = self.shell.document();
+                devtools.refresh_inspector(doc);
+
+                // Push pipeline stats for the Debugger tab.
+                if let Ok(tel) = self.telemetry.read() {
+                    let fm = tel.frame_metrics();
+                    devtools.push_frame_snapshot(FrameSnapshot {
+                        frame_number: self.frame_count,
+                        fps: fm.current_fps,
+                        avg_frame_ms: fm.avg_frame_ms,
+                        css_rule_count: self.shell.css_rule_count(),
+                        css_variable_count: self.shell.css_variable_count(),
+                        stylesheet_count: self.shell.stylesheet_count(),
+                        viewport_w: self.width as f32,
+                        viewport_h: self.height as f32,
+                    });
+                }
+
                 if let (Some(layout), Some(styles)) =
                     (self.shell.layout_tree(), self.shell.style_map())
                 {
+                    devtools.scene_debugger.snapshot(&scene);
                     for node in devtools.build_scene(doc, layout, styles) {
                         scene.add_child(node);
                     }

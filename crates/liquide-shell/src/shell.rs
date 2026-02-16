@@ -2964,4 +2964,19 @@ impl Shell {
     pub fn hit_test_engine(&self) -> Option<&HitTestEngine> {
         self.hit_test_engine.as_ref()
     }
+
+    /// Total number of CSS rules compiled across all loaded stylesheets.
+    pub fn css_rule_count(&self) -> usize {
+        self.css_pipeline.style_engine.rule_count()
+    }
+
+    /// Number of loaded stylesheets.
+    pub fn stylesheet_count(&self) -> usize {
+        self.css_pipeline.style_engine.sheet_count()
+    }
+
+    /// Number of CSS custom properties (variables) defined.
+    pub fn css_variable_count(&self) -> usize {
+        self.css_pipeline.style_engine.variable_count()
+    }
 }

@@ -37,7 +37,7 @@ pub mod style_panel;
 
 pub use console::DebugConsole;
 pub use context_menu::{ContextAction, ContextMenu};
-pub use devtools_panel::{DevToolsPanel, DevToolsConfig, DevToolsTab, DockPosition};
+pub use devtools_panel::{DevToolsPanel, DevToolsConfig, DevToolsTab, DockPosition, FrameSnapshot};
 pub use dom_serializer::DomSerializer;
 pub use element_picker::ElementPicker;
 pub use inspector::ElementTreeInspector;

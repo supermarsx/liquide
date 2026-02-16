@@ -320,6 +320,16 @@ impl StyleEngine {
         self.sheets.iter().map(|s| s.rules.len()).sum()
     }
 
+    /// Number of loaded stylesheets.
+    pub fn sheet_count(&self) -> usize {
+        self.sheets.len()
+    }
+
+    /// Number of CSS custom properties (variables) defined.
+    pub fn variable_count(&self) -> usize {
+        self.variables.len()
+    }
+
     // ── Private: apply property values to ComputedStyle ──
 
     fn apply_single_property(
