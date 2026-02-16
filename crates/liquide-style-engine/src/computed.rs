@@ -3141,7 +3141,62 @@ impl ComputedStyle {
 
     /// Is this element a table container?
     pub fn is_table(&self) -> bool {
+        matches!(
+            self.display,
+            Display::Table
+                | Display::TableRow
+                | Display::TableCell
+                | Display::TableRowGroup
+                | Display::TableHeaderGroup
+                | Display::TableFooterGroup
+                | Display::TableCaption
+                | Display::TableColumn
+                | Display::TableColumnGroup
+        )
+    }
+
+    /// Is this element a table wrapper (display: table)?
+    pub fn is_table_wrapper(&self) -> bool {
         self.display == Display::Table
+    }
+
+    /// Is this element a table internal element?
+    pub fn is_table_internal(&self) -> bool {
+        matches!(
+            self.display,
+            Display::TableRow
+                | Display::TableCell
+                | Display::TableRowGroup
+                | Display::TableHeaderGroup
+                | Display::TableFooterGroup
+                | Display::TableColumn
+                | Display::TableColumnGroup
+                | Display::TableCaption
+        )
+    }
+
+    /// Does this element establish a new block formatting context?
+    pub fn establishes_bfc(&self) -> bool {
+        matches!(self.display, Display::FlowRoot)
+            || self.is_flex_container()
+            || self.is_grid_container()
+            || matches!(self.position, Position::Absolute | Position::Fixed)
+            || matches!(self.overflow_x, Overflow::Hidden | Overflow::Scroll | Overflow::Auto)
+            || matches!(self.overflow_y, Overflow::Hidden | Overflow::Scroll | Overflow::Auto)
+            || self.display == Display::InlineBlock
+            || self.is_table_wrapper()
+            || self.column_count.is_some()
+            || self.contain.layout
+    }
+
+    /// Is this element a CSS container query container?
+    pub fn is_container_query_host(&self) -> bool {
+        self.container_type != ContainerType::Normal
+    }
+
+    /// Is this a list-item?
+    pub fn is_list_item(&self) -> bool {
+        self.display == Display::ListItem
     }
 
     /// Is this element a multi-column container?

@@ -507,8 +507,21 @@ impl StyleEngine {
                             continue;
                         }
                     }
+                    // Skip @supports-gated rules that don't match
+                    if let Some(ref cond) = rule.supports_condition {
+                        if !self.evaluate_supports_condition(cond) {
+                            continue;
+                        }
+                    }
+                    // Evaluate @container conditions against ancestor containers
+                    if let Some(ref cc) = rule.container_condition {
+                        if !self.evaluate_container_condition(cc, node_id, doc, map) {
+                            continue;
+                        }
+                    }
                     if rule.selector.matches(doc, node_id) {
-                        let priority = CascadePriority::author(rule.specificity, rule.source_order);
+                        let mut priority = CascadePriority::author(rule.specificity, rule.source_order);
+                        priority.layer_order = rule.layer_order;
                         cascade.add_properties(&rule.properties, priority);
                     }
                 }
@@ -537,6 +550,18 @@ impl StyleEngine {
                 }
             }
 
+            // Apply registered custom property initial values for vars not yet set
+            for (name, def) in &self.registered_properties {
+                if !local_vars.contains_key(name) {
+                    if let Some(ref initial) = def.initial_value {
+                        local_vars.insert(
+                            name.clone(),
+                            liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
+                        );
+                    }
+                }
+            }
+
             for (prop, val) in &resolved {
                 self.apply_single_property(prop, val, &mut style, &local_vars);
             }
@@ -559,6 +584,95 @@ impl StyleEngine {
         let children = doc.children(node_id).to_vec();
         for child_id in children {
             self.restyle_node(doc, child_id, Some(&style), map, scope_vars);
+        }
+    }
+
+    /// Evaluate a `@container` condition by walking up the tree to find
+    /// the nearest container ancestor and checking the condition against
+    /// its computed dimensions.
+    fn evaluate_container_condition(
+        &self,
+        condition: &ContainerCondition,
+        node_id: NodeId,
+        doc: &Document,
+        map: &StyleMap,
+    ) -> bool {
+        // Walk ancestors to find a container
+        let mut current = doc.parent(node_id);
+        while let Some(ancestor_id) = current {
+            if let Some(ancestor_style) = map.get(ancestor_id) {
+                let ct = ancestor_style.container_type;
+                if ct != ContainerType::Normal {
+                    // Check container name if specified
+                    if let Some(ref required_name) = condition.name {
+                        if ancestor_style.container_name.as_deref() != Some(required_name.as_str()) {
+                            current = doc.parent(ancestor_id);
+                            continue;
+                        }
+                    }
+                    // Evaluate the condition against this container's dimensions.
+                    // Currently we use the viewport as a proxy since layout hasn't run yet.
+                    // In a full implementation, container dimensions come from the layout tree.
+                    return self.evaluate_container_size_condition(
+                        &condition.condition,
+                        self.viewport.width,
+                        self.viewport.height,
+                    );
+                }
+            }
+            current = doc.parent(ancestor_id);
+        }
+        false // No matching container found
+    }
+
+    /// Parse and evaluate a container size condition like `(min-width: 600px)`.
+    fn evaluate_container_size_condition(
+        &self,
+        condition: &str,
+        container_w: f32,
+        container_h: f32,
+    ) -> bool {
+        let condition = condition.trim();
+        let inner = condition
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(')'))
+            .unwrap_or(condition);
+
+        // Handle compound conditions
+        if inner.contains(") and (") {
+            return inner.split(") and (").all(|part| {
+                self.evaluate_container_size_condition(
+                    &format!("({})", part.trim_matches(|c| c == '(' || c == ')')),
+                    container_w,
+                    container_h,
+                )
+            });
+        }
+        if inner.contains(") or (") {
+            return inner.split(") or (").any(|part| {
+                self.evaluate_container_size_condition(
+                    &format!("({})", part.trim_matches(|c| c == '(' || c == ')')),
+                    container_w,
+                    container_h,
+                )
+            });
+        }
+
+        if let Some((prop, value_str)) = inner.split_once(':') {
+            let prop = prop.trim();
+            let value_str = value_str.trim();
+            let px_value = Self::parse_px_value(value_str).unwrap_or(0.0);
+            match prop {
+                "min-width" => container_w >= px_value,
+                "max-width" => container_w <= px_value,
+                "min-height" => container_h >= px_value,
+                "max-height" => container_h <= px_value,
+                "width" => (container_w - px_value).abs() < 1.0,
+                "height" => (container_h - px_value).abs() < 1.0,
+                _ => true,
+            }
+        } else {
+            true
         }
     }
 
