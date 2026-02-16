@@ -467,10 +467,11 @@ fn statusbar_positioned_at_top() {
     });
 
     if let Some(sb) = statusbar_box {
+        let abs = output.layout.absolute_border_rect(sb.id);
         // Statusbar should be at y=0 (top of viewport)
-        assert!(sb.border_rect.y < 10.0, "Statusbar should be at top (y={})", sb.border_rect.y);
+        assert!(abs.y < 10.0, "Statusbar should be at top (y={})", abs.y);
         // Width should span most or all of viewport
-        assert!(sb.border_rect.width > 1000.0, "Statusbar width={} should be wide", sb.border_rect.width);
+        assert!(abs.width > 1000.0, "Statusbar width={} should be wide", abs.width);
     }
 }
 
@@ -502,8 +503,9 @@ fn dock_positioned_at_bottom() {
     });
 
     if let Some(d) = dock_box {
+        let abs = output.layout.absolute_border_rect(d.id);
         // Dock should be near bottom of viewport (y + height should be close to viewport height)
-        let bottom = d.border_rect.y + d.border_rect.height;
+        let bottom = abs.y + abs.height;
         assert!(bottom > 1000.0, "Dock bottom={} should be near viewport bottom", bottom);
     }
 }
@@ -524,13 +526,14 @@ fn elements_respect_viewport_width() {
 
     // No layout box should extend beyond viewport
     for b in &output.layout.boxes {
-        let right = b.border_rect.x + b.border_rect.width;
+        let abs = output.layout.absolute_border_rect(b.id);
+        let right = abs.x + abs.width;
         // Allow small overflow for rounding
         assert!(
             right <= 1930.0,
             "Element at x={} width={} exceeds viewport",
-            b.border_rect.x,
-            b.border_rect.width
+            abs.x,
+            abs.width
         );
     }
 }
@@ -551,13 +554,14 @@ fn elements_respect_viewport_height() {
 
     // No layout box should extend beyond viewport
     for b in &output.layout.boxes {
-        let bottom = b.border_rect.y + b.border_rect.height;
+        let abs = output.layout.absolute_border_rect(b.id);
+        let bottom = abs.y + abs.height;
         // Allow small overflow for rounding
         assert!(
             bottom <= 1090.0,
             "Element at y={} height={} exceeds viewport",
-            b.border_rect.y,
-            b.border_rect.height
+            abs.y,
+            abs.height
         );
     }
 }
