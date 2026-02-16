@@ -1,0 +1,95 @@
+/* ═══════════════════════════════════════════════════════
+   LiquiDE Component: Notifications
+   Toast notification area and individual notifications.
+   ═══════════════════════════════════════════════════════ */
+
+notification-area {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    position: fixed;
+    top: 36px;
+    right: 12px;
+    z-index: 3000;
+    gap: 8px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    pointer-events: none;
+}
+
+notification {
+    display: flex;
+    flex-direction: row;
+    gap: 12px;
+    width: 320px;
+    min-height: 64px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    backdrop-filter: blur(20px);
+    border-width: 1px;
+    border-style: solid;
+    pointer-events: auto;
+    cursor: default;
+    overflow: hidden;
+}
+
+notification.urgency-critical {
+    border-left-width: 3px;
+    border-left-style: solid;
+}
+
+notification-icon {
+    display: block;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+notification-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 2px;
+}
+
+notification-title {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+notification-body {
+    font-size: 12px;
+    opacity: 0.8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* Limit to 3 lines */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+notification-actions {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top-width: 1px;
+    border-top-style: solid;
+}
+
+notification-action {
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+notification-action:hover {
+    opacity: 0.85;
+}

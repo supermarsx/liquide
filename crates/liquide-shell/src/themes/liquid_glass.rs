@@ -1,7 +1,7 @@
 //! Liquid Glass dark theme — Deep blue glass with dark blue glows
 //!
 //! Based on spec-design.md §2.1 color palette with enhanced glass effects.
-//! Inspired by Chromium's two-shadow key+ambient system, layered blur,
+//! Uses a two-shadow key+ambient system, layered blur,
 //! and modern glass UI patterns. All surfaces use translucent deep-blue
 //! tints with stylish dark blue glow accents and heavy blur.
 

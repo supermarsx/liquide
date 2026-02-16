@@ -1,0 +1,22 @@
+[package]
+name = "liquide-devtools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Developer tools for LiquiDE — live reload, element inspector, style viewer, layout visualizer"
+
+[dependencies]
+liquide-dom.workspace = true
+liquide-style-engine.workspace = true
+liquide-layout.workspace = true
+liquide-paint.workspace = true
+liquide-compositor.workspace = true
+liquide-components.workspace = true
+liquide-theme-css.workspace = true
+liquide-hit-test.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+notify = "7.0"
+tracing.workspace = true
+
+[dev-dependencies]

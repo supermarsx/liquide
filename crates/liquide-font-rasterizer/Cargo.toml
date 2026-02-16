@@ -11,6 +11,7 @@ description = "TrueType/OpenType font loading, shaping, and glyph rasterization 
 liquide-fonts.workspace = true
 liquide-text-engine.workspace = true
 ab_glyph.workspace = true
+rustybuzz.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true

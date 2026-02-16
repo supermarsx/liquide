@@ -1284,7 +1284,7 @@ impl SoftwareRenderer {
                 crate::icons::draw_icon(fb, *icon_id, bounds, c, &self.srgb_lut);
             }
 
-            // ── Backdrop Filter (Chromium-inspired: blur + color effects) ──
+            // ── Backdrop Filter (blur + color effects on content behind) ──
             SceneNodeKind::BackdropFilter { filters } => {
                 use liquide_compositor::scene::BackdropFilterSpec;
                 for filter in filters {
@@ -1472,7 +1472,8 @@ impl SoftwareRenderer {
                     let draw_border_side = |fb: &mut FrameBuffer,
                                             side_rect: Rect,
                                             side: &liquide_compositor::scene::BorderSide,
-                                            op: f32| {
+                                            op: f32,
+                                            horizontal: bool| {
                         if side.width <= 0.0
                             || side.style == BorderSideStyle::None
                             || side.style == BorderSideStyle::Hidden
@@ -1486,7 +1487,198 @@ impl SoftwareRenderer {
                         if c.a == 0 {
                             return;
                         }
-                        rasterizer::fill_rect(fb, side_rect, c, BlendMode::SrcOver);
+
+                        match side.style {
+                            BorderSideStyle::Solid => {
+                                rasterizer::fill_rect(fb, side_rect, c, BlendMode::SrcOver);
+                            }
+                            BorderSideStyle::Dashed => {
+                                // Dashes: 3*width on, 3*width off
+                                let dash_len = (side.width * 3.0).max(3.0);
+                                let gap_len = dash_len;
+                                if horizontal {
+                                    let mut dx = side_rect.x;
+                                    let end = side_rect.x + side_rect.width;
+                                    while dx < end {
+                                        let seg_w = dash_len.min(end - dx);
+                                        rasterizer::fill_rect(
+                                            fb,
+                                            Rect::new(dx, side_rect.y, seg_w, side_rect.height),
+                                            c,
+                                            BlendMode::SrcOver,
+                                        );
+                                        dx += dash_len + gap_len;
+                                    }
+                                } else {
+                                    let mut dy = side_rect.y;
+                                    let end = side_rect.y + side_rect.height;
+                                    while dy < end {
+                                        let seg_h = dash_len.min(end - dy);
+                                        rasterizer::fill_rect(
+                                            fb,
+                                            Rect::new(side_rect.x, dy, side_rect.width, seg_h),
+                                            c,
+                                            BlendMode::SrcOver,
+                                        );
+                                        dy += dash_len + gap_len;
+                                    }
+                                }
+                            }
+                            BorderSideStyle::Dotted => {
+                                // Dots: circles spaced at 2*width intervals
+                                let dot_size = side.width;
+                                let spacing = dot_size * 2.0;
+                                if horizontal {
+                                    let mut dx = side_rect.x + dot_size * 0.5;
+                                    let end = side_rect.x + side_rect.width;
+                                    let cy = side_rect.y + side_rect.height * 0.5;
+                                    while dx < end {
+                                        let r = (dot_size * 0.5).max(0.5);
+                                        // Draw a filled circle approximated as a rect
+                                        // (proper circle rendering would use SDF)
+                                        rasterizer::fill_rect(
+                                            fb,
+                                            Rect::new(dx - r, cy - r, r * 2.0, r * 2.0),
+                                            c,
+                                            BlendMode::SrcOver,
+                                        );
+                                        dx += spacing;
+                                    }
+                                } else {
+                                    let mut dy = side_rect.y + dot_size * 0.5;
+                                    let end = side_rect.y + side_rect.height;
+                                    let cx = side_rect.x + side_rect.width * 0.5;
+                                    while dy < end {
+                                        let r = (dot_size * 0.5).max(0.5);
+                                        rasterizer::fill_rect(
+                                            fb,
+                                            Rect::new(cx - r, dy - r, r * 2.0, r * 2.0),
+                                            c,
+                                            BlendMode::SrcOver,
+                                        );
+                                        dy += spacing;
+                                    }
+                                }
+                            }
+                            BorderSideStyle::Double => {
+                                // Two lines with gap: each line is 1/3 of width
+                                let line_w = (side.width / 3.0).max(1.0);
+                                if horizontal {
+                                    rasterizer::fill_rect(
+                                        fb,
+                                        Rect::new(side_rect.x, side_rect.y, side_rect.width, line_w),
+                                        c,
+                                        BlendMode::SrcOver,
+                                    );
+                                    rasterizer::fill_rect(
+                                        fb,
+                                        Rect::new(
+                                            side_rect.x,
+                                            side_rect.y + side_rect.height - line_w,
+                                            side_rect.width,
+                                            line_w,
+                                        ),
+                                        c,
+                                        BlendMode::SrcOver,
+                                    );
+                                } else {
+                                    rasterizer::fill_rect(
+                                        fb,
+                                        Rect::new(side_rect.x, side_rect.y, line_w, side_rect.height),
+                                        c,
+                                        BlendMode::SrcOver,
+                                    );
+                                    rasterizer::fill_rect(
+                                        fb,
+                                        Rect::new(
+                                            side_rect.x + side_rect.width - line_w,
+                                            side_rect.y,
+                                            line_w,
+                                            side_rect.height,
+                                        ),
+                                        c,
+                                        BlendMode::SrcOver,
+                                    );
+                                }
+                            }
+                            BorderSideStyle::Groove | BorderSideStyle::Ridge => {
+                                // 3D effect: outer half is lighter/darker, inner is opposite
+                                let is_groove = side.style == BorderSideStyle::Groove;
+                                let light = Color::new(
+                                    (c.r as u16 * 3 / 4 + 64).min(255) as u8,
+                                    (c.g as u16 * 3 / 4 + 64).min(255) as u8,
+                                    (c.b as u16 * 3 / 4 + 64).min(255) as u8,
+                                    c.a,
+                                );
+                                let dark = Color::new(
+                                    c.r / 2, c.g / 2, c.b / 2, c.a,
+                                );
+                                let (outer_c, inner_c) = if is_groove {
+                                    (dark, light)
+                                } else {
+                                    (light, dark)
+                                };
+                                let half = (side.width / 2.0).max(1.0);
+                                if horizontal {
+                                    rasterizer::fill_rect(
+                                        fb,
+                                        Rect::new(side_rect.x, side_rect.y, side_rect.width, half),
+                                        outer_c,
+                                        BlendMode::SrcOver,
+                                    );
+                                    rasterizer::fill_rect(
+                                        fb,
+                                        Rect::new(
+                                            side_rect.x,
+                                            side_rect.y + half,
+                                            side_rect.width,
+                                            (side_rect.height - half).max(0.0),
+                                        ),
+                                        inner_c,
+                                        BlendMode::SrcOver,
+                                    );
+                                } else {
+                                    rasterizer::fill_rect(
+                                        fb,
+                                        Rect::new(side_rect.x, side_rect.y, half, side_rect.height),
+                                        outer_c,
+                                        BlendMode::SrcOver,
+                                    );
+                                    rasterizer::fill_rect(
+                                        fb,
+                                        Rect::new(
+                                            side_rect.x + half,
+                                            side_rect.y,
+                                            (side_rect.width - half).max(0.0),
+                                            side_rect.height,
+                                        ),
+                                        inner_c,
+                                        BlendMode::SrcOver,
+                                    );
+                                }
+                            }
+                            BorderSideStyle::Inset | BorderSideStyle::Outset => {
+                                // Inset: top+left darkened, bottom+right lightened
+                                // Outset: opposite
+                                let is_inset = side.style == BorderSideStyle::Inset;
+                                let light = Color::new(
+                                    (c.r as u16 * 3 / 4 + 64).min(255) as u8,
+                                    (c.g as u16 * 3 / 4 + 64).min(255) as u8,
+                                    (c.b as u16 * 3 / 4 + 64).min(255) as u8,
+                                    c.a,
+                                );
+                                let dark = Color::new(
+                                    c.r / 2, c.g / 2, c.b / 2, c.a,
+                                );
+                                // For horizontal borders: top uses outer, bottom uses outer
+                                // For vertical: left uses outer, right uses outer
+                                // "outer" meaning depends on inset vs outset
+                                let use_dark = is_inset;
+                                let final_c = if use_dark { dark } else { light };
+                                rasterizer::fill_rect(fb, side_rect, final_c, BlendMode::SrcOver);
+                            }
+                            BorderSideStyle::None | BorderSideStyle::Hidden => {}
+                        }
                     };
 
                     // Top border
@@ -1495,6 +1687,7 @@ impl SoftwareRenderer {
                         Rect::new(bounds.x, bounds.y, bounds.width, sides.top.width),
                         &sides.top,
                         opacity,
+                        true,
                     );
                     // Bottom border
                     draw_border_side(
@@ -1507,6 +1700,7 @@ impl SoftwareRenderer {
                         ),
                         &sides.bottom,
                         opacity,
+                        true,
                     );
                     // Left border (between top and bottom)
                     draw_border_side(
@@ -1519,6 +1713,7 @@ impl SoftwareRenderer {
                         ),
                         &sides.left,
                         opacity,
+                        false,
                     );
                     // Right border (between top and bottom)
                     draw_border_side(
@@ -1531,6 +1726,7 @@ impl SoftwareRenderer {
                         ),
                         &sides.right,
                         opacity,
+                        false,
                     );
                 } else {
                     // ── Rounded border: SDF-based per-pixel rendering ──
@@ -2808,7 +3004,7 @@ impl SoftwareRenderer {
     /// Render a gradient fill within `bounds`.
     ///
     /// Supports linear, radial, and conic gradients with antialiased color stops.
-    /// Inspired by Chromium's `cc::paint` gradient rendering approach:
+    /// Gradient rendering — linear interpolation between color stops:
     /// each pixel is evaluated against the gradient function and color stops
     /// are linearly interpolated.
     fn render_gradient(
@@ -3063,7 +3259,7 @@ impl SoftwareRenderer {
 /// Sample a color from sorted gradient stops at parameter `t` ∈ [0, 1].
 ///
 /// Uses linear interpolation between adjacent stops, consistent with
-/// Chromium's `PaintShader::MakeLinearGradient` approach. If only one
+/// linear gradient shader: if only one
 /// stop exists, its color is returned. Opacity is pre-multiplied into
 /// the alpha channel.
 fn sample_gradient_stops(stops: &[(f32, Color)], t: f32, opacity: f32) -> Color {

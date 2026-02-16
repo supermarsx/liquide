@@ -216,6 +216,68 @@ impl ThemeParser {
             CssRule::Import(import) => {
                 stylesheet.add_import(import.url.to_string());
             }
+            CssRule::LayerStatement(layer_stmt) => {
+                // @layer declaration (ordering): @layer reset, base, components;
+                for name in &layer_stmt.names {
+                    let layer_name = self.to_css_string(name);
+                    stylesheet.add_layer(&layer_name);
+                }
+            }
+            CssRule::LayerBlock(layer_block) => {
+                // @layer name { ... } — rules inside a named cascade layer
+                let layer_name = layer_block.name.as_ref()
+                    .map(|n| self.to_css_string(n))
+                    .unwrap_or_default();
+                if !layer_name.is_empty() {
+                    stylesheet.add_layer(&layer_name);
+                }
+                for nested_rule in &layer_block.rules.0 {
+                    self.process_rule_in_layer(nested_rule, stylesheet, &layer_name)?;
+                }
+            }
+            CssRule::Container(container) => {
+                // @container (condition) { ... } — container queries
+                let condition = self.to_css_string(&container.condition);
+                let name = container.name.as_ref().map(|n| {
+                    self.to_css_string(n)
+                });
+                let mut container_rules = Vec::new();
+                for nested_rule in &container.rules.0 {
+                    if let CssRule::Style(style_rule) = nested_rule {
+                        for selector in &style_rule.selectors.0 {
+                            let selector_str = self.selector_to_string(selector)?;
+                            let our_selector = Selector::parse(&selector_str)?;
+                            let properties = self.convert_declarations(&style_rule.declarations)?;
+                            container_rules.push(crate::stylesheet::StyleRule::new(our_selector, properties));
+                        }
+                    }
+                }
+                stylesheet.add_container_rule(crate::stylesheet::ContainerRule {
+                    name,
+                    condition,
+                    rules: container_rules,
+                });
+            }
+            CssRule::Property(property) => {
+                // @property --name { syntax: "<color>"; inherits: false; initial-value: red; }
+                let name = self.to_css_string(&property.name);
+                let syntax = match &property.syntax {
+                    lightningcss::values::syntax::SyntaxString::Universal => "*".to_string(),
+                    lightningcss::values::syntax::SyntaxString::Components(c) => {
+                        self.to_css_string(c)
+                    }
+                };
+                let inherits = property.inherits;
+                let initial_value = property.initial_value.as_ref().map(|v| {
+                    self.to_css_string(v)
+                });
+                stylesheet.add_registered_property(crate::stylesheet::RegisteredProperty {
+                    name,
+                    syntax,
+                    inherits,
+                    initial_value,
+                });
+            }
             // Ignore rule types we don't yet handle
             _ => {}
         }
@@ -256,6 +318,30 @@ impl ThemeParser {
             }
             // For any other rule type inside @media, delegate to normal processing
             _ => {
+                self.process_rule(rule, stylesheet)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Process a CSS rule that lives inside a @layer block.
+    fn process_rule_in_layer(
+        &self,
+        rule: &CssRule,
+        stylesheet: &mut StyleSheet,
+        layer_name: &str,
+    ) -> Result<()> {
+        match rule {
+            CssRule::Style(style_rule) => {
+                for selector in &style_rule.selectors.0 {
+                    let selector_str = self.selector_to_string(selector)?;
+                    let our_selector = Selector::parse(&selector_str)?;
+                    let properties = self.convert_declarations(&style_rule.declarations)?;
+                    stylesheet.add_layer_rule(layer_name, our_selector, properties);
+                }
+            }
+            _ => {
+                // For other rule types inside @layer, delegate to normal processing
                 self.process_rule(rule, stylesheet)?;
             }
         }

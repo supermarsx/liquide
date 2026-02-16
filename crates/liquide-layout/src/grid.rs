@@ -1,7 +1,9 @@
 //! Grid layout — CSS Grid Level 1 (simplified).
 
+use std::collections::HashMap;
+
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{Display, GridLine, TrackSize, Position};
+use liquide_style_engine::computed::{Display, GridAutoFlow, GridLine, TrackSize, Position};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
 
@@ -69,6 +71,22 @@ pub fn layout_grid(
     let gap_row = style.gap.height
         .resolve_px(content_width, base_font_size, font_size, viewport_w, viewport_h)
         .unwrap_or(0.0);
+
+    // ── Resolve grid_template_areas into named line mappings ──
+    let area_line_names = resolve_area_line_names(&style.grid_template_areas);
+    let _ = &area_line_names; // used for future named-line lookups
+
+    // ── Dense auto-flow flag ──
+    let dense = matches!(
+        style.grid_auto_flow,
+        GridAutoFlow::RowDense | GridAutoFlow::ColumnDense
+    );
+
+    // ── Implicit track sizes from style ──
+    let implicit_col_size = resolve_track_px(&style.grid_auto_columns, content_width);
+    let implicit_row_size = |available: f32| -> f32 {
+        resolve_track_px(&style.grid_auto_rows, available)
+    };
 
     // Resolve column track sizes
     let col_tracks = resolve_tracks(&style.grid_template_columns, content_width, gap_col);
@@ -149,6 +167,12 @@ pub fn layout_grid(
     let mut auto_cursor_row: usize = 0;
     let mut auto_cursor_col: usize = 0;
     for child_id in auto_items {
+        // Dense packing: reset cursor to (0,0) to backtrack and fill gaps
+        if dense {
+            auto_cursor_row = 0;
+            auto_cursor_col = 0;
+        }
+
         // Find next unoccupied cell
         loop {
             if auto_cursor_row >= num_rows {
@@ -184,16 +208,19 @@ pub fn layout_grid(
     // Recalculate num_rows from all items
     num_rows = placed_items.iter().map(|it| it.row_end).max().unwrap_or(1).max(1);
 
+    let available_h_for_rows = style.height
+        .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
+        .unwrap_or(container_height);
+    let implicit_row_px = implicit_row_size(available_h_for_rows);
+
     let row_tracks = if style.grid_template_rows.is_empty() {
-        vec![0.0f32; num_rows] // auto rows
+        // Use grid-auto-rows for all implicit rows (instead of 0)
+        vec![implicit_row_px; num_rows]
     } else {
-        let available_h = style.height
-            .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
-            .unwrap_or(container_height);
-        let mut rt = resolve_tracks(&style.grid_template_rows, available_h, gap_row);
-        // Extend with auto rows if needed
+        let mut rt = resolve_tracks(&style.grid_template_rows, available_h_for_rows, gap_row);
+        // Extend with implicit row size (grid-auto-rows) for tracks beyond the template
         while rt.len() < num_rows {
-            rt.push(0.0);
+            rt.push(implicit_row_px);
         }
         rt
     };
@@ -205,8 +232,9 @@ pub fn layout_grid(
         // Calculate spanned cell width: sum of columns [col_start..col_end] + gaps
         let span_cols = item.col_end.saturating_sub(item.col_start).max(1);
         let mut cell_width = 0.0f32;
+        let fallback_col = if implicit_col_size > 0.0 { implicit_col_size } else { content_width / num_cols as f32 };
         for c in item.col_start..item.col_end.min(num_cols) {
-            cell_width += if c < col_tracks.len() { col_tracks[c] } else { content_width / num_cols as f32 };
+            cell_width += if c < col_tracks.len() { col_tracks[c] } else { fallback_col };
         }
         // Add inter-column gaps within the span
         if span_cols > 1 {
@@ -258,9 +286,10 @@ pub fn layout_grid(
 
     let mut x_offsets: Vec<f32> = vec![0.0; num_cols];
     let mut cumulative_x = 0.0f32;
+    let fallback_col_pos = if implicit_col_size > 0.0 { implicit_col_size } else { content_width / num_cols as f32 };
     for col in 0..num_cols {
         x_offsets[col] = cumulative_x;
-        let cw = if col < col_tracks.len() { col_tracks[col] } else { content_width / num_cols as f32 };
+        let cw = if col < col_tracks.len() { col_tracks[col] } else { fallback_col_pos };
         cumulative_x += cw + if col < num_cols - 1 { gap_col } else { 0.0 };
     }
 
@@ -278,7 +307,7 @@ pub fn layout_grid(
         let span_cols = item.col_end.saturating_sub(item.col_start).max(1);
         let mut cell_w = 0.0f32;
         for c in item.col_start..item.col_end.min(num_cols) {
-            cell_w += if c < col_tracks.len() { col_tracks[c] } else { content_width / num_cols as f32 };
+            cell_w += if c < col_tracks.len() { col_tracks[c] } else { fallback_col_pos };
         }
         if span_cols > 1 {
             cell_w += (span_cols - 1) as f32 * gap_col;
@@ -409,6 +438,40 @@ fn resolve_track_px(track: &TrackSize, available: f32) -> f32 {
         TrackSize::MinMax(min, _) => resolve_track_px(min, available),
         TrackSize::FitContent(pct) => available * pct / 100.0,
     }
+}
+
+/// Resolve `grid_template_areas` rows into named line mappings.
+///
+/// Each row in `grid_template_areas` is a space-separated string of area names.
+/// This produces a mapping from "{name}-start" / "{name}-end" to line indices
+/// for both row and column axes, which can be used to resolve named grid lines.
+fn resolve_area_line_names(areas: &[String]) -> HashMap<String, usize> {
+    let mut names: HashMap<String, usize> = HashMap::new();
+    if areas.is_empty() {
+        return names;
+    }
+
+    for (row_idx, row_str) in areas.iter().enumerate() {
+        let tokens: Vec<&str> = row_str.split_whitespace().collect();
+        for (col_idx, token) in tokens.iter().enumerate() {
+            if *token == "." {
+                continue; // null cell token
+            }
+            let start_row_key = format!("{}-start-row", token);
+            let end_row_key = format!("{}-end-row", token);
+            let start_col_key = format!("{}-start-col", token);
+            let end_col_key = format!("{}-end-col", token);
+
+            // Row lines: first occurrence sets start, every occurrence updates end
+            names.entry(start_row_key).or_insert(row_idx);
+            names.insert(end_row_key, row_idx + 1);
+
+            // Column lines
+            names.entry(start_col_key).or_insert(col_idx);
+            names.insert(end_col_key, col_idx + 1);
+        }
+    }
+    names
 }
 
 fn resolve_dim(

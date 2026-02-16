@@ -2,7 +2,7 @@
 //!
 //! Converts shorthand property declarations (e.g. `margin: 10px 20px`) into
 //! their constituent longhand properties, following CSS spec expansion rules.
-//! Inspired by Chromium's `Shorthand::longhands()` pattern.
+//! Maps CSS shorthand properties to their constituent longhands.
 
 use liquide_theme_css::value::PropertyValue;
 
@@ -143,7 +143,7 @@ pub fn expand_shorthand(name: &str, value: &PropertyValue) -> Option<Expanded> {
         "grid-area" => Some(expand_grid_area(value)),
 
         // ═══════════════════════════════════════════════════════════════
-        // Chromium parity — additional shorthands
+        // CSS spec coverage — additional shorthands
         // ═══════════════════════════════════════════════════════════════
 
         // font-synthesis: weight style small-caps

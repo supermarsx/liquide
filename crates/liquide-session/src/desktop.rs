@@ -111,6 +111,8 @@ pub struct DesktopCompositor {
     render_in_flight: bool,
     /// Telemetry system for performance monitoring.
     telemetry: TelemetryHandle,
+    /// Whether developer mode is enabled (windowed + devtools).
+    dev_mode: bool,
 }
 
 impl DesktopCompositor {
@@ -156,7 +158,18 @@ impl DesktopCompositor {
             render_thread: None,
             render_in_flight: false,
             telemetry: create_telemetry(60), // 60fps target
+            dev_mode: false,
         }
+    }
+
+    /// Enable developer mode (windowed, resizable, devtools available).
+    pub fn set_dev_mode(&mut self, enabled: bool) {
+        self.dev_mode = enabled;
+    }
+
+    /// Whether developer mode is enabled.
+    pub fn is_dev_mode(&self) -> bool {
+        self.dev_mode
     }
 
     /// Set the maximum frames per second. 0 means unlimited.
@@ -842,36 +855,54 @@ impl DesktopCompositor {
 
         // Detect the actual primary screen size and resize the compositor
         // to match so the framebuffer covers the full display.
-        let screen_rect = platform.display().virtual_screen_rect();
-        let screen_w = screen_rect.width as u32;
-        let screen_h = screen_rect.height as u32;
-        if screen_w > 0 && screen_h > 0 && (screen_w != self.width || screen_h != self.height) {
-            info!(
-                old_w = self.width,
-                old_h = self.height,
-                new_w = screen_w,
-                new_h = screen_h,
-                "resizing compositor to match primary screen"
-            );
-            self.width = screen_w;
-            self.height = screen_h;
-            if let Some(ref mut compositor) = self.compositor {
-                let _ = compositor.resize(screen_w, screen_h);
+        // In dev mode, keep the requested resolution for windowed mode.
+        if !self.dev_mode {
+            let screen_rect = platform.display().virtual_screen_rect();
+            let screen_w = screen_rect.width as u32;
+            let screen_h = screen_rect.height as u32;
+            if screen_w > 0 && screen_h > 0 && (screen_w != self.width || screen_h != self.height) {
+                info!(
+                    old_w = self.width,
+                    old_h = self.height,
+                    new_w = screen_w,
+                    new_h = screen_h,
+                    "resizing compositor to match primary screen"
+                );
+                self.width = screen_w;
+                self.height = screen_h;
+                if let Some(ref mut compositor) = self.compositor {
+                    let _ = compositor.resize(screen_w, screen_h);
+                }
+                self.shell.resize_screen(screen_w as f32, screen_h as f32);
+                self.cursor_x = screen_w as f32 / 2.0;
+                self.cursor_y = screen_h as f32 / 2.0;
             }
-            self.shell.resize_screen(screen_w as f32, screen_h as f32);
-            self.cursor_x = screen_w as f32 / 2.0;
-            self.cursor_y = screen_h as f32 / 2.0;
         }
 
-        // Create a borderless fullscreen desktop window.
+        // Create a borderless fullscreen desktop window, or a resizable
+        // windowed mode when dev_mode is active.
         debug!("creating desktop window {}x{}", self.width, self.height);
         let t_win = Instant::now();
-        let params = NativeWindowParams {
-            title: "Liquide Desktop".to_string(),
-            geometry: Rect::new(0.0, 0.0, self.width as f32, self.height as f32),
-            window_type: "desktop".to_string(),
-            parent: None,
-            app_id: "com.liquide.desktop".to_string(),
+        let params = if self.dev_mode {
+            // Dev mode: create a normal resizable window at the requested
+            // size (not fullscreen) so the desktop can be inspected alongside
+            // other host windows.
+            info!("dev mode: creating resizable windowed compositor");
+            NativeWindowParams {
+                title: "Liquide Desktop [DEV]".to_string(),
+                geometry: Rect::new(40.0, 40.0, self.width as f32, self.height as f32),
+                window_type: "normal".to_string(),
+                parent: None,
+                app_id: "com.liquide.desktop.dev".to_string(),
+            }
+        } else {
+            NativeWindowParams {
+                title: "Liquide Desktop".to_string(),
+                geometry: Rect::new(0.0, 0.0, self.width as f32, self.height as f32),
+                window_type: "desktop".to_string(),
+                parent: None,
+                app_id: "com.liquide.desktop".to_string(),
+            }
         };
         if let Ok(handle) = platform.window_host().create_window(params) {
             self.window_handle = Some(handle);
@@ -879,8 +910,9 @@ impl DesktopCompositor {
         info!(
             width = self.width,
             height = self.height,
+            windowed = self.dev_mode,
             elapsed_ms = format!("{:.1}", t_win.elapsed().as_secs_f64() * 1000.0),
-            "desktop window created (borderless fullscreen)"
+            "desktop window created"
         );
 
         // Show loading overlay (synchronous — render thread not spawned yet).

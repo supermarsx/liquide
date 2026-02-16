@@ -1,0 +1,20 @@
+<!-- Launcher Component Template
+     Full-screen app launcher overlay.
+     Data attributes: data-app-id, data-icon, data-query, data-index
+     Classes: .selected (keyboard-selected item)
+-->
+<launcher-overlay id="launcher-overlay">
+  <launcher id="shell-launcher">
+    <launcher-search id="launcher-search" data-query="">
+      Search…
+    </launcher-search>
+
+    <launcher-results>
+      <!-- Items generated dynamically -->
+      <launcher-item class="selected" data-app-id="files" data-icon="folder">
+        <launcher-item-icon data-icon="folder" />
+        <launcher-item-label>Files</launcher-item-label>
+      </launcher-item>
+    </launcher-results>
+  </launcher>
+</launcher-overlay>

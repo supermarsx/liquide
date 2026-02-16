@@ -2195,7 +2195,7 @@ pub struct ComputedStyle {
     pub scale: Option<String>,
     pub translate: Option<String>,
 
-    // ── Font extras (Chromium parity) ──
+    // ── Font extras (CSS spec coverage) ──
     pub font_variant_alternates: FontVariantAlternates,
     pub font_variant_east_asian: FontVariantEastAsian,
     pub font_variant_ligatures: FontVariantLigatures,
@@ -2207,7 +2207,7 @@ pub struct ComputedStyle {
     pub font_language_override: Option<String>,
     pub font_palette: Option<String>,
 
-    // ── Text extras (Chromium parity) ──
+    // ── Text extras (CSS spec coverage) ──
     pub text_emphasis_style: Option<String>,
     pub text_emphasis_color: Option<Color>,
     pub text_emphasis_position: Option<String>,
@@ -2227,7 +2227,7 @@ pub struct ComputedStyle {
     pub initial_letter: Option<String>,
     pub text_autospace: Option<String>,
 
-    // ── Overflow / scroll extras (Chromium parity) ──
+    // ── Overflow / scroll extras (CSS spec coverage) ──
     pub overflow_anchor: OverflowAnchor,
     pub overflow_clip_margin: Option<f32>,
     pub scrollbar_width: ScrollbarWidth,
@@ -2331,7 +2331,7 @@ pub struct ComputedStyle {
     pub view_timeline_inset: Option<String>,
     pub timeline_scope: Option<String>,
 
-    // ── Misc Chromium parity ──
+    // ── Misc CSS spec coverage ──
     pub page: Option<String>,
     pub zoom: f32,
     pub overlay: Option<String>,

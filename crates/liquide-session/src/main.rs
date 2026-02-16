@@ -132,7 +132,7 @@ async fn run(cli: Cli) -> Result<()> {
             debug_perf = cli.debug_perf,
             "Launching desktop compositor"
         );
-        run_desktop(cli.width, cli.height, cli.fps_cap, cli.debug_perf)
+        run_desktop(cli.width, cli.height, cli.fps_cap, cli.debug_perf, cli.dev_mode)
     }
 }
 
@@ -141,7 +141,7 @@ async fn run(cli: Cli) -> Result<()> {
 /// This creates the platform backend (Win32, X11, Wayland, or macOS),
 /// instantiates the desktop compositor with the shell, and enters the
 /// blocking event loop.
-fn run_desktop(width: u32, height: u32, fps_cap: u32, debug_perf: bool) -> Result<()> {
+fn run_desktop(width: u32, height: u32, fps_cap: u32, debug_perf: bool, dev_mode: bool) -> Result<()> {
     let mut platform = liquide_platform::create_platform()
         .context("Failed to create platform backend")?;
 
@@ -153,6 +153,7 @@ fn run_desktop(width: u32, height: u32, fps_cap: u32, debug_perf: bool) -> Resul
     let mut desktop = DesktopCompositor::new(width, height);
     desktop.set_fps_cap(fps_cap);
     desktop.set_debug_perf(debug_perf);
+    desktop.set_dev_mode(dev_mode);
 
     info!("Entering desktop event loop");
     desktop.run(platform.as_mut());

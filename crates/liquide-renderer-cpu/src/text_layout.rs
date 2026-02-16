@@ -77,6 +77,16 @@ impl TextLayoutEngine {
         alignment: TextAlignment,
         line_height: f32,
     ) -> TextLayoutResult {
+        if text.is_empty() {
+            return TextLayoutResult {
+                lines: Vec::new(),
+                width: 0.0,
+                height: 0.0,
+                font_size,
+                line_height: if line_height > 0.0 { font_size * line_height } else { font_size * 1.2 },
+            };
+        }
+
         let db = self.font_db.lock().unwrap();
 
         let face_id = db.resolve(font_family, font_weight, false);

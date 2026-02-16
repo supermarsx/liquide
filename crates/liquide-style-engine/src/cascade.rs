@@ -7,7 +7,7 @@
 //! - Source order
 //! - Inline styles (highest author specificity)
 //!
-//! Inspired by Chromium's `CascadePriority` pattern — we encode priority as a
+//! Cascade priority encoding — we encode priority as a
 //! single comparable struct so sorting the cascade is a simple `Ord` comparison.
 
 use crate::specificity::Specificity;

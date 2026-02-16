@@ -1,0 +1,26 @@
+<!-- StatusBar Component Template
+     Three slots: left, center, right. Items placed by StatusBarComponent.
+     Item types map to tag names:
+       - statusbar-item: generic item (clock, etc.)
+       - notification-indicator: notification badge
+       - status-indicator: connection/status badge (.connected, .degraded, .disconnected)
+       - status-tray: system tray area
+       - session-button: user/session button
+       - statusbar-logo: OS logo
+-->
+<statusbar id="shell-statusbar">
+  <statusbar-slot class="left">
+    <statusbar-logo id="logo">LiquiDE</statusbar-logo>
+  </statusbar-slot>
+
+  <statusbar-slot class="center">
+    <statusbar-item id="clock">12:34</statusbar-item>
+  </statusbar-slot>
+
+  <statusbar-slot class="right">
+    <notification-indicator id="notifications" class="active">3</notification-indicator>
+    <status-indicator id="connection" class="connected">Connected</status-indicator>
+    <status-tray id="tray" />
+    <session-button id="session">User</session-button>
+  </statusbar-slot>
+</statusbar>

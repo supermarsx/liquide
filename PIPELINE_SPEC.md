@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-A Chrome-like CSS rendering pipeline without the JS overhead, built in Rust.
+A production-grade CSS rendering pipeline without the JS overhead, built in Rust.
 Desktop shell elements (statusbar, dock, background, window decorations) are
 fully defined as DOM elements styled with CSS. Applications run sandboxed but
 the base desktop is native DOM.

@@ -1,13 +1,15 @@
-//! Table layout — basic CSS table formatting context.
+//! Table layout — CSS table formatting context with colspan/rowspan support.
 //!
-//! Implements a simplified table layout:
-//! 1. Identify table-row and table-cell children
-//! 2. Calculate column widths (equal distribution or content-based)
-//! 3. Position cells in a grid pattern
+//! Implements table layout per CSS 2.1 §17:
+//! 1. Identify table-caption, table-row, and table-cell children
+//! 2. Build an occupancy grid to handle colspan/rowspan spanning
+//! 3. Calculate column widths (content-based with span distribution)
+//! 4. Position cells in a grid pattern with proper row/column spans
 //!
-//! This handles `display: table` containers with `display: table-row`
-//! and `display: table-cell` children. Also works with `<table>`, `<tr>`,
-//! `<td>` elements by tag name as a fallback.
+//! This handles `display: table` containers with `display: table-row`,
+//! `display: table-cell`, and `display: table-caption` children. Also
+//! works with `<table>`, `<tr>`, `<td>`, `<caption>` elements by tag
+//! name as a fallback.
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::computed::{Display, Position};
@@ -24,20 +26,50 @@ struct TableRow {
     cells: Vec<TableCell>,
 }
 
-/// A resolved table cell.
+/// A resolved table cell with colspan/rowspan support.
 struct TableCell {
     _node_id: NodeId,
     box_id: LayoutBoxId,
     intrinsic_width: f32,
     intrinsic_height: f32,
+    colspan: usize,
+    rowspan: usize,
+}
+
+/// A caption block laid out above the table rows.
+struct TableCaption {
+    box_id: LayoutBoxId,
+    height: f32,
+}
+
+/// Entry in the occupancy grid pointing back to the cell that owns the slot.
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct GridSlot {
+    /// Row index of the originating cell.
+    origin_row: usize,
+    /// Column index of the originating cell (within the row's `cells` vec).
+    origin_cell: usize,
+}
+
+/// Read a positive integer attribute (`colspan` / `rowspan`) from the DOM,
+/// falling back to 1 when absent or unparseable.
+fn read_span_attr(doc: &Document, node_id: NodeId, attr: &str) -> usize {
+    doc.get_attribute(node_id, attr)
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|v| v.max(1))
+        .unwrap_or(1)
 }
 
 /// Perform table layout.
 ///
 /// Lays out a table container by:
-/// 1. Collecting rows and cells from child elements
-/// 2. Computing column widths based on content or equal distribution
-/// 3. Positioning cells in a grid pattern with proper row heights
+/// 1. Laying out any `<caption>` / `display: table-caption` children as
+///    blocks above the grid area
+/// 2. Collecting rows and cells from child elements, reading colspan/rowspan
+/// 3. Building an occupancy grid for spanning cells
+/// 4. Computing column widths (distributing spanning-cell excess equally)
+/// 5. Positioning cells using spanned widths/heights
 pub fn layout_table(
     doc: &Document,
     node_id: NodeId,
@@ -85,8 +117,52 @@ pub fn layout_table(
 
     let border_spacing = style.border_spacing;
 
-    // ── Step 1: Collect rows and cells ──
+    // ── Step 0: Layout captions ──
     let children = doc.children(node_id).to_vec();
+    let mut captions: Vec<TableCaption> = Vec::new();
+
+    for &child_id in &children {
+        let child_style = styles.get(child_id).cloned().unwrap_or_default();
+        let is_caption = child_style.display == Display::TableCaption
+            || doc.get(child_id).map(|n| n.tag_name() == "caption").unwrap_or(false);
+
+        if is_caption {
+            let cap_box = crate::block::layout_block(
+                doc, child_id, styles, tree, text_measurer, image_measurer,
+                content_width, container_height, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            );
+            let cap_h = tree
+                .get(cap_box)
+                .map(|b| b.margin_rect.height)
+                .unwrap_or(0.0);
+            captions.push(TableCaption {
+                box_id: cap_box,
+                height: cap_h,
+            });
+            tree.add_child(box_id, cap_box);
+        }
+    }
+
+    // Position captions above the grid; compute total caption height.
+    let mut caption_y = 0.0f32;
+    for cap in &captions {
+        if let Some(b) = tree.get_mut(cap.box_id) {
+            let dx = content_x - b.content_rect.x;
+            let dy = (content_y + caption_y) - b.content_rect.y;
+            b.content_rect.x += dx;
+            b.content_rect.y += dy;
+            b.padding_rect.x += dx;
+            b.padding_rect.y += dy;
+            b.border_rect.x += dx;
+            b.border_rect.y += dy;
+            b.margin_rect.x += dx;
+            b.margin_rect.y += dy;
+        }
+        caption_y += cap.height;
+    }
+
+    // ── Step 1: Collect rows and cells ──
     let mut rows: Vec<TableRow> = Vec::new();
 
     for &child_id in &children {
@@ -95,6 +171,12 @@ pub fn layout_table(
             continue;
         }
         if matches!(child_style.position, Position::Absolute | Position::Fixed) {
+            continue;
+        }
+        // Skip captions; already handled above.
+        let is_caption = child_style.display == Display::TableCaption
+            || doc.get(child_id).map(|n| n.tag_name() == "caption").unwrap_or(false);
+        if is_caption {
             continue;
         }
 
@@ -109,6 +191,9 @@ pub fn layout_table(
                 if cell_style.display == Display::None {
                     continue;
                 }
+
+                let colspan = read_span_attr(doc, cell_id, "colspan");
+                let rowspan = read_span_attr(doc, cell_id, "rowspan");
 
                 // Layout cell to get intrinsic size
                 let cell_box = crate::block::layout_block(
@@ -127,6 +212,8 @@ pub fn layout_table(
                     box_id: cell_box,
                     intrinsic_width: iw,
                     intrinsic_height: ih,
+                    colspan,
+                    rowspan,
                 });
 
                 tree.add_child(box_id, cell_box);
@@ -155,6 +242,8 @@ pub fn layout_table(
                     box_id: cell_box,
                     intrinsic_width: iw,
                     intrinsic_height: ih,
+                    colspan: 1,
+                    rowspan: 1,
                 }],
             });
 
@@ -162,12 +251,51 @@ pub fn layout_table(
         }
     }
 
-    // ── Step 2: Determine column count and widths ──
-    let num_cols = rows.iter().map(|r| r.cells.len()).max().unwrap_or(0);
+    // ── Step 1b: Build occupancy grid ──
+    // First pass: determine grid dimensions by simulating cell placement.
+    let num_rows = rows.len();
+    // Upper-bound column count: sum of colspans in the widest row, grown by
+    // rowspan reservations.
+    let mut num_cols: usize = 0;
+    {
+        // Temporary occupancy just for sizing. `true` = occupied.
+        let mut tmp_occ: Vec<Vec<bool>> = vec![vec![false; 0]; num_rows];
+        for (ri, row) in rows.iter().enumerate() {
+            let mut col = 0usize;
+            for cell in &row.cells {
+                // Skip occupied slots (from earlier rowspans)
+                while col < tmp_occ[ri].len() && tmp_occ[ri][col] {
+                    col += 1;
+                }
+                let end_col = col + cell.colspan;
+                // Ensure all affected rows are wide enough.
+                for dr in 0..cell.rowspan {
+                    let r = ri + dr;
+                    if r < num_rows {
+                        if tmp_occ[r].len() < end_col {
+                            tmp_occ[r].resize(end_col, false);
+                        }
+                        for c in col..end_col {
+                            tmp_occ[r][c] = true;
+                        }
+                    }
+                }
+                if end_col > num_cols {
+                    num_cols = end_col;
+                }
+                col = end_col;
+            }
+            if col > num_cols {
+                num_cols = col;
+            }
+        }
+    }
+
     if num_cols == 0 {
-        // Empty table
+        // Empty table (may still have captions).
+        let total_h = caption_y;
         set_table_geometry(
-            tree, box_id, content_x, content_y, content_width, 0.0,
+            tree, box_id, content_x, content_y, content_width, total_h,
             pad_top, pad_right, pad_bottom, pad_left,
             border_top, border_right, border_bottom, border_left,
             mar_top, mar_right, mar_bottom, mar_left,
@@ -175,12 +303,74 @@ pub fn layout_table(
         return box_id;
     }
 
-    // Compute max intrinsic width per column
-    let mut col_max_widths = vec![0.0f32; num_cols];
-    for row in &rows {
+    // Now build the real occupancy grid with slot info.
+    let mut grid: Vec<Vec<Option<GridSlot>>> = vec![vec![None; num_cols]; num_rows];
+    // `cell_grid_col[row_index][cell_index_in_row]` = starting grid column
+    let mut cell_grid_col: Vec<Vec<usize>> = Vec::with_capacity(num_rows);
+
+    for (ri, row) in rows.iter().enumerate() {
+        let mut col = 0usize;
+        let mut col_indices = Vec::with_capacity(row.cells.len());
         for (ci, cell) in row.cells.iter().enumerate() {
-            if ci < num_cols {
-                col_max_widths[ci] = col_max_widths[ci].max(cell.intrinsic_width);
+            // Skip occupied slots
+            while col < num_cols && grid[ri][col].is_some() {
+                col += 1;
+            }
+            col_indices.push(col);
+            let end_col = (col + cell.colspan).min(num_cols);
+            for dr in 0..cell.rowspan {
+                let r = ri + dr;
+                if r < num_rows {
+                    for c in col..end_col {
+                        grid[r][c] = Some(GridSlot {
+                            origin_row: ri,
+                            origin_cell: ci,
+                        });
+                    }
+                }
+            }
+            col = end_col;
+        }
+        cell_grid_col.push(col_indices);
+    }
+
+    // ── Step 2: Determine column widths ──
+    // First: max intrinsic width per column from non-spanning cells only.
+    let mut col_max_widths = vec![0.0f32; num_cols];
+    for (ri, row) in rows.iter().enumerate() {
+        for (ci, cell) in row.cells.iter().enumerate() {
+            if cell.colspan == 1 {
+                let gc = cell_grid_col[ri][ci];
+                if gc < num_cols {
+                    col_max_widths[gc] = col_max_widths[gc].max(cell.intrinsic_width);
+                }
+            }
+        }
+    }
+
+    // Distribute spanning cells' excess width equally among spanned columns.
+    for (ri, row) in rows.iter().enumerate() {
+        for (ci, cell) in row.cells.iter().enumerate() {
+            if cell.colspan > 1 {
+                let gc = cell_grid_col[ri][ci];
+                let end_col = (gc + cell.colspan).min(num_cols);
+                let span = end_col - gc;
+                if span == 0 {
+                    continue;
+                }
+                let spanned_spacing = if span > 1 {
+                    (span - 1) as f32 * border_spacing
+                } else {
+                    0.0
+                };
+                let current_sum: f32 = col_max_widths[gc..end_col].iter().sum();
+                let needed = cell.intrinsic_width - spanned_spacing;
+                if needed > current_sum {
+                    let extra_per_col = (needed - current_sum) / span as f32;
+                    for c in gc..end_col {
+                        col_max_widths[c] += extra_per_col;
+                    }
+                }
             }
         }
     }
@@ -219,32 +409,84 @@ pub fn layout_table(
         }
     }
 
+    // ── Step 2b: Determine row heights ──
+    // First pass: non-spanning rows (rowspan == 1).
+    let mut row_heights = vec![0.0f32; num_rows];
+    for (ri, row) in rows.iter().enumerate() {
+        for cell in &row.cells {
+            if cell.rowspan == 1 {
+                row_heights[ri] = row_heights[ri].max(cell.intrinsic_height);
+            }
+        }
+    }
+
+    // Second pass: distribute spanning cells' excess height equally.
+    for (ri, row) in rows.iter().enumerate() {
+        for cell in &row.cells {
+            if cell.rowspan > 1 {
+                let end_row = (ri + cell.rowspan).min(num_rows);
+                let span = end_row - ri;
+                if span == 0 {
+                    continue;
+                }
+                let spanned_spacing = if span > 1 {
+                    (span - 1) as f32 * border_spacing
+                } else {
+                    0.0
+                };
+                let current_sum: f32 = row_heights[ri..end_row].iter().sum();
+                let needed = cell.intrinsic_height - spanned_spacing;
+                if needed > current_sum {
+                    let extra_per_row = (needed - current_sum) / span as f32;
+                    for r in ri..end_row {
+                        row_heights[r] += extra_per_row;
+                    }
+                }
+            }
+        }
+    }
+
+    // Pre-compute row y positions
+    let mut row_y_positions = Vec::with_capacity(num_rows);
+    {
+        let mut ry = 0.0f32;
+        for (ri, &rh) in row_heights.iter().enumerate() {
+            row_y_positions.push(ry);
+            ry += rh;
+            if ri < num_rows - 1 {
+                ry += border_spacing;
+            }
+        }
+    }
+
     // ── Step 3: Position cells in grid pattern ──
-    let mut row_y = 0.0f32;
-
-    for row in &rows {
-        // Determine row height: max cell height in this row
-        let row_height = row
-            .cells
-            .iter()
-            .map(|c| c.intrinsic_height)
-            .fold(0.0f32, |a, b| a.max(b));
-
+    for (ri, row) in rows.iter().enumerate() {
         for (ci, cell) in row.cells.iter().enumerate() {
-            if ci >= num_cols {
-                break;
+            let gc = cell_grid_col[ri][ci];
+            let end_col = (gc + cell.colspan).min(num_cols);
+            let end_row = (ri + cell.rowspan).min(num_rows);
+
+            // Spanned width = sum of column widths + internal spacing
+            let mut cell_w: f32 = col_widths[gc..end_col].iter().sum();
+            if end_col > gc + 1 {
+                cell_w += (end_col - gc - 1) as f32 * border_spacing;
             }
 
-            let cell_x = content_x + col_x_positions[ci];
-            let cell_y = content_y + row_y;
-            let cell_w = col_widths[ci];
+            // Spanned height = sum of row heights + internal spacing
+            let mut cell_h: f32 = row_heights[ri..end_row].iter().sum();
+            if end_row > ri + 1 {
+                cell_h += (end_row - ri - 1) as f32 * border_spacing;
+            }
+
+            let cell_x = content_x + col_x_positions[gc];
+            let cell_y = content_y + caption_y + row_y_positions[ri];
 
             // Reposition the cell box
             if let Some(b) = tree.get_mut(cell.box_id) {
                 let dx = cell_x - b.content_rect.x;
                 let dy = cell_y - b.content_rect.y;
                 let dw = cell_w - b.content_rect.width;
-                let dh = row_height - b.content_rect.height;
+                let dh = cell_h - b.content_rect.height;
 
                 b.content_rect.x += dx;
                 b.content_rect.y += dy;
@@ -264,19 +506,20 @@ pub fn layout_table(
                 b.margin_rect.height += dh;
             }
         }
-
-        row_y += row_height + border_spacing;
     }
 
-    // Remove trailing spacing
-    if !rows.is_empty() {
-        row_y -= border_spacing;
-    }
+    // Total grid height
+    let grid_height: f32 = if num_rows > 0 {
+        row_y_positions[num_rows - 1] + row_heights[num_rows - 1]
+    } else {
+        0.0
+    };
 
+    let total_content_height = caption_y + grid_height;
     let content_height = style
         .height
         .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
-        .unwrap_or(row_y);
+        .unwrap_or(total_content_height);
 
     set_table_geometry(
         tree, box_id, content_x, content_y, content_width, content_height,

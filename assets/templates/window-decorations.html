@@ -1,0 +1,22 @@
+<!-- Window Decorations Component Template
+     CSD (client-side decoration) titlebar with controls.
+     Classes: .maximized, .focused, .unfocused
+-->
+<window-decoration id="window-decoration">
+  <titlebar>
+    <titlebar-icon data-icon="app" />
+    <titlebar-title>Window Title</titlebar-title>
+    <titlebar-spacer />
+    <titlebar-controls>
+      <titlebar-button data-action="minimize" class="minimize">
+        <titlebar-button-icon data-icon="minus" />
+      </titlebar-button>
+      <titlebar-button data-action="maximize" class="maximize">
+        <titlebar-button-icon data-icon="maximize" />
+      </titlebar-button>
+      <titlebar-button data-action="close" class="close">
+        <titlebar-button-icon data-icon="x" />
+      </titlebar-button>
+    </titlebar-controls>
+  </titlebar>
+</window-decoration>

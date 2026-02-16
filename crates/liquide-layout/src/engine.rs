@@ -63,6 +63,11 @@ impl LayoutEngine {
                 self.viewport.width, self.viewport.height, 0.0, 0.0,
                 self.viewport.width, self.viewport.height, self.base_font_size,
             )
+        } else if matches!(root_style.display, liquide_style_engine::computed::Display::Inline) {
+            crate::inline::layout_inline(
+                doc, root, styles, &mut tree, text_measurer,
+                self.viewport.width, 0.0, 0.0,
+            )
         } else {
             crate::block::layout_block(
                 doc, root, styles, &mut tree, text_measurer, image_measurer,

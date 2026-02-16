@@ -10,7 +10,9 @@
 //! 5. Position columns side by side
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{Display, Position};
+use liquide_style_engine::computed::{
+    BorderLineStyle, BreakValue, ColumnSpan, Display, Position,
+};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
 
@@ -96,10 +98,27 @@ pub fn layout_multicol(
         content_width
     };
 
-    // ── Layout all children as block flow ──
+    // ── Column rule info (for painter) ──
+    let rule_width = style.column_rule.width;
+    let rule_style = style.column_rule.style;
+    let _rule_color = style.column_rule.color;
+
+    // ── Layout all children as block flow, handling column-span and break hints ──
+    //
+    // Children are partitioned into "segments". A column-span:all child splits
+    // the flow: children before it form one segment, the spanner itself is placed
+    // at full width, and children after it form another segment.
+    #[derive(Debug)]
+    enum Segment {
+        /// A run of regular children laid out in columns.
+        Flow(Vec<(LayoutBoxId, f32, bool /* break_before */, bool /* break_after */)>),
+        /// A column-span:all child.
+        Spanner(LayoutBoxId, f32),
+    }
+
     let children = doc.children(node_id).to_vec();
-    let mut child_boxes: Vec<(LayoutBoxId, f32)> = Vec::new();
-    let mut total_height = 0.0f32;
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut current_flow: Vec<(LayoutBoxId, f32, bool, bool)> = Vec::new();
 
     for &child_id in &children {
         let child_style = styles.get(child_id).cloned().unwrap_or_default();
@@ -110,31 +129,46 @@ pub fn layout_multicol(
             continue;
         }
 
+        // Check for column-span: all
+        if child_style.column_span == ColumnSpan::All && column_count > 1 {
+            // Flush current flow segment
+            if !current_flow.is_empty() {
+                segments.push(Segment::Flow(std::mem::take(&mut current_flow)));
+            }
+            // Layout the spanner at full container width
+            let spanner_box = crate::block::layout_block(
+                doc, child_id, styles, tree, text_measurer, image_measurer,
+                content_width, container_height, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            );
+            let h = tree.get(spanner_box).map(|b| b.margin_rect.height).unwrap_or(0.0);
+            tree.add_child(box_id, spanner_box);
+            segments.push(Segment::Spanner(spanner_box, h));
+            continue;
+        }
+
         // Layout each child into a single column-width block
         let child_box = crate::block::layout_block(
-            doc,
-            child_id,
-            styles,
-            tree,
-            text_measurer,
-            image_measurer,
-            col_width,
-            container_height,
-            0.0,
-            0.0,
-            viewport_w,
-            viewport_h,
-            base_font_size,
+            doc, child_id, styles, tree, text_measurer, image_measurer,
+            col_width, container_height, 0.0, 0.0,
+            viewport_w, viewport_h, base_font_size,
         );
 
-        let h = tree
-            .get(child_box)
-            .map(|b| b.margin_rect.height)
-            .unwrap_or(0.0);
-        child_boxes.push((child_box, h));
-        total_height += h;
+        let h = tree.get(child_box).map(|b| b.margin_rect.height).unwrap_or(0.0);
+        let brk_before = child_style.break_before == BreakValue::Column;
+        let brk_after = child_style.break_after == BreakValue::Column;
+        current_flow.push((child_box, h, brk_before, brk_after));
         tree.add_child(box_id, child_box);
     }
+    if !current_flow.is_empty() {
+        segments.push(Segment::Flow(current_flow));
+    }
+
+    // Compute total flow height for balanced column height calculation
+    let total_height: f32 = segments.iter().map(|seg| match seg {
+        Segment::Flow(items) => items.iter().map(|(_, h, _, _)| *h).sum::<f32>(),
+        Segment::Spanner(_, h) => *h,
+    }).sum();
 
     // ── Determine column height ──
     // If explicit height is set, use it as the column height.
@@ -152,44 +186,113 @@ pub fn layout_multicol(
         }
     });
 
-    // ── Distribute children into columns ──
-    let mut current_col = 0u32;
-    let mut col_y = 0.0f32;
+    // ── Distribute segments into columns ──
+    let mut overall_y = 0.0f32; // vertical cursor across segments
     let mut max_col_height = 0.0f32;
+    let mut columns_used = 0u32; // track which columns were used (for rules)
 
-    for &(child_box_id, child_h) in &child_boxes {
-        // Break to next column if needed
-        if col_y > 0.0 && col_y + child_h > col_height && current_col + 1 < column_count {
-            if col_y > max_col_height {
-                max_col_height = col_y;
+    for segment in &segments {
+        match segment {
+            Segment::Spanner(spanner_box_id, spanner_h) => {
+                // Position the spanner at full width
+                if let Some(b) = tree.get_mut(*spanner_box_id) {
+                    let dx = content_x - b.content_rect.x;
+                    let dy = (content_y + overall_y) - b.content_rect.y;
+                    b.content_rect.x += dx;
+                    b.content_rect.y += dy;
+                    b.padding_rect.x += dx;
+                    b.padding_rect.y += dy;
+                    b.border_rect.x += dx;
+                    b.border_rect.y += dy;
+                    b.margin_rect.x += dx;
+                    b.margin_rect.y += dy;
+                }
+                overall_y += spanner_h;
+                if overall_y > max_col_height {
+                    max_col_height = overall_y;
+                }
             }
-            current_col += 1;
-            col_y = 0.0;
+            Segment::Flow(items) => {
+                let mut current_col = 0u32;
+                let mut col_y = 0.0f32;
+                let mut seg_max_h = 0.0f32;
+
+                for &(child_box_id, child_h, brk_before, brk_after) in items {
+                    // break-before: column — force a column break before this child
+                    if brk_before && col_y > 0.0 && current_col + 1 < column_count {
+                        if col_y > seg_max_h {
+                            seg_max_h = col_y;
+                        }
+                        current_col += 1;
+                        col_y = 0.0;
+                    }
+
+                    // Natural column break when content exceeds column height
+                    if col_y > 0.0 && col_y + child_h > col_height && current_col + 1 < column_count {
+                        if col_y > seg_max_h {
+                            seg_max_h = col_y;
+                        }
+                        current_col += 1;
+                        col_y = 0.0;
+                    }
+
+                    let col_x = content_x + current_col as f32 * (col_width + column_gap);
+                    let target_y = content_y + overall_y + col_y;
+
+                    if let Some(b) = tree.get_mut(child_box_id) {
+                        let dx = col_x - b.content_rect.x;
+                        let dy = target_y - b.content_rect.y;
+                        b.content_rect.x += dx;
+                        b.content_rect.y += dy;
+                        b.padding_rect.x += dx;
+                        b.padding_rect.y += dy;
+                        b.border_rect.x += dx;
+                        b.border_rect.y += dy;
+                        b.margin_rect.x += dx;
+                        b.margin_rect.y += dy;
+                    }
+
+                    col_y += child_h;
+
+                    // break-after: column — force a column break after this child
+                    if brk_after && current_col + 1 < column_count {
+                        if col_y > seg_max_h {
+                            seg_max_h = col_y;
+                        }
+                        current_col += 1;
+                        col_y = 0.0;
+                    }
+                }
+
+                if col_y > seg_max_h {
+                    seg_max_h = col_y;
+                }
+                if current_col + 1 > columns_used {
+                    columns_used = current_col + 1;
+                }
+                overall_y += seg_max_h;
+                if overall_y > max_col_height {
+                    max_col_height = overall_y;
+                }
+            }
         }
-
-        let col_x = content_x + current_col as f32 * (col_width + column_gap);
-        let target_y = content_y + col_y;
-
-        // Reposition the child box by applying a delta
-        if let Some(b) = tree.get_mut(child_box_id) {
-            let dx = col_x - b.content_rect.x;
-            let dy = target_y - b.content_rect.y;
-            b.content_rect.x += dx;
-            b.content_rect.y += dy;
-            b.padding_rect.x += dx;
-            b.padding_rect.y += dy;
-            b.border_rect.x += dx;
-            b.border_rect.y += dy;
-            b.margin_rect.x += dx;
-            b.margin_rect.y += dy;
-        }
-
-        col_y += child_h;
     }
 
-    // Track the last column's height
-    if col_y > max_col_height {
-        max_col_height = col_y;
+    // ── Emit column rule boxes between adjacent columns ──
+    if rule_width > 0.0 && rule_style != BorderLineStyle::None && column_count > 1 {
+        let used_cols = columns_used.max(1).min(column_count);
+        for i in 1..used_cols {
+            let rule_x = content_x + i as f32 * (col_width + column_gap) - column_gap / 2.0 - rule_width / 2.0;
+            let rule_box_id = tree.alloc(node_id, BoxType::Block);
+            if let Some(rb) = tree.get_mut(rule_box_id) {
+                let rule_rect = Rect::new(rule_x, content_y, rule_width, max_col_height);
+                rb.content_rect = rule_rect;
+                rb.padding_rect = rule_rect;
+                rb.border_rect = rule_rect;
+                rb.margin_rect = rule_rect;
+            }
+            tree.add_child(box_id, rule_box_id);
+        }
     }
 
     let content_height = explicit_height.unwrap_or(max_col_height);

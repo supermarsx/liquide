@@ -1807,7 +1807,7 @@ impl StyleEngine {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // Chromium parity — transition longhands
+            // CSS spec — transition longhands
             // ═══════════════════════════════════════════════════════════════
             "transition-property" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -1839,7 +1839,7 @@ impl StyleEngine {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // Chromium parity — animation longhands
+            // CSS spec — animation longhands
             // ═══════════════════════════════════════════════════════════════
             "animation-name" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -1921,7 +1921,7 @@ impl StyleEngine {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // Chromium parity — motion path
+            // CSS spec — motion path
             // ═══════════════════════════════════════════════════════════════
             "offset-path" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -1967,7 +1967,7 @@ impl StyleEngine {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // Font extras (Chromium parity)
+            // Font extras (CSS spec coverage)
             // ═══════════════════════════════════════════════════════════════
             "font-variant-alternates" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -2066,7 +2066,7 @@ impl StyleEngine {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // Text extras (Chromium parity)
+            // Text extras (CSS spec coverage)
             // ═══════════════════════════════════════════════════════════════
             "text-emphasis-style" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -2197,7 +2197,7 @@ impl StyleEngine {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // Overflow / scroll extras (Chromium parity)
+            // Overflow / scroll extras (CSS spec coverage)
             // ═══════════════════════════════════════════════════════════════
             "overflow-anchor" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -2238,7 +2238,7 @@ impl StyleEngine {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // Containment extras (Chromium parity)
+            // Containment extras (CSS spec coverage)
             // ═══════════════════════════════════════════════════════════════
             "container-type" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -2260,7 +2260,7 @@ impl StyleEngine {
             "contain-intrinsic-block-size" => style.contain_intrinsic_height = resolve_dimension(val),
 
             // ═══════════════════════════════════════════════════════════════
-            // Shape (Chromium parity)
+            // Shape (CSS spec coverage)
             // ═══════════════════════════════════════════════════════════════
             "shape-outside" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -2308,7 +2308,7 @@ impl StyleEngine {
             "border-end-end-radius" => style.border_end_end_radius = resolve_number(val),
 
             // ═══════════════════════════════════════════════════════════════
-            // Mask longhands (Chromium parity)
+            // Mask longhands (CSS spec coverage)
             // ═══════════════════════════════════════════════════════════════
             "mask-image" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -2557,7 +2557,7 @@ impl StyleEngine {
             "y" => style.y = resolve_dimension(val),
 
             // ═══════════════════════════════════════════════════════════════
-            // Ruby (Chromium parity)
+            // Ruby (CSS spec coverage)
             // ═══════════════════════════════════════════════════════════════
             "ruby-position" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -2648,7 +2648,7 @@ impl StyleEngine {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // Misc Chromium parity
+            // Misc CSS spec coverage
             // ═══════════════════════════════════════════════════════════════
             "page" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -2690,7 +2690,7 @@ impl StyleEngine {
             }
 
             // ═══════════════════════════════════════════════════════════════
-            // Scroll margin/padding logical (Chromium parity)
+            // Scroll margin/padding logical (CSS spec coverage)
             // ═══════════════════════════════════════════════════════════════
             "scroll-margin-block-start" => style.scroll_margin.top = resolve_dimension(val),
             "scroll-margin-block-end" => style.scroll_margin.bottom = resolve_dimension(val),

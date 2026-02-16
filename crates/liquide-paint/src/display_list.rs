@@ -1,6 +1,6 @@
 //! Display list — a flat list of paint commands with spatial indexing.
 //!
-//! Inspired by Chromium's `cc::DisplayItemList` + `PaintOpBuffer`:
+//! A flat contiguous list of typed paint operations for recording and replay:
 //! - Flat contiguous list of typed paint operations
 //! - R-tree spatial index for efficient partial invalidation
 //! - Push/Pop state commands for clip, transform, opacity, filters
@@ -15,10 +15,7 @@ use liquide_style_engine::computed::{
 use liquide_style_engine::dimension::Corners;
 
 
-/// A single paint command — the fundamental unit of the display list.
-///
-/// Modeled after Chromium's PaintOp types (~37 op types in cc/paint/paint_op.h).
-/// We have both draw ops (produce pixels) and state ops (Push/Pop).
+/// A single paint command — draw ops produce pixels, state ops push/pop compositor state.
 #[derive(Debug, Clone)]
 pub enum DisplayItem {
     // ═══════════════════════════════════════════════════
@@ -249,7 +246,7 @@ pub enum DisplayItem {
     },
     PopStackingContext,
 
-    // ── Save/Restore (Skia-style save layer) ──
+    // ── Save/Restore (isolated layer) ──
     SaveLayer {
         rect: Rect,
         opacity: f32,
@@ -327,9 +324,6 @@ impl Default for BorderEdge {
 }
 
 /// An ordered list of paint commands with optional spatial indexing.
-///
-/// Modeled after Chromium's `DisplayItemList` which wraps a `PaintOpBuffer`
-/// and adds an R-tree for efficient partial rasterization.
 #[derive(Debug, Clone)]
 pub struct DisplayList {
     pub items: Vec<DisplayItem>,

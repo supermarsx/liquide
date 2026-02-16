@@ -204,6 +204,45 @@ pub fn layout_block(
                 content_width, container_height, 0.0, child_y,
                 viewport_w, viewport_h, base_font_size,
             )
+        } else if matches!(child_style.display, Display::Inline) {
+            // Inline elements get proper inline formatting context
+            crate::inline::layout_inline(
+                doc, child_id, styles, tree, text_measurer,
+                content_width, 0.0, child_y,
+            )
+        } else if matches!(child_style.display, Display::InlineBlock) {
+            // Inline-block: lay out as block internally, but participate
+            // in inline flow (simplified: treat as block for now with
+            // shrink-to-fit width)
+            layout_block(
+                doc, child_id, styles, tree, text_measurer, image_measurer,
+                content_width, container_height, 0.0, child_y,
+                viewport_w, viewport_h, base_font_size,
+            )
+        } else if matches!(child_style.display, Display::Contents) {
+            // display: contents — skip the element, layout its children
+            // directly into this block context
+            let grandchildren = doc.children(child_id).to_vec();
+            let mut contents_last_box: Option<LayoutBoxId> = None;
+            for &gc_id in &grandchildren {
+                let gc_box = layout_block(
+                    doc, gc_id, styles, tree, text_measurer, image_measurer,
+                    content_width, container_height, 0.0, child_y,
+                    viewport_w, viewport_h, base_font_size,
+                );
+                tree.add_child(box_id, gc_box);
+                if let Some(cb) = tree.get(gc_box) {
+                    child_y += cb.margin_rect.height;
+                }
+                contents_last_box = Some(gc_box);
+            }
+            // Skip the normal add_child + height advancement below
+            prev_margin_bottom = None;
+            if let Some(_) = contents_last_box {
+                continue;
+            }
+            // If no grandchildren, just create an empty box
+            tree.alloc(child_id, BoxType::Block)
         } else {
             layout_block(
                 doc, child_id, styles, tree, text_measurer, image_measurer,

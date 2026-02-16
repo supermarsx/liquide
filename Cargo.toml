@@ -115,6 +115,9 @@ members = [
 
     # Icon database
     "crates/liquide-icons",
+
+    # Developer tools
+    "crates/liquide-devtools",
 ]
 
 [workspace.package]
@@ -183,6 +186,7 @@ dirs = "6"
 
 # Font rendering
 ab_glyph = "0.2"
+rustybuzz = "0.20"
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_Shell"] }
 
 # Testing
@@ -249,6 +253,7 @@ liquide-paint = { path = "crates/liquide-paint" }
 liquide-hit-test = { path = "crates/liquide-hit-test" }
 liquide-components = { path = "crates/liquide-components" }
 liquide-icons = { path = "crates/liquide-icons" }
+liquide-devtools = { path = "crates/liquide-devtools" }
 
 [profile.dev]
 opt-level = 0

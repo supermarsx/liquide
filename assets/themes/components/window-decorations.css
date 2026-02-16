@@ -1,0 +1,84 @@
+/* ═══════════════════════════════════════════════════════
+   LiquiDE Component: Window Decorations
+   Client-side decoration titlebar and controls.
+   ═══════════════════════════════════════════════════════ */
+
+window-decoration {
+    display: flex;
+    flex-direction: column;
+}
+
+titlebar {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    height: 36px;
+    padding: 0 8px;
+    -webkit-app-region: drag;
+    user-select: none;
+}
+
+titlebar-icon {
+    display: block;
+    width: 16px;
+    height: 16px;
+    margin-right: 8px;
+    flex-shrink: 0;
+}
+
+titlebar-title {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+titlebar-spacer {
+    flex: 1 1 auto;
+}
+
+titlebar-controls {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    -webkit-app-region: no-drag;
+}
+
+titlebar-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+titlebar-button:hover {
+    /* Theme colors */
+}
+
+titlebar-button.close:hover {
+    /* Close button has distinct hover color in theme */
+}
+
+titlebar-button-icon {
+    display: block;
+    width: 12px;
+    height: 12px;
+}
+
+/* Maximized state adjustments */
+window-decoration.maximized titlebar {
+    border-radius: 0;
+}
+
+/* Unfocused window */
+window-decoration.unfocused titlebar {
+    opacity: 0.7;
+}

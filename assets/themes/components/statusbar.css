@@ -1,0 +1,112 @@
+/* ═══════════════════════════════════════════════════════
+   LiquiDE Component: StatusBar
+   Top bar with left/center/right slot layout.
+   ═══════════════════════════════════════════════════════ */
+
+statusbar {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 28px;
+    padding: 0 8px;
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+    border-bottom-width: 1px;
+    border-bottom-style: solid;
+    font-size: 13px;
+}
+
+statusbar-slot {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+}
+
+statusbar-slot.left {
+    flex: 0 0 auto;
+    justify-content: flex-start;
+}
+
+statusbar-slot.center {
+    flex: 1 1 auto;
+    justify-content: center;
+}
+
+statusbar-slot.right {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+}
+
+statusbar-logo {
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 0 8px;
+}
+
+statusbar-item {
+    padding: 0 4px;
+    font-size: 13px;
+}
+
+notification-indicator {
+    padding: 0 6px;
+    font-size: 12px;
+    border-radius: 8px;
+    min-width: 16px;
+    text-align: center;
+    cursor: pointer;
+}
+
+notification-indicator.active {
+    font-weight: 700;
+}
+
+notification-indicator.dnd {
+    opacity: 0.6;
+}
+
+status-indicator {
+    padding: 0 4px;
+    font-size: 12px;
+}
+
+status-indicator.connected::before {
+    content: "●";
+    margin-right: 4px;
+}
+
+status-indicator.degraded::before {
+    content: "◐";
+    margin-right: 4px;
+}
+
+status-indicator.disconnected::before {
+    content: "○";
+    margin-right: 4px;
+}
+
+status-tray {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    padding: 0 4px;
+    border-radius: 4px;
+}
+
+session-button {
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+session-button:hover {
+    opacity: 0.85;
+}

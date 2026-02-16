@@ -1,0 +1,18 @@
+<!-- Notifications Component Template
+     Notification toasts rendered in a stacked area.
+     Urgency classes: .urgency-low, .urgency-normal, .urgency-critical
+     Sub-elements: notification-icon, notification-content, notification-actions
+-->
+<notification-area id="notification-area">
+  <notification class="urgency-normal" data-key="notif-1">
+    <notification-icon data-icon="mail" />
+    <notification-content>
+      <notification-title>New Mail</notification-title>
+      <notification-body>You have 3 new messages</notification-body>
+    </notification-content>
+    <notification-actions>
+      <notification-action data-action-id="read">Read</notification-action>
+      <notification-action data-action-id="dismiss">Dismiss</notification-action>
+    </notification-actions>
+  </notification>
+</notification-area>

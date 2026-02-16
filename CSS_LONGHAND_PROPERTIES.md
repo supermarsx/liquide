@@ -1,6 +1,6 @@
-# Complete CSS Longhand Properties — Chromium/Blink Reference
+# Complete CSS Longhand Properties Reference
 
-**Sources:** MDN Web Docs CSS Reference, W3C All CSS Properties Index, Chromium Blink source  
+**Sources:** MDN Web Docs CSS Reference, W3C All CSS Properties Index  
 **Date:** February 2026  
 **Total unique longhand properties:** ~370 (standard) + ~20 (-webkit- prefixed)
 
@@ -799,9 +799,9 @@ These CSS properties apply to SVG elements:
 
 ---
 
-## 36. -webkit- Prefixed Properties (Widely Supported in Chromium)
+## 36. -webkit- Prefixed Properties (Widely Supported)
 
-These are non-standard but commonly used and supported by Chromium/Blink:
+These are non-standard but widely supported in modern browsers:
 
 | Property | Standard Equivalent | Notes |
 |----------|-------------------|-------|
@@ -887,4 +887,4 @@ These are non-standard but commonly used and supported by Chromium/Blink:
 
 ---
 
-*This list represents the CSS longhand properties supported by Chromium/Blink as of early 2026. It was compiled from the MDN CSS Reference index, the W3C complete CSS properties list (741 entries including duplicates across specs), and filtered to those actually implemented in modern Chromium.*
+*This list represents the CSS longhand properties supported by modern browsers as of early 2026. It was compiled from the MDN CSS Reference index, the W3C complete CSS properties list (741 entries including duplicates across specs), and filtered to those actually implemented in modern browsers.*

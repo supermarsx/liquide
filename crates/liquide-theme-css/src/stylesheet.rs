@@ -23,6 +23,39 @@ pub struct StyleSheet {
 
     /// `@import` URLs (resolved externally).
     imports: Vec<String>,
+
+    /// `@layer` ordering — layer names in cascade order.
+    layer_order: Vec<String>,
+
+    /// `@container` query rules.
+    container_rules: Vec<ContainerRule>,
+
+    /// `@property` custom property registrations.
+    registered_properties: Vec<RegisteredProperty>,
+}
+
+/// A `@container` query rule.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerRule {
+    /// Optional container name (None = any nearest container).
+    pub name: Option<String>,
+    /// The container query condition string (e.g., "(min-width: 600px)").
+    pub condition: String,
+    /// Nested style rules.
+    pub rules: Vec<StyleRule>,
+}
+
+/// A `@property` custom property registration (CSS Houdini).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisteredProperty {
+    /// Property name (e.g., "--my-color").
+    pub name: String,
+    /// Syntax descriptor (e.g., "<color>", "<length>", "*").
+    pub syntax: String,
+    /// Whether the property inherits.
+    pub inherits: bool,
+    /// Initial value string.
+    pub initial_value: Option<String>,
 }
 
 /// A single style rule
@@ -40,6 +73,9 @@ pub struct StyleRule {
     /// Optional media condition string (e.g. "(prefers-color-scheme: dark)").
     /// When `Some`, the rule only applies if the condition matches the viewport.
     pub media_condition: Option<String>,
+
+    /// Optional cascade layer name.
+    pub layer: Option<String>,
 }
 
 impl StyleRule {
@@ -51,6 +87,7 @@ impl StyleRule {
             properties,
             specificity,
             media_condition: None,
+            layer: None,
         }
     }
 
@@ -195,6 +232,49 @@ impl StyleSheet {
     /// All `@import` URLs.
     pub fn imports(&self) -> &[String] {
         &self.imports
+    }
+
+    // ── @layer ─────────────────────────────────────────────────────────
+    /// Declare a cascade layer. Layers are ordered by first declaration.
+    pub fn add_layer(&mut self, name: &str) {
+        if !self.layer_order.contains(&name.to_string()) {
+            self.layer_order.push(name.to_string());
+        }
+    }
+
+    /// Add a style rule to a named layer.
+    pub fn add_layer_rule(&mut self, layer_name: &str, selector: Selector, properties: PropertySet) {
+        self.add_layer(layer_name);
+        let mut rule = StyleRule::new(selector, properties);
+        rule.layer = Some(layer_name.to_string());
+        self.rules.push(rule);
+    }
+
+    /// Get cascade layer ordering.
+    pub fn layer_order(&self) -> &[String] {
+        &self.layer_order
+    }
+
+    // ── @container ─────────────────────────────────────────────────────
+    /// Add a `@container` query rule.
+    pub fn add_container_rule(&mut self, rule: ContainerRule) {
+        self.container_rules.push(rule);
+    }
+
+    /// All `@container` rules.
+    pub fn container_rules(&self) -> &[ContainerRule] {
+        &self.container_rules
+    }
+
+    // ── @property ──────────────────────────────────────────────────────
+    /// Register a custom property.
+    pub fn add_registered_property(&mut self, prop: RegisteredProperty) {
+        self.registered_properties.push(prop);
+    }
+
+    /// All registered custom properties.
+    pub fn registered_properties(&self) -> &[RegisteredProperty] {
+        &self.registered_properties
     }
 }
 

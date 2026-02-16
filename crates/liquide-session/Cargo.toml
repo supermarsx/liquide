@@ -33,6 +33,7 @@ liquide-clipboard.workspace = true
 liquide-audio.workspace = true
 liquide-interop.workspace = true
 liquide-a11y.workspace = true
+liquide-devtools.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

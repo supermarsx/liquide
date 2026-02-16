@@ -216,6 +216,28 @@ impl<'a> GlyphRasterizer<'a> {
                     }
                 }
 
+                // ── LCD Filter (5-tap FIR to reduce color fringing) ──
+                // Mimics ClearType: a weighted low-pass filter applied
+                // horizontally across each row's RGB subpixel values.
+                let kernel: [f32; 5] = [0.06, 0.25, 0.38, 0.25, 0.06];
+                let unfiltered = pixels.clone();
+                for py in 0..h {
+                    for px in 0..w {
+                        let idx = ((py * w + px) * 3) as usize;
+                        for ch in 0..3_usize {
+                            let mut acc = 0.0_f32;
+                            for (k, &wt) in kernel.iter().enumerate() {
+                                let tap = px as i32 + k as i32 - 2;
+                                if tap >= 0 && (tap as u32) < w {
+                                    let src = ((py * w + tap as u32) * 3) as usize + ch;
+                                    acc += unfiltered[src] as f32 * wt;
+                                }
+                            }
+                            pixels[idx + ch] = acc.round().clamp(0.0, 255.0) as u8;
+                        }
+                    }
+                }
+
                 Ok(GlyphBitmap {
                     glyph_id: glyph_id.0 as u32,
                     width: w,

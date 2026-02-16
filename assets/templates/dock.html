@@ -1,0 +1,14 @@
+<!-- Dock Component Template
+     Rendered by DockComponent — each dock-item is generated per-app.
+     Data attributes: data-app-id, data-icon, data-label, data-index
+     Classes: .active (running), .pinned (pinned to dock)
+     Pseudo-states: :hover on hovered item
+-->
+<dock id="shell-dock">
+  <!-- Dock items are generated dynamically per application -->
+  <dock-item class="active pinned" data-app-id="files" data-icon="folder" data-label="Files">
+    <dock-item-icon data-icon="folder" />
+    <dock-item-label>Files</dock-item-label>
+    <dock-indicator class="running" />
+  </dock-item>
+</dock>

@@ -38,6 +38,8 @@ pub struct LoadedFace {
     pub italic: bool,
     /// Source file path (if loaded from disk).
     pub path: Option<PathBuf>,
+    /// Raw font file bytes (needed by rustybuzz for OpenType shaping).
+    pub raw_data: Vec<u8>,
 }
 
 impl std::fmt::Debug for LoadedFace {
@@ -47,6 +49,7 @@ impl std::fmt::Debug for LoadedFace {
             .field("weight", &self.weight)
             .field("italic", &self.italic)
             .field("path", &self.path)
+            .field("raw_data_len", &self.raw_data.len())
             .finish()
     }
 }
@@ -106,6 +109,7 @@ impl FontDatabase {
             source: e,
         })?;
 
+        let raw_data = data.clone();
         let font = FontArc::try_from_vec(data).map_err(|_| FontRasterizerError::InvalidFont {
             path: path.display().to_string(),
             reason: "failed to parse TrueType/OpenType data".into(),
@@ -120,6 +124,7 @@ impl FontDatabase {
             weight,
             italic,
             path: Some(path.to_owned()),
+            raw_data,
         };
 
         self.faces.insert(id, face);
@@ -150,6 +155,7 @@ impl FontDatabase {
     ) -> Result<FontFaceId> {
         let family = family.into();
 
+        let raw_data = data.clone();
         let font = FontArc::try_from_vec(data).map_err(|_| FontRasterizerError::InvalidFont {
             path: "<memory>".into(),
             reason: "failed to parse TrueType/OpenType data".into(),
@@ -164,6 +170,7 @@ impl FontDatabase {
             weight,
             italic,
             path: None,
+            raw_data,
         };
 
         self.faces.insert(id, face);

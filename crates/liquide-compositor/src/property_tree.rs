@@ -1,4 +1,4 @@
-//! Property trees — Chromium-inspired compositing property trees.
+//! Property trees — compositing property trees for spatial, clip, effect, and scroll hierarchies.
 //!
 //! Instead of a flat list of nodes, we maintain 4 independent property trees
 //! (Transform, Clip, Effect, Scroll) that store compositing state separately
@@ -9,8 +9,6 @@
 //!   re-layout or re-paint)
 //! - Shared property inheritance (many nodes share a clip or effect)
 //! - Correct compositing order without sorting entire flat lists
-//!
-//! Modeled after Chromium's `cc/trees/property_tree.h`.
 
 use crate::geometry::{Affine2D, Point, Rect};
 use crate::pixel::{BlendMode, Color};
@@ -184,8 +182,7 @@ pub struct RoundedCornerBounds {
     pub bottom_left: f32,
 }
 
-/// Compositor-level filter operation.
-/// Matches Chromium's `cc::FilterOperation::FilterType`.
+/// Compositor-level filter operation types.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterOp {
     Blur(f32),
@@ -258,7 +255,6 @@ impl Default for ScrollNode {
 // ── Property Tree Container ─────────────────────────
 
 /// A single property tree — stores nodes in a flat Vec indexed by ID.
-/// Mirrors Chromium's `PropertyTree<T>` pattern.
 #[derive(Debug, Clone)]
 pub struct PropertyTree<T> {
     nodes: Vec<T>,

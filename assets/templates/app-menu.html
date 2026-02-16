@@ -1,0 +1,21 @@
+<!-- App Menu Component Template
+     Window-level app actions menu.
+     Each item has data-action and optional data-icon + keyboard shortcut.
+-->
+<app-menu id="app-menu">
+  <menu-item data-action="minimize" data-icon="minus">
+    <menu-item-icon data-icon="minus" />
+    <menu-item-label>Minimize</menu-item-label>
+    <menu-item-shortcut>Super+H</menu-item-shortcut>
+  </menu-item>
+  <menu-item data-action="maximize" data-icon="maximize">
+    <menu-item-icon data-icon="maximize" />
+    <menu-item-label>Maximize</menu-item-label>
+  </menu-item>
+  <menu-separator />
+  <menu-item data-action="close" data-icon="x">
+    <menu-item-icon data-icon="x" />
+    <menu-item-label>Close</menu-item-label>
+    <menu-item-shortcut>Alt+F4</menu-item-shortcut>
+  </menu-item>
+</app-menu>
