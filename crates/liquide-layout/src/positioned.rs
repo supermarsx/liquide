@@ -388,7 +388,7 @@ fn layout_children_in_positioned(
 }
 
 /// Recursively offset all boxes by (dx, dy).
-fn offset_box_recursive(tree: &mut LayoutTree, box_id: LayoutBoxId, dx: f32, dy: f32) {
+pub fn offset_box_recursive(tree: &mut LayoutTree, box_id: LayoutBoxId, dx: f32, dy: f32) {
     if let Some(b) = tree.get_mut(box_id) {
         b.content_rect.x += dx;
         b.content_rect.y += dy;

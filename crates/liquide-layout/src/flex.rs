@@ -92,11 +92,25 @@ pub fn layout_flex(
             continue;
         }
 
-        let child_box = crate::block::layout_block(
-            doc, child_id, styles, tree, text_measurer, image_measurer,
-            content_width, container_height, 0.0, 0.0,
-            viewport_w, viewport_h, base_font_size,
-        );
+        let child_box = if child_style.is_flex_container() {
+            crate::flex::layout_flex(
+                doc, child_id, styles, tree, text_measurer, image_measurer,
+                content_width, container_height, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            )
+        } else if child_style.is_grid_container() {
+            crate::grid::layout_grid(
+                doc, child_id, styles, tree, text_measurer, image_measurer,
+                content_width, container_height, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            )
+        } else {
+            crate::block::layout_block(
+                doc, child_id, styles, tree, text_measurer, image_measurer,
+                content_width, container_height, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            )
+        };
 
         let intrinsic = tree.get(child_box).map(|b| b.margin_rect).unwrap_or(Rect::zero());
 
@@ -250,7 +264,21 @@ pub fn layout_flex(
             };
 
             if let Some(b) = tree.get_mut(item.box_id) {
+                let old_x = b.content_rect.x;
+                let old_y = b.content_rect.y;
                 reposition_box(b, x, y, w, h);
+                let dx = b.content_rect.x - old_x;
+                let dy = b.content_rect.y - old_y;
+                // Propagate position change to all descendants
+                if dx != 0.0 || dy != 0.0 {
+                    let child_ids: Vec<LayoutBoxId> = tree
+                        .get(item.box_id)
+                        .map(|b| b.children.clone())
+                        .unwrap_or_default();
+                    for cid in child_ids {
+                        crate::positioned::offset_box_recursive(tree, cid, dx, dy);
+                    }
+                }
             }
 
             main_pos += item.main_size + gap + if i < count - 1 { extra_gap } else { 0.0 };
@@ -280,11 +308,18 @@ pub fn layout_flex(
         for (li, line) in lines.iter().enumerate() {
             let delta = cross_start;
             for idx in line.start..line.end {
-                if let Some(b) = tree.get_mut(items[idx].box_id) {
-                    if is_row {
-                        shift_box(b, 0.0, delta);
-                    } else {
-                        shift_box(b, delta, 0.0);
+                let bid = items[idx].box_id;
+                let (dx, dy) = if is_row { (0.0, delta) } else { (delta, 0.0) };
+                if let Some(b) = tree.get_mut(bid) {
+                    shift_box(b, dx, dy);
+                }
+                if dx != 0.0 || dy != 0.0 {
+                    let child_ids: Vec<LayoutBoxId> = tree
+                        .get(bid)
+                        .map(|b| b.children.clone())
+                        .unwrap_or_default();
+                    for cid in child_ids {
+                        crate::positioned::offset_box_recursive(tree, cid, dx, dy);
                     }
                 }
             }
