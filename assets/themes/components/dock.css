@@ -55,10 +55,17 @@ dock-item-label {
     font-size: 10px;
     white-space: nowrap;
     position: absolute;
-    top: -24px;
-    padding: 2px 8px;
+    top: -32px;
+    padding: 3px 10px;
     border-radius: 4px;
     z-index: 1001;
+    pointer-events: none;
+    background: rgba(50, 50, 50, 0.95);
+    color: rgba(230, 230, 230, 1.0);
+    backdrop-filter: blur(8px);
+    border-width: 1px;
+    border-style: solid;
+    border-color: rgba(80, 80, 80, 0.5);
 }
 
 dock-item:hover > dock-item-label {

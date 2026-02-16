@@ -609,7 +609,7 @@ impl DevToolsPanel {
         // If the cursor is inside the panel, handle element tree hover.
         if self.visible {
             let bounds = self.panel_bounds();
-            let tab_bar_h = 28.0;
+            let tab_bar_h = 30.0;
             let content_y = bounds.y + 1.0 + tab_bar_h + 1.0 + 8.0;
 
             if x >= bounds.x && x <= bounds.x + bounds.width
@@ -689,7 +689,7 @@ impl DevToolsPanel {
             return false;
         }
 
-        let tab_bar_h = 28.0;
+        let tab_bar_h = 30.0;
         let tab_bar_top = bounds.y + 1.0;
         let tab_bar_bottom = tab_bar_top + tab_bar_h;
 
@@ -868,7 +868,7 @@ impl DevToolsPanel {
             return false;
         }
 
-        let tab_bar_h = 28.0;
+        let tab_bar_h = 30.0;
         let content_y = bounds.y + 1.0 + tab_bar_h + 1.0;
         let status_h = 22.0;
         let content_h = bounds.height - tab_bar_h - 2.0 - status_h;
@@ -2032,7 +2032,7 @@ impl DevToolsPanel {
 
         // Only show context menu in Elements tab on a node line.
         if self.active_tab == DevToolsTab::Elements {
-            let tab_bar_h = 28.0;
+            let tab_bar_h = 30.0;
             let content_y = bounds.y + 1.0 + tab_bar_h + 1.0 + 8.0;
             let line_h: f32 = 20.0;
             let scroll_y = (y - content_y) + self.scroll_offset;

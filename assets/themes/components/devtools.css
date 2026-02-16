@@ -36,6 +36,7 @@ devtools-panel {
     color: rgba(212, 212, 212, 1.0);
     font-size: 12px;
     font-family: "Inter", "SF Pro", system-ui, sans-serif;
+    box-sizing: border-box;
 }
 
 devtools-panel.dock-right {
@@ -104,6 +105,7 @@ devtools-tab {
     border-bottom-width: 2px;
     border-bottom-style: solid;
     border-bottom-color: transparent;
+    box-sizing: border-box;
 }
 
 devtools-tab:hover {
@@ -131,7 +133,8 @@ devtools-btn {
     height: 24px;
     border-radius: 4px;
     color: rgba(140, 140, 140, 1.0);
-    font-size: 13px;
+    font-size: 14px;
+    font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "JetBrains Mono", "Inter", sans-serif;
     cursor: pointer;
 }
 
@@ -219,6 +222,7 @@ devtools-side-tab {
     color: rgba(140, 140, 140, 1.0);
     cursor: pointer;
     white-space: nowrap;
+    box-sizing: border-box;
 }
 
 devtools-side-tab:hover {
@@ -270,7 +274,7 @@ devtools-tree {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
     font-size: 12px;
 }
 
@@ -369,7 +373,7 @@ devtools-prop {
 
 devtools-prop-name {
     color: rgba(156, 220, 254, 1.0);
-    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
     font-size: 10px;
     margin-right: 4px;
     white-space: nowrap;
@@ -377,7 +381,7 @@ devtools-prop-name {
 
 devtools-prop-value {
     color: rgba(206, 145, 120, 1.0);
-    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
     font-size: 10px;
     white-space: nowrap;
     flex-grow: 1;
@@ -463,7 +467,7 @@ devtools-box-content {
     min-height: 18px;
     color: rgba(66, 165, 245, 1.0);
     font-size: 10px;
-    font-family: "Cascadia Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", monospace;
 }
 
 devtools-layout-props {
@@ -491,7 +495,7 @@ devtools-console-entry {
     max-height: 18px;
     padding-left: 8px;
     padding-right: 8px;
-    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
     font-size: 11px;
     border-bottom-width: 1px;
     border-bottom-style: solid;
@@ -540,14 +544,14 @@ devtools-console-input {
 
 devtools-console-prompt {
     color: rgba(0, 122, 204, 1.0);
-    font-family: "Cascadia Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", monospace;
     font-size: 11px;
     margin-right: 4px;
 }
 
 devtools-console-field {
     color: rgba(212, 212, 212, 1.0);
-    font-family: "Cascadia Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", monospace;
     font-size: 11px;
     flex-grow: 1;
 }
@@ -586,7 +590,7 @@ devtools-row {
     min-height: 16px;
     max-height: 16px;
     padding-left: 6px;
-    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
     font-size: 10px;
 }
 
@@ -676,7 +680,7 @@ devtools-scene-list {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    font-family: "Cascadia Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", monospace;
     font-size: 10px;
 }
 
@@ -715,7 +719,7 @@ devtools-editor-entry {
     min-height: 18px;
     max-height: 18px;
     padding-left: 6px;
-    font-family: "Cascadia Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", monospace;
     font-size: 10px;
 }
 
@@ -739,7 +743,7 @@ devtools-editor-input {
     border-top-color: rgba(60, 60, 60, 1.0);
     padding-left: 8px;
     background: rgba(25, 25, 25, 1.0);
-    font-family: "Cascadia Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", monospace;
     font-size: 11px;
     color: rgba(212, 212, 212, 1.0);
 }
@@ -750,7 +754,7 @@ devtools-mutations-list {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    font-family: "Cascadia Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", monospace;
     font-size: 10px;
 }
 
@@ -770,7 +774,7 @@ devtools-dom-json {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    font-family: "Cascadia Code", monospace;
+    font-family: "JetBrains Mono", "Cascadia Code", monospace;
     font-size: 10px;
     white-space: pre;
     padding: 2px 4px;
