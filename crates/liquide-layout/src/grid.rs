@@ -241,12 +241,27 @@ pub fn layout_grid(
             cell_width += (span_cols - 1) as f32 * gap_col;
         }
 
-        // Layout child in cell
-        let child_box = crate::block::layout_block(
-            doc, item.node_id, styles, tree, text_measurer, image_measurer,
-            cell_width, container_height, 0.0, 0.0,
-            viewport_w, viewport_h, base_font_size,
-        );
+        // Layout child in cell (dispatch to correct layout mode)
+        let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
+        let child_box = if child_style.is_flex_container() {
+            crate::flex::layout_flex(
+                doc, item.node_id, styles, tree, text_measurer, image_measurer,
+                cell_width, container_height, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            )
+        } else if child_style.is_grid_container() {
+            crate::grid::layout_grid(
+                doc, item.node_id, styles, tree, text_measurer, image_measurer,
+                cell_width, container_height, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            )
+        } else {
+            crate::block::layout_block(
+                doc, item.node_id, styles, tree, text_measurer, image_measurer,
+                cell_width, container_height, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            )
+        };
 
         if let Some(cb) = tree.get(child_box) {
             // Distribute height across spanned rows (use max for first row)
@@ -324,10 +339,24 @@ pub fn layout_grid(
         }
 
         if let Some(b) = tree.get_mut(child_box_id) {
+            let old_x = b.content_rect.x;
+            let old_y = b.content_rect.y;
             b.content_rect = Rect::new(cell_x, cell_y, cell_w, cell_h);
             b.padding_rect = b.content_rect;
             b.border_rect = b.content_rect;
             b.margin_rect = b.content_rect;
+            let dx = cell_x - old_x;
+            let dy = cell_y - old_y;
+            // Propagate position change to all descendants
+            if dx != 0.0 || dy != 0.0 {
+                let child_ids: Vec<crate::tree::LayoutBoxId> = tree
+                    .get(child_box_id)
+                    .map(|b| b.children.clone())
+                    .unwrap_or_default();
+                for cid in child_ids {
+                    crate::positioned::offset_box_recursive(tree, cid, dx, dy);
+                }
+            }
         }
     }
 

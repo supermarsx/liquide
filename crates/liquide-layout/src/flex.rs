@@ -343,9 +343,10 @@ pub fn layout_flex(
                 liquide_style_engine::computed::AlignSelf::Stretch => AlignItems::Stretch,
             };
 
+            let cross_offset_val;
             if let Some(b) = tree.get_mut(item.box_id) {
                 let item_cross = if is_row { b.content_rect.height } else { b.content_rect.width };
-                let cross_offset_val = match align {
+                cross_offset_val = match align {
                     AlignItems::FlexStart => 0.0,
                     AlignItems::FlexEnd => line_cross - item_cross,
                     AlignItems::Center => (line_cross - item_cross) / 2.0,
@@ -365,10 +366,20 @@ pub fn layout_flex(
                     AlignItems::Baseline => 0.0, // simplified
                 };
 
-                if is_row {
-                    shift_box(b, 0.0, cross_offset_val);
-                } else {
-                    shift_box(b, cross_offset_val, 0.0);
+                let (dx, dy) = if is_row { (0.0, cross_offset_val) } else { (cross_offset_val, 0.0) };
+                shift_box(b, dx, dy);
+            } else {
+                cross_offset_val = 0.0;
+            }
+            // Propagate cross-axis alignment shift to descendants
+            let (dx, dy) = if is_row { (0.0, cross_offset_val) } else { (cross_offset_val, 0.0) };
+            if dx != 0.0 || dy != 0.0 {
+                let child_ids: Vec<LayoutBoxId> = tree
+                    .get(item.box_id)
+                    .map(|b| b.children.clone())
+                    .unwrap_or_default();
+                for cid in child_ids {
+                    crate::positioned::offset_box_recursive(tree, cid, dx, dy);
                 }
             }
         }
