@@ -30,7 +30,7 @@ pub mod pseudo;
 pub mod dirty;
 pub mod visitor;
 
-pub use node::{Node, NodeData, NodeId};
+pub use node::{Node, NodeData, NodeId, PseudoType};
 pub use document::Document;
 pub use tag::Tag;
 pub use attrs::AttributeMap;

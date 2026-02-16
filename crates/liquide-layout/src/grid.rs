@@ -561,6 +561,10 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
                 // Auto tracks get a share of remaining space
                 fr_total += 1.0;
             }
+            TrackSize::Subgrid => {
+                // Subgrid inherits parent grid tracks — treat as auto for now
+                fr_total += 1.0;
+            }
         }
     }
 
@@ -582,6 +586,10 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
                     sizes[i] += grow;
                 }
                 TrackSize::Px(_) | TrackSize::Percent(_) | TrackSize::FitContent(_) => {} // already set
+                TrackSize::Subgrid => {
+                    // Subgrid: treat like auto for distribution
+                    sizes[i] = remaining * (1.0 / fr_total);
+                }
             }
         }
     }
@@ -595,7 +603,7 @@ fn resolve_track_px(track: &TrackSize, available: f32) -> f32 {
         TrackSize::Px(v) => *v,
         TrackSize::Percent(v) => available * v / 100.0,
         TrackSize::Fr(_) => 0.0,
-        TrackSize::Auto | TrackSize::MinContent | TrackSize::MaxContent => 0.0,
+        TrackSize::Auto | TrackSize::MinContent | TrackSize::MaxContent | TrackSize::Subgrid => 0.0,
         TrackSize::MinMax(min, _) => resolve_track_px(min, available),
         TrackSize::FitContent(pct) => available * pct / 100.0,
     }

@@ -134,7 +134,7 @@ devtools-btn {
     border-radius: 4px;
     color: rgba(140, 140, 140, 1.0);
     font-size: 14px;
-    font-family: "Segoe UI Symbol", "Noto Sans Symbols 2", "JetBrains Mono", "Inter", sans-serif;
+    font-family: "JetBrains Mono", "Inter", sans-serif;
     cursor: pointer;
 }
 

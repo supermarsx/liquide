@@ -6,7 +6,7 @@ use liquide_compositor::pixel::Color;
 use liquide_theme_css::value::PropertyValue;
 
 use crate::computed::*;
-use crate::dimension::Dimension;
+use crate::dimension::{CalcExpr, Dimension};
 
 /// Parse an inline style string value into a PropertyValue.
 ///
@@ -86,9 +86,8 @@ pub fn resolve_dimension(val: &PropertyValue) -> Dimension {
             _ => Dimension::Auto,
         },
         PropertyValue::MathExpr(expr) => {
-            // Resolve statically
-            let px = expr.resolve(16.0, 1920.0, 1080.0);
-            Dimension::Px(px)
+            // Convert to deferred CalcExpr for lazy resolution at layout time
+            Dimension::Calc(Box::new(math_expr_to_calc(expr)))
         }
         _ => Dimension::Auto,
     }
@@ -108,6 +107,42 @@ fn length_unit_to_dimension(lu: &liquide_theme_css::value::LengthUnit) -> Dimens
         LengthUnit::Vmax(v) => Dimension::Vmax(*v),
         LengthUnit::Ch(v) => Dimension::Ch(*v),
         LengthUnit::Ex(v) => Dimension::Em(*v * 0.5), // approximate
+    }
+}
+
+fn length_unit_to_calc(lu: &liquide_theme_css::value::LengthUnit) -> CalcExpr {
+    use liquide_theme_css::value::LengthUnit;
+    match lu {
+        LengthUnit::Px(v) | LengthUnit::Pt(v) => CalcExpr::Px(if matches!(lu, LengthUnit::Pt(_)) { *v * 1.333 } else { *v }),
+        LengthUnit::Em(v) => CalcExpr::Em(*v),
+        LengthUnit::Rem(v) => CalcExpr::Rem(*v),
+        LengthUnit::Percent(v) => CalcExpr::Percent(*v),
+        LengthUnit::Vw(v) => CalcExpr::Vw(*v),
+        LengthUnit::Vh(v) => CalcExpr::Vh(*v),
+        LengthUnit::Vmin(v) => CalcExpr::Vmin(*v),
+        LengthUnit::Vmax(v) => CalcExpr::Vmax(*v),
+        LengthUnit::Ch(v) | LengthUnit::Ex(v) => CalcExpr::Em(if matches!(lu, LengthUnit::Ex(_)) { *v * 0.5 } else { *v }),
+    }
+}
+
+/// Convert a `CssMathExpr` (parser type) to a `CalcExpr` (style-engine type)
+/// so that calc() values can be lazily resolved with actual context at layout time.
+fn math_expr_to_calc(expr: &liquide_theme_css::value::CssMathExpr) -> CalcExpr {
+    use liquide_theme_css::value::CssMathExpr;
+    match expr {
+        CssMathExpr::Value(lu) => length_unit_to_calc(lu),
+        CssMathExpr::Number(n) => CalcExpr::Number(*n),
+        CssMathExpr::Add(a, b) => CalcExpr::Add(Box::new(math_expr_to_calc(a)), Box::new(math_expr_to_calc(b))),
+        CssMathExpr::Sub(a, b) => CalcExpr::Sub(Box::new(math_expr_to_calc(a)), Box::new(math_expr_to_calc(b))),
+        CssMathExpr::Mul(a, b) => CalcExpr::Mul(Box::new(math_expr_to_calc(a)), Box::new(math_expr_to_calc(b))),
+        CssMathExpr::Div(a, b) => CalcExpr::Div(Box::new(math_expr_to_calc(a)), Box::new(math_expr_to_calc(b))),
+        CssMathExpr::Min(args) => CalcExpr::Min(args.iter().map(math_expr_to_calc).collect()),
+        CssMathExpr::Max(args) => CalcExpr::Max(args.iter().map(math_expr_to_calc).collect()),
+        CssMathExpr::Clamp { min, preferred, max } => CalcExpr::Clamp {
+            min: Box::new(math_expr_to_calc(min)),
+            preferred: Box::new(math_expr_to_calc(preferred)),
+            max: Box::new(math_expr_to_calc(max)),
+        },
     }
 }
 
@@ -148,9 +183,18 @@ pub fn resolve_display(val: &PropertyValue) -> Display {
             "table-row" => Display::TableRow,
             "table-cell" => Display::TableCell,
             "table-row-group" => Display::TableRowGroup,
+            "table-header-group" => Display::TableHeaderGroup,
+            "table-footer-group" => Display::TableFooterGroup,
+            "table-column" => Display::TableColumn,
+            "table-column-group" => Display::TableColumnGroup,
             "table-caption" => Display::TableCaption,
             "none" => Display::None,
             "contents" => Display::Contents,
+            "flow-root" => Display::FlowRoot,
+            "list-item" => Display::ListItem,
+            "ruby" => Display::Ruby,
+            "ruby-text" => Display::RubyText,
+            "run-in" => Display::RunIn,
             _ => Display::Block,
         }
     } else {

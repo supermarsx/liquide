@@ -1111,7 +1111,7 @@ impl DevToolsPanel {
                     .key("btn-detach")
                     .attr("data-action", "detach")
                     .class_if("active", self.config.dock_position == DockPosition::Detached)
-                    .child(TemplateNode::text("\u{29C9}")), // ⧉ detach icon
+                    .child(TemplateNode::text("\u{25EB}")), // ◫ detach/window icon
             )
             .child(
                 TemplateNode::el("devtools-btn")

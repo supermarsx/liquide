@@ -24,6 +24,33 @@ pub struct PreparedRule {
     pub properties: PropertySet,
     /// Optional media condition string. `None` means the rule is unconditional.
     pub media_condition: Option<String>,
+    /// Cascade layer order (0 = unlayered, 1+ = layer index in declaration order).
+    pub layer_order: u32,
+    /// Optional `@container` condition. Rule only applies when an ancestor
+    /// container satisfies this condition.
+    pub container_condition: Option<ContainerCondition>,
+    /// Optional `@supports` condition for runtime feature checking.
+    pub supports_condition: Option<String>,
+}
+
+/// A `@container` query condition attached to a prepared rule.
+#[derive(Debug, Clone)]
+pub struct ContainerCondition {
+    /// Optional container name to search for (None = nearest).
+    pub name: Option<String>,
+    /// The condition expression, e.g. "(min-width: 600px)".
+    pub condition: String,
+}
+
+/// A parsed `@font-face` rule ready for registration.
+#[derive(Debug, Clone)]
+pub struct PreparedFontFace {
+    pub family: String,
+    pub sources: Vec<liquide_theme_css::value::FontSource>,
+    pub weight: Option<(u16, u16)>,
+    pub style: Option<String>,
+    pub display: Option<String>,
+    pub unicode_range: Option<String>,
 }
 
 /// A prepared stylesheet — all rules compiled and ready.
@@ -59,6 +86,25 @@ pub struct StyleEngine {
     pub base_font_size: f32,
     /// CSS variables.
     variables: std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
+    /// Layer order map: layer name → layer index (1-based).
+    layer_order: std::collections::HashMap<String, u32>,
+    /// `@font-face` rules parsed from stylesheets.
+    font_faces: Vec<PreparedFontFace>,
+    /// CSS properties we support (for `@supports` runtime evaluation).
+    supported_properties: std::collections::HashSet<&'static str>,
+    /// Registered custom properties from `@property` rules.
+    registered_properties: std::collections::HashMap<String, RegisteredPropertyDef>,
+}
+
+/// A registered custom property definition (from `@property`).
+#[derive(Debug, Clone)]
+pub struct RegisteredPropertyDef {
+    /// Syntax descriptor, e.g. "<color>", "<length>", "*".
+    pub syntax: String,
+    /// Whether the property inherits.
+    pub inherits: bool,
+    /// Initial value.
+    pub initial_value: Option<String>,
 }
 
 impl StyleEngine {
@@ -69,7 +115,117 @@ impl StyleEngine {
             viewport,
             base_font_size,
             variables: std::collections::HashMap::new(),
+            layer_order: std::collections::HashMap::new(),
+            font_faces: Vec::new(),
+            supported_properties: Self::build_supported_properties(),
+            registered_properties: std::collections::HashMap::new(),
         }
+    }
+
+    /// Build the set of CSS properties we support for `@supports` runtime checks.
+    fn build_supported_properties() -> std::collections::HashSet<&'static str> {
+        [
+            "display", "position", "box-sizing", "width", "height", "min-width",
+            "max-width", "min-height", "max-height", "margin", "margin-top",
+            "margin-right", "margin-bottom", "margin-left", "padding",
+            "padding-top", "padding-right", "padding-bottom", "padding-left",
+            "border", "border-width", "border-style", "border-color",
+            "border-radius", "border-top", "border-right", "border-bottom",
+            "border-left", "top", "right", "bottom", "left", "z-index",
+            "float", "clear", "overflow", "overflow-x", "overflow-y",
+            "visibility", "opacity", "color", "background", "background-color",
+            "background-image", "background-size", "background-position",
+            "background-repeat", "font-family", "font-size", "font-weight",
+            "font-style", "line-height", "letter-spacing", "word-spacing",
+            "text-align", "text-decoration", "text-transform", "text-overflow",
+            "text-indent", "white-space", "word-break", "vertical-align",
+            "flex", "flex-direction", "flex-wrap", "flex-grow", "flex-shrink",
+            "flex-basis", "justify-content", "align-items", "align-self",
+            "align-content", "order", "gap", "row-gap", "column-gap",
+            "grid", "grid-template-columns", "grid-template-rows",
+            "grid-column", "grid-row", "grid-area", "grid-auto-flow",
+            "grid-auto-columns", "grid-auto-rows", "grid-template-areas",
+            "transform", "transition", "animation", "box-shadow",
+            "filter", "backdrop-filter", "clip-path", "cursor", "outline",
+            "resize", "user-select", "pointer-events", "content",
+            "counter-increment", "counter-reset", "quotes",
+            "list-style", "list-style-type", "list-style-position",
+            "table-layout", "border-collapse", "border-spacing",
+            "columns", "column-count", "column-width", "column-gap",
+            "column-rule", "column-span", "column-fill",
+            "writing-mode", "direction", "unicode-bidi",
+            "contain", "container-type", "container-name",
+            "aspect-ratio", "object-fit", "object-position",
+            "scroll-behavior", "scroll-snap-type", "scroll-snap-align",
+            "scroll-padding", "scroll-margin", "overscroll-behavior",
+            "accent-color", "caret-color", "appearance",
+            "will-change", "isolation", "mix-blend-mode",
+            "mask", "mask-image", "mask-size", "mask-position",
+            "shape-outside", "shape-margin", "shape-image-threshold",
+            // Logical properties
+            "margin-inline", "margin-inline-start", "margin-inline-end",
+            "margin-block", "margin-block-start", "margin-block-end",
+            "padding-inline", "padding-inline-start", "padding-inline-end",
+            "padding-block", "padding-block-start", "padding-block-end",
+            "border-inline", "border-block", "inset", "inset-inline", "inset-block",
+            // Modern CSS features
+            "container", "subgrid",
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    /// Evaluate a `@supports` condition at runtime.
+    pub fn evaluate_supports_condition(&self, condition: &str) -> bool {
+        let condition = condition.trim();
+
+        // Handle `not (…)`
+        if let Some(inner) = condition.strip_prefix("not ") {
+            return !self.evaluate_supports_condition(inner.trim());
+        }
+
+        // Handle bare parenthesized condition `(property: value)`
+        if condition.starts_with('(') && condition.ends_with(')') {
+            let inner = &condition[1..condition.len() - 1];
+            if let Some((prop, _val)) = inner.split_once(':') {
+                return self.supported_properties.contains(prop.trim());
+            }
+            // Could be a nested condition
+            return self.evaluate_supports_condition(inner.trim());
+        }
+
+        // Handle `(…) and (…)`
+        if condition.contains(") and (") {
+            return condition
+                .split(") and (")
+                .all(|part| {
+                    let p = part.trim().trim_start_matches('(').trim_end_matches(')');
+                    self.evaluate_supports_condition(&format!("({})", p))
+                });
+        }
+
+        // Handle `(…) or (…)`
+        if condition.contains(") or (") {
+            return condition
+                .split(") or (")
+                .any(|part| {
+                    let p = part.trim().trim_start_matches('(').trim_end_matches(')');
+                    self.evaluate_supports_condition(&format!("({})", p))
+                });
+        }
+
+        // Default: assume supported
+        true
+    }
+
+    /// Get parsed @font-face rules for external font loading.
+    pub fn font_faces(&self) -> &[PreparedFontFace] {
+        &self.font_faces
+    }
+
+    /// Get registered custom properties.
+    pub fn registered_property(&self, name: &str) -> Option<&RegisteredPropertyDef> {
+        self.registered_properties.get(name)
     }
 
     /// Parse and add a CSS stylesheet.
@@ -83,7 +239,37 @@ impl StyleEngine {
             }
         };
 
-        // Extract variables
+        // ── @layer ordering ─────────────────────────────────────────────
+        for layer_name in stylesheet.layer_order() {
+            let next_idx = self.layer_order.len() as u32 + 1;
+            self.layer_order.entry(layer_name.to_string()).or_insert(next_idx);
+        }
+
+        // ── @font-face rules ────────────────────────────────────────────
+        for ff in stylesheet.font_faces() {
+            self.font_faces.push(PreparedFontFace {
+                family: ff.family.clone(),
+                sources: ff.src.clone(),
+                weight: ff.weight,
+                style: ff.style.clone(),
+                display: ff.display.clone(),
+                unicode_range: ff.unicode_range.clone(),
+            });
+        }
+
+        // ── @property registrations ─────────────────────────────────────
+        for prop in stylesheet.registered_properties() {
+            self.registered_properties.insert(
+                prop.name.clone(),
+                RegisteredPropertyDef {
+                    syntax: prop.syntax.clone(),
+                    inherits: prop.inherits,
+                    initial_value: prop.initial_value.clone(),
+                },
+            );
+        }
+
+        // ── Extract variables ───────────────────────────────────────────
         for rule in stylesheet.rules() {
             for (key, val) in rule.properties.iter() {
                 if key.starts_with("--") {
@@ -92,7 +278,7 @@ impl StyleEngine {
             }
         }
 
-        // Compile rules
+        // ── Compile normal rules ────────────────────────────────────────
         let mut prepared_rules = Vec::new();
         let mut order = self
             .sheets
@@ -123,14 +309,72 @@ impl StyleEngine {
 
             if let Some(complex) = ComplexSelector::parse(&selector_str) {
                 let specificity = complex.specificity();
+                // Resolve layer order for this rule
+                let layer_ord = rule
+                    .layer
+                    .as_ref()
+                    .and_then(|name| self.layer_order.get(name))
+                    .copied()
+                    .unwrap_or(0);
                 prepared_rules.push(PreparedRule {
                     selector: complex,
                     specificity,
                     source_order: order,
                     properties: rule.properties.clone(),
                     media_condition: rule.media_condition.clone(),
+                    layer_order: layer_ord,
+                    container_condition: None,
+                    supports_condition: None,
                 });
                 order += 1;
+            }
+        }
+
+        // ── Compile @container query rules ──────────────────────────────
+        for cr in stylesheet.container_rules() {
+            for rule in &cr.rules {
+                let selector_str = format!(
+                    "{}{}{}{}",
+                    &rule.selector.element,
+                    rule.selector
+                        .classes
+                        .iter()
+                        .map(|c| format!(".{}", c))
+                        .collect::<String>(),
+                    rule.selector
+                        .id
+                        .as_ref()
+                        .map(|id| format!("#{}", id))
+                        .unwrap_or_default(),
+                    rule.selector
+                        .pseudo_classes
+                        .iter()
+                        .map(|p| format!(":{}", p))
+                        .collect::<String>(),
+                );
+                if let Some(complex) = ComplexSelector::parse(&selector_str) {
+                    let specificity = complex.specificity();
+                    let layer_ord = rule
+                        .layer
+                        .as_ref()
+                        .and_then(|name| self.layer_order.get(name))
+                        .copied()
+                        .unwrap_or(0);
+                    prepared_rules.push(PreparedRule {
+                        selector: complex,
+                        specificity,
+                        source_order: order,
+                        properties: rule.properties.clone(),
+                        media_condition: rule.media_condition.clone(),
+                        layer_order: layer_ord,
+                        container_condition: Some(ContainerCondition {
+                            name: cr.name.clone(),
+                            condition: cr.condition.clone(),
+                        }),
+                        supports_condition: None,
+                    });
+                    order += 1;
+                }
             }
         }
 
@@ -172,8 +416,21 @@ impl StyleEngine {
                         continue;
                     }
                 }
+                // Skip @supports-gated rules that don't match
+                if let Some(ref cond) = rule.supports_condition {
+                    if !self.evaluate_supports_condition(cond) {
+                        continue;
+                    }
+                }
+                // Skip @container-gated rules (container evaluation needs layout
+                // data which isn't available in compute_style — these are
+                // handled in restyle_node instead)
+                if rule.container_condition.is_some() {
+                    continue;
+                }
                 if rule.selector.matches(doc, node_id) {
-                    let priority = CascadePriority::author(rule.specificity, rule.source_order);
+                    let mut priority = CascadePriority::author(rule.specificity, rule.source_order);
+                    priority.layer_order = rule.layer_order;
                     cascade.add_properties(&rule.properties, priority);
                 }
             }

@@ -28,6 +28,24 @@ pub enum Display {
     TableCaption,
     None,
     Contents,
+    /// Establishes a new block formatting context (prevents margin collapse).
+    FlowRoot,
+    /// Block with a list marker (outside or inside).
+    ListItem,
+    /// Ruby annotation container.
+    Ruby,
+    /// Ruby text container.
+    RubyText,
+    /// Run-in box (collapses into following block if possible).
+    RunIn,
+    /// Table header group.
+    TableHeaderGroup,
+    /// Table footer group.
+    TableFooterGroup,
+    /// Table column.
+    TableColumn,
+    /// Table column group.
+    TableColumnGroup,
 }
 
 impl Default for Display {
@@ -180,6 +198,8 @@ pub enum TrackSize {
     Auto,
     MinMax(Box<TrackSize>, Box<TrackSize>),
     FitContent(f32),
+    /// CSS Subgrid — inherits tracks from parent grid.
+    Subgrid,
 }
 
 impl Default for TrackSize {

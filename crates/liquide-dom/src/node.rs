@@ -58,6 +58,24 @@ pub enum NodeData {
     Surface { surface_id: u64 },
     /// Shadow root (for component isolation within the desktop).
     ShadowRoot,
+    /// CSS pseudo-element (`::before` or `::after`).
+    PseudoElement {
+        pseudo_type: PseudoType,
+        /// Generated content from the CSS `content` property.
+        content: String,
+    },
+}
+
+/// Which type of CSS pseudo-element this node represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PseudoType {
+    Before,
+    After,
+    FirstLine,
+    FirstLetter,
+    Marker,
+    Placeholder,
+    Selection,
 }
 
 impl Node {
@@ -95,6 +113,35 @@ impl Node {
         }
     }
 
+    /// Create a new pseudo-element node (`::before` or `::after`).
+    pub fn new_pseudo_element(id: NodeId, pseudo_type: PseudoType, content: &str) -> Self {
+        let tag_name = match pseudo_type {
+            PseudoType::Before => "::before",
+            PseudoType::After => "::after",
+            PseudoType::FirstLine => "::first-line",
+            PseudoType::FirstLetter => "::first-letter",
+            PseudoType::Marker => "::marker",
+            PseudoType::Placeholder => "::placeholder",
+            PseudoType::Selection => "::selection",
+        };
+        Self {
+            id,
+            tag: Tag::intern(tag_name),
+            parent: None,
+            children: Vec::new(),
+            attrs: AttributeMap::new(),
+            inline_styles: AttributeMap::new(),
+            classes: ClassList::new(),
+            element_id: None,
+            pseudo_states: PseudoStateFlags::empty(),
+            data: NodeData::PseudoElement {
+                pseudo_type,
+                content: content.to_string(),
+            },
+            dirty: DirtyFlags::all_dirty(),
+        }
+    }
+
     /// Check if this is a text node.
     pub fn is_text(&self) -> bool {
         matches!(self.data, NodeData::Text(_))
@@ -102,7 +149,28 @@ impl Node {
 
     /// Check if this is an element node.
     pub fn is_element(&self) -> bool {
-        matches!(self.data, NodeData::Element | NodeData::ShadowRoot)
+        matches!(self.data, NodeData::Element | NodeData::ShadowRoot | NodeData::PseudoElement { .. })
+    }
+
+    /// Check if this is a pseudo-element node.
+    pub fn is_pseudo_element(&self) -> bool {
+        matches!(self.data, NodeData::PseudoElement { .. })
+    }
+
+    /// Get the pseudo-element type, if any.
+    pub fn pseudo_type(&self) -> Option<PseudoType> {
+        match &self.data {
+            NodeData::PseudoElement { pseudo_type, .. } => Some(*pseudo_type),
+            _ => None,
+        }
+    }
+
+    /// Get pseudo-element generated content, if any.
+    pub fn pseudo_content(&self) -> Option<&str> {
+        match &self.data {
+            NodeData::PseudoElement { content, .. } => Some(content.as_str()),
+            _ => None,
+        }
     }
 
     /// Get text content (for text nodes).

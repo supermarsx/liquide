@@ -329,9 +329,18 @@ fn format_display(d: Display) -> String {
         Display::TableRow => "table-row".into(),
         Display::TableCell => "table-cell".into(),
         Display::TableRowGroup => "table-row-group".into(),
+        Display::TableHeaderGroup => "table-header-group".into(),
+        Display::TableFooterGroup => "table-footer-group".into(),
+        Display::TableColumn => "table-column".into(),
+        Display::TableColumnGroup => "table-column-group".into(),
         Display::TableCaption => "table-caption".into(),
         Display::None => "none".into(),
         Display::Contents => "contents".into(),
+        Display::FlowRoot => "flow-root".into(),
+        Display::ListItem => "list-item".into(),
+        Display::Ruby => "ruby".into(),
+        Display::RubyText => "ruby-text".into(),
+        Display::RunIn => "run-in".into(),
     }
 }
 
@@ -449,6 +458,7 @@ fn format_dim(d: &Dimension) -> String {
         Dimension::MaxContent => "max-content".into(),
         Dimension::MinContent => "min-content".into(),
         Dimension::FitContent(inner) => format!("fit-content({})", format_dim(inner)),
+        Dimension::Calc(_) => "calc(…)".into(),
     }
 }
 

@@ -80,6 +80,56 @@ impl Document {
         id
     }
 
+    /// Create a pseudo-element node (detached).
+    ///
+    /// The node is inserted as a synthetic DOM child during style resolution.
+    /// `::before` is prepended, `::after` is appended to the originating element.
+    pub fn create_pseudo_element(
+        &mut self,
+        pseudo_type: crate::node::PseudoType,
+        content: &str,
+    ) -> NodeId {
+        let id = self.alloc_id();
+        let node = Node::new_pseudo_element(id, pseudo_type, content);
+        self.nodes.insert(id, node);
+        id
+    }
+
+    /// Insert a child as the first child of a parent.
+    pub fn prepend_child(&mut self, parent: NodeId, child: NodeId) {
+        // Detach from previous parent if needed
+        if let Some(old_parent) = self.nodes.get(&child).and_then(|n| n.parent) {
+            if let Some(p) = self.nodes.get_mut(&old_parent) {
+                p.children.retain(|&c| c != child);
+            }
+        }
+
+        // Set new parent
+        if let Some(node) = self.nodes.get_mut(&child) {
+            node.parent = Some(parent);
+        }
+        if let Some(node) = self.nodes.get_mut(&parent) {
+            node.children.insert(0, child);
+        }
+    }
+
+    /// Remove all pseudo-element children from a node.
+    pub fn remove_pseudo_elements(&mut self, parent: NodeId) {
+        let pseudo_ids: Vec<NodeId> = self
+            .children(parent)
+            .iter()
+            .copied()
+            .filter(|&cid| {
+                self.get(cid)
+                    .map(|n| n.is_pseudo_element())
+                    .unwrap_or(false)
+            })
+            .collect();
+        for pid in pseudo_ids {
+            self.remove_child(parent, pid);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Tree mutation
     // -----------------------------------------------------------------------
