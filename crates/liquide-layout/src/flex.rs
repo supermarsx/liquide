@@ -10,11 +10,11 @@
 //! 7. Position items absolutely
 
 use liquide_dom::{Document, NodeId};
+use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{
     AlignContent, AlignItems, Display, FlexDirection, FlexWrap, JustifyContent, Position,
 };
 use liquide_style_engine::dimension::Dimension;
-use liquide_style_engine::StyleMap;
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
@@ -42,18 +42,80 @@ pub fn layout_flex(
     let font_size = style.font_size;
     let width = style
         .width
-        .resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h)
+        .resolve_px(
+            container_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(container_width);
 
-    let pad_top = rdim(&style.padding.top, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_right = rdim(&style.padding.right, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_bottom = rdim(&style.padding.bottom, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_left = rdim(&style.padding.left, width, base_font_size, font_size, viewport_w, viewport_h);
+    let pad_top = rdim(
+        &style.padding.top,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_right = rdim(
+        &style.padding.right,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_bottom = rdim(
+        &style.padding.bottom,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_left = rdim(
+        &style.padding.left,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
-    let mar_top = rdim(&style.margin.top, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_right = rdim(&style.margin.right, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_bottom = rdim(&style.margin.bottom, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_left = rdim(&style.margin.left, container_width, base_font_size, font_size, viewport_w, viewport_h);
+    let mar_top = rdim(
+        &style.margin.top,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_right = rdim(
+        &style.margin.right,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_bottom = rdim(
+        &style.margin.bottom,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_left = rdim(
+        &style.margin.left,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     let border_top = style.border_width.top;
     let border_right = style.border_width.right;
@@ -66,17 +128,40 @@ pub fn layout_flex(
 
     let direction = style.flex_direction;
     let is_row = matches!(direction, FlexDirection::Row | FlexDirection::RowReverse);
-    let is_reverse = matches!(direction, FlexDirection::RowReverse | FlexDirection::ColumnReverse);
+    let is_reverse = matches!(
+        direction,
+        FlexDirection::RowReverse | FlexDirection::ColumnReverse
+    );
     let wrap = style.flex_wrap;
     let should_wrap = wrap != FlexWrap::NoWrap;
 
-    let gap_dim = if is_row { &style.gap.width } else { &style.gap.height };
+    let gap_dim = if is_row {
+        &style.gap.width
+    } else {
+        &style.gap.height
+    };
     let gap = gap_dim
-        .resolve_px(content_width, base_font_size, font_size, viewport_w, viewport_h)
+        .resolve_px(
+            content_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(0.0);
-    let cross_gap_dim = if is_row { &style.gap.height } else { &style.gap.width };
+    let cross_gap_dim = if is_row {
+        &style.gap.height
+    } else {
+        &style.gap.width
+    };
     let cross_gap = cross_gap_dim
-        .resolve_px(content_width, base_font_size, font_size, viewport_w, viewport_h)
+        .resolve_px(
+            content_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(0.0);
 
     // ── Step 1: Collect flex items ──
@@ -94,29 +179,66 @@ pub fn layout_flex(
 
         let child_box = if child_style.is_flex_container() {
             crate::flex::layout_flex(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else if child_style.is_grid_container() {
             crate::grid::layout_grid(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else {
             crate::block::layout_block(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         };
 
-        let intrinsic = tree.get(child_box).map(|b| b.margin_rect).unwrap_or(Rect::zero());
+        let intrinsic = tree
+            .get(child_box)
+            .map(|b| b.margin_rect)
+            .unwrap_or(Rect::zero());
 
-        let flex_basis = child_style
-            .flex_basis
-            .resolve_px(content_width, base_font_size, child_style.font_size, viewport_w, viewport_h);
+        let flex_basis = child_style.flex_basis.resolve_px(
+            content_width,
+            base_font_size,
+            child_style.font_size,
+            viewport_w,
+            viewport_h,
+        );
 
         let main_size = if is_row {
             flex_basis.unwrap_or(intrinsic.width)
@@ -125,15 +247,51 @@ pub fn layout_flex(
         };
 
         let min_main = if is_row {
-            child_style.min_width.resolve_px(content_width, base_font_size, child_style.font_size, viewport_w, viewport_h).unwrap_or(0.0)
+            child_style
+                .min_width
+                .resolve_px(
+                    content_width,
+                    base_font_size,
+                    child_style.font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .unwrap_or(0.0)
         } else {
-            child_style.min_height.resolve_px(container_height, base_font_size, child_style.font_size, viewport_w, viewport_h).unwrap_or(0.0)
+            child_style
+                .min_height
+                .resolve_px(
+                    container_height,
+                    base_font_size,
+                    child_style.font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .unwrap_or(0.0)
         };
 
         let max_main = if is_row {
-            child_style.max_width.resolve_px(content_width, base_font_size, child_style.font_size, viewport_w, viewport_h).unwrap_or(f32::INFINITY)
+            child_style
+                .max_width
+                .resolve_px(
+                    content_width,
+                    base_font_size,
+                    child_style.font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .unwrap_or(f32::INFINITY)
         } else {
-            child_style.max_height.resolve_px(container_height, base_font_size, child_style.font_size, viewport_w, viewport_h).unwrap_or(f32::INFINITY)
+            child_style
+                .max_height
+                .resolve_px(
+                    container_height,
+                    base_font_size,
+                    child_style.font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .unwrap_or(f32::INFINITY)
         };
 
         items.push(FlexItem {
@@ -143,7 +301,11 @@ pub fn layout_flex(
             flex_shrink: child_style.flex_shrink,
             base_main_size: main_size,
             main_size,
-            cross_size: if is_row { intrinsic.height } else { intrinsic.width },
+            cross_size: if is_row {
+                intrinsic.height
+            } else {
+                intrinsic.width
+            },
             min_main,
             max_main,
             order: child_style.order,
@@ -164,7 +326,13 @@ pub fn layout_flex(
     } else {
         style
             .height
-            .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
+            .resolve_px(
+                container_height,
+                base_font_size,
+                font_size,
+                viewport_w,
+                viewport_h,
+            )
             .unwrap_or(container_height)
     };
 
@@ -208,7 +376,11 @@ pub fn layout_flex(
     for line in &lines {
         let line_items = &mut items[line.start..line.end];
         let count = line_items.len();
-        let total_gaps = if count > 1 { (count - 1) as f32 * gap } else { 0.0 };
+        let total_gaps = if count > 1 {
+            (count - 1) as f32 * gap
+        } else {
+            0.0
+        };
         let total_main: f32 = line_items.iter().map(|i| i.main_size).sum::<f32>() + total_gaps;
         let free_space = available_main - total_main;
 
@@ -217,7 +389,9 @@ pub fn layout_flex(
             if total_grow > 0.0 {
                 for item in line_items.iter_mut() {
                     let grow = free_space * (item.flex_grow / total_grow);
-                    item.main_size = (item.main_size + grow).min(item.max_main).max(item.min_main);
+                    item.main_size = (item.main_size + grow)
+                        .min(item.max_main)
+                        .max(item.min_main);
                 }
             }
         } else if free_space < 0.0 {
@@ -263,21 +437,51 @@ pub fn layout_flex(
 
         let new_box = if child_style.is_flex_container() {
             crate::flex::layout_flex(
-                doc, item.node_id, styles, tree, text_measurer, image_measurer,
-                child_w, child_h, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                item.node_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                child_w,
+                child_h,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else if child_style.is_grid_container() {
             crate::grid::layout_grid(
-                doc, item.node_id, styles, tree, text_measurer, image_measurer,
-                child_w, child_h, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                item.node_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                child_w,
+                child_h,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else {
             crate::block::layout_block(
-                doc, item.node_id, styles, tree, text_measurer, image_measurer,
-                child_w, child_h, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                item.node_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                child_w,
+                child_h,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         };
 
@@ -285,8 +489,15 @@ pub fn layout_flex(
         tree.add_child(box_id, new_box);
 
         // Update cross size from re-layout
-        let new_intrinsic = tree.get(new_box).map(|b| b.margin_rect).unwrap_or(Rect::zero());
-        item.cross_size = if is_row { new_intrinsic.height } else { new_intrinsic.width };
+        let new_intrinsic = tree
+            .get(new_box)
+            .map(|b| b.margin_rect)
+            .unwrap_or(Rect::zero());
+        item.cross_size = if is_row {
+            new_intrinsic.height
+        } else {
+            new_intrinsic.width
+        };
     }
 
     // ── Step 5: Position items per line ──
@@ -296,7 +507,11 @@ pub fn layout_flex(
     for line in &lines {
         let line_items = &items[line.start..line.end];
         let count = line_items.len();
-        let total_gaps = if count > 1 { (count - 1) as f32 * gap } else { 0.0 };
+        let total_gaps = if count > 1 {
+            (count - 1) as f32 * gap
+        } else {
+            0.0
+        };
         let used_main: f32 = line_items.iter().map(|i| i.main_size).sum::<f32>() + total_gaps;
         let remaining = available_main - used_main;
 
@@ -310,18 +525,17 @@ pub fn layout_flex(
 
         for (i, idx) in (line.start..line.end).enumerate() {
             let item = &mut items[idx];
-            let (x, y, w, h) = if is_row {
-                (content_x + main_pos, content_y + cross_offset, item.main_size, item.cross_size)
+            // (x, y) is the desired margin-edge position for this item
+            let (x, y) = if is_row {
+                (content_x + main_pos, content_y + cross_offset)
             } else {
-                (content_x + cross_offset, content_y + main_pos, item.cross_size, item.main_size)
+                (content_x + cross_offset, content_y + main_pos)
             };
 
             if let Some(b) = tree.get_mut(item.box_id) {
-                let old_x = b.content_rect.x;
-                let old_y = b.content_rect.y;
-                reposition_box(b, x, y, w, h);
-                let dx = b.content_rect.x - old_x;
-                let dy = b.content_rect.y - old_y;
+                let dx = x - b.margin_rect.x;
+                let dy = y - b.margin_rect.y;
+                shift_box(b, dx, dy);
                 // Propagate position change to all descendants
                 if dx != 0.0 || dy != 0.0 {
                     let child_ids: Vec<LayoutBoxId> = tree
@@ -342,11 +556,22 @@ pub fn layout_flex(
     }
 
     // ── Step 6: Align items on cross axis ──
-    let total_cross = cross_offset - if !line_cross_sizes.is_empty() { cross_gap } else { 0.0 };
+    let total_cross = cross_offset
+        - if !line_cross_sizes.is_empty() {
+            cross_gap
+        } else {
+            0.0
+        };
     let container_cross = if is_row {
         style
             .height
-            .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
+            .resolve_px(
+                container_height,
+                base_font_size,
+                font_size,
+                viewport_w,
+                viewport_h,
+            )
             .unwrap_or(total_cross)
     } else {
         content_width
@@ -398,14 +623,21 @@ pub fn layout_flex(
 
             let cross_offset_val;
             if let Some(b) = tree.get_mut(item.box_id) {
-                let item_cross = if is_row { b.content_rect.height } else { b.content_rect.width };
+                // Use margin_rect for cross size since line_cross is margin-box based
+                let item_cross = if is_row {
+                    b.margin_rect.height
+                } else {
+                    b.margin_rect.width
+                };
                 cross_offset_val = match align {
                     AlignItems::FlexStart => 0.0,
                     AlignItems::FlexEnd => line_cross - item_cross,
                     AlignItems::Center => (line_cross - item_cross) / 2.0,
                     AlignItems::Stretch => {
-                        let dw = if !is_row { line_cross - b.content_rect.width } else { 0.0 };
-                        let dh = if is_row { line_cross - b.content_rect.height } else { 0.0 };
+                        // Stretch content to fill line: delta = line_cross - current_margin_box
+                        let stretch = (line_cross - item_cross).max(0.0);
+                        let dw = if !is_row { stretch } else { 0.0 };
+                        let dh = if is_row { stretch } else { 0.0 };
                         b.content_rect.width += dw;
                         b.content_rect.height += dh;
                         b.padding_rect.width += dw;
@@ -419,13 +651,21 @@ pub fn layout_flex(
                     AlignItems::Baseline => 0.0, // simplified
                 };
 
-                let (dx, dy) = if is_row { (0.0, cross_offset_val) } else { (cross_offset_val, 0.0) };
+                let (dx, dy) = if is_row {
+                    (0.0, cross_offset_val)
+                } else {
+                    (cross_offset_val, 0.0)
+                };
                 shift_box(b, dx, dy);
             } else {
                 cross_offset_val = 0.0;
             }
             // Propagate cross-axis alignment shift to descendants
-            let (dx, dy) = if is_row { (0.0, cross_offset_val) } else { (cross_offset_val, 0.0) };
+            let (dx, dy) = if is_row {
+                (0.0, cross_offset_val)
+            } else {
+                (cross_offset_val, 0.0)
+            };
             if dx != 0.0 || dy != 0.0 {
                 let child_ids: Vec<LayoutBoxId> = tree
                     .get(item.box_id)
@@ -443,11 +683,21 @@ pub fn layout_flex(
     let content_height = if is_row {
         style
             .height
-            .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
+            .resolve_px(
+                container_height,
+                base_font_size,
+                font_size,
+                viewport_w,
+                viewport_h,
+            )
             .unwrap_or(total_cross.max(0.0))
     } else {
         let last_main: f32 = items.iter().map(|i| i.main_size).sum::<f32>()
-            + if items.len() > 1 { (items.len() - 1) as f32 * gap } else { 0.0 };
+            + if items.len() > 1 {
+                (items.len() - 1) as f32 * gap
+            } else {
+                0.0
+            };
         last_main
     };
 
@@ -500,27 +750,6 @@ struct FlexLine {
 
 /// Reposition a layout box: move content_rect to (x, y) with size (w, h),
 /// and propagate position/size deltas to padding/border/margin rects.
-fn reposition_box(b: &mut crate::tree::LayoutBox, x: f32, y: f32, w: f32, h: f32) {
-    let dx = x - b.content_rect.x;
-    let dy = y - b.content_rect.y;
-    let dw = w - b.content_rect.width;
-    let dh = h - b.content_rect.height;
-
-    b.content_rect = Rect::new(x, y, w, h);
-    b.padding_rect.x += dx;
-    b.padding_rect.y += dy;
-    b.padding_rect.width += dw;
-    b.padding_rect.height += dh;
-    b.border_rect.x += dx;
-    b.border_rect.y += dy;
-    b.border_rect.width += dw;
-    b.border_rect.height += dh;
-    b.margin_rect.x += dx;
-    b.margin_rect.y += dy;
-    b.margin_rect.width += dw;
-    b.margin_rect.height += dh;
-}
-
 /// Shift all rects of a layout box by a position delta.
 fn shift_box(b: &mut crate::tree::LayoutBox, dx: f32, dy: f32) {
     b.content_rect.x += dx;
@@ -533,7 +762,14 @@ fn shift_box(b: &mut crate::tree::LayoutBox, dx: f32, dy: f32) {
     b.margin_rect.y += dy;
 }
 
-fn rdim(dim: &Dimension, parent_px: f32, base_font_size: f32, font_size: f32, vw: f32, vh: f32) -> f32 {
+fn rdim(
+    dim: &Dimension,
+    parent_px: f32,
+    base_font_size: f32,
+    font_size: f32,
+    vw: f32,
+    vh: f32,
+) -> f32 {
     dim.resolve_px(parent_px, base_font_size, font_size, vw, vh)
         .unwrap_or(0.0)
 }

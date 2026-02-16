@@ -162,7 +162,13 @@ impl TextMeasurer for DefaultTextMeasurer {
         let transformed = props.transform_text(text);
         let total_width: f32 = transformed
             .chars()
-            .map(|ch| if ch == ' ' { char_width + space_extra } else { char_width })
+            .map(|ch| {
+                if ch == ' ' {
+                    char_width + space_extra
+                } else {
+                    char_width
+                }
+            })
             .sum();
         let line_h = props.line_height_px(font_size);
 

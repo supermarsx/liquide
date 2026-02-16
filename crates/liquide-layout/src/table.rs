@@ -12,9 +12,9 @@
 //! name as a fallback.
 
 use liquide_dom::{Document, NodeId};
+use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{Display, Position};
 use liquide_style_engine::dimension::Dimension;
-use liquide_style_engine::StyleMap;
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
@@ -91,20 +91,82 @@ pub fn layout_table(
     let font_size = style.font_size;
     let width = style
         .width
-        .resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h)
+        .resolve_px(
+            container_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(container_width);
 
     // Resolve padding
-    let pad_top = rdim(&style.padding.top, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_right = rdim(&style.padding.right, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_bottom = rdim(&style.padding.bottom, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_left = rdim(&style.padding.left, width, base_font_size, font_size, viewport_w, viewport_h);
+    let pad_top = rdim(
+        &style.padding.top,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_right = rdim(
+        &style.padding.right,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_bottom = rdim(
+        &style.padding.bottom,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_left = rdim(
+        &style.padding.left,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     // Resolve margins
-    let mar_top = rdim(&style.margin.top, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_right = rdim(&style.margin.right, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_bottom = rdim(&style.margin.bottom, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_left = rdim(&style.margin.left, container_width, base_font_size, font_size, viewport_w, viewport_h);
+    let mar_top = rdim(
+        &style.margin.top,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_right = rdim(
+        &style.margin.right,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_bottom = rdim(
+        &style.margin.bottom,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_left = rdim(
+        &style.margin.left,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     let border_top = style.border_width.top;
     let border_right = style.border_width.right;
@@ -124,13 +186,26 @@ pub fn layout_table(
     for &child_id in &children {
         let child_style = styles.get(child_id).cloned().unwrap_or_default();
         let is_caption = child_style.display == Display::TableCaption
-            || doc.get(child_id).map(|n| n.tag_name() == "caption").unwrap_or(false);
+            || doc
+                .get(child_id)
+                .map(|n| n.tag_name() == "caption")
+                .unwrap_or(false);
 
         if is_caption {
             let cap_box = crate::block::layout_block(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             );
             let cap_h = tree
                 .get(cap_box)
@@ -147,7 +222,7 @@ pub fn layout_table(
     // Position captions above the grid; compute total caption height.
     let mut caption_y = 0.0f32;
     for cap in &captions {
-        if let Some(b) = tree.get_mut(cap.box_id) {
+        let (dx, dy) = if let Some(b) = tree.get_mut(cap.box_id) {
             let dx = content_x - b.content_rect.x;
             let dy = (content_y + caption_y) - b.content_rect.y;
             b.content_rect.x += dx;
@@ -158,6 +233,19 @@ pub fn layout_table(
             b.border_rect.y += dy;
             b.margin_rect.x += dx;
             b.margin_rect.y += dy;
+            (dx, dy)
+        } else {
+            (0.0, 0.0)
+        };
+        // Propagate position change to caption descendants
+        if dx != 0.0 || dy != 0.0 {
+            let child_ids: Vec<crate::tree::LayoutBoxId> = tree
+                .get(cap.box_id)
+                .map(|b| b.children.clone())
+                .unwrap_or_default();
+            for cid in child_ids {
+                crate::positioned::offset_box_recursive(tree, cid, dx, dy);
+            }
         }
         caption_y += cap.height;
     }
@@ -175,7 +263,10 @@ pub fn layout_table(
         }
         // Skip captions; already handled above.
         let is_caption = child_style.display == Display::TableCaption
-            || doc.get(child_id).map(|n| n.tag_name() == "caption").unwrap_or(false);
+            || doc
+                .get(child_id)
+                .map(|n| n.tag_name() == "caption")
+                .unwrap_or(false);
         if is_caption {
             continue;
         }
@@ -197,9 +288,19 @@ pub fn layout_table(
 
                 // Layout cell to get intrinsic size
                 let cell_box = crate::block::layout_block(
-                    doc, cell_id, styles, tree, text_measurer, image_measurer,
-                    content_width, container_height, 0.0, 0.0,
-                    viewport_w, viewport_h, base_font_size,
+                    doc,
+                    cell_id,
+                    styles,
+                    tree,
+                    text_measurer,
+                    image_measurer,
+                    content_width,
+                    container_height,
+                    0.0,
+                    0.0,
+                    viewport_w,
+                    viewport_h,
+                    base_font_size,
                 );
 
                 let (iw, ih) = tree
@@ -225,9 +326,19 @@ pub fn layout_table(
         } else {
             // Non-row child: treat as a single-cell row (anonymous table row)
             let cell_box = crate::block::layout_block(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             );
 
             let (iw, ih) = tree
@@ -295,10 +406,24 @@ pub fn layout_table(
         // Empty table (may still have captions).
         let total_h = caption_y;
         set_table_geometry(
-            tree, box_id, content_x, content_y, content_width, total_h,
-            pad_top, pad_right, pad_bottom, pad_left,
-            border_top, border_right, border_bottom, border_left,
-            mar_top, mar_right, mar_bottom, mar_left,
+            tree,
+            box_id,
+            content_x,
+            content_y,
+            content_width,
+            total_h,
+            pad_top,
+            pad_right,
+            pad_bottom,
+            pad_left,
+            border_top,
+            border_right,
+            border_bottom,
+            border_left,
+            mar_top,
+            mar_right,
+            mar_bottom,
+            mar_left,
         );
         return box_id;
     }
@@ -390,7 +515,8 @@ pub fn layout_table(
         col_max_widths.iter().map(|w| w + extra).collect()
     } else if total_intrinsic > 0.0 {
         // Scale down proportionally
-        let scale = (content_width - total_spacing).max(0.0) / (total_intrinsic - total_spacing).max(1.0);
+        let scale =
+            (content_width - total_spacing).max(0.0) / (total_intrinsic - total_spacing).max(1.0);
         col_max_widths.iter().map(|w| w * scale).collect()
     } else {
         // Equal distribution
@@ -482,7 +608,7 @@ pub fn layout_table(
             let cell_y = content_y + caption_y + row_y_positions[ri];
 
             // Reposition the cell box
-            if let Some(b) = tree.get_mut(cell.box_id) {
+            let (dx, dy) = if let Some(b) = tree.get_mut(cell.box_id) {
                 let dx = cell_x - b.content_rect.x;
                 let dy = cell_y - b.content_rect.y;
                 let dw = cell_w - b.content_rect.width;
@@ -504,6 +630,19 @@ pub fn layout_table(
                 b.margin_rect.y += dy;
                 b.margin_rect.width += dw;
                 b.margin_rect.height += dh;
+                (dx, dy)
+            } else {
+                (0.0, 0.0)
+            };
+            // Propagate position change to cell descendants
+            if dx != 0.0 || dy != 0.0 {
+                let child_ids: Vec<crate::tree::LayoutBoxId> = tree
+                    .get(cell.box_id)
+                    .map(|b| b.children.clone())
+                    .unwrap_or_default();
+                for cid in child_ids {
+                    crate::positioned::offset_box_recursive(tree, cid, dx, dy);
+                }
             }
         }
     }
@@ -518,14 +657,34 @@ pub fn layout_table(
     let total_content_height = caption_y + grid_height;
     let content_height = style
         .height
-        .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
+        .resolve_px(
+            container_height,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(total_content_height);
 
     set_table_geometry(
-        tree, box_id, content_x, content_y, content_width, content_height,
-        pad_top, pad_right, pad_bottom, pad_left,
-        border_top, border_right, border_bottom, border_left,
-        mar_top, mar_right, mar_bottom, mar_left,
+        tree,
+        box_id,
+        content_x,
+        content_y,
+        content_width,
+        content_height,
+        pad_top,
+        pad_right,
+        pad_bottom,
+        pad_left,
+        border_top,
+        border_right,
+        border_bottom,
+        border_left,
+        mar_top,
+        mar_right,
+        mar_bottom,
+        mar_left,
     );
 
     box_id
@@ -602,9 +761,9 @@ fn rdim(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DefaultImageMeasurer, DefaultTextMeasurer};
     use liquide_dom::Document;
     use liquide_style_engine::engine::{StyleEngine, ViewportSize};
-    use crate::{DefaultTextMeasurer, DefaultImageMeasurer};
 
     #[test]
     fn basic_table_layout() {
@@ -623,7 +782,13 @@ mod tests {
             }
         }
 
-        let mut engine = StyleEngine::new(ViewportSize { width: 800.0, height: 600.0 }, 16.0);
+        let mut engine = StyleEngine::new(
+            ViewportSize {
+                width: 800.0,
+                height: 600.0,
+            },
+            16.0,
+        );
         engine.add_stylesheet(
             "table { display: table; width: 400px; } tr { display: table-row; } td { display: table-cell; height: 30px; }",
         );
@@ -638,7 +803,13 @@ mod tests {
             &mut tree,
             &DefaultTextMeasurer,
             &DefaultImageMeasurer,
-            800.0, 600.0, 0.0, 0.0, 800.0, 600.0, 16.0,
+            800.0,
+            600.0,
+            0.0,
+            0.0,
+            800.0,
+            600.0,
+            16.0,
         );
 
         let table_box = tree.get(box_id).unwrap();
@@ -664,7 +835,13 @@ mod tests {
             &mut tree,
             &DefaultTextMeasurer,
             &DefaultImageMeasurer,
-            800.0, 600.0, 0.0, 0.0, 800.0, 600.0, 16.0,
+            800.0,
+            600.0,
+            0.0,
+            0.0,
+            800.0,
+            600.0,
+            16.0,
         );
 
         assert!(tree.get(box_id).is_some());

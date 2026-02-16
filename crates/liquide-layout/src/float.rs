@@ -9,8 +9,8 @@
 //! be queried for available width at a given vertical position.
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{Display, Float, Position};
 use liquide_style_engine::StyleMap;
+use liquide_style_engine::computed::{Display, Float, Position};
 
 use crate::geometry::Rect;
 use crate::tree::{LayoutBoxId, LayoutTree};
@@ -206,9 +206,19 @@ pub fn layout_block_with_floats(
         if let Some(side) = float_side {
             // Layout the float to determine its intrinsic size
             let float_box = crate::block::layout_block(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                container_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                container_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             );
 
             let (fw, fh) = tree
@@ -222,10 +232,10 @@ pub fn layout_block_with_floats(
                 FloatSide::Right => float_ctx.place_right(fw, fh, block_y),
             };
 
-            // Reposition float box to its placed position
-            if let Some(b) = tree.get_mut(float_box) {
-                let dx = (content_x + placed.x) - b.content_rect.x;
-                let dy = (content_y + placed.y) - b.content_rect.y;
+            // Reposition float box to its placed position (margin edge)
+            let (dx, dy) = if let Some(b) = tree.get_mut(float_box) {
+                let dx = (content_x + placed.x) - b.margin_rect.x;
+                let dy = (content_y + placed.y) - b.margin_rect.y;
                 b.content_rect.x += dx;
                 b.content_rect.y += dy;
                 b.padding_rect.x += dx;
@@ -234,6 +244,19 @@ pub fn layout_block_with_floats(
                 b.border_rect.y += dy;
                 b.margin_rect.x += dx;
                 b.margin_rect.y += dy;
+                (dx, dy)
+            } else {
+                (0.0, 0.0)
+            };
+            // Propagate position change to float descendants
+            if dx != 0.0 || dy != 0.0 {
+                let child_ids: Vec<crate::tree::LayoutBoxId> = tree
+                    .get(float_box)
+                    .map(|b| b.children.clone())
+                    .unwrap_or_default();
+                for cid in child_ids {
+                    crate::positioned::offset_box_recursive(tree, cid, dx, dy);
+                }
             }
 
             tree.add_child(parent_box_id, float_box);
@@ -244,9 +267,19 @@ pub fn layout_block_with_floats(
                 float_ctx.available_width_at(block_y, line_height);
 
             let child_box = crate::block::layout_block(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                avail_w, container_height, content_x + left_edge, content_y + block_y,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                avail_w,
+                container_height,
+                content_x + left_edge,
+                content_y + block_y,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             );
 
             let child_h = tree

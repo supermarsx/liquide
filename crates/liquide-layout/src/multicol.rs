@@ -10,11 +10,9 @@
 //! 5. Position columns side by side
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{
-    BorderLineStyle, BreakValue, ColumnSpan, Display, Position,
-};
-use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
+use liquide_style_engine::computed::{BorderLineStyle, BreakValue, ColumnSpan, Display, Position};
+use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
@@ -42,20 +40,82 @@ pub fn layout_multicol(
     let font_size = style.font_size;
     let width = style
         .width
-        .resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h)
+        .resolve_px(
+            container_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(container_width);
 
     // Resolve padding
-    let pad_top = rdim(&style.padding.top, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_right = rdim(&style.padding.right, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_bottom = rdim(&style.padding.bottom, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_left = rdim(&style.padding.left, width, base_font_size, font_size, viewport_w, viewport_h);
+    let pad_top = rdim(
+        &style.padding.top,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_right = rdim(
+        &style.padding.right,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_bottom = rdim(
+        &style.padding.bottom,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_left = rdim(
+        &style.padding.left,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     // Resolve margins
-    let mar_top = rdim(&style.margin.top, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_right = rdim(&style.margin.right, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_bottom = rdim(&style.margin.bottom, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_left = rdim(&style.margin.left, container_width, base_font_size, font_size, viewport_w, viewport_h);
+    let mar_top = rdim(
+        &style.margin.top,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_right = rdim(
+        &style.margin.right,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_bottom = rdim(
+        &style.margin.bottom,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_left = rdim(
+        &style.margin.left,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     let border_top = style.border_width.top;
     let border_right = style.border_width.right;
@@ -69,12 +129,22 @@ pub fn layout_multicol(
     // ── Determine column parameters ──
     let column_gap = style
         .column_gap
-        .resolve_px(content_width, base_font_size, font_size, viewport_w, viewport_h)
+        .resolve_px(
+            content_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(font_size); // CSS default column-gap is `normal` ≈ 1em
 
-    let column_width_hint = style
-        .column_width
-        .resolve_px(content_width, base_font_size, font_size, viewport_w, viewport_h);
+    let column_width_hint = style.column_width.resolve_px(
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     // Resolve column count per CSS Multi-column spec §3:
     //   If column-count is set, use it.
@@ -82,13 +152,15 @@ pub fn layout_multicol(
     //   If both are set, column-count is an upper limit.
     let column_count = match (style.column_count, column_width_hint) {
         (Some(count), Some(cw)) if cw > 0.0 => {
-            let derived = ((content_width + column_gap) / (cw + column_gap)).floor().max(1.0) as u32;
+            let derived = ((content_width + column_gap) / (cw + column_gap))
+                .floor()
+                .max(1.0) as u32;
             derived.min(count).max(1)
         }
         (Some(count), _) => count.max(1),
-        (None, Some(cw)) if cw > 0.0 => {
-            ((content_width + column_gap) / (cw + column_gap)).floor().max(1.0) as u32
-        }
+        (None, Some(cw)) if cw > 0.0 => ((content_width + column_gap) / (cw + column_gap))
+            .floor()
+            .max(1.0) as u32,
         _ => 1,
     };
 
@@ -111,7 +183,14 @@ pub fn layout_multicol(
     #[derive(Debug)]
     enum Segment {
         /// A run of regular children laid out in columns.
-        Flow(Vec<(LayoutBoxId, f32, bool /* break_before */, bool /* break_after */)>),
+        Flow(
+            Vec<(
+                LayoutBoxId,
+                f32,
+                bool, /* break_before */
+                bool, /* break_after */
+            )>,
+        ),
         /// A column-span:all child.
         Spanner(LayoutBoxId, f32),
     }
@@ -137,11 +216,24 @@ pub fn layout_multicol(
             }
             // Layout the spanner at full container width
             let spanner_box = crate::block::layout_block(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             );
-            let h = tree.get(spanner_box).map(|b| b.margin_rect.height).unwrap_or(0.0);
+            let h = tree
+                .get(spanner_box)
+                .map(|b| b.margin_rect.height)
+                .unwrap_or(0.0);
             tree.add_child(box_id, spanner_box);
             segments.push(Segment::Spanner(spanner_box, h));
             continue;
@@ -149,12 +241,25 @@ pub fn layout_multicol(
 
         // Layout each child into a single column-width block
         let child_box = crate::block::layout_block(
-            doc, child_id, styles, tree, text_measurer, image_measurer,
-            col_width, container_height, 0.0, 0.0,
-            viewport_w, viewport_h, base_font_size,
+            doc,
+            child_id,
+            styles,
+            tree,
+            text_measurer,
+            image_measurer,
+            col_width,
+            container_height,
+            0.0,
+            0.0,
+            viewport_w,
+            viewport_h,
+            base_font_size,
         );
 
-        let h = tree.get(child_box).map(|b| b.margin_rect.height).unwrap_or(0.0);
+        let h = tree
+            .get(child_box)
+            .map(|b| b.margin_rect.height)
+            .unwrap_or(0.0);
         let brk_before = child_style.break_before == BreakValue::Column;
         let brk_after = child_style.break_after == BreakValue::Column;
         current_flow.push((child_box, h, brk_before, brk_after));
@@ -165,17 +270,24 @@ pub fn layout_multicol(
     }
 
     // Compute total flow height for balanced column height calculation
-    let total_height: f32 = segments.iter().map(|seg| match seg {
-        Segment::Flow(items) => items.iter().map(|(_, h, _, _)| *h).sum::<f32>(),
-        Segment::Spanner(_, h) => *h,
-    }).sum();
+    let total_height: f32 = segments
+        .iter()
+        .map(|seg| match seg {
+            Segment::Flow(items) => items.iter().map(|(_, h, _, _)| *h).sum::<f32>(),
+            Segment::Spanner(_, h) => *h,
+        })
+        .sum();
 
     // ── Determine column height ──
     // If explicit height is set, use it as the column height.
     // Otherwise, balance by dividing total content height among columns.
-    let explicit_height = style
-        .height
-        .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h);
+    let explicit_height = style.height.resolve_px(
+        container_height,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     let col_height = explicit_height.unwrap_or_else(|| {
         if column_count > 1 {
@@ -195,7 +307,7 @@ pub fn layout_multicol(
         match segment {
             Segment::Spanner(spanner_box_id, spanner_h) => {
                 // Position the spanner at full width
-                if let Some(b) = tree.get_mut(*spanner_box_id) {
+                let (dx, dy) = if let Some(b) = tree.get_mut(*spanner_box_id) {
                     let dx = content_x - b.content_rect.x;
                     let dy = (content_y + overall_y) - b.content_rect.y;
                     b.content_rect.x += dx;
@@ -206,6 +318,18 @@ pub fn layout_multicol(
                     b.border_rect.y += dy;
                     b.margin_rect.x += dx;
                     b.margin_rect.y += dy;
+                    (dx, dy)
+                } else {
+                    (0.0, 0.0)
+                };
+                if dx != 0.0 || dy != 0.0 {
+                    let child_ids: Vec<crate::tree::LayoutBoxId> = tree
+                        .get(*spanner_box_id)
+                        .map(|b| b.children.clone())
+                        .unwrap_or_default();
+                    for cid in child_ids {
+                        crate::positioned::offset_box_recursive(tree, cid, dx, dy);
+                    }
                 }
                 overall_y += spanner_h;
                 if overall_y > max_col_height {
@@ -228,7 +352,8 @@ pub fn layout_multicol(
                     }
 
                     // Natural column break when content exceeds column height
-                    if col_y > 0.0 && col_y + child_h > col_height && current_col + 1 < column_count {
+                    if col_y > 0.0 && col_y + child_h > col_height && current_col + 1 < column_count
+                    {
                         if col_y > seg_max_h {
                             seg_max_h = col_y;
                         }
@@ -239,7 +364,7 @@ pub fn layout_multicol(
                     let col_x = content_x + current_col as f32 * (col_width + column_gap);
                     let target_y = content_y + overall_y + col_y;
 
-                    if let Some(b) = tree.get_mut(child_box_id) {
+                    let (dx, dy) = if let Some(b) = tree.get_mut(child_box_id) {
                         let dx = col_x - b.content_rect.x;
                         let dy = target_y - b.content_rect.y;
                         b.content_rect.x += dx;
@@ -250,6 +375,18 @@ pub fn layout_multicol(
                         b.border_rect.y += dy;
                         b.margin_rect.x += dx;
                         b.margin_rect.y += dy;
+                        (dx, dy)
+                    } else {
+                        (0.0, 0.0)
+                    };
+                    if dx != 0.0 || dy != 0.0 {
+                        let child_ids: Vec<crate::tree::LayoutBoxId> = tree
+                            .get(child_box_id)
+                            .map(|b| b.children.clone())
+                            .unwrap_or_default();
+                        for cid in child_ids {
+                            crate::positioned::offset_box_recursive(tree, cid, dx, dy);
+                        }
                     }
 
                     col_y += child_h;
@@ -282,7 +419,9 @@ pub fn layout_multicol(
     if rule_width > 0.0 && rule_style != BorderLineStyle::None && column_count > 1 {
         let used_cols = columns_used.max(1).min(column_count);
         for i in 1..used_cols {
-            let rule_x = content_x + i as f32 * (col_width + column_gap) - column_gap / 2.0 - rule_width / 2.0;
+            let rule_x = content_x + i as f32 * (col_width + column_gap)
+                - column_gap / 2.0
+                - rule_width / 2.0;
             let rule_box_id = tree.alloc(node_id, BoxType::Block);
             if let Some(rb) = tree.get_mut(rule_box_id) {
                 let rule_rect = Rect::new(rule_x, content_y, rule_width, max_col_height);
@@ -338,9 +477,9 @@ fn rdim(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DefaultImageMeasurer, DefaultTextMeasurer};
     use liquide_dom::Document;
     use liquide_style_engine::engine::{StyleEngine, ViewportSize};
-    use crate::{DefaultTextMeasurer, DefaultImageMeasurer};
 
     #[test]
     fn basic_multicol_layout() {
@@ -354,10 +493,14 @@ mod tests {
             doc.append_child(container, child);
         }
 
-        let mut engine = StyleEngine::new(ViewportSize { width: 800.0, height: 600.0 }, 16.0);
-        engine.add_stylesheet(
-            "div { column-count: 3; width: 600px; } p { height: 50px; }",
+        let mut engine = StyleEngine::new(
+            ViewportSize {
+                width: 800.0,
+                height: 600.0,
+            },
+            16.0,
         );
+        engine.add_stylesheet("div { column-count: 3; width: 600px; } p { height: 50px; }");
 
         let styles = engine.restyle_all(&doc);
         let mut tree = LayoutTree::new();
@@ -369,7 +512,13 @@ mod tests {
             &mut tree,
             &DefaultTextMeasurer,
             &DefaultImageMeasurer,
-            800.0, 600.0, 0.0, 0.0, 800.0, 600.0, 16.0,
+            800.0,
+            600.0,
+            0.0,
+            0.0,
+            800.0,
+            600.0,
+            16.0,
         );
 
         assert!(tree.get(box_id).is_some());
@@ -400,7 +549,13 @@ mod tests {
             &mut tree,
             &DefaultTextMeasurer,
             &DefaultImageMeasurer,
-            200.0, 600.0, 0.0, 0.0, 200.0, 600.0, 16.0,
+            200.0,
+            600.0,
+            0.0,
+            0.0,
+            200.0,
+            600.0,
+            16.0,
         );
 
         // No column-count set → single column, like block layout

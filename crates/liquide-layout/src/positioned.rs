@@ -214,9 +214,18 @@ pub fn layout_positioned(
             .get(intrinsic_id)
             .map(|b| b.children.clone())
             .unwrap_or_default();
-        // Compute offset from intrinsic origin to actual content origin
-        let dx = content_x;
-        let dy = content_y;
+        // Children are already at their local absolute positions (block.rs offset them).
+        // Compute the remaining delta: target content origin minus the intrinsic content origin.
+        let intrinsic_cx = tree
+            .get(intrinsic_id)
+            .map(|b| b.content_rect.x)
+            .unwrap_or(0.0);
+        let intrinsic_cy = tree
+            .get(intrinsic_id)
+            .map(|b| b.content_rect.y)
+            .unwrap_or(0.0);
+        let dx = content_x - intrinsic_cx;
+        let dy = content_y - intrinsic_cy;
         for child_id in child_ids {
             offset_box_recursive(tree, child_id, dx, dy);
             tree.add_child(box_id, child_id);
@@ -398,6 +407,13 @@ pub fn offset_box_recursive(tree: &mut LayoutTree, box_id: LayoutBoxId, dx: f32,
         b.border_rect.y += dy;
         b.margin_rect.x += dx;
         b.margin_rect.y += dy;
+        // Also offset line boxes inside Text nodes
+        if let BoxType::Text { ref mut line_boxes } = b.box_type {
+            for lb in line_boxes.iter_mut() {
+                lb.rect.x += dx;
+                lb.rect.y += dy;
+            }
+        }
     }
     let children: Vec<LayoutBoxId> = tree
         .get(box_id)

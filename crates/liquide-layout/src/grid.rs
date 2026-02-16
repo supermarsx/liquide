@@ -3,21 +3,21 @@
 use std::collections::HashMap;
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{Display, GridAutoFlow, GridLine, TrackSize, Position};
-use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
+use liquide_style_engine::computed::{Display, GridAutoFlow, GridLine, Position, TrackSize};
+use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
-use crate::{TextMeasurer, ImageMeasurer};
+use crate::{ImageMeasurer, TextMeasurer};
 
 /// A resolved grid item with its placement coordinates.
 struct GridItem {
     node_id: NodeId,
     col_start: usize,
-    col_end: usize,   // exclusive
+    col_end: usize, // exclusive
     row_start: usize,
-    row_end: usize,    // exclusive
+    row_end: usize, // exclusive
     box_id: Option<LayoutBoxId>,
 }
 
@@ -43,18 +43,80 @@ pub fn layout_grid(
     let font_size = style.font_size;
     let width = style
         .width
-        .resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h)
+        .resolve_px(
+            container_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(container_width);
 
-    let pad_top = resolve_dim(&style.padding.top, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_right = resolve_dim(&style.padding.right, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_bottom = resolve_dim(&style.padding.bottom, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_left = resolve_dim(&style.padding.left, width, base_font_size, font_size, viewport_w, viewport_h);
+    let pad_top = resolve_dim(
+        &style.padding.top,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_right = resolve_dim(
+        &style.padding.right,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_bottom = resolve_dim(
+        &style.padding.bottom,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_left = resolve_dim(
+        &style.padding.left,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
-    let mar_top = resolve_dim(&style.margin.top, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_right = resolve_dim(&style.margin.right, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_bottom = resolve_dim(&style.margin.bottom, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_left = resolve_dim(&style.margin.left, container_width, base_font_size, font_size, viewport_w, viewport_h);
+    let mar_top = resolve_dim(
+        &style.margin.top,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_right = resolve_dim(
+        &style.margin.right,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_bottom = resolve_dim(
+        &style.margin.bottom,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_left = resolve_dim(
+        &style.margin.left,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     let border_top = style.border_width.top;
     let border_right = style.border_width.right;
@@ -65,11 +127,27 @@ pub fn layout_grid(
     let content_x = offset_x + mar_left + border_left + pad_left;
     let content_y = offset_y + mar_top + border_top + pad_top;
 
-    let gap_col = style.gap.width
-        .resolve_px(content_width, base_font_size, font_size, viewport_w, viewport_h)
+    let gap_col = style
+        .gap
+        .width
+        .resolve_px(
+            content_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(0.0);
-    let gap_row = style.gap.height
-        .resolve_px(content_width, base_font_size, font_size, viewport_w, viewport_h)
+    let gap_row = style
+        .gap
+        .height
+        .resolve_px(
+            content_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(0.0);
 
     // ── Resolve grid_template_areas into named line mappings ──
@@ -84,9 +162,8 @@ pub fn layout_grid(
 
     // ── Implicit track sizes from style ──
     let implicit_col_size = resolve_track_px(&style.grid_auto_columns, content_width);
-    let implicit_row_size = |available: f32| -> f32 {
-        resolve_track_px(&style.grid_auto_rows, available)
-    };
+    let implicit_row_size =
+        |available: f32| -> f32 { resolve_track_px(&style.grid_auto_rows, available) };
 
     // Resolve column track sizes
     let col_tracks = resolve_tracks(&style.grid_template_columns, content_width, gap_col);
@@ -206,10 +283,22 @@ pub fn layout_grid(
     }
 
     // Recalculate num_rows from all items
-    num_rows = placed_items.iter().map(|it| it.row_end).max().unwrap_or(1).max(1);
+    num_rows = placed_items
+        .iter()
+        .map(|it| it.row_end)
+        .max()
+        .unwrap_or(1)
+        .max(1);
 
-    let available_h_for_rows = style.height
-        .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h)
+    let available_h_for_rows = style
+        .height
+        .resolve_px(
+            container_height,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        )
         .unwrap_or(container_height);
     let implicit_row_px = implicit_row_size(available_h_for_rows);
 
@@ -232,9 +321,17 @@ pub fn layout_grid(
         // Calculate spanned cell width: sum of columns [col_start..col_end] + gaps
         let span_cols = item.col_end.saturating_sub(item.col_start).max(1);
         let mut cell_width = 0.0f32;
-        let fallback_col = if implicit_col_size > 0.0 { implicit_col_size } else { content_width / num_cols as f32 };
+        let fallback_col = if implicit_col_size > 0.0 {
+            implicit_col_size
+        } else {
+            content_width / num_cols as f32
+        };
         for c in item.col_start..item.col_end.min(num_cols) {
-            cell_width += if c < col_tracks.len() { col_tracks[c] } else { fallback_col };
+            cell_width += if c < col_tracks.len() {
+                col_tracks[c]
+            } else {
+                fallback_col
+            };
         }
         // Add inter-column gaps within the span
         if span_cols > 1 {
@@ -245,21 +342,51 @@ pub fn layout_grid(
         let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
         let child_box = if child_style.is_flex_container() {
             crate::flex::layout_flex(
-                doc, item.node_id, styles, tree, text_measurer, image_measurer,
-                cell_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                item.node_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                cell_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else if child_style.is_grid_container() {
             crate::grid::layout_grid(
-                doc, item.node_id, styles, tree, text_measurer, image_measurer,
-                cell_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                item.node_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                cell_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else {
             crate::block::layout_block(
-                doc, item.node_id, styles, tree, text_measurer, image_measurer,
-                cell_width, container_height, 0.0, 0.0,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                item.node_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                cell_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         };
 
@@ -301,10 +428,18 @@ pub fn layout_grid(
 
     let mut x_offsets: Vec<f32> = vec![0.0; num_cols];
     let mut cumulative_x = 0.0f32;
-    let fallback_col_pos = if implicit_col_size > 0.0 { implicit_col_size } else { content_width / num_cols as f32 };
+    let fallback_col_pos = if implicit_col_size > 0.0 {
+        implicit_col_size
+    } else {
+        content_width / num_cols as f32
+    };
     for col in 0..num_cols {
         x_offsets[col] = cumulative_x;
-        let cw = if col < col_tracks.len() { col_tracks[col] } else { fallback_col_pos };
+        let cw = if col < col_tracks.len() {
+            col_tracks[col]
+        } else {
+            fallback_col_pos
+        };
         cumulative_x += cw + if col < num_cols - 1 { gap_col } else { 0.0 };
     }
 
@@ -322,7 +457,11 @@ pub fn layout_grid(
         let span_cols = item.col_end.saturating_sub(item.col_start).max(1);
         let mut cell_w = 0.0f32;
         for c in item.col_start..item.col_end.min(num_cols) {
-            cell_w += if c < col_tracks.len() { col_tracks[c] } else { fallback_col_pos };
+            cell_w += if c < col_tracks.len() {
+                col_tracks[c]
+            } else {
+                fallback_col_pos
+            };
         }
         if span_cols > 1 {
             cell_w += (span_cols - 1) as f32 * gap_col;
@@ -393,7 +532,11 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
         return Vec::new();
     }
 
-    let total_gap = if tracks.len() > 1 { (tracks.len() - 1) as f32 * gap } else { 0.0 };
+    let total_gap = if tracks.len() > 1 {
+        (tracks.len() - 1) as f32 * gap
+    } else {
+        0.0
+    };
     let mut fixed_total = total_gap;
     let mut fr_total = 0.0f32;
     let mut sizes = vec![0.0f32; tracks.len()];
@@ -446,7 +589,9 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
                 TrackSize::MinMax(_min, max) => {
                     // Expand toward max if there's remaining space
                     let max_px = resolve_track_px(max, available);
-                    let grow = (max_px - sizes[i]).max(0.0).min(remaining * (1.0 / fr_total));
+                    let grow = (max_px - sizes[i])
+                        .max(0.0)
+                        .min(remaining * (1.0 / fr_total));
                     sizes[i] += grow;
                 }
                 TrackSize::Px(_) | TrackSize::Percent(_) | TrackSize::FitContent(_) => {} // already set

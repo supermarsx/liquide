@@ -2,10 +2,8 @@
 //! white-space handling, and inline box-model application.
 
 use liquide_dom::{Document, NodeId};
-use liquide_style_engine::computed::{
-    Display, Position, TextAlign, VerticalAlign, WhiteSpace,
-};
 use liquide_style_engine::StyleMap;
+use liquide_style_engine::computed::{Display, Position, TextAlign, VerticalAlign, WhiteSpace};
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree, LineBox};
@@ -80,10 +78,7 @@ enum InlineItem {
         font_size: f32,
     },
     /// A whitespace run (may collapse to a single space).
-    Space {
-        width: f32,
-        node_id: NodeId,
-    },
+    Space { width: f32, node_id: NodeId },
     /// Forced line break (`\n` in `pre`/`pre-wrap`/`pre-line`, or `<br>`).
     ForcedBreak,
     /// Opening of an inline box (e.g. `<span>`) — pushes edges.
@@ -166,12 +161,18 @@ fn edges_from_style(
 
 /// Should whitespace be collapsed for this mode?
 fn collapses_whitespace(ws: WhiteSpace) -> bool {
-    matches!(ws, WhiteSpace::Normal | WhiteSpace::NoWrap | WhiteSpace::PreLine)
+    matches!(
+        ws,
+        WhiteSpace::Normal | WhiteSpace::NoWrap | WhiteSpace::PreLine
+    )
 }
 
 /// Does this mode preserve newlines?
 fn preserves_newlines(ws: WhiteSpace) -> bool {
-    matches!(ws, WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine)
+    matches!(
+        ws,
+        WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine
+    )
 }
 
 /// Does this mode allow wrapping?
@@ -266,10 +267,7 @@ fn collect_inline_items(
 
     // If this node is itself a text node, tokenise it directly.
     if let Some(text) = node.text_content() {
-        let style = styles
-            .get(node_id)
-            .cloned()
-            .unwrap_or_default();
+        let style = styles.get(node_id).cloned().unwrap_or_default();
         let props = TextProperties::from_style(&style);
         let toks = tokenise_text(
             text,
@@ -316,7 +314,16 @@ fn collect_inline_items(
     // Recurse into children.
     let children = doc.children(node_id).to_vec();
     for &child_id in &children {
-        collect_inline_items(doc, child_id, styles, tree, text_measurer, parent_width, items, false);
+        collect_inline_items(
+            doc,
+            child_id,
+            styles,
+            tree,
+            text_measurer,
+            parent_width,
+            items,
+            false,
+        );
     }
 
     if let Some((box_id, edges)) = inline_box {
@@ -370,10 +377,9 @@ fn break_into_lines(
             InlineItem::Space { width, .. } => {
                 // Spaces at the start of a line after a wrap are suppressed.
                 if current_line.is_empty()
-                    || current_line.iter().all(|&i| matches!(
-                        &items[i],
-                        InlineItem::OpenInline { .. }
-                    ))
+                    || current_line
+                        .iter()
+                        .all(|&i| matches!(&items[i], InlineItem::OpenInline { .. }))
                 {
                     // Skip leading space on a new line.
                     continue;
@@ -384,11 +390,7 @@ fn break_into_lines(
             InlineItem::Word { width, .. } => {
                 let _needed = pending_open_width + width;
                 pending_open_width = 0.0;
-                let effective_max = if is_first_line {
-                    max_width
-                } else {
-                    max_width
-                };
+                let effective_max = if is_first_line { max_width } else { max_width };
                 let _ = effective_max;
 
                 // If word doesn't fit and wrapping is allowed, start a new line.
@@ -480,7 +482,9 @@ fn layout_lines(
 
         for &idx in line {
             match &items[idx] {
-                InlineItem::Word { height, baseline, .. } => {
+                InlineItem::Word {
+                    height, baseline, ..
+                } => {
                     let extra_top: f32 = edge_stack.iter().map(|e| e.block_start()).sum();
                     let extra_bot: f32 = edge_stack.iter().map(|e| e.block_end()).sum();
                     let asc = *baseline + extra_top;
@@ -735,7 +739,9 @@ pub fn layout_inline(
                     node_id: child_node,
                     ..
                 } => {
-                    let (va, child_fs) = va_stack.pop().unwrap_or((VerticalAlign::Baseline, font_size));
+                    let (va, child_fs) = va_stack
+                        .pop()
+                        .unwrap_or((VerticalAlign::Baseline, font_size));
 
                     let li = if idx < item_to_line.len() {
                         item_to_line[idx]
