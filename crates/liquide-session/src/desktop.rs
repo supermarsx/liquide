@@ -24,8 +24,10 @@ use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::{Color, PixelFormat};
 use liquide_compositor::scene::{CursorShape, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_compositor::{Compositor, CompositorContract};
+use liquide_devtools::DevToolsPanel;
 use liquide_input::InputState;
 use liquide_input::event::InputEvent;
+use liquide_input::keyboard::{KeyCode, KeyState};
 use liquide_platform::{NativeWindowHandle, NativeWindowParams, PlatformBackend, PlatformEvent};
 use liquide_renderer_cpu::{Renderer, SoftwareRenderer};
 use liquide_shell::Shell;
@@ -113,6 +115,8 @@ pub struct DesktopCompositor {
     telemetry: TelemetryHandle,
     /// Whether developer mode is enabled (windowed + devtools).
     dev_mode: bool,
+    /// DevTools panel (only active in dev_mode).
+    devtools: Option<DevToolsPanel>,
 }
 
 impl DesktopCompositor {
@@ -159,12 +163,21 @@ impl DesktopCompositor {
             render_in_flight: false,
             telemetry: create_telemetry(60), // 60fps target
             dev_mode: false,
+            devtools: None,
         }
     }
 
     /// Enable developer mode (windowed, resizable, devtools available).
     pub fn set_dev_mode(&mut self, enabled: bool) {
         self.dev_mode = enabled;
+        if enabled && self.devtools.is_none() {
+            let mut panel = DevToolsPanel::with_defaults();
+            panel.set_screen_size(self.width as f32, self.height as f32);
+            self.devtools = Some(panel);
+            info!("devtools panel initialized (F12 to toggle)");
+        } else if !enabled {
+            self.devtools = None;
+        }
     }
 
     /// Whether developer mode is enabled.
@@ -386,6 +399,20 @@ impl DesktopCompositor {
             self.shell.build_scene()
         };
 
+        // 1b. Overlay devtools panel scene nodes (if active).
+        if !self.loading && self.dev_mode {
+            if let Some(ref devtools) = self.devtools {
+                let doc = self.shell.document();
+                if let (Some(layout), Some(styles)) =
+                    (self.shell.layout_tree(), self.shell.style_map())
+                {
+                    for node in devtools.build_scene(doc, layout, styles) {
+                        scene.add_child(node);
+                    }
+                }
+            }
+        }
+
         // 2. Add software cursor to the scene.
         if !self.loading {
             let cursor_size = 24.0_f32;
@@ -457,7 +484,21 @@ impl DesktopCompositor {
         }
 
         // Build the scene graph (lightweight tree construction).
-        let scene = self.shell.build_scene();
+        let mut scene = self.shell.build_scene();
+
+        // Overlay devtools panel scene nodes (if active).
+        if self.dev_mode {
+            if let Some(ref devtools) = self.devtools {
+                let doc = self.shell.document();
+                if let (Some(layout), Some(styles)) =
+                    (self.shell.layout_tree(), self.shell.style_map())
+                {
+                    for node in devtools.build_scene(doc, layout, styles) {
+                        scene.add_child(node);
+                    }
+                }
+            }
+        }
 
         // Get current state for telemetry.
         let dragged_window = self.shell.dragged_window();
@@ -775,6 +816,9 @@ impl DesktopCompositor {
                 }
 
                 self.shell.resize_screen(*width as f32, *height as f32);
+                if let Some(ref mut devtools) = self.devtools {
+                    devtools.set_screen_size(*width as f32, *height as f32);
+                }
                 needs_redraw = true;
             }
             PlatformEvent::WindowCloseRequested { .. } | PlatformEvent::Quit => {
@@ -784,6 +828,30 @@ impl DesktopCompositor {
                 needs_redraw = true;
             }
             PlatformEvent::KeyInput { event: ke, .. } => {
+                // DevTools keyboard shortcuts (intercept before shell).
+                if self.dev_mode {
+                    if let Some(ref mut devtools) = self.devtools {
+                        if ke.state == KeyState::Pressed {
+                            let key_str = match ke.key {
+                                KeyCode::F12 => Some("F12"),
+                                KeyCode::I => Some("I"),
+                                KeyCode::C => Some("C"),
+                                KeyCode::Tab => Some("Tab"),
+                                _ => None,
+                            };
+                            if let Some(k) = key_str {
+                                if devtools.handle_key(
+                                    k,
+                                    ke.modifiers.ctrl(),
+                                    ke.modifiers.shift(),
+                                    ke.modifiers.alt(),
+                                ) {
+                                    needs_redraw = true;
+                                }
+                            }
+                        }
+                    }
+                }
                 self.input_state.handle_event(&InputEvent::Keyboard(*ke));
             }
             PlatformEvent::MouseInput { event: me, .. } => {
@@ -802,10 +870,34 @@ impl DesktopCompositor {
                             self.cursor_y = new_y;
                             needs_redraw = true;
                         }
+                        // Forward to devtools element picker.
+                        if self.dev_mode {
+                            if let Some(ref mut devtools) = self.devtools {
+                                if let (Some(hit_test), Some(layout)) = (
+                                    self.shell.hit_test_engine(),
+                                    self.shell.layout_tree(),
+                                ) {
+                                    let doc = self.shell.document();
+                                    if devtools.on_mouse_move(new_x, new_y, hit_test, doc, layout) {
+                                        needs_redraw = true;
+                                    }
+                                }
+                            }
+                        }
                     }
                     MouseEvent::Button { x, y, .. } => {
                         self.cursor_x = *x;
                         self.cursor_y = *y;
+                        // Forward click to devtools element picker.
+                        if self.dev_mode {
+                            if let Some(ref mut devtools) = self.devtools {
+                                if let Some(styles) = self.shell.style_map() {
+                                    if devtools.on_click(styles) {
+                                        needs_redraw = true;
+                                    }
+                                }
+                            }
+                        }
                     }
                     _ => {}
                 }

@@ -37,6 +37,9 @@ use crate::{Result, ShellError};
 use liquide_dock::Dock;
 use liquide_hit_test::event::{DomEventKind, MouseButton as DomMouseButton};
 use liquide_hit_test::{EventDispatcher, HitTestEngine};
+use liquide_dom::Document;
+use liquide_layout::tree::LayoutTree;
+use liquide_style_engine::StyleMap;
 
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
@@ -2938,5 +2941,27 @@ impl Shell {
             }
             _ => false,
         }
+    }
+
+    // ─── DevTools accessors ───────────────────────────────────
+
+    /// Get a reference to the desktop DOM document (for devtools).
+    pub fn document(&self) -> &Document {
+        &self.desktop_dom.doc
+    }
+
+    /// Get the most recently computed layout tree (available after build_scene).
+    pub fn layout_tree(&self) -> Option<&LayoutTree> {
+        self.hit_test_engine.as_ref().map(|e| e.layout())
+    }
+
+    /// Get the most recently computed style map (available after build_scene).
+    pub fn style_map(&self) -> Option<&StyleMap> {
+        self.hit_test_engine.as_ref().map(|e| e.styles())
+    }
+
+    /// Get the hit-test engine (available after build_scene).
+    pub fn hit_test_engine(&self) -> Option<&HitTestEngine> {
+        self.hit_test_engine.as_ref()
     }
 }

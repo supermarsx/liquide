@@ -37,6 +37,16 @@ impl HitTestEngine {
         self.styles = styles;
     }
 
+    /// Get a reference to the layout tree.
+    pub fn layout(&self) -> &LayoutTree {
+        &self.layout
+    }
+
+    /// Get a reference to the style map.
+    pub fn styles(&self) -> &StyleMap {
+        &self.styles
+    }
+
     /// Hit test a single point. Returns the topmost matching node.
     pub fn hit_test(&self, point: Point) -> Option<HitTestResult> {
         self.hit_test_box(self.layout.root, point)
