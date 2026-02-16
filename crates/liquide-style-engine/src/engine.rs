@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use liquide_compositor::pixel::Color;
 use liquide_dom::{Document, NodeId};
-use liquide_theme_css::property::PropertySet;
 use liquide_theme_css::ThemeParser;
+use liquide_theme_css::property::PropertySet;
 
 use crate::cascade::{CascadeDeclaration, CascadeMap, CascadePriority};
 use crate::computed::*;
@@ -13,7 +13,7 @@ use crate::dimension::Sides;
 use crate::selector::ComplexSelector;
 use crate::specificity::Specificity;
 use crate::style_map::StyleMap;
-use crate::value_resolve::{*, parse_inline_value};
+use crate::value_resolve::{parse_inline_value, *};
 
 /// A prepared stylesheet rule ready for matching.
 #[derive(Debug)]
@@ -94,7 +94,11 @@ impl StyleEngine {
 
         // Compile rules
         let mut prepared_rules = Vec::new();
-        let mut order = self.sheets.iter().map(|s| s.rules.len() as u32).sum::<u32>();
+        let mut order = self
+            .sheets
+            .iter()
+            .map(|s| s.rules.len() as u32)
+            .sum::<u32>();
 
         for rule in stylesheet.rules() {
             let selector_str = format!(
@@ -169,10 +173,7 @@ impl StyleEngine {
                     }
                 }
                 if rule.selector.matches(doc, node_id) {
-                    let priority = CascadePriority::author(
-                        rule.specificity,
-                        rule.source_order,
-                    );
+                    let priority = CascadePriority::author(rule.specificity, rule.source_order);
                     cascade.add_properties(&rule.properties, priority);
                 }
             }
@@ -191,7 +192,10 @@ impl StyleEngine {
         }
 
         let resolved = cascade.resolve();
-        let empty_scope: std::collections::HashMap<String, liquide_theme_css::value::PropertyValue> = std::collections::HashMap::new();
+        let empty_scope: std::collections::HashMap<
+            String,
+            liquide_theme_css::value::PropertyValue,
+        > = std::collections::HashMap::new();
         for (prop, val) in &resolved {
             self.apply_single_property(prop, val, &mut style, &empty_scope);
         }
@@ -209,9 +213,7 @@ impl StyleEngine {
 
     /// Compute styles for a subtree (incremental).
     pub fn restyle_subtree(&self, doc: &Document, node_id: NodeId, map: &mut StyleMap) {
-        let parent_style = doc
-            .parent(node_id)
-            .and_then(|pid| map.get(pid).cloned());
+        let parent_style = doc.parent(node_id).and_then(|pid| map.get(pid).cloned());
         let scope = std::collections::HashMap::new();
         self.restyle_node(doc, node_id, parent_style.as_deref(), map, &scope);
     }
@@ -249,10 +251,7 @@ impl StyleEngine {
                         }
                     }
                     if rule.selector.matches(doc, node_id) {
-                        let priority = CascadePriority::author(
-                            rule.specificity,
-                            rule.source_order,
-                        );
+                        let priority = CascadePriority::author(rule.specificity, rule.source_order);
                         cascade.add_properties(&rule.properties, priority);
                     }
                 }
@@ -312,10 +311,7 @@ impl StyleEngine {
     }
 
     /// Resolve a CSS variable value.
-    pub fn resolve_variable(
-        &self,
-        name: &str,
-    ) -> Option<&liquide_theme_css::value::PropertyValue> {
+    pub fn resolve_variable(&self, name: &str) -> Option<&liquide_theme_css::value::PropertyValue> {
         self.variables.get(name)
     }
 
@@ -445,10 +441,26 @@ impl StyleEngine {
                     style.border_color = Sides::all(c);
                 }
             }
-            "border-top-color" => { if let Some(c) = resolve_color(val) { style.border_color.top = c; } }
-            "border-right-color" => { if let Some(c) = resolve_color(val) { style.border_color.right = c; } }
-            "border-bottom-color" => { if let Some(c) = resolve_color(val) { style.border_color.bottom = c; } }
-            "border-left-color" => { if let Some(c) = resolve_color(val) { style.border_color.left = c; } }
+            "border-top-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_color.top = c;
+                }
+            }
+            "border-right-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_color.right = c;
+                }
+            }
+            "border-bottom-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_color.bottom = c;
+                }
+            }
+            "border-left-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_color.left = c;
+                }
+            }
 
             // Border style
             "border-style" => {
@@ -463,16 +475,22 @@ impl StyleEngine {
             // Box shadow
             "box-shadow" => {
                 if let liquide_theme_css::value::PropertyValue::BoxShadow(shadows) = val {
-                    style.box_shadow = shadows.iter().map(|s| {
-                        liquide_compositor::scene::BoxShadowSpec {
+                    style.box_shadow = shadows
+                        .iter()
+                        .map(|s| liquide_compositor::scene::BoxShadowSpec {
                             offset_x: s.offset_x,
                             offset_y: s.offset_y,
                             blur_radius: s.blur_radius,
                             spread_radius: s.spread_radius,
-                            color: Color { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a },
+                            color: Color {
+                                r: s.color.r,
+                                g: s.color.g,
+                                b: s.color.b,
+                                a: s.color.a,
+                            },
                             inset: s.inset,
-                        }
-                    }).collect();
+                        })
+                        .collect();
                 }
             }
 
@@ -566,7 +584,10 @@ impl StyleEngine {
             }
             "font-family" => {
                 if let liquide_theme_css::value::PropertyValue::String(s) = val {
-                    style.font_family = s.split(',').map(|f| f.trim().trim_matches('"').to_string()).collect();
+                    style.font_family = s
+                        .split(',')
+                        .map(|f| f.trim().trim_matches('"').to_string())
+                        .collect();
                 }
             }
             "font-size" => style.font_size = resolve_number(val),
@@ -583,8 +604,12 @@ impl StyleEngine {
             "line-height" => {
                 style.line_height = match val {
                     liquide_theme_css::value::PropertyValue::Number(n) => LineHeight::Number(*n),
-                    liquide_theme_css::value::PropertyValue::Length(lu) => LineHeight::Px(lu.to_px(16.0)),
-                    liquide_theme_css::value::PropertyValue::Keyword(kw) if kw == "normal" => LineHeight::Normal,
+                    liquide_theme_css::value::PropertyValue::Length(lu) => {
+                        LineHeight::Px(lu.to_px(16.0))
+                    }
+                    liquide_theme_css::value::PropertyValue::Keyword(kw) if kw == "normal" => {
+                        LineHeight::Normal
+                    }
                     _ => LineHeight::Normal,
                 };
             }
@@ -709,14 +734,16 @@ impl StyleEngine {
                 if let Some(c) = resolve_color(val) {
                     // Store as a single zero-offset shadow with only the color set.
                     if style.box_shadow.is_empty() {
-                        style.box_shadow.push(liquide_compositor::scene::BoxShadowSpec {
-                            offset_x: 0.0,
-                            offset_y: 4.0,
-                            blur_radius: 12.0,
-                            spread_radius: 0.0,
-                            color: c,
-                            inset: false,
-                        });
+                        style
+                            .box_shadow
+                            .push(liquide_compositor::scene::BoxShadowSpec {
+                                offset_x: 0.0,
+                                offset_y: 4.0,
+                                blur_radius: 12.0,
+                                spread_radius: 0.0,
+                                color: c,
+                                inset: false,
+                            });
                     } else {
                         for sh in &mut style.box_shadow {
                             sh.color = c;
@@ -727,9 +754,10 @@ impl StyleEngine {
             // titlebar-background (legacy compat — maps to x_custom)
             "titlebar-background" => {
                 if let Some(c) = resolve_color(val) {
-                    style.x_custom.push(("titlebar-background".into(), format!(
-                        "rgba({},{},{},{})", c.r, c.g, c.b, c.a
-                    )));
+                    style.x_custom.push((
+                        "titlebar-background".into(),
+                        format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a),
+                    ));
                 }
             }
 
@@ -1018,12 +1046,16 @@ impl StyleEngine {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     if kw == "none" {
                         style.perspective = Perspective::None;
-                    } else if let Some(px) = kw.strip_suffix("px").and_then(|v| v.parse::<f32>().ok()) {
+                    } else if let Some(px) =
+                        kw.strip_suffix("px").and_then(|v| v.parse::<f32>().ok())
+                    {
                         style.perspective = Perspective::Length(px);
                     }
                 } else {
                     let n = resolve_number(val);
-                    if n > 0.0 { style.perspective = Perspective::Length(n); }
+                    if n > 0.0 {
+                        style.perspective = Perspective::Length(n);
+                    }
                 }
             }
             "perspective-origin" => {
@@ -1133,8 +1165,12 @@ impl StyleEngine {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     style.text_rendering = match kw.as_str() {
                         "optimizeSpeed" | "optimizespeed" => TextRendering::OptimizeSpeed,
-                        "optimizeLegibility" | "optimizelegibility" => TextRendering::OptimizeLegibility,
-                        "geometricPrecision" | "geometricprecision" => TextRendering::GeometricPrecision,
+                        "optimizeLegibility" | "optimizelegibility" => {
+                            TextRendering::OptimizeLegibility
+                        }
+                        "geometricPrecision" | "geometricprecision" => {
+                            TextRendering::GeometricPrecision
+                        }
                         _ => TextRendering::Auto,
                     };
                 }
@@ -1143,7 +1179,9 @@ impl StyleEngine {
                 // Text shadow is handled via the existing compositor TextShadow type
                 // Complex parsing would need full shadow parser; for now handle keyword none
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "none" { style.text_shadow.clear(); }
+                    if kw == "none" {
+                        style.text_shadow.clear();
+                    }
                 }
             }
 
@@ -1217,14 +1255,22 @@ impl StyleEngine {
             }
             "font-feature-settings" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.font_feature_settings = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.font_feature_settings = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
                     style.font_feature_settings = Some(s.clone());
                 }
             }
             "font-variation-settings" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.font_variation_settings = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.font_variation_settings = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
                     style.font_variation_settings = Some(s.clone());
                 }
@@ -1251,7 +1297,13 @@ impl StyleEngine {
                         "auto" => TouchAction::auto(),
                         "manipulation" => TouchAction::manipulation_val(),
                         other => {
-                            let mut ta = TouchAction { pan_x: false, pan_y: false, pinch_zoom: false, manipulation: false, none: false };
+                            let mut ta = TouchAction {
+                                pan_x: false,
+                                pan_y: false,
+                                pinch_zoom: false,
+                                manipulation: false,
+                                none: false,
+                            };
                             for part in other.split_whitespace() {
                                 match part {
                                     "pan-x" => ta.pan_x = true,
@@ -1269,14 +1321,18 @@ impl StyleEngine {
             // ── Caret & accent color ──
             "caret-color" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "auto" { style.caret_color = None; }
+                    if kw == "auto" {
+                        style.caret_color = None;
+                    }
                 } else if let Some(c) = resolve_color(val) {
                     style.caret_color = Some(c);
                 }
             }
             "accent-color" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "auto" { style.accent_color = None; }
+                    if kw == "auto" {
+                        style.accent_color = None;
+                    }
                 } else if let Some(c) = resolve_color(val) {
                     style.accent_color = Some(c);
                 }
@@ -1390,7 +1446,9 @@ impl StyleEngine {
             "column-rule-width" => style.column_rule.width = resolve_number(val),
             "column-rule-style" => style.column_rule.style = resolve_border_style(val),
             "column-rule-color" => {
-                if let Some(c) = resolve_color(val) { style.column_rule.color = c; }
+                if let Some(c) = resolve_color(val) {
+                    style.column_rule.color = c;
+                }
             }
             "column-rule" => {
                 // Shorthand: width style color
@@ -1399,7 +1457,9 @@ impl StyleEngine {
                         if let Ok(w) = part.strip_suffix("px").unwrap_or(part).parse::<f32>() {
                             style.column_rule.width = w;
                         } else {
-                            let bs = resolve_border_style(&liquide_theme_css::value::PropertyValue::Keyword(part.to_string()));
+                            let bs = resolve_border_style(
+                                &liquide_theme_css::value::PropertyValue::Keyword(part.to_string()),
+                            );
                             if bs != BorderLineStyle::None {
                                 style.column_rule.style = bs;
                             }
@@ -1498,7 +1558,9 @@ impl StyleEngine {
             "clip" => {
                 // Legacy clip: rect(...)
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "auto" { style.clip_path = None; }
+                    if kw == "auto" {
+                        style.clip_path = None;
+                    }
                 }
             }
 
@@ -1555,14 +1617,34 @@ impl StyleEngine {
             "border-inline-end-width" => style.border_inline_end_width = resolve_number(val),
             "border-block-start-width" => style.border_block_start_width = resolve_number(val),
             "border-block-end-width" => style.border_block_end_width = resolve_number(val),
-            "border-inline-start-style" => style.border_inline_start_style = resolve_border_style(val),
+            "border-inline-start-style" => {
+                style.border_inline_start_style = resolve_border_style(val)
+            }
             "border-inline-end-style" => style.border_inline_end_style = resolve_border_style(val),
-            "border-block-start-style" => style.border_block_start_style = resolve_border_style(val),
+            "border-block-start-style" => {
+                style.border_block_start_style = resolve_border_style(val)
+            }
             "border-block-end-style" => style.border_block_end_style = resolve_border_style(val),
-            "border-inline-start-color" => { if let Some(c) = resolve_color(val) { style.border_inline_start_color = c; } }
-            "border-inline-end-color" => { if let Some(c) = resolve_color(val) { style.border_inline_end_color = c; } }
-            "border-block-start-color" => { if let Some(c) = resolve_color(val) { style.border_block_start_color = c; } }
-            "border-block-end-color" => { if let Some(c) = resolve_color(val) { style.border_block_end_color = c; } }
+            "border-inline-start-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_inline_start_color = c;
+                }
+            }
+            "border-inline-end-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_inline_end_color = c;
+                }
+            }
+            "border-block-start-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_block_start_color = c;
+                }
+            }
+            "border-block-end-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.border_block_end_color = c;
+                }
+            }
             "border-inline-width" => {
                 let w = resolve_number(val);
                 style.border_inline_start_width = w;
@@ -1682,13 +1764,15 @@ impl StyleEngine {
                         style.grid_template_areas.clear();
                     } else {
                         // Parse quoted strings like '"header header" "main sidebar"'
-                        style.grid_template_areas = kw.split('"')
+                        style.grid_template_areas = kw
+                            .split('"')
                             .filter(|s| !s.trim().is_empty())
                             .map(|s| s.trim().to_string())
                             .collect();
                     }
                 } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
-                    style.grid_template_areas = s.split('"')
+                    style.grid_template_areas = s
+                        .split('"')
                         .filter(|seg| !seg.trim().is_empty())
                         .map(|seg| seg.trim().to_string())
                         .collect();
@@ -1698,7 +1782,11 @@ impl StyleEngine {
             // ── Content & counters ──
             "content" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.content = if kw == "normal" || kw == "none" { None } else { Some(kw.clone()) };
+                    style.content = if kw == "normal" || kw == "none" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
                     style.content = Some(s.clone());
                 }
@@ -1720,7 +1808,11 @@ impl StyleEngine {
             }
             "quotes" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.quotes = if kw == "auto" || kw == "none" { None } else { Some(kw.clone()) };
+                    style.quotes = if kw == "auto" || kw == "none" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
                     style.quotes = Some(s.clone());
                 }
@@ -1741,9 +1833,15 @@ impl StyleEngine {
             // ── Line clamp ──
             "-webkit-line-clamp" | "line-clamp" => {
                 if let liquide_theme_css::value::PropertyValue::Number(n) = val {
-                    style.line_clamp = if *n <= 0.0 { LineClamp::None } else { LineClamp::Count(*n as u32) };
+                    style.line_clamp = if *n <= 0.0 {
+                        LineClamp::None
+                    } else {
+                        LineClamp::Count(*n as u32)
+                    };
                 } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "none" { style.line_clamp = LineClamp::None; }
+                    if kw == "none" {
+                        style.line_clamp = LineClamp::None;
+                    }
                 }
             }
 
@@ -1754,8 +1852,15 @@ impl StyleEngine {
                     o.width = w;
                 } else {
                     style.outline = Some(liquide_compositor::scene::OutlineSpec {
-                        width: w, style: liquide_compositor::scene::OutlineStyle::Solid,
-                        color: Color { r: 0, g: 0, b: 0, a: 255 }, offset: 0.0,
+                        width: w,
+                        style: liquide_compositor::scene::OutlineStyle::Solid,
+                        color: Color {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: 255,
+                        },
+                        offset: 0.0,
                     });
                 }
             }
@@ -1776,8 +1881,15 @@ impl StyleEngine {
                         o.style = os;
                     } else {
                         style.outline = Some(liquide_compositor::scene::OutlineSpec {
-                            width: 0.0, style: os,
-                            color: Color { r: 0, g: 0, b: 0, a: 255 }, offset: 0.0,
+                            width: 0.0,
+                            style: os,
+                            color: Color {
+                                r: 0,
+                                g: 0,
+                                b: 0,
+                                a: 255,
+                            },
+                            offset: 0.0,
                         });
                     }
                 }
@@ -1788,8 +1900,10 @@ impl StyleEngine {
                         o.color = c;
                     } else {
                         style.outline = Some(liquide_compositor::scene::OutlineSpec {
-                            width: 0.0, style: liquide_compositor::scene::OutlineStyle::Solid,
-                            color: c, offset: 0.0,
+                            width: 0.0,
+                            style: liquide_compositor::scene::OutlineStyle::Solid,
+                            color: c,
+                            offset: 0.0,
                         });
                     }
                 }
@@ -1800,8 +1914,15 @@ impl StyleEngine {
                     o.offset = off;
                 } else {
                     style.outline = Some(liquide_compositor::scene::OutlineSpec {
-                        width: 0.0, style: liquide_compositor::scene::OutlineStyle::None,
-                        color: Color { r: 0, g: 0, b: 0, a: 255 }, offset: off,
+                        width: 0.0,
+                        style: liquide_compositor::scene::OutlineStyle::None,
+                        color: Color {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: 255,
+                        },
+                        offset: off,
                     });
                 }
             }
@@ -1941,7 +2062,11 @@ impl StyleEngine {
             }
             "offset-position" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.offset_position = if kw == "auto" || kw == "normal" { None } else { Some(kw.clone()) };
+                    style.offset_position = if kw == "auto" || kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
 
@@ -2000,7 +2125,9 @@ impl StyleEngine {
                         "common-ligatures" => FontVariantLigatures::CommonLigatures,
                         "no-common-ligatures" => FontVariantLigatures::NoCommonLigatures,
                         "discretionary-ligatures" => FontVariantLigatures::DiscretionaryLigatures,
-                        "no-discretionary-ligatures" => FontVariantLigatures::NoDiscretionaryLigatures,
+                        "no-discretionary-ligatures" => {
+                            FontVariantLigatures::NoDiscretionaryLigatures
+                        }
                         "historical-ligatures" => FontVariantLigatures::HistoricalLigatures,
                         "no-historical-ligatures" => FontVariantLigatures::NoHistoricalLigatures,
                         "contextual" => FontVariantLigatures::Contextual,
@@ -2054,14 +2181,22 @@ impl StyleEngine {
             }
             "font-language-override" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.font_language_override = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.font_language_override = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
                     style.font_language_override = Some(s.clone());
                 }
             }
             "font-palette" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.font_palette = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.font_palette = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
 
@@ -2133,7 +2268,11 @@ impl StyleEngine {
             }
             "text-box-edge" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.text_box_edge = if kw == "auto" || kw == "leading" { None } else { Some(kw.clone()) };
+                    style.text_box_edge = if kw == "auto" || kw == "leading" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "text-size-adjust" | "-webkit-text-size-adjust" => {
@@ -2143,12 +2282,20 @@ impl StyleEngine {
             }
             "text-spacing-trim" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.text_spacing_trim = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.text_spacing_trim = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "text-autospace" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.text_autospace = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.text_autospace = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "white-space-collapse" => {
@@ -2182,7 +2329,8 @@ impl StyleEngine {
             }
             "hyphenate-limit-chars" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.hyphenate_limit_chars = if kw == "auto" { None } else { Some(kw.clone()) };
+                    style.hyphenate_limit_chars =
+                        if kw == "auto" { None } else { Some(kw.clone()) };
                 }
             }
             "hanging-punctuation" => {
@@ -2192,7 +2340,11 @@ impl StyleEngine {
             }
             "initial-letter" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.initial_letter = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.initial_letter = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
 
@@ -2256,8 +2408,12 @@ impl StyleEngine {
             }
             "contain-intrinsic-width" => style.contain_intrinsic_width = resolve_dimension(val),
             "contain-intrinsic-height" => style.contain_intrinsic_height = resolve_dimension(val),
-            "contain-intrinsic-inline-size" => style.contain_intrinsic_width = resolve_dimension(val),
-            "contain-intrinsic-block-size" => style.contain_intrinsic_height = resolve_dimension(val),
+            "contain-intrinsic-inline-size" => {
+                style.contain_intrinsic_width = resolve_dimension(val)
+            }
+            "contain-intrinsic-block-size" => {
+                style.contain_intrinsic_height = resolve_dimension(val)
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // Shape (CSS spec coverage)
@@ -2378,7 +2534,11 @@ impl StyleEngine {
                 if let Some(c) = resolve_color(val) {
                     style.fill = Some(format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a));
                 } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.fill = if kw == "none" { Some("none".into()) } else { Some(kw.clone()) };
+                    style.fill = if kw == "none" {
+                        Some("none".into())
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "fill-opacity" => style.fill_opacity = resolve_number(val),
@@ -2394,7 +2554,11 @@ impl StyleEngine {
                 if let Some(c) = resolve_color(val) {
                     style.stroke = Some(format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a));
                 } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.stroke = if kw == "none" { Some("none".into()) } else { Some(kw.clone()) };
+                    style.stroke = if kw == "none" {
+                        Some("none".into())
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "stroke-width" => style.stroke_width = resolve_dimension(val),
@@ -2442,10 +2606,22 @@ impl StyleEngine {
                     };
                 }
             }
-            "flood-color" => { if let Some(c) = resolve_color(val) { style.flood_color = c; } }
+            "flood-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.flood_color = c;
+                }
+            }
             "flood-opacity" => style.flood_opacity = resolve_number(val),
-            "lighting-color" => { if let Some(c) = resolve_color(val) { style.lighting_color = c; } }
-            "stop-color" => { if let Some(c) = resolve_color(val) { style.stop_color = c; } }
+            "lighting-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.lighting_color = c;
+                }
+            }
+            "stop-color" => {
+                if let Some(c) = resolve_color(val) {
+                    style.stop_color = c;
+                }
+            }
             "stop-opacity" => style.stop_opacity = resolve_number(val),
             "dominant-baseline" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -2495,7 +2671,9 @@ impl StyleEngine {
                     style.shape_rendering = match kw.as_str() {
                         "optimizeSpeed" | "optimizespeed" => ShapeRendering::OptimizeSpeed,
                         "crispEdges" | "crispedges" => ShapeRendering::CrispEdges,
-                        "geometricPrecision" | "geometricprecision" => ShapeRendering::GeometricPrecision,
+                        "geometricPrecision" | "geometricprecision" => {
+                            ShapeRendering::GeometricPrecision
+                        }
                         _ => ShapeRendering::Auto,
                     };
                 }
@@ -2609,7 +2787,8 @@ impl StyleEngine {
             }
             "view-transition-class" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.view_transition_class = if kw == "none" { None } else { Some(kw.clone()) };
+                    style.view_transition_class =
+                        if kw == "none" { None } else { Some(kw.clone()) };
                 }
             }
 
@@ -2659,8 +2838,11 @@ impl StyleEngine {
                 if let liquide_theme_css::value::PropertyValue::Number(n) = val {
                     style.zoom = *n;
                 } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "normal" { style.zoom = 1.0; }
-                    else if let Ok(n) = kw.replace('%', "").parse::<f32>() { style.zoom = n / 100.0; }
+                    if kw == "normal" {
+                        style.zoom = 1.0;
+                    } else if let Ok(n) = kw.replace('%', "").parse::<f32>() {
+                        style.zoom = n / 100.0;
+                    }
                 }
             }
             "overlay" => {
@@ -2675,17 +2857,29 @@ impl StyleEngine {
             }
             "math-style" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.math_style = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.math_style = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "reading-flow" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.reading_flow = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.reading_flow = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "field-sizing" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.field_sizing = if kw == "fixed" { None } else { Some(kw.clone()) };
+                    style.field_sizing = if kw == "fixed" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
 
@@ -2777,12 +2971,18 @@ impl StyleEngine {
 
             let inner = &rest[..end];
             let (var_name, fallback) = if let Some(comma_pos) = Self::find_top_level_comma(inner) {
-                (inner[..comma_pos].trim(), Some(inner[comma_pos + 1..].trim()))
+                (
+                    inner[..comma_pos].trim(),
+                    Some(inner[comma_pos + 1..].trim()),
+                )
             } else {
                 (inner.trim(), None)
             };
 
-            if let Some(resolved) = scope_vars.get(var_name).or_else(|| self.variables.get(var_name)) {
+            if let Some(resolved) = scope_vars
+                .get(var_name)
+                .or_else(|| self.variables.get(var_name))
+            {
                 let replacement = match resolved {
                     liquide_theme_css::value::PropertyValue::Color(c) => c.to_hex(),
                     liquide_theme_css::value::PropertyValue::Length(lu) => {

@@ -243,7 +243,12 @@ impl StyleSheet {
     }
 
     /// Add a style rule to a named layer.
-    pub fn add_layer_rule(&mut self, layer_name: &str, selector: Selector, properties: PropertySet) {
+    pub fn add_layer_rule(
+        &mut self,
+        layer_name: &str,
+        selector: Selector,
+        properties: PropertySet,
+    ) {
         self.add_layer(layer_name);
         let mut rule = StyleRule::new(selector, properties);
         rule.layer = Some(layer_name.to_string());

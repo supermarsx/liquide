@@ -39,3 +39,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
 anyhow.workspace = true
+[dev-dependencies]
+liquide-compositor = { path = "../liquide-compositor" }
+liquide-shell = { path = "../liquide-shell" }
+liquide-devtools = { path = "../liquide-devtools" }
+liquide-input = { path = "../liquide-input" }
+liquide-platform = { path = "../liquide-platform" }
+liquide-dom = { path = "../liquide-dom" }

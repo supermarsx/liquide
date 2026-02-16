@@ -3,9 +3,9 @@
 //! Manages a collection of loaded font faces indexed by family name and
 //! weight. Supports loading from file paths and from embedded byte slices.
 
+use ab_glyph::FontArc;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use ab_glyph::FontArc;
 use tracing::{debug, info};
 
 use crate::{FontRasterizerError, Result};

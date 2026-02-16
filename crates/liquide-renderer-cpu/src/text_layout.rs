@@ -83,7 +83,11 @@ impl TextLayoutEngine {
                 width: 0.0,
                 height: 0.0,
                 font_size,
-                line_height: if line_height > 0.0 { font_size * line_height } else { font_size * 1.2 },
+                line_height: if line_height > 0.0 {
+                    font_size * line_height
+                } else {
+                    font_size * 1.2
+                },
             };
         }
 
@@ -108,13 +112,8 @@ impl TextLayoutEngine {
         let letter_spacing = 0.0_f32;
 
         // Layout lines with word wrapping.
-        let wrapped_lines = shaper.shape_wrapped(
-            shaper_face,
-            text,
-            font_size,
-            letter_spacing,
-            max_width,
-        );
+        let wrapped_lines =
+            shaper.shape_wrapped(shaper_face, text, font_size, letter_spacing, max_width);
 
         let effective_line_height = if line_height > 0.0 {
             font_size * line_height
@@ -242,15 +241,8 @@ mod tests {
     fn test_layout_paragraph_empty() {
         let db = FontDatabase::new();
         let engine = TextLayoutEngine::new(Arc::new(Mutex::new(db)));
-        let result = engine.layout_paragraph(
-            "",
-            "Manrope",
-            14.0,
-            400,
-            200.0,
-            TextAlignment::Start,
-            1.4,
-        );
+        let result =
+            engine.layout_paragraph("", "Manrope", 14.0, 400, 200.0, TextAlignment::Start, 1.4);
         assert!(result.is_empty());
     }
 

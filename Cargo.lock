@@ -2896,6 +2896,7 @@ dependencies = [
  "liquide-css",
  "liquide-cursor",
  "liquide-devtools",
+ "liquide-dom",
  "liquide-encoder",
  "liquide-font-rasterizer",
  "liquide-input",

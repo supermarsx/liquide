@@ -169,7 +169,10 @@ impl<'a> TextShaper<'a> {
                 let line_width = if current_line.is_empty() {
                     0.0
                 } else {
-                    current_line.last().map(|g| g.x_offset + g.x_advance - line_start_x).unwrap_or(0.0)
+                    current_line
+                        .last()
+                        .map(|g| g.x_offset + g.x_advance - line_start_x)
+                        .unwrap_or(0.0)
                 };
                 lines.push((std::mem::take(&mut current_line), line_width));
                 line_start_x = glyph.x_offset + glyph.x_advance;
@@ -191,7 +194,10 @@ impl<'a> TextShaper<'a> {
                     let line_width = if current_line.is_empty() {
                         0.0
                     } else {
-                        current_line.last().map(|g| g.x_offset + g.x_advance - line_start_x).unwrap_or(0.0)
+                        current_line
+                            .last()
+                            .map(|g| g.x_offset + g.x_advance - line_start_x)
+                            .unwrap_or(0.0)
                     };
                     lines.push((std::mem::take(&mut current_line), line_width));
 
@@ -206,7 +212,10 @@ impl<'a> TextShaper<'a> {
                     let line_width = if current_line.is_empty() {
                         0.0
                     } else {
-                        current_line.last().map(|g| g.x_offset + g.x_advance - line_start_x).unwrap_or(0.0)
+                        current_line
+                            .last()
+                            .map(|g| g.x_offset + g.x_advance - line_start_x)
+                            .unwrap_or(0.0)
                     };
                     lines.push((std::mem::take(&mut current_line), line_width));
                     line_start_x = glyph.x_offset;
@@ -218,7 +227,10 @@ impl<'a> TextShaper<'a> {
 
         // Flush remaining
         if !current_line.is_empty() {
-            let line_width = current_line.last().map(|g| g.x_offset + g.x_advance - line_start_x).unwrap_or(0.0);
+            let line_width = current_line
+                .last()
+                .map(|g| g.x_offset + g.x_advance - line_start_x)
+                .unwrap_or(0.0);
             lines.push((current_line, line_width));
         }
 

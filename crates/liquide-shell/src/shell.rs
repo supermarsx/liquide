@@ -35,9 +35,9 @@ use crate::window::{Window, WindowFlags, WindowId, WindowState};
 use crate::workspace::WorkspaceManager;
 use crate::{Result, ShellError};
 use liquide_dock::Dock;
+use liquide_dom::Document;
 use liquide_hit_test::event::{DomEventKind, MouseButton as DomMouseButton};
 use liquide_hit_test::{EventDispatcher, HitTestEngine};
-use liquide_dom::Document;
 use liquide_layout::tree::LayoutTree;
 use liquide_style_engine::StyleMap;
 

@@ -1,13 +1,13 @@
 //! Block layout — CSS block formatting context.
 
 use liquide_dom::{Document, NodeId};
+use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{BoxSizing, Display, Position};
 use liquide_style_engine::dimension::Dimension;
-use liquide_style_engine::StyleMap;
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
-use crate::{TextMeasurer, ImageMeasurer};
+use crate::{ImageMeasurer, TextMeasurer};
 
 /// Perform block layout for a node and its children.
 ///
@@ -34,16 +34,48 @@ pub fn layout_block(
 
     // Resolve own dimensions
     let font_size = style.font_size;
-    let explicit_width = style
-        .width
-        .resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h);
+    let explicit_width = style.width.resolve_px(
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
     let width = explicit_width.unwrap_or(container_width);
 
     // Resolve padding
-    let pad_top = resolve_dim(&style.padding.top, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_right = resolve_dim(&style.padding.right, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_bottom = resolve_dim(&style.padding.bottom, width, base_font_size, font_size, viewport_w, viewport_h);
-    let pad_left = resolve_dim(&style.padding.left, width, base_font_size, font_size, viewport_w, viewport_h);
+    let pad_top = resolve_dim(
+        &style.padding.top,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_right = resolve_dim(
+        &style.padding.right,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_bottom = resolve_dim(
+        &style.padding.bottom,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_left = resolve_dim(
+        &style.padding.left,
+        width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     let border_top = style.border_width.top;
     let border_right = style.border_width.right;
@@ -58,26 +90,68 @@ pub fn layout_block(
         (Some(w), BoxSizing::BorderBox) => {
             (w - pad_left - pad_right - border_left - border_right).max(0.0)
         }
-        (None, _) => {
-            (width - pad_left - pad_right - border_left - border_right).max(0.0)
-        }
+        (None, _) => (width - pad_left - pad_right - border_left - border_right).max(0.0),
     };
 
     // Apply min-width / max-width constraints
     let content_width = {
-        let min_w = style.min_width.resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h).unwrap_or(0.0);
-        let max_w = style.max_width.resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h).unwrap_or(f32::INFINITY);
+        let min_w = style
+            .min_width
+            .resolve_px(
+                container_width,
+                base_font_size,
+                font_size,
+                viewport_w,
+                viewport_h,
+            )
+            .unwrap_or(0.0);
+        let max_w = style
+            .max_width
+            .resolve_px(
+                container_width,
+                base_font_size,
+                font_size,
+                viewport_w,
+                viewport_h,
+            )
+            .unwrap_or(f32::INFINITY);
         content_width.max(min_w).min(max_w)
     };
 
     // Resolve vertical margins (top/bottom)
-    let mar_top = resolve_dim(&style.margin.top, container_width, base_font_size, font_size, viewport_w, viewport_h);
-    let mar_bottom = resolve_dim(&style.margin.bottom, container_width, base_font_size, font_size, viewport_w, viewport_h);
+    let mar_top = resolve_dim(
+        &style.margin.top,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let mar_bottom = resolve_dim(
+        &style.margin.bottom,
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
 
     // Resolve horizontal margins with auto-margin centering support
     let (mar_left, mar_right) = {
-        let ml = style.margin.left.resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h);
-        let mr = style.margin.right.resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h);
+        let ml = style.margin.left.resolve_px(
+            container_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        );
+        let mr = style.margin.right.resolve_px(
+            container_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        );
         let ml_auto = matches!(style.margin.left, Dimension::Auto);
         let mr_auto = matches!(style.margin.right, Dimension::Auto);
         let outer = content_width + pad_left + pad_right + border_left + border_right;
@@ -143,7 +217,12 @@ pub fn layout_block(
                         content_width,
                         metrics.width,
                     );
-                    let text_box = tree.alloc(child_id, BoxType::Text { line_boxes: Vec::new() });
+                    let text_box = tree.alloc(
+                        child_id,
+                        BoxType::Text {
+                            line_boxes: Vec::new(),
+                        },
+                    );
                     if let Some(tb) = tree.get_mut(text_box) {
                         tb.content_rect = Rect::new(text_x, child_y, metrics.width, metrics.height);
                         tb.padding_rect = tb.content_rect;
@@ -162,12 +241,20 @@ pub fn layout_block(
 
         // Resolve child top/bottom margins for collapse calculation
         let child_mar_top = resolve_dim(
-            &child_style.margin.top, container_width, base_font_size,
-            child_style.font_size, viewport_w, viewport_h,
+            &child_style.margin.top,
+            container_width,
+            base_font_size,
+            child_style.font_size,
+            viewport_w,
+            viewport_h,
         );
         let child_mar_bottom = resolve_dim(
-            &child_style.margin.bottom, container_width, base_font_size,
-            child_style.font_size, viewport_w, viewport_h,
+            &child_style.margin.bottom,
+            container_width,
+            base_font_size,
+            child_style.font_size,
+            viewport_w,
+            viewport_h,
         );
 
         // Collapse adjacent margins: instead of prev_margin_bottom + child_margin_top,
@@ -182,42 +269,98 @@ pub fn layout_block(
         // Recurse for element children — pass 0.0 as offset, we position after
         let child_box = if child_style.is_flex_container() {
             crate::flex::layout_flex(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, child_y,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                child_y,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else if child_style.is_grid_container() {
             crate::grid::layout_grid(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, child_y,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                child_y,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else if child_style.is_table() {
             crate::table::layout_table(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, child_y,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                child_y,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else if child_style.is_multicol() {
             crate::multicol::layout_multicol(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, child_y,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                child_y,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else if matches!(child_style.display, Display::Inline) {
             // Inline elements get proper inline formatting context
             crate::inline::layout_inline(
-                doc, child_id, styles, tree, text_measurer,
-                content_width, 0.0, child_y,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                content_width,
+                0.0,
+                child_y,
             )
         } else if matches!(child_style.display, Display::InlineBlock) {
             // Inline-block: lay out as block internally, but participate
             // in inline flow (simplified: treat as block for now with
             // shrink-to-fit width)
             layout_block(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, child_y,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                child_y,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         } else if matches!(child_style.display, Display::Contents) {
             // display: contents — skip the element, layout its children
@@ -226,9 +369,19 @@ pub fn layout_block(
             let mut contents_last_box: Option<LayoutBoxId> = None;
             for &gc_id in &grandchildren {
                 let gc_box = layout_block(
-                    doc, gc_id, styles, tree, text_measurer, image_measurer,
-                    content_width, container_height, 0.0, child_y,
-                    viewport_w, viewport_h, base_font_size,
+                    doc,
+                    gc_id,
+                    styles,
+                    tree,
+                    text_measurer,
+                    image_measurer,
+                    content_width,
+                    container_height,
+                    0.0,
+                    child_y,
+                    viewport_w,
+                    viewport_h,
+                    base_font_size,
                 );
                 tree.add_child(box_id, gc_box);
                 if let Some(cb) = tree.get(gc_box) {
@@ -245,9 +398,19 @@ pub fn layout_block(
             tree.alloc(child_id, BoxType::Block)
         } else {
             layout_block(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, 0.0, child_y,
-                viewport_w, viewport_h, base_font_size,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                child_y,
+                viewport_w,
+                viewport_h,
+                base_font_size,
             )
         };
 
@@ -262,9 +425,13 @@ pub fn layout_block(
     }
 
     // Content height: explicit or sum of children
-    let explicit_height = style
-        .height
-        .resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h);
+    let explicit_height = style.height.resolve_px(
+        container_height,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
     let content_height = match (explicit_height, style.box_sizing) {
         (Some(h), BoxSizing::ContentBox) => h,
         (Some(h), BoxSizing::BorderBox) => {
@@ -275,8 +442,26 @@ pub fn layout_block(
 
     // Apply min-height / max-height constraints
     let content_height = {
-        let min_h = style.min_height.resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h).unwrap_or(0.0);
-        let max_h = style.max_height.resolve_px(container_height, base_font_size, font_size, viewport_w, viewport_h).unwrap_or(f32::INFINITY);
+        let min_h = style
+            .min_height
+            .resolve_px(
+                container_height,
+                base_font_size,
+                font_size,
+                viewport_w,
+                viewport_h,
+            )
+            .unwrap_or(0.0);
+        let max_h = style
+            .max_height
+            .resolve_px(
+                container_height,
+                base_font_size,
+                font_size,
+                viewport_w,
+                viewport_h,
+            )
+            .unwrap_or(f32::INFINITY);
         content_height.max(min_h).min(max_h)
     };
 

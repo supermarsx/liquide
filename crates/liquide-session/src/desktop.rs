@@ -873,10 +873,9 @@ impl DesktopCompositor {
                         // Forward to devtools element picker.
                         if self.dev_mode {
                             if let Some(ref mut devtools) = self.devtools {
-                                if let (Some(hit_test), Some(layout)) = (
-                                    self.shell.hit_test_engine(),
-                                    self.shell.layout_tree(),
-                                ) {
+                                if let (Some(hit_test), Some(layout)) =
+                                    (self.shell.hit_test_engine(), self.shell.layout_tree())
+                                {
                                     let doc = self.shell.document();
                                     if devtools.on_mouse_move(new_x, new_y, hit_test, doc, layout) {
                                         needs_redraw = true;

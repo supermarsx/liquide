@@ -100,7 +100,9 @@ impl ThemeParser {
             }
             CssRule::Keyframes(keyframes) => {
                 let name = match &keyframes.name {
-                    lightningcss::rules::keyframes::KeyframesName::Ident(ident) => ident.0.to_string(),
+                    lightningcss::rules::keyframes::KeyframesName::Ident(ident) => {
+                        ident.0.to_string()
+                    }
                     lightningcss::rules::keyframes::KeyframesName::Custom(s) => s.to_string(),
                 };
                 let mut frames = Vec::new();
@@ -122,8 +124,7 @@ impl ThemeParser {
                             }
                         }
                     }
-                    let declarations =
-                        self.convert_declarations_to_pairs(&kf.declarations)?;
+                    let declarations = self.convert_declarations_to_pairs(&kf.declarations)?;
                     frames.push(Keyframe {
                         selectors,
                         declarations,
@@ -149,7 +150,8 @@ impl ThemeParser {
 
                 let mut sources = Vec::new();
                 for prop in &font_face.properties {
-                    if let lightningcss::rules::font_face::FontFaceProperty::Source(src_list) = prop {
+                    if let lightningcss::rules::font_face::FontFaceProperty::Source(src_list) = prop
+                    {
                         for src in src_list.iter() {
                             match src {
                                 lightningcss::rules::font_face::Source::Url(url_src) => {
@@ -191,13 +193,16 @@ impl ThemeParser {
                             style = Some(self.to_css_string(fs));
                         }
                         lightningcss::rules::font_face::FontFaceProperty::UnicodeRange(ranges) => {
-                            let range_strs: Vec<String> = ranges.iter().map(|r| {
-                                if r.start == r.end {
-                                    format!("U+{:X}", r.start)
-                                } else {
-                                    format!("U+{:X}-{:X}", r.start, r.end)
-                                }
-                            }).collect();
+                            let range_strs: Vec<String> = ranges
+                                .iter()
+                                .map(|r| {
+                                    if r.start == r.end {
+                                        format!("U+{:X}", r.start)
+                                    } else {
+                                        format!("U+{:X}-{:X}", r.start, r.end)
+                                    }
+                                })
+                                .collect();
                             unicode_range = Some(range_strs.join(", "));
                         }
                         _ => {}
@@ -225,7 +230,9 @@ impl ThemeParser {
             }
             CssRule::LayerBlock(layer_block) => {
                 // @layer name { ... } — rules inside a named cascade layer
-                let layer_name = layer_block.name.as_ref()
+                let layer_name = layer_block
+                    .name
+                    .as_ref()
                     .map(|n| self.to_css_string(n))
                     .unwrap_or_default();
                 if !layer_name.is_empty() {
@@ -238,9 +245,7 @@ impl ThemeParser {
             CssRule::Container(container) => {
                 // @container (condition) { ... } — container queries
                 let condition = self.to_css_string(&container.condition);
-                let name = container.name.as_ref().map(|n| {
-                    self.to_css_string(n)
-                });
+                let name = container.name.as_ref().map(|n| self.to_css_string(n));
                 let mut container_rules = Vec::new();
                 for nested_rule in &container.rules.0 {
                     if let CssRule::Style(style_rule) = nested_rule {
@@ -248,7 +253,8 @@ impl ThemeParser {
                             let selector_str = self.selector_to_string(selector)?;
                             let our_selector = Selector::parse(&selector_str)?;
                             let properties = self.convert_declarations(&style_rule.declarations)?;
-                            container_rules.push(crate::stylesheet::StyleRule::new(our_selector, properties));
+                            container_rules
+                                .push(crate::stylesheet::StyleRule::new(our_selector, properties));
                         }
                     }
                 }
@@ -268,9 +274,10 @@ impl ThemeParser {
                     }
                 };
                 let inherits = property.inherits;
-                let initial_value = property.initial_value.as_ref().map(|v| {
-                    self.to_css_string(v)
-                });
+                let initial_value = property
+                    .initial_value
+                    .as_ref()
+                    .map(|v| self.to_css_string(v));
                 stylesheet.add_registered_property(crate::stylesheet::RegisteredProperty {
                     name,
                     syntax,
@@ -299,7 +306,11 @@ impl ThemeParser {
                     let our_selector = Selector::parse(&selector_str)?;
                     let properties = self.convert_declarations(&style_rule.declarations)?;
                     if let Some(condition) = media_condition {
-                        stylesheet.add_conditional_rule(our_selector, properties, condition.to_string());
+                        stylesheet.add_conditional_rule(
+                            our_selector,
+                            properties,
+                            condition.to_string(),
+                        );
                     } else {
                         stylesheet.add_rule(our_selector, properties);
                     }
@@ -817,7 +828,11 @@ impl ThemeParser {
                 let trimmed = css_str.trim();
                 if let Ok(n) = trimmed.parse::<f32>() {
                     // Only treat as unitless number if it has no unit suffix
-                    if !trimmed.ends_with("px") && !trimmed.ends_with("em") && !trimmed.ends_with("rem") && !trimmed.ends_with('%') {
+                    if !trimmed.ends_with("px")
+                        && !trimmed.ends_with("em")
+                        && !trimmed.ends_with("rem")
+                        && !trimmed.ends_with('%')
+                    {
                         properties.insert("line-height".into(), PropertyValue::Number(n));
                     } else if let Some(v) = self.parse_length_value(&css_str) {
                         properties.insert("line-height".into(), v);
@@ -839,8 +854,15 @@ impl ThemeParser {
                     let offset_y = self.length_to_px(&self.to_css_string(&shadow.y_offset));
                     let blur = self.length_to_px(&self.to_css_string(&shadow.blur));
                     let spread = self.length_to_px(&self.to_css_string(&shadow.spread));
-                    let color = self.convert_color(&shadow.color)
-                        .and_then(|v| if let PropertyValue::Color(c) = v { Some(c) } else { None })
+                    let color = self
+                        .convert_color(&shadow.color)
+                        .and_then(|v| {
+                            if let PropertyValue::Color(c) = v {
+                                Some(c)
+                            } else {
+                                None
+                            }
+                        })
                         .unwrap_or(Color::new(0, 0, 0, 255));
                     shadow_values.push(crate::value::BoxShadow {
                         offset_x,
@@ -851,9 +873,18 @@ impl ThemeParser {
                         inset: shadow.inset,
                     });
                     // Also set individual shadow properties for easy querying
-                    properties.insert("shadow-offset-x".into(), PropertyValue::Length(LengthUnit::Px(offset_x)));
-                    properties.insert("shadow-offset-y".into(), PropertyValue::Length(LengthUnit::Px(offset_y)));
-                    properties.insert("shadow-blur".into(), PropertyValue::Length(LengthUnit::Px(blur)));
+                    properties.insert(
+                        "shadow-offset-x".into(),
+                        PropertyValue::Length(LengthUnit::Px(offset_x)),
+                    );
+                    properties.insert(
+                        "shadow-offset-y".into(),
+                        PropertyValue::Length(LengthUnit::Px(offset_y)),
+                    );
+                    properties.insert(
+                        "shadow-blur".into(),
+                        PropertyValue::Length(LengthUnit::Px(blur)),
+                    );
                     properties.insert("shadow-color".into(), PropertyValue::Color(color));
                     properties.insert("box-shadow-color".into(), PropertyValue::Color(color));
                 }
@@ -1075,9 +1106,18 @@ impl ThemeParser {
             }
             Property::BorderStyle(bs) => {
                 properties.insert("border-top-style".into(), self.convert_line_style(&bs.top));
-                properties.insert("border-right-style".into(), self.convert_line_style(&bs.right));
-                properties.insert("border-bottom-style".into(), self.convert_line_style(&bs.bottom));
-                properties.insert("border-left-style".into(), self.convert_line_style(&bs.left));
+                properties.insert(
+                    "border-right-style".into(),
+                    self.convert_line_style(&bs.right),
+                );
+                properties.insert(
+                    "border-bottom-style".into(),
+                    self.convert_line_style(&bs.bottom),
+                );
+                properties.insert(
+                    "border-left-style".into(),
+                    self.convert_line_style(&bs.left),
+                );
                 properties.insert("border-style".into(), self.convert_line_style(&bs.top));
             }
 
@@ -1148,7 +1188,10 @@ impl ThemeParser {
             // ── Grid ────────────────────────────────────────────────────
             Property::GridTemplateColumns(tracks) => {
                 let css_str = self.to_css_string(tracks);
-                properties.insert("grid-template-columns".into(), PropertyValue::Keyword(css_str));
+                properties.insert(
+                    "grid-template-columns".into(),
+                    PropertyValue::Keyword(css_str),
+                );
             }
             Property::GridTemplateRows(tracks) => {
                 let css_str = self.to_css_string(tracks);
@@ -1349,31 +1392,66 @@ impl ThemeParser {
     fn parse_length_value(&self, s: &str) -> Option<PropertyValue> {
         let s = s.trim();
         if let Some(v) = s.strip_suffix("px") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Px(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Px(n)))
         } else if let Some(v) = s.strip_suffix("rem") {
             // Must check rem before em to avoid false match
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Rem(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Rem(n)))
         } else if let Some(v) = s.strip_suffix("em") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Em(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Em(n)))
         } else if let Some(v) = s.strip_suffix("vmin") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Vmin(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Vmin(n)))
         } else if let Some(v) = s.strip_suffix("vmax") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Vmax(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Vmax(n)))
         } else if let Some(v) = s.strip_suffix("vw") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Vw(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Vw(n)))
         } else if let Some(v) = s.strip_suffix("vh") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Vh(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Vh(n)))
         } else if let Some(v) = s.strip_suffix("ch") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Ch(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Ch(n)))
         } else if let Some(v) = s.strip_suffix("ex") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Ex(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Ex(n)))
         } else if let Some(v) = s.strip_suffix("pt") {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Pt(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Pt(n)))
         } else if let Some(v) = s.strip_suffix('%') {
-            v.trim().parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Percent(n)))
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Percent(n)))
         } else {
             // Try as plain number → pixels
-            s.parse::<f32>().ok().map(|n| PropertyValue::Length(LengthUnit::Px(n)))
+            s.parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Px(n)))
         }
     }
 
@@ -1440,12 +1518,18 @@ impl ThemeParser {
         }
         if let Some(inner) = Self::strip_function(s, "min") {
             let args = Self::split_function_args(inner);
-            let exprs: Option<Vec<_>> = args.iter().map(|a| self.parse_calc_atom(a.trim())).collect();
+            let exprs: Option<Vec<_>> = args
+                .iter()
+                .map(|a| self.parse_calc_atom(a.trim()))
+                .collect();
             return exprs.map(crate::value::CssMathExpr::Min);
         }
         if let Some(inner) = Self::strip_function(s, "max") {
             let args = Self::split_function_args(inner);
-            let exprs: Option<Vec<_>> = args.iter().map(|a| self.parse_calc_atom(a.trim())).collect();
+            let exprs: Option<Vec<_>> = args
+                .iter()
+                .map(|a| self.parse_calc_atom(a.trim()))
+                .collect();
             return exprs.map(crate::value::CssMathExpr::Max);
         }
         if let Some(inner) = Self::strip_function(s, "clamp") {
@@ -1500,7 +1584,11 @@ impl ThemeParser {
     fn parse_calc_atom(&self, s: &str) -> Option<crate::value::CssMathExpr> {
         let s = s.trim();
         // Nested function (calc, min, max, clamp)
-        if s.starts_with("calc(") || s.starts_with("min(") || s.starts_with("max(") || s.starts_with("clamp(") {
+        if s.starts_with("calc(")
+            || s.starts_with("min(")
+            || s.starts_with("max(")
+            || s.starts_with("clamp(")
+        {
             return self.parse_math_expr(s);
         }
         // Parenthesized sub-expression
@@ -1523,10 +1611,7 @@ impl ThemeParser {
     /// Strip a function wrapper: e.g. `calc(100% - 20px)` → `100% - 20px`.
     fn strip_function<'a>(s: &'a str, name: &str) -> Option<&'a str> {
         let s = s.trim();
-        if s.starts_with(name)
-            && s[name.len()..].starts_with('(')
-            && s.ends_with(')')
-        {
+        if s.starts_with(name) && s[name.len()..].starts_with('(') && s.ends_with(')') {
             Some(&s[name.len() + 1..s.len() - 1])
         } else {
             None
@@ -1540,8 +1625,14 @@ impl ThemeParser {
         let mut depth = 0;
         for ch in s.chars() {
             match ch {
-                '(' => { depth += 1; current.push(ch); }
-                ')' => { depth -= 1; current.push(ch); }
+                '(' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                ')' => {
+                    depth -= 1;
+                    current.push(ch);
+                }
                 ',' if depth == 0 => {
                     args.push(std::mem::take(&mut current));
                 }

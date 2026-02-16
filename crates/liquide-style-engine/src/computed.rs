@@ -481,17 +481,37 @@ pub struct Contain {
 
 impl Default for Contain {
     fn default() -> Self {
-        Self { size: false, layout: false, style: false, paint: false, inline_size: false }
+        Self {
+            size: false,
+            layout: false,
+            style: false,
+            paint: false,
+            inline_size: false,
+        }
     }
 }
 
 impl Contain {
-    pub fn none() -> Self { Self::default() }
+    pub fn none() -> Self {
+        Self::default()
+    }
     pub fn strict() -> Self {
-        Self { size: true, layout: true, style: true, paint: true, inline_size: false }
+        Self {
+            size: true,
+            layout: true,
+            style: true,
+            paint: true,
+            inline_size: false,
+        }
     }
     pub fn content() -> Self {
-        Self { size: false, layout: true, style: true, paint: true, inline_size: false }
+        Self {
+            size: false,
+            layout: true,
+            style: true,
+            paint: true,
+            inline_size: false,
+        }
     }
 }
 
@@ -1056,17 +1076,37 @@ pub struct TouchAction {
 
 impl Default for TouchAction {
     fn default() -> Self {
-        Self { pan_x: true, pan_y: true, pinch_zoom: true, manipulation: false, none: false }
+        Self {
+            pan_x: true,
+            pan_y: true,
+            pinch_zoom: true,
+            manipulation: false,
+            none: false,
+        }
     }
 }
 
 impl TouchAction {
-    pub fn auto() -> Self { Self::default() }
+    pub fn auto() -> Self {
+        Self::default()
+    }
     pub fn none_val() -> Self {
-        Self { pan_x: false, pan_y: false, pinch_zoom: false, manipulation: false, none: true }
+        Self {
+            pan_x: false,
+            pan_y: false,
+            pinch_zoom: false,
+            manipulation: false,
+            none: true,
+        }
     }
     pub fn manipulation_val() -> Self {
-        Self { pan_x: true, pan_y: true, pinch_zoom: true, manipulation: true, none: false }
+        Self {
+            pan_x: true,
+            pan_y: true,
+            pinch_zoom: true,
+            manipulation: true,
+            none: false,
+        }
     }
 }
 
@@ -1203,7 +1243,12 @@ impl Default for ColumnRule {
         Self {
             width: 0.0,
             style: BorderLineStyle::None,
-            color: Color { r: 0, g: 0, b: 0, a: 255 },
+            color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
         }
     }
 }
@@ -1493,7 +1538,9 @@ pub enum TransitionBehavior {
     AllowDiscrete,
 }
 impl Default for TransitionBehavior {
-    fn default() -> Self { TransitionBehavior::Normal }
+    fn default() -> Self {
+        TransitionBehavior::Normal
+    }
 }
 
 // ── Animation extras ──
@@ -1505,7 +1552,9 @@ pub enum AnimationComposition {
     Accumulate,
 }
 impl Default for AnimationComposition {
-    fn default() -> Self { AnimationComposition::Replace }
+    fn default() -> Self {
+        AnimationComposition::Replace
+    }
 }
 
 // ── Font extras ──
@@ -1516,7 +1565,9 @@ pub enum FontVariantAlternates {
     HistoricalForms,
 }
 impl Default for FontVariantAlternates {
-    fn default() -> Self { FontVariantAlternates::Normal }
+    fn default() -> Self {
+        FontVariantAlternates::Normal
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1533,7 +1584,9 @@ pub enum FontVariantEastAsian {
     Ruby,
 }
 impl Default for FontVariantEastAsian {
-    fn default() -> Self { FontVariantEastAsian::Normal }
+    fn default() -> Self {
+        FontVariantEastAsian::Normal
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1550,7 +1603,9 @@ pub enum FontVariantLigatures {
     NoContextual,
 }
 impl Default for FontVariantLigatures {
-    fn default() -> Self { FontVariantLigatures::Normal }
+    fn default() -> Self {
+        FontVariantLigatures::Normal
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1560,7 +1615,9 @@ pub enum FontVariantPosition {
     Super,
 }
 impl Default for FontVariantPosition {
-    fn default() -> Self { FontVariantPosition::Normal }
+    fn default() -> Self {
+        FontVariantPosition::Normal
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1571,7 +1628,9 @@ pub enum FontVariantEmoji {
     Unicode,
 }
 impl Default for FontVariantEmoji {
-    fn default() -> Self { FontVariantEmoji::Normal }
+    fn default() -> Self {
+        FontVariantEmoji::Normal
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1580,7 +1639,9 @@ pub enum FontSynthesisWeight {
     None,
 }
 impl Default for FontSynthesisWeight {
-    fn default() -> Self { FontSynthesisWeight::Auto }
+    fn default() -> Self {
+        FontSynthesisWeight::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1589,7 +1650,9 @@ pub enum FontSynthesisStyle {
     None,
 }
 impl Default for FontSynthesisStyle {
-    fn default() -> Self { FontSynthesisStyle::Auto }
+    fn default() -> Self {
+        FontSynthesisStyle::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1598,7 +1661,9 @@ pub enum FontSynthesisSmallCaps {
     None,
 }
 impl Default for FontSynthesisSmallCaps {
-    fn default() -> Self { FontSynthesisSmallCaps::Auto }
+    fn default() -> Self {
+        FontSynthesisSmallCaps::Auto
+    }
 }
 
 // ── Text extras ──
@@ -1610,7 +1675,9 @@ pub enum TextOrientation {
     Sideways,
 }
 impl Default for TextOrientation {
-    fn default() -> Self { TextOrientation::Mixed }
+    fn default() -> Self {
+        TextOrientation::Mixed
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1620,7 +1687,9 @@ pub enum TextCombineUpright {
     Digits(u8),
 }
 impl Default for TextCombineUpright {
-    fn default() -> Self { TextCombineUpright::None }
+    fn default() -> Self {
+        TextCombineUpright::None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1629,7 +1698,9 @@ pub enum TextWrapMode {
     NoWrap,
 }
 impl Default for TextWrapMode {
-    fn default() -> Self { TextWrapMode::Wrap }
+    fn default() -> Self {
+        TextWrapMode::Wrap
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1640,7 +1711,9 @@ pub enum TextWrapStyle {
     Stable,
 }
 impl Default for TextWrapStyle {
-    fn default() -> Self { TextWrapStyle::Auto }
+    fn default() -> Self {
+        TextWrapStyle::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1651,7 +1724,9 @@ pub enum TextBoxTrim {
     TrimBoth,
 }
 impl Default for TextBoxTrim {
-    fn default() -> Self { TextBoxTrim::None }
+    fn default() -> Self {
+        TextBoxTrim::None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1663,7 +1738,9 @@ pub enum WhiteSpaceCollapse {
     BreakSpaces,
 }
 impl Default for WhiteSpaceCollapse {
-    fn default() -> Self { WhiteSpaceCollapse::Collapse }
+    fn default() -> Self {
+        WhiteSpaceCollapse::Collapse
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1675,7 +1752,9 @@ pub enum LineBreak {
     Anywhere,
 }
 impl Default for LineBreak {
-    fn default() -> Self { LineBreak::Auto }
+    fn default() -> Self {
+        LineBreak::Auto
+    }
 }
 
 // ── Overflow / scroll extras ──
@@ -1686,7 +1765,9 @@ pub enum OverflowAnchor {
     None,
 }
 impl Default for OverflowAnchor {
-    fn default() -> Self { OverflowAnchor::Auto }
+    fn default() -> Self {
+        OverflowAnchor::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1696,7 +1777,9 @@ pub enum ScrollbarWidth {
     None,
 }
 impl Default for ScrollbarWidth {
-    fn default() -> Self { ScrollbarWidth::Auto }
+    fn default() -> Self {
+        ScrollbarWidth::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1706,7 +1789,9 @@ pub enum ScrollbarGutter {
     StableBothEdges,
 }
 impl Default for ScrollbarGutter {
-    fn default() -> Self { ScrollbarGutter::Auto }
+    fn default() -> Self {
+        ScrollbarGutter::Auto
+    }
 }
 
 // ── Containment extras ──
@@ -1718,7 +1803,9 @@ pub enum ContainerType {
     Size,
 }
 impl Default for ContainerType {
-    fn default() -> Self { ContainerType::Normal }
+    fn default() -> Self {
+        ContainerType::Normal
+    }
 }
 
 // ── Shape ──
@@ -1732,7 +1819,9 @@ pub enum ShapeOutside {
     ContentBox,
 }
 impl Default for ShapeOutside {
-    fn default() -> Self { ShapeOutside::None }
+    fn default() -> Self {
+        ShapeOutside::None
+    }
 }
 
 // ── Object view box ──
@@ -1743,7 +1832,9 @@ pub enum ImageOrientation {
     None,
 }
 impl Default for ImageOrientation {
-    fn default() -> Self { ImageOrientation::FromImage }
+    fn default() -> Self {
+        ImageOrientation::FromImage
+    }
 }
 
 // ── SVG presentation ──
@@ -1754,7 +1845,9 @@ pub enum FillRule {
     EvenOdd,
 }
 impl Default for FillRule {
-    fn default() -> Self { FillRule::NonZero }
+    fn default() -> Self {
+        FillRule::NonZero
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1764,7 +1857,9 @@ pub enum StrokeLinecap {
     Square,
 }
 impl Default for StrokeLinecap {
-    fn default() -> Self { StrokeLinecap::Butt }
+    fn default() -> Self {
+        StrokeLinecap::Butt
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1774,7 +1869,9 @@ pub enum StrokeLinejoin {
     Bevel,
 }
 impl Default for StrokeLinejoin {
-    fn default() -> Self { StrokeLinejoin::Miter }
+    fn default() -> Self {
+        StrokeLinejoin::Miter
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1790,7 +1887,9 @@ pub enum DominantBaseline {
     TextTop,
 }
 impl Default for DominantBaseline {
-    fn default() -> Self { DominantBaseline::Auto }
+    fn default() -> Self {
+        DominantBaseline::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1806,7 +1905,9 @@ pub enum AlignmentBaseline {
     TextTop,
 }
 impl Default for AlignmentBaseline {
-    fn default() -> Self { AlignmentBaseline::Auto }
+    fn default() -> Self {
+        AlignmentBaseline::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1815,7 +1916,9 @@ pub enum ClipRule {
     EvenOdd,
 }
 impl Default for ClipRule {
-    fn default() -> Self { ClipRule::NonZero }
+    fn default() -> Self {
+        ClipRule::NonZero
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1826,7 +1929,9 @@ pub enum ShapeRendering {
     GeometricPrecision,
 }
 impl Default for ShapeRendering {
-    fn default() -> Self { ShapeRendering::Auto }
+    fn default() -> Self {
+        ShapeRendering::Auto
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1835,7 +1940,9 @@ pub enum VectorEffect {
     NonScalingStroke,
 }
 impl Default for VectorEffect {
-    fn default() -> Self { VectorEffect::None }
+    fn default() -> Self {
+        VectorEffect::None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1845,7 +1952,9 @@ pub enum TextAnchor {
     End,
 }
 impl Default for TextAnchor {
-    fn default() -> Self { TextAnchor::Start }
+    fn default() -> Self {
+        TextAnchor::Start
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1855,7 +1964,9 @@ pub enum ColorInterpolation {
     LinearRGB,
 }
 impl Default for ColorInterpolation {
-    fn default() -> Self { ColorInterpolation::SRGB }
+    fn default() -> Self {
+        ColorInterpolation::SRGB
+    }
 }
 
 // ── Mask type ──
@@ -1866,7 +1977,9 @@ pub enum MaskType {
     Alpha,
 }
 impl Default for MaskType {
-    fn default() -> Self { MaskType::Luminance }
+    fn default() -> Self {
+        MaskType::Luminance
+    }
 }
 
 // ── Ruby ──
@@ -1879,7 +1992,9 @@ pub enum RubyPosition {
     AlternateUnder,
 }
 impl Default for RubyPosition {
-    fn default() -> Self { RubyPosition::Over }
+    fn default() -> Self {
+        RubyPosition::Over
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1890,7 +2005,9 @@ pub enum RubyAlign {
     SpaceBetween,
 }
 impl Default for RubyAlign {
-    fn default() -> Self { RubyAlign::SpaceAround }
+    fn default() -> Self {
+        RubyAlign::SpaceAround
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2606,10 +2723,30 @@ impl Default for ComputedStyle {
             border_inline_end_style: BorderLineStyle::None,
             border_block_start_style: BorderLineStyle::None,
             border_block_end_style: BorderLineStyle::None,
-            border_inline_start_color: Color { r: 0, g: 0, b: 0, a: 255 },
-            border_inline_end_color: Color { r: 0, g: 0, b: 0, a: 255 },
-            border_block_start_color: Color { r: 0, g: 0, b: 0, a: 255 },
-            border_block_end_color: Color { r: 0, g: 0, b: 0, a: 255 },
+            border_inline_start_color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            border_inline_end_color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            border_block_start_color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+            border_block_end_color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
 
             // Grid extras
             grid_column_start: GridLine::default(),
@@ -2750,10 +2887,25 @@ impl Default for ComputedStyle {
             stroke_opacity: 1.0,
             color_interpolation: ColorInterpolation::default(),
             color_interpolation_filters: ColorInterpolation::LinearRGB,
-            flood_color: Color { r: 0, g: 0, b: 0, a: 255 },
+            flood_color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
             flood_opacity: 1.0,
-            lighting_color: Color { r: 255, g: 255, b: 255, a: 255 },
-            stop_color: Color { r: 0, g: 0, b: 0, a: 255 },
+            lighting_color: Color {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            },
+            stop_color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
             stop_opacity: 1.0,
             dominant_baseline: DominantBaseline::default(),
             alignment_baseline: AlignmentBaseline::default(),
@@ -2974,8 +3126,7 @@ impl ComputedStyle {
 
     /// Is this element a multi-column container?
     pub fn is_multicol(&self) -> bool {
-        self.column_count.is_some()
-            || !matches!(self.column_width, Dimension::Auto)
+        self.column_count.is_some() || !matches!(self.column_width, Dimension::Auto)
     }
 
     /// Is this element positioned (not static)?
