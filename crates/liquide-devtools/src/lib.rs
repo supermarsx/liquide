@@ -22,6 +22,8 @@
 //! - **`dom_serializer`** — Serializes the live DOM tree to JSON for external tools.
 //! - **`mutation_log`** — Records DOM mutations via `MutationObserver` for debugging.
 
+pub mod console;
+pub mod context_menu;
 pub mod devtools_panel;
 pub mod dom_serializer;
 pub mod element_picker;
@@ -29,13 +31,19 @@ pub mod inspector;
 pub mod layout_overlay;
 pub mod live_reload;
 pub mod mutation_log;
+pub mod scene_graph;
+pub mod style_editor;
 pub mod style_panel;
 
-pub use devtools_panel::{DevToolsPanel, DevToolsConfig, DevToolsTab};
+pub use console::DebugConsole;
+pub use context_menu::{ContextAction, ContextMenu};
+pub use devtools_panel::{DevToolsPanel, DevToolsConfig, DevToolsTab, DockPosition};
 pub use dom_serializer::DomSerializer;
 pub use element_picker::ElementPicker;
 pub use inspector::ElementTreeInspector;
 pub use layout_overlay::LayoutOverlay;
 pub use live_reload::{LiveReloadWatcher, ReloadEvent};
 pub use mutation_log::{MutationLog, MutationRecord};
+pub use scene_graph::SceneGraphDebugger;
+pub use style_editor::StyleEditor;
 pub use style_panel::StyleInspector;

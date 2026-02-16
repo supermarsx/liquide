@@ -61,6 +61,10 @@ struct RenderedFrame {
     format: PixelFormat,
     render_ms: f64,
     blur_enabled: bool,
+    /// `true` when the renderer had text nodes whose glyphs were still
+    /// being rasterised.  The main thread uses this to schedule a quick
+    /// follow-up render so the real TrueType glyphs appear without delay.
+    has_pending_glyphs: bool,
 }
 
 /// Message sent to the render thread.
@@ -587,6 +591,13 @@ impl DesktopCompositor {
                     );
                 }
 
+                // If the renderer still has glyphs being rasterised,
+                // schedule an immediate follow-up render so the real
+                // TrueType glyphs appear without visible delay.
+                if frame.has_pending_glyphs {
+                    self.dirty = true;
+                }
+
                 true
             }
             Err(mpsc::TryRecvError::Empty) => false,
@@ -783,6 +794,7 @@ impl DesktopCompositor {
                         format: framebuf.format,
                         render_ms: total_ms,
                         blur_enabled: renderer.blur_enabled(),
+                        has_pending_glyphs: renderer.has_pending_glyphs(),
                     };
 
                     if tx.send(result).is_err() {
@@ -832,15 +844,86 @@ impl DesktopCompositor {
                 if self.dev_mode {
                     if let Some(ref mut devtools) = self.devtools {
                         if ke.state == KeyState::Pressed {
-                            let key_str = match ke.key {
+                            // Map KeyCode to a string for devtools handle_key.
+                            let key_str: Option<&str> = match ke.key {
                                 KeyCode::F12 => Some("F12"),
-                                KeyCode::I => Some("I"),
-                                KeyCode::C => Some("C"),
                                 KeyCode::Tab => Some("Tab"),
+                                KeyCode::Escape => Some("Escape"),
+                                KeyCode::Enter => Some("Enter"),
+                                KeyCode::Backspace => Some("Backspace"),
+                                KeyCode::Delete => Some("Delete"),
+                                KeyCode::ArrowUp => Some("ArrowUp"),
+                                KeyCode::ArrowDown => Some("ArrowDown"),
+                                KeyCode::ArrowLeft => Some("ArrowLeft"),
+                                KeyCode::ArrowRight => Some("ArrowRight"),
+                                KeyCode::Home => Some("Home"),
+                                KeyCode::End => Some("End"),
+                                KeyCode::Space => Some(" "),
+                                // Letters.
+                                KeyCode::A => Some(if ke.modifiers.shift() { "A" } else { "a" }),
+                                KeyCode::B => Some(if ke.modifiers.shift() { "B" } else { "b" }),
+                                KeyCode::C => Some(if ke.modifiers.shift() { "C" } else { "c" }),
+                                KeyCode::D => Some(if ke.modifiers.shift() { "D" } else { "d" }),
+                                KeyCode::E => Some(if ke.modifiers.shift() { "E" } else { "e" }),
+                                KeyCode::F => Some(if ke.modifiers.shift() { "F" } else { "f" }),
+                                KeyCode::G => Some(if ke.modifiers.shift() { "G" } else { "g" }),
+                                KeyCode::H => Some(if ke.modifiers.shift() { "H" } else { "h" }),
+                                KeyCode::I => Some(if ke.modifiers.shift() { "I" } else { "i" }),
+                                KeyCode::J => Some(if ke.modifiers.shift() { "J" } else { "j" }),
+                                KeyCode::K => Some(if ke.modifiers.shift() { "K" } else { "k" }),
+                                KeyCode::L => Some(if ke.modifiers.shift() { "L" } else { "l" }),
+                                KeyCode::M => Some(if ke.modifiers.shift() { "M" } else { "m" }),
+                                KeyCode::N => Some(if ke.modifiers.shift() { "N" } else { "n" }),
+                                KeyCode::O => Some(if ke.modifiers.shift() { "O" } else { "o" }),
+                                KeyCode::P => Some(if ke.modifiers.shift() { "P" } else { "p" }),
+                                KeyCode::Q => Some(if ke.modifiers.shift() { "Q" } else { "q" }),
+                                KeyCode::R => Some(if ke.modifiers.shift() { "R" } else { "r" }),
+                                KeyCode::S => Some(if ke.modifiers.shift() { "S" } else { "s" }),
+                                KeyCode::T => Some(if ke.modifiers.shift() { "T" } else { "t" }),
+                                KeyCode::U => Some(if ke.modifiers.shift() { "U" } else { "u" }),
+                                KeyCode::V => Some(if ke.modifiers.shift() { "V" } else { "v" }),
+                                KeyCode::W => Some(if ke.modifiers.shift() { "W" } else { "w" }),
+                                KeyCode::X => Some(if ke.modifiers.shift() { "X" } else { "x" }),
+                                KeyCode::Y => Some(if ke.modifiers.shift() { "Y" } else { "y" }),
+                                KeyCode::Z => Some(if ke.modifiers.shift() { "Z" } else { "z" }),
+                                // Digits / shifted symbols.
+                                KeyCode::Digit0 => Some(if ke.modifiers.shift() { ")" } else { "0" }),
+                                KeyCode::Digit1 => Some(if ke.modifiers.shift() { "!" } else { "1" }),
+                                KeyCode::Digit2 => Some(if ke.modifiers.shift() { "@" } else { "2" }),
+                                KeyCode::Digit3 => Some(if ke.modifiers.shift() { "#" } else { "3" }),
+                                KeyCode::Digit4 => Some(if ke.modifiers.shift() { "$" } else { "4" }),
+                                KeyCode::Digit5 => Some(if ke.modifiers.shift() { "%" } else { "5" }),
+                                KeyCode::Digit6 => Some(if ke.modifiers.shift() { "^" } else { "6" }),
+                                KeyCode::Digit7 => Some(if ke.modifiers.shift() { "&" } else { "7" }),
+                                KeyCode::Digit8 => Some(if ke.modifiers.shift() { "*" } else { "8" }),
+                                KeyCode::Digit9 => Some(if ke.modifiers.shift() { "(" } else { "9" }),
+                                // Punctuation.
+                                KeyCode::Period => Some(if ke.modifiers.shift() { ">" } else { "." }),
+                                KeyCode::Comma => Some(if ke.modifiers.shift() { "<" } else { "," }),
+                                KeyCode::Slash => Some(if ke.modifiers.shift() { "?" } else { "/" }),
+                                KeyCode::Semicolon => Some(if ke.modifiers.shift() { ":" } else { ";" }),
+                                KeyCode::Quote => Some(if ke.modifiers.shift() { "\"" } else { "'" }),
+                                KeyCode::BracketLeft => Some(if ke.modifiers.shift() { "{" } else { "[" }),
+                                KeyCode::BracketRight => Some(if ke.modifiers.shift() { "}" } else { "]" }),
+                                KeyCode::Backslash => Some(if ke.modifiers.shift() { "|" } else { "\\" }),
+                                KeyCode::Minus => Some(if ke.modifiers.shift() { "_" } else { "-" }),
+                                KeyCode::Equal => Some(if ke.modifiers.shift() { "+" } else { "=" }),
+                                KeyCode::Grave => Some(if ke.modifiers.shift() { "~" } else { "`" }),
                                 _ => None,
                             };
                             if let Some(k) = key_str {
-                                if devtools.handle_key(
+                                // For Enter in console, also pass doc/layout/styles for command execution.
+                                if k == "Enter" && devtools.is_console_focused() {
+                                    if let (Some(layout), Some(styles)) =
+                                        (self.shell.layout_tree(), self.shell.style_map())
+                                    {
+                                        let doc = self.shell.document();
+                                        devtools.handle_console_key(
+                                            "Enter", false, false, doc, layout, styles,
+                                        );
+                                        needs_redraw = true;
+                                    }
+                                } else if devtools.handle_key(
                                     k,
                                     ke.modifiers.ctrl(),
                                     ke.modifiers.shift(),
@@ -884,16 +967,58 @@ impl DesktopCompositor {
                             }
                         }
                     }
-                    MouseEvent::Button { x, y, .. } => {
+                    MouseEvent::Button { x, y, button, state } => {
                         self.cursor_x = *x;
                         self.cursor_y = *y;
-                        // Forward click to devtools element picker.
+                        // Only react on button press, not release.
+                        if *state == liquide_input::mouse::ButtonState::Pressed
+                            && *button == liquide_input::mouse::MouseButton::Left
+                        {
+                            // Forward click to devtools panel (tabs, tree nodes, etc.)
+                            // and element picker / viewport click-to-inspect.
+                            if self.dev_mode {
+                                if let Some(ref mut devtools) = self.devtools {
+                                    if let Some(styles) = self.shell.style_map() {
+                                        if devtools.on_panel_click(*x, *y, styles) {
+                                            needs_redraw = true;
+                                        } else if devtools.on_click(styles) {
+                                            needs_redraw = true;
+                                        } else if let Some(hit_test) = self.shell.hit_test_engine() {
+                                            // Click-to-inspect: clicking outside the panel
+                                            // selects the element under the cursor.
+                                            if devtools.on_viewport_click(*x, *y, hit_test, styles) {
+                                                needs_redraw = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Right-click: context menu in devtools.
+                        if *state == liquide_input::mouse::ButtonState::Pressed
+                            && *button == liquide_input::mouse::MouseButton::Right
+                        {
+                            if self.dev_mode {
+                                if let Some(ref mut devtools) = self.devtools {
+                                    if let Some(styles) = self.shell.style_map() {
+                                        if devtools.on_right_click(*x, *y, styles) {
+                                            needs_redraw = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    MouseEvent::Scroll { delta, x, y, .. } => {
+                        // Forward scroll to devtools panel.
                         if self.dev_mode {
                             if let Some(ref mut devtools) = self.devtools {
-                                if let Some(styles) = self.shell.style_map() {
-                                    if devtools.on_click(styles) {
-                                        needs_redraw = true;
-                                    }
+                                // Convert scroll delta: positive delta = scroll up
+                                // in most platform conventions, but we want positive
+                                // = scroll content down (increase offset).
+                                let scroll_px = -delta * 36.0;
+                                if devtools.on_scroll(*x, *y, scroll_px) {
+                                    needs_redraw = true;
                                 }
                             }
                         }
@@ -1213,6 +1338,8 @@ fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
         SceneNodeKind::Mask { .. } => "Mask",
         SceneNodeKind::Border { .. } => "Border",
         SceneNodeKind::BorderImage { .. } => "BorderImage",
+        SceneNodeKind::TextCaret { .. } => "TextCaret",
+        SceneNodeKind::SelectionOverlay { .. } => "SelectionOverlay",
     }
 }
 

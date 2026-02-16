@@ -2538,7 +2538,7 @@ impl Default for ComputedStyle {
                 b: 0,
                 a: 255,
             },
-            font_family: vec!["sans-serif".to_string()],
+            font_family: vec!["Inter".to_string(), "sans-serif".to_string()],
             font_size: 16.0,
             font_weight: 400,
             font_style: FontStyle::default(),

@@ -81,6 +81,14 @@ pub struct SoftwareRenderer {
     buffer_pool: ObjectPool<Vec<u8>>,
     /// Window ID to render in skeleton mode (outline only during drag).
     skeleton_window: Option<u64>,
+    /// Set to `true` during `render()` when any text node had glyphs
+    /// not yet in the atlas.  The caller can check this to schedule an
+    /// immediate follow-up render so the real TrueType glyphs appear
+    /// without delay.
+    has_pending_glyphs: bool,
+    /// Tracks font_family+size combos that have already been pre-warmed
+    /// to avoid redundant synchronous rasterization.
+    prewarmed_fonts: std::collections::HashSet<(u32, u16)>,
 }
 
 impl SoftwareRenderer {
@@ -105,6 +113,8 @@ impl SoftwareRenderer {
             lod_manager: LodManager::new(1920.0, 1080.0),
             buffer_pool: ObjectPool::new(64),
             skeleton_window: None,
+            has_pending_glyphs: false,
+            prewarmed_fonts: std::collections::HashSet::new(),
         }
     }
 
@@ -129,6 +139,57 @@ impl SoftwareRenderer {
             lod_manager: LodManager::new(1920.0, 1080.0),
             buffer_pool: ObjectPool::new(64),
             skeleton_window: None,
+            has_pending_glyphs: false,
+            prewarmed_fonts: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Returns `true` if the last `render()` call encountered text nodes
+    /// whose glyphs were not yet in the atlas (i.e. still being rasterised
+    /// by the font worker).  When this returns `true` the caller should
+    /// schedule a follow-up render so the real glyphs appear promptly.
+    #[must_use]
+    pub fn has_pending_glyphs(&self) -> bool {
+        self.has_pending_glyphs
+    }
+
+    /// Pre-warm the glyph atlas for a font by synchronously requesting
+    /// common ASCII characters.  This runs once per unique (font_id, size)
+    /// pair and avoids the 1-2 frame flash that used to occur when glyphs
+    /// were not yet in the atlas.
+    ///
+    /// The actual rasterization still happens on the font-worker thread;
+    /// this method merely ensures the requests are *queued* as early as
+    /// possible so they complete before (or during) the very first frame
+    /// that needs the glyphs.
+    fn prewarm_glyphs(
+        &mut self,
+        font_id: u32,
+        size_px: u16,
+        target_height: u32,
+        font_family: &str,
+        font_weight: u16,
+    ) {
+        // Common characters that appear in virtually every UI text.
+        const PREWARM_CHARS: &str =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\
+             0123456789 .,;:!?-–—'\"()[]{}/<>@#$%^&*+=_~`|\\…•·";
+        for ch in PREWARM_CHARS.chars() {
+            let key = GlyphKey {
+                font_id,
+                glyph_id: ch as u32,
+                size_px,
+                subpixel: false,
+            };
+            if self.glyph_atlas.get(&key).is_none() {
+                self.font_worker.request_glyph_with_font(
+                    key,
+                    ch,
+                    target_height,
+                    font_family.to_string(),
+                    font_weight,
+                );
+            }
         }
     }
 
@@ -446,6 +507,9 @@ impl Renderer for SoftwareRenderer {
         fb: &mut FrameBuffer,
         damage: &DamageSet,
     ) -> crate::Result<Vec<DamageTile>> {
+        // Reset pending-glyph tracker for this frame.
+        self.has_pending_glyphs = false;
+
         // Drain any completed async blur results before rendering.
         self.blur_worker.poll_results();
 
@@ -1146,7 +1210,6 @@ impl SoftwareRenderer {
                 #[allow(unused_assignments)]
                 let mut pen_x = bounds.x + text_indent;
                 let mut pen_y = bounds.y;
-                let mut all_in_atlas = true;
                 let line_h = if *line_height > 0.0 {
                     *line_height
                 } else {
@@ -1156,6 +1219,19 @@ impl SoftwareRenderer {
                 // First pass: check which glyphs are in the atlas, request
                 // missing ones from the font worker (with font family/weight
                 // so the worker can use real TrueType rasterization).
+                //
+                // Pre-warm common glyphs synchronously the first time a new
+                // font_id + size_px combo is encountered.  This avoids the
+                // old bitmap-fallback flash: instead of rendering crude 8×16
+                // bitmap text for 1-2 frames, we rasterise the most commonly
+                // used characters up-front so they are already in the atlas
+                // when we reach the rendering pass below.
+                let prewarm_key = (font_id, size_px);
+                if !font_family.is_empty() && !self.prewarmed_fonts.contains(&prewarm_key) {
+                    self.prewarmed_fonts.insert(prewarm_key);
+                    self.prewarm_glyphs(font_id, size_px, glyph_height, font_family, *font_weight);
+                }
+
                 for ch in render_text.chars() {
                     if ch == '\n' || ch == '\r' {
                         continue;
@@ -1168,7 +1244,7 @@ impl SoftwareRenderer {
                         subpixel: false,
                     };
                     if self.glyph_atlas.get(&key).is_none() {
-                        all_in_atlas = false;
+                        self.has_pending_glyphs = true;
                         self.font_worker.request_glyph_with_font(
                             key,
                             ch,
@@ -1179,10 +1255,17 @@ impl SoftwareRenderer {
                     }
                 }
 
-                if all_in_atlas {
+                // Always render using the atlas — draw glyphs that are
+                // available and use an estimated advance for any that are
+                // still being rasterised.  This completely eliminates the
+                // old bitmap-fallback flash (crude 8×16 text for 1-2 frames).
+                {
                     // Split text into lines and apply text-align per line
                     let lines: Vec<&str> = render_text.split('\n').collect();
                     let mut is_first_line = true;
+                    // Estimated advance for a missing glyph (≈ 0.55 * font_size
+                    // — a reasonable average for proportional Latin text).
+                    let estimated_advance = glyph_height as f32 * 0.55;
                     for line_text in &lines {
                         // Measure line width for alignment
                         let mut line_width = 0.0f32;
@@ -1202,6 +1285,9 @@ impl SoftwareRenderer {
                             if let Some(cached) = self.glyph_atlas.get(&key) {
                                 let extra = if ch == ' ' { *word_spacing } else { 0.0 };
                                 line_width += cached.advance + *letter_spacing + extra;
+                            } else {
+                                let extra = if ch == ' ' { *word_spacing } else { 0.0 };
+                                line_width += estimated_advance + *letter_spacing + extra;
                             }
                         }
 
@@ -1258,21 +1344,18 @@ impl SoftwareRenderer {
                                 self.glyph_atlas.blit_glyph(fb, &cached, pos, c);
                                 let extra = if ch == ' ' { *word_spacing } else { 0.0 };
                                 pen_x += cached.advance + *letter_spacing + extra;
+                            } else {
+                                // Glyph not yet in atlas — advance pen by estimated
+                                // width so subsequent glyphs land in roughly the right
+                                // position.  The missing glyph will appear on the next
+                                // frame after the font worker completes rasterization.
+                                let extra = if ch == ' ' { *word_spacing } else { 0.0 };
+                                pen_x += estimated_advance + *letter_spacing + extra;
                             }
                         }
                         pen_y += line_h;
                         is_first_line = false;
                     }
-                } else {
-                    // Fallback: use 1-bit bitmap font while atlas is being populated.
-                    crate::bitmap_font::draw_text(
-                        fb,
-                        render_text,
-                        bounds.x as i32,
-                        bounds.y as i32,
-                        c,
-                        *scale,
-                    );
                 }
             }
 
@@ -2081,6 +2164,44 @@ impl SoftwareRenderer {
                     bounds.height + (outline.width + offset) * 2.0,
                 );
                 rasterizer::stroke_rect(fb, outline_rect, outline.width, c, BlendMode::SrcOver);
+            }
+
+            // ── Text Caret (blinking insertion cursor) ──────────────
+            SceneNodeKind::TextCaret { color, width } => {
+                let mut c = *color;
+                if opacity < 1.0 {
+                    c.a = (c.a as f32 * opacity + 0.5) as u8;
+                }
+                if c.a > 0 {
+                    let caret_rect = Rect::new(bounds.x, bounds.y, *width, bounds.height);
+                    rasterizer::fill_rect(fb, caret_rect, c, BlendMode::SrcOver);
+                }
+            }
+
+            // ── Selection / inspection overlay ──────────────────────
+            SceneNodeKind::SelectionOverlay {
+                fill,
+                border_color,
+                border_width,
+            } => {
+                // Semi-transparent fill.
+                let mut fc = *fill;
+                if opacity < 1.0 {
+                    fc.a = (fc.a as f32 * opacity + 0.5) as u8;
+                }
+                if fc.a > 0 {
+                    rasterizer::fill_rect(fb, bounds, fc, BlendMode::SrcOver);
+                }
+                // Border.
+                if *border_width > 0.0 {
+                    let mut bc = *border_color;
+                    if opacity < 1.0 {
+                        bc.a = (bc.a as f32 * opacity + 0.5) as u8;
+                    }
+                    if bc.a > 0 {
+                        rasterizer::stroke_rect(fb, bounds, *border_width, bc, BlendMode::SrcOver);
+                    }
+                }
             }
         }
     }

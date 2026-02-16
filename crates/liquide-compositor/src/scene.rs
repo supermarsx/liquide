@@ -815,6 +815,31 @@ pub enum SceneNodeKind {
     },
     /// Border image (CSS border-image).
     BorderImage { spec: BorderImageSpec },
+    /// Text input caret — a blinking vertical insertion cursor.
+    ///
+    /// The node bounds define the position and height of the caret.
+    /// The `width` field controls the caret thickness (typically 1–2 px).
+    /// Callers control blink state by including or excluding this node
+    /// from the scene on each frame.
+    TextCaret {
+        /// Caret color.
+        color: Color,
+        /// Caret width in logical pixels (typically 1.0–2.0).
+        width: f32,
+    },
+    /// Highlight overlay for element inspection / selection feedback.
+    ///
+    /// Draws a semi-transparent filled rectangle with an optional border,
+    /// typically used to highlight hovered or selected elements in the
+    /// viewport during devtools inspection.
+    SelectionOverlay {
+        /// Fill color (semi-transparent).
+        fill: Color,
+        /// Border color.
+        border_color: Color,
+        /// Border width.
+        border_width: f32,
+    },
     /// Lock screen overlay.
     LockScreen,
     /// Emergency crash overlay.

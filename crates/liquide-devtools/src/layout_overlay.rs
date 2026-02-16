@@ -197,7 +197,7 @@ impl LayoutOverlay {
                     text: label,
                     color: Color::new(255, 255, 255, 255),
                     scale: 1,
-                    font_family: String::new(),
+                    font_family: "Inter".to_string(),
                     font_size: 11.0,
                     font_weight: 400,
                     font_style_italic: false,

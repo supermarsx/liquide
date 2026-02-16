@@ -184,10 +184,42 @@ impl FontDatabase {
     }
 
     /// Resolve a font face by family name and weight (closest match).
+    ///
+    /// Maps CSS generic family names to concrete fonts:
+    /// - `sans-serif` → Inter, Manrope, Noto Sans
+    /// - `monospace`  → JetBrains Mono
+    /// - `serif`      → Noto Sans (fallback; no true serif loaded)
+    /// - `system-ui`  → Inter
     #[must_use]
     pub fn resolve(&self, family: &str, weight: u16, italic: bool) -> Option<FontFaceId> {
         let key = family.to_lowercase();
-        let candidates = self.family_index.get(&key)?;
+
+        // Map CSS generic family names to concrete loaded fonts.
+        let concrete_families: &[&str] = match key.as_str() {
+            "sans-serif" | "system-ui" | "ui-sans-serif" => {
+                &["inter", "manrope", "noto sans"]
+            }
+            "monospace" | "ui-monospace" => &["jetbrains mono"],
+            "serif" | "ui-serif" => &["noto sans"],
+            "cursive" | "fantasy" => &["manrope", "inter"],
+            _ => &[],
+        };
+
+        if !concrete_families.is_empty() {
+            for concrete in concrete_families {
+                if let Some(id) = self.resolve_exact(concrete, weight, italic) {
+                    return Some(id);
+                }
+            }
+            return None;
+        }
+
+        self.resolve_exact(&key, weight, italic)
+    }
+
+    /// Resolve by exact (lowercase) family key — no generic mapping.
+    fn resolve_exact(&self, key: &str, weight: u16, italic: bool) -> Option<FontFaceId> {
+        let candidates = self.family_index.get(key)?;
 
         // First: exact match.
         for &id in candidates {

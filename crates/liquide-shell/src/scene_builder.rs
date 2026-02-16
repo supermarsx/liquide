@@ -68,7 +68,7 @@ pub fn text_node(
             text,
             color,
             scale,
-            font_family: String::new(),
+            font_family: "Inter".to_string(),
             font_size: 0.0,
             font_weight: 400,
             font_style_italic: false,
