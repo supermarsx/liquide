@@ -212,10 +212,12 @@ pub fn layout_block(
                         Some(content_width),
                         &text_props,
                     );
+                    // Clamp text width to container width so it doesn't overflow
+                    let clamped_text_w = metrics.width.min(content_width);
                     let text_x = crate::inline::align_offset(
                         child_style.text_align,
                         content_width,
-                        metrics.width,
+                        clamped_text_w,
                     );
                     let text_box = tree.alloc(
                         child_id,
@@ -224,7 +226,7 @@ pub fn layout_block(
                         },
                     );
                     if let Some(tb) = tree.get_mut(text_box) {
-                        tb.content_rect = Rect::new(text_x, child_y, metrics.width, metrics.height);
+                        tb.content_rect = Rect::new(text_x, child_y, clamped_text_w, metrics.height);
                         tb.padding_rect = tb.content_rect;
                         tb.border_rect = tb.content_rect;
                         tb.margin_rect = tb.content_rect;

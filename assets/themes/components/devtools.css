@@ -218,6 +218,7 @@ devtools-side-tab {
     font-size: 10px;
     color: rgba(140, 140, 140, 1.0);
     cursor: pointer;
+    white-space: nowrap;
 }
 
 devtools-side-tab:hover {
@@ -282,6 +283,7 @@ devtools-tree-row {
     max-height: 20px;
     padding-right: 4px;
     cursor: pointer;
+    overflow: hidden;
 }
 
 devtools-tree-row:hover {

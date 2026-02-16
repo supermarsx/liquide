@@ -132,6 +132,13 @@ impl LayoutTree {
         }
     }
 
+    /// Remove a child from a parent box's children list.
+    pub fn remove_child(&mut self, parent: LayoutBoxId, child: LayoutBoxId) {
+        if let Some(p) = self.boxes.get_mut(parent) {
+            p.children.retain(|&c| c != child);
+        }
+    }
+
     /// Find the layout box for a given DOM node.
     pub fn find_by_node(&self, node_id: NodeId) -> Option<&LayoutBox> {
         self.boxes.iter().find(|b| b.node == node_id)

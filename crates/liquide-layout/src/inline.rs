@@ -821,7 +821,9 @@ pub fn layout_inline(
     // Apply the root element's own inline edges.
     let root_edges = edges_from_style(&style, max_width);
 
-    let content_rect = Rect::new(offset_x, offset_y, total_width, total_height);
+    // Clamp total_width to max_width so box doesn't extend beyond container
+    let clamped_width = total_width.min(max_width);
+    let content_rect = Rect::new(offset_x, offset_y, clamped_width, total_height);
     let padding_rect = Rect::new(
         content_rect.x - root_edges.padding_left,
         content_rect.y - root_edges.padding_top,

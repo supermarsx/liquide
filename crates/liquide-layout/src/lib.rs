@@ -167,8 +167,13 @@ impl TextMeasurer for DefaultTextMeasurer {
         let line_h = props.line_height_px(font_size);
 
         if let Some(max_w) = max_width {
+            // white-space: nowrap / pre — do NOT wrap
+            let allows_wrap = matches!(
+                props.white_space,
+                WhiteSpace::Normal | WhiteSpace::PreWrap | WhiteSpace::PreLine
+            );
             let effective_first_line = max_w - props.text_indent;
-            if total_width > effective_first_line && effective_first_line > 0.0 {
+            if allows_wrap && total_width > effective_first_line && effective_first_line > 0.0 {
                 let chars_per_line = (effective_first_line / char_width).floor().max(1.0) as u32;
                 let line_count =
                     ((transformed.len() as u32 + chars_per_line - 1) / chars_per_line).max(1);

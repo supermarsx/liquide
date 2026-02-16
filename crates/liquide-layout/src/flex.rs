@@ -236,6 +236,59 @@ pub fn layout_flex(
         }
     }
 
+    // ── Step 4b: Re-layout items whose resolved size differs from initial ──
+    // Children were initially laid out at content_width. After grow/shrink the
+    // actual main size may be smaller (shrink) or larger (grow). Re-layout each
+    // child at its resolved size so that text wrapping, nested flex, etc. use
+    // the correct available width.
+    for item in &mut items {
+        let initial_main = item.base_main_size;
+        let resolved_main = item.main_size;
+
+        // Tolerance: skip re-layout when the difference is negligible
+        if (resolved_main - initial_main).abs() < 0.5 {
+            continue;
+        }
+
+        let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
+
+        // Remove old child from tree (detach children list), we'll re-add
+        tree.remove_child(box_id, item.box_id);
+
+        let (child_w, child_h) = if is_row {
+            (resolved_main, container_height)
+        } else {
+            (content_width, resolved_main)
+        };
+
+        let new_box = if child_style.is_flex_container() {
+            crate::flex::layout_flex(
+                doc, item.node_id, styles, tree, text_measurer, image_measurer,
+                child_w, child_h, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            )
+        } else if child_style.is_grid_container() {
+            crate::grid::layout_grid(
+                doc, item.node_id, styles, tree, text_measurer, image_measurer,
+                child_w, child_h, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            )
+        } else {
+            crate::block::layout_block(
+                doc, item.node_id, styles, tree, text_measurer, image_measurer,
+                child_w, child_h, 0.0, 0.0,
+                viewport_w, viewport_h, base_font_size,
+            )
+        };
+
+        item.box_id = new_box;
+        tree.add_child(box_id, new_box);
+
+        // Update cross size from re-layout
+        let new_intrinsic = tree.get(new_box).map(|b| b.margin_rect).unwrap_or(Rect::zero());
+        item.cross_size = if is_row { new_intrinsic.height } else { new_intrinsic.width };
+    }
+
     // ── Step 5: Position items per line ──
     let mut cross_offset = 0.0f32;
     let mut line_cross_sizes: Vec<f32> = Vec::new();
