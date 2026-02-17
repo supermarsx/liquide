@@ -2,7 +2,7 @@
 
 use crate::{Color, CssValue, LengthUnit};
 
-/// Parse a CSS colour literal (hex, `rgb()`, `rgba()`, or named colour).
+/// Parse a CSS colour literal (hex, `rgb()`, `rgba()`, `hsl()`, `hsla()`, `hwb()`, or named colour).
 pub fn parse_color(input: &str) -> Option<Color> {
     let input = input.trim();
     if let Some(hex) = input.strip_prefix('#') {
@@ -11,6 +11,12 @@ pub fn parse_color(input: &str) -> Option<Color> {
         parse_rgba_func(inner)
     } else if let Some(inner) = strip_func(input, "rgb") {
         parse_rgb_func(inner)
+    } else if let Some(inner) = strip_func(input, "hsla") {
+        parse_hsla_func(inner)
+    } else if let Some(inner) = strip_func(input, "hsl") {
+        parse_hsl_func(inner)
+    } else if let Some(inner) = strip_func(input, "hwb") {
+        parse_hwb_func(inner)
     } else {
         parse_named_color(input)
     }
@@ -20,7 +26,14 @@ pub fn parse_color(input: &str) -> Option<Color> {
 /// E.g. `strip_func("rgb(1, 2, 3)", "rgb")` returns `Some("1, 2, 3")`.
 fn strip_func<'a>(input: &'a str, name: &str) -> Option<&'a str> {
     let input = input.trim();
-    let rest = input.strip_prefix(name)?;
+    // CSS function names are case-insensitive
+    if input.len() < name.len() {
+        return None;
+    }
+    if !input[..name.len()].eq_ignore_ascii_case(name) {
+        return None;
+    }
+    let rest = &input[name.len()..];
     let rest = rest.trim_start();
     let rest = rest.strip_prefix('(')?;
     let rest = rest.trim();
@@ -51,6 +64,146 @@ fn parse_rgba_func(args: &str) -> Option<Color> {
     let b = parts[2].trim().parse::<u8>().ok()?;
     let a = parts[3].trim().parse::<f32>().ok()?;
     Some(Color { r, g, b, a })
+}
+
+/// Convert HSL (h: 0–360, s: 0–100, l: 0–100) to RGB (0–255 each).
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+    let s = s / 100.0;
+    let l = l / 100.0;
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h_prime = ((h % 360.0) + 360.0) % 360.0 / 60.0;
+    let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = if h_prime < 1.0 {
+        (c, x, 0.0)
+    } else if h_prime < 2.0 {
+        (x, c, 0.0)
+    } else if h_prime < 3.0 {
+        (0.0, c, x)
+    } else if h_prime < 4.0 {
+        (0.0, x, c)
+    } else if h_prime < 5.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    let m = l - c / 2.0;
+    (
+        ((r1 + m) * 255.0 + 0.5) as u8,
+        ((g1 + m) * 255.0 + 0.5) as u8,
+        ((b1 + m) * 255.0 + 0.5) as u8,
+    )
+}
+
+/// Parse CSS number that may end in `%` (returns as percentage 0–100) or bare number.
+fn parse_css_number_or_percent(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if let Some(pct) = s.strip_suffix('%') {
+        pct.trim().parse::<f32>().ok()
+    } else {
+        s.parse::<f32>().ok()
+    }
+}
+
+/// Parse `hsl(h, s%, l%)` arguments.
+fn parse_hsl_func(args: &str) -> Option<Color> {
+    // Support both comma-separated and space-separated syntax
+    let parts: Vec<&str> = if args.contains(',') {
+        args.split(',').collect()
+    } else {
+        // Space-separated: may include / alpha (e.g. "200 50% 60% / 0.5")
+        let slash_parts: Vec<&str> = args.split('/').collect();
+        if slash_parts.len() == 2 {
+            let mut p: Vec<&str> = slash_parts[0].split_whitespace().collect();
+            p.push(slash_parts[1].trim());
+            return parse_hsla_parts(&p);
+        }
+        args.split_whitespace().collect()
+    };
+    if parts.len() < 3 {
+        return None;
+    }
+    let h = parts[0].trim().trim_end_matches("deg").trim().parse::<f32>().ok()?;
+    let s = parse_css_number_or_percent(parts[1])?;
+    let l = parse_css_number_or_percent(parts[2])?;
+    let (r, g, b) = hsl_to_rgb(h, s, l);
+    Some(Color { r, g, b, a: 1.0 })
+}
+
+/// Parse `hsla(h, s%, l%, a)` arguments.
+fn parse_hsla_func(args: &str) -> Option<Color> {
+    let parts: Vec<&str> = if args.contains(',') {
+        args.split(',').collect()
+    } else {
+        // space-separated: hsl(h s l / a)
+        let slash_parts: Vec<&str> = args.split('/').collect();
+        if slash_parts.len() == 2 {
+            let mut p: Vec<&str> = slash_parts[0].split_whitespace().collect();
+            p.push(slash_parts[1].trim());
+            return parse_hsla_parts(&p);
+        }
+        args.split_whitespace().collect()
+    };
+    parse_hsla_parts(&parts)
+}
+
+fn parse_hsla_parts(parts: &[&str]) -> Option<Color> {
+    if parts.len() < 4 {
+        return None;
+    }
+    let h = parts[0].trim().trim_end_matches("deg").trim().parse::<f32>().ok()?;
+    let s = parse_css_number_or_percent(parts[1])?;
+    let l = parse_css_number_or_percent(parts[2])?;
+    let a_str = parts[3].trim();
+    let a = if let Some(pct) = a_str.strip_suffix('%') {
+        pct.trim().parse::<f32>().ok()? / 100.0
+    } else {
+        a_str.parse::<f32>().ok()?
+    };
+    let (r, g, b) = hsl_to_rgb(h, s, l);
+    Some(Color { r, g, b, a })
+}
+
+/// Parse `hwb(h, w%, b%)` or `hwb(h w% b%)` arguments.
+fn parse_hwb_func(args: &str) -> Option<Color> {
+    let parts: Vec<&str> = if args.contains(',') {
+        args.split(',').collect()
+    } else {
+        // space-separated, possibly with / alpha
+        let slash_parts: Vec<&str> = args.split('/').collect();
+        let mut p: Vec<&str> = slash_parts[0].split_whitespace().collect();
+        if slash_parts.len() == 2 {
+            p.push(slash_parts[1].trim());
+        }
+        p
+    };
+    if parts.len() < 3 {
+        return None;
+    }
+    let h = parts[0].trim().trim_end_matches("deg").trim().parse::<f32>().ok()?;
+    let w = parse_css_number_or_percent(parts[1])? / 100.0;
+    let b = parse_css_number_or_percent(parts[2])? / 100.0;
+    let alpha = if parts.len() >= 4 {
+        let a_str = parts[3].trim();
+        if let Some(pct) = a_str.strip_suffix('%') {
+            pct.trim().parse::<f32>().ok()? / 100.0
+        } else {
+            a_str.parse::<f32>().ok()?
+        }
+    } else {
+        1.0
+    };
+    // HWB to RGB: first get pure hue, then mix with white/black
+    let (hr, hg, hb) = hsl_to_rgb(h, 100.0, 50.0);
+    let total = w + b;
+    let (w, b) = if total > 1.0 {
+        (w / total, b / total)
+    } else {
+        (w, b)
+    };
+    let r = ((hr as f32 / 255.0 * (1.0 - w - b) + w) * 255.0 + 0.5) as u8;
+    let g = ((hg as f32 / 255.0 * (1.0 - w - b) + w) * 255.0 + 0.5) as u8;
+    let bl = ((hb as f32 / 255.0 * (1.0 - w - b) + w) * 255.0 + 0.5) as u8;
+    Some(Color { r, g, b: bl, a: alpha })
 }
 
 /// Parse a 3, 4, 6, or 8-digit hex colour.

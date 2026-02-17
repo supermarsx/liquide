@@ -386,22 +386,22 @@ impl<'a> TextShaper<'a> {
         lines
     }
 
-    /// Fallback shaping when no font is available — approximate metrics.
+    /// Fallback shaping when no font is available — approximate metrics
+    /// using character-class based width estimation.
     fn shape_fallback(
         &self,
         text: &str,
         size_px: f32,
         letter_spacing: f32,
     ) -> (Vec<ShapedGlyph>, f32) {
-        let avg_width = size_px * 0.55;
         let mut glyphs = Vec::with_capacity(text.len());
         let mut pen_x = 0.0_f32;
 
         for (byte_idx, ch) in text.char_indices() {
-            let advance = avg_width;
+            let advance = Self::approx_char_advance(ch, size_px);
             glyphs.push(ShapedGlyph {
                 codepoint: ch,
-                glyph_id: 0,
+                glyph_id: ch as u32,
                 x_offset: pen_x,
                 y_offset: 0.0,
                 x_advance: advance,
@@ -411,6 +411,25 @@ impl<'a> TextShaper<'a> {
         }
 
         (glyphs, pen_x)
+    }
+
+    /// Approximate advance width for a character based on character class.
+    fn approx_char_advance(ch: char, size: f32) -> f32 {
+        let em = size * 0.6; // base advance ≈ 0.6 em
+        let space = size * 0.25;
+        match ch {
+            ' ' => space,
+            '\t' => space * 4.0,
+            'W' | 'M' | 'm' | 'w' => em * 1.2,
+            'i' | 'l' | '!' | '|' | '.' | ',' | ':' | ';' | '\'' => em * 0.4,
+            'f' | 'j' | 'r' | 't' => em * 0.6,
+            'I' | '1' => em * 0.5,
+            _ if ch.is_ascii_uppercase() => em * 0.95,
+            _ if ch.is_ascii_lowercase() => em * 0.75,
+            _ if ch.is_ascii_digit() => em * 0.75,
+            _ if ch.is_ascii_punctuation() => em * 0.5,
+            _ => em, // CJK / emoji / other → full em width
+        }
     }
 }
 

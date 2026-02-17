@@ -302,7 +302,7 @@ fn depth_single_child() {
 fn walk_visits_all_visible() {
     let tree = build_test_tree();
     let mut count = 0;
-    tree.walk(&mut |_node, _transform| {
+    tree.walk(&mut |_node, _transform, _opacity| {
         count += 1;
     });
     // Root + bg + workspace + surf_a + surf_b = 5 visible nodes

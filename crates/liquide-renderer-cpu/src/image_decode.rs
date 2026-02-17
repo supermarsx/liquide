@@ -205,10 +205,7 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
         return Err(ImageDecodeError::InvalidFormat("no IHDR chunk".into()));
     }
 
-    // For now, return a placeholder image since full zlib decompression
-    // of IDAT chunks requires a deflate implementation.
-    // In production, this would use miniz_oxide or flate2.
-    let channels = match color_type {
+    let channels: usize = match color_type {
         0 => 1, // Grayscale
         2 => 3, // RGB
         4 => 2, // Grayscale + Alpha
@@ -216,11 +213,117 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
         _ => return Err(ImageDecodeError::UnsupportedColorType(color_type)),
     };
 
-    let _ = (bit_depth, channels, idat_data.len()); // Will be used by full decoder
+    if bit_depth != 8 {
+        return Err(ImageDecodeError::InvalidFormat(
+            format!("unsupported bit depth {bit_depth} (only 8-bit supported)"),
+        ));
+    }
 
-    // Placeholder: return transparent image of correct dimensions
+    // Decompress zlib-wrapped IDAT data
+    let decompressed = miniz_oxide::inflate::decompress_to_vec_zlib(&idat_data)
+        .map_err(|e| ImageDecodeError::InvalidFormat(format!("zlib decompress failed: {e:?}")))?;
+
+    // PNG scanlines: each row is prefixed by a filter byte, then `width * channels` bytes
+    let stride = width as usize * channels;
+    let expected_len = height as usize * (1 + stride);
+    if decompressed.len() < expected_len {
+        return Err(ImageDecodeError::TruncatedData);
+    }
+
+    // Un-filter scanlines (PNG filter types 0-4)
+    let mut raw_pixels = vec![0u8; (height as usize) * stride];
+    let bpp = channels; // bytes per pixel (bit_depth == 8)
+
+    for row in 0..height as usize {
+        let src_off = row * (1 + stride);
+        let filter = decompressed[src_off];
+        let src_row = &decompressed[src_off + 1..src_off + 1 + stride];
+        let dst_off = row * stride;
+
+        match filter {
+            0 => {
+                // None
+                raw_pixels[dst_off..dst_off + stride].copy_from_slice(src_row);
+            }
+            1 => {
+                // Sub: pixel[x] += pixel[x - bpp]
+                for i in 0..stride {
+                    let left = if i >= bpp { raw_pixels[dst_off + i - bpp] } else { 0 };
+                    raw_pixels[dst_off + i] = src_row[i].wrapping_add(left);
+                }
+            }
+            2 => {
+                // Up: pixel[x] += pixel_prev_row[x]
+                for i in 0..stride {
+                    let up = if row > 0 { raw_pixels[dst_off - stride + i] } else { 0 };
+                    raw_pixels[dst_off + i] = src_row[i].wrapping_add(up);
+                }
+            }
+            3 => {
+                // Average: pixel[x] += floor((left + up) / 2)
+                for i in 0..stride {
+                    let left = if i >= bpp { raw_pixels[dst_off + i - bpp] as u16 } else { 0 };
+                    let up = if row > 0 { raw_pixels[dst_off - stride + i] as u16 } else { 0 };
+                    raw_pixels[dst_off + i] = src_row[i].wrapping_add(((left + up) / 2) as u8);
+                }
+            }
+            4 => {
+                // Paeth
+                for i in 0..stride {
+                    let a = if i >= bpp { raw_pixels[dst_off + i - bpp] as i32 } else { 0 };
+                    let b = if row > 0 { raw_pixels[dst_off - stride + i] as i32 } else { 0 };
+                    let c = if row > 0 && i >= bpp { raw_pixels[dst_off - stride + i - bpp] as i32 } else { 0 };
+                    let p = a + b - c;
+                    let pa = (p - a).abs();
+                    let pb = (p - b).abs();
+                    let pc = (p - c).abs();
+                    let pr = if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c };
+                    raw_pixels[dst_off + i] = src_row[i].wrapping_add(pr as u8);
+                }
+            }
+            _ => {
+                // Unknown filter — treat as None (best effort)
+                raw_pixels[dst_off..dst_off + stride].copy_from_slice(src_row);
+            }
+        }
+    }
+
+    // Convert to RGBA
     let pixel_count = (width * height) as usize;
-    let pixels = vec![0u8; pixel_count * 4];
+    let mut pixels = vec![0u8; pixel_count * 4];
+
+    match color_type {
+        0 => {
+            // Grayscale → RGBA
+            for i in 0..pixel_count {
+                let v = raw_pixels[i];
+                let o = i * 4;
+                pixels[o] = v; pixels[o + 1] = v; pixels[o + 2] = v; pixels[o + 3] = 255;
+            }
+        }
+        2 => {
+            // RGB → RGBA
+            for i in 0..pixel_count {
+                let s = i * 3;
+                let o = i * 4;
+                pixels[o] = raw_pixels[s]; pixels[o + 1] = raw_pixels[s + 1]; pixels[o + 2] = raw_pixels[s + 2]; pixels[o + 3] = 255;
+            }
+        }
+        4 => {
+            // Grayscale + Alpha → RGBA
+            for i in 0..pixel_count {
+                let s = i * 2;
+                let o = i * 4;
+                let v = raw_pixels[s];
+                pixels[o] = v; pixels[o + 1] = v; pixels[o + 2] = v; pixels[o + 3] = raw_pixels[s + 1];
+            }
+        }
+        6 => {
+            // RGBA — direct copy
+            pixels.copy_from_slice(&raw_pixels[..pixel_count * 4]);
+        }
+        _ => unreachable!(),
+    }
 
     Ok(DecodedImage {
         width,

@@ -111,14 +111,16 @@ impl TextureCache {
 
     /// Evict the least-recently-used texture.
     fn evict_lru(&mut self) {
-        if let Some((lru_id, lru_texture)) = self
+        // Find the LRU texture by access time, clone only the key (not the texture data)
+        let lru_id = self
             .textures
             .iter()
             .min_by_key(|(_, texture)| texture.access_time)
-            .map(|(id, texture)| (id.clone(), texture.clone()))
-        {
-            self.current_size_bytes -= lru_texture.size_bytes();
-            self.textures.remove(&lru_id);
+            .map(|(id, _)| id.clone());
+        if let Some(id) = lru_id {
+            if let Some(old) = self.textures.remove(&id) {
+                self.current_size_bytes -= old.size_bytes();
+            }
         }
     }
 

@@ -10,6 +10,7 @@
 //! `stopPropagation()` and `stopImmediatePropagation()` are supported.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::document::Document;
 use crate::node::NodeId;
@@ -121,8 +122,8 @@ pub struct EventListener {
     pub event_type: String,
     /// Options.
     pub options: ListenerOptions,
-    /// The callback function.
-    pub callback: fn(&mut Event),
+    /// The callback function — supports closures with captured state.
+    pub callback: Arc<dyn Fn(&mut Event) + Send + Sync>,
 }
 
 impl std::fmt::Debug for EventListener {
@@ -156,7 +157,7 @@ impl EventTargetMap {
         &mut self,
         node_id: NodeId,
         event_type: impl Into<String>,
-        callback: fn(&mut Event),
+        callback: impl Fn(&mut Event) + Send + Sync + 'static,
         options: ListenerOptions,
     ) -> u64 {
         let id = self.next_id;
@@ -165,7 +166,7 @@ impl EventTargetMap {
             id,
             event_type: event_type.into(),
             options,
-            callback,
+            callback: Arc::new(callback),
         };
         self.listeners.entry(node_id).or_default().push(listener);
         id

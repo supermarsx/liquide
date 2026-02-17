@@ -213,14 +213,13 @@ fn tokenise_text(
         }
         let metrics = text_measurer.measure(word, font_size, font_family, font_weight, None, props);
         items.push(InlineItem::Word {
-            text: word.clone(),
+            text: std::mem::take(word),
             width: metrics.width,
             height: metrics.height,
             baseline: metrics.baseline,
             node_id,
             font_size,
         });
-        word.clear();
     };
 
     let mut prev_was_space = false;
@@ -906,7 +905,7 @@ pub fn layout_inline(
 
     if let Some(b) = tree.get_mut(box_id) {
         b.box_type = BoxType::Text {
-            line_boxes: line_boxes.clone(),
+            line_boxes: std::mem::take(&mut line_boxes),
         };
         b.content_rect = content_rect;
         b.padding_rect = padding_rect;

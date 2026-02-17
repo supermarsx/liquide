@@ -271,8 +271,29 @@ pub trait ImageMeasurer {
     fn intrinsic_size(&self, src: &str) -> Option<Size>;
 }
 
-/// Fallback text measurer that estimates sizes.
+/// Fallback text measurer that estimates sizes using character-class width heuristics.
 pub struct DefaultTextMeasurer;
+
+impl DefaultTextMeasurer {
+    /// Approximate advance width for a character based on character class.
+    fn approx_char_advance(ch: char, size: f32) -> f32 {
+        let em = size * 0.6;
+        let space = size * 0.25;
+        match ch {
+            ' ' => space,
+            '\t' => space * 4.0,
+            'W' | 'M' | 'm' | 'w' => em * 1.2,
+            'i' | 'l' | '!' | '|' | '.' | ',' | ':' | ';' | '\'' => em * 0.4,
+            'f' | 'j' | 'r' | 't' => em * 0.6,
+            'I' | '1' => em * 0.5,
+            _ if ch.is_ascii_uppercase() => em * 0.95,
+            _ if ch.is_ascii_lowercase() => em * 0.75,
+            _ if ch.is_ascii_digit() => em * 0.75,
+            _ if ch.is_ascii_punctuation() => em * 0.5,
+            _ => em,
+        }
+    }
+}
 
 impl TextMeasurer for DefaultTextMeasurer {
     fn measure(
@@ -284,19 +305,20 @@ impl TextMeasurer for DefaultTextMeasurer {
         max_width: Option<f32>,
         props: &TextProperties,
     ) -> TextMetrics {
-        let char_width = font_size * 0.6 + props.letter_spacing;
         let space_extra = props.word_spacing;
         let transformed = props.transform_text(text);
         let total_width: f32 = transformed
             .chars()
             .map(|ch| {
-                if ch == ' ' {
-                    char_width + space_extra
-                } else {
-                    char_width
-                }
+                let base = Self::approx_char_advance(ch, font_size);
+                base + props.letter_spacing + if ch == ' ' { space_extra } else { 0.0 }
             })
             .sum();
+        let avg_char_w = if transformed.is_empty() {
+            font_size * 0.6 + props.letter_spacing
+        } else {
+            total_width / transformed.chars().count() as f32
+        };
         let line_h = props.line_height_px(font_size);
 
         if let Some(max_w) = max_width {
@@ -307,7 +329,7 @@ impl TextMeasurer for DefaultTextMeasurer {
             );
             let effective_first_line = max_w - props.text_indent;
             if allows_wrap && total_width > effective_first_line && effective_first_line > 0.0 {
-                let chars_per_line = (effective_first_line / char_width).floor().max(1.0) as u32;
+                let chars_per_line = (effective_first_line / avg_char_w).floor().max(1.0) as u32;
                 let char_count = transformed.chars().count() as u32;
                 let line_count =
                     ((char_count + chars_per_line - 1) / chars_per_line).max(1);

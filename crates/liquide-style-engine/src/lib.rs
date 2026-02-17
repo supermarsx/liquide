@@ -17,6 +17,7 @@ pub mod shadow_dom;
 pub mod shorthand;
 pub mod specificity;
 pub mod style_map;
+pub mod transition;
 pub mod value_resolve;
 
 pub use cascade::{CascadeMap, CascadeOrigin, CascadePriority};

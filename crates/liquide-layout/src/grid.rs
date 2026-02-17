@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{Display, GridAutoFlow, GridLine, JustifyItems, JustifySelf, Position, TrackSize};
+use liquide_style_engine::computed::{BoxSizing, Display, GridAutoFlow, GridLine, JustifyItems, JustifySelf, Position, TrackSize};
 use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
@@ -41,7 +41,7 @@ pub fn layout_grid(
     let box_id = tree.alloc(node_id, BoxType::Grid);
 
     let font_size = style.font_size;
-    let width = style
+    let explicit_width = style
         .width
         .resolve_px(
             container_width,
@@ -49,8 +49,8 @@ pub fn layout_grid(
             font_size,
             viewport_w,
             viewport_h,
-        )
-        .unwrap_or(container_width);
+        );
+    let width = explicit_width.unwrap_or(container_width);
 
     let pad_top = resolve_dim(
         &style.padding.top,
@@ -123,7 +123,16 @@ pub fn layout_grid(
     let border_bottom = style.border_width.bottom;
     let border_left = style.border_width.left;
 
-    let content_width = width - pad_left - pad_right - border_left - border_right;
+    // box-sizing: content-box (default) — `width` is the content width
+    // box-sizing: border-box — `width` includes padding + border
+    // width: auto — fills container, subtract padding + border regardless
+    let content_width = match (explicit_width, style.box_sizing) {
+        (Some(w), BoxSizing::ContentBox) => w,
+        (Some(w), BoxSizing::BorderBox) => {
+            (w - pad_left - pad_right - border_left - border_right).max(0.0)
+        }
+        (None, _) => (width - pad_left - pad_right - border_left - border_right).max(0.0),
+    };
     let content_x = offset_x + mar_left + border_left + pad_left;
     let content_y = offset_y + mar_top + border_top + pad_top;
 
@@ -152,7 +161,6 @@ pub fn layout_grid(
 
     // ── Resolve grid_template_areas into named line mappings ──
     let area_line_names = resolve_area_line_names(&style.grid_template_areas);
-    let _ = &area_line_names; // used for future named-line lookups
 
     // ── Dense auto-flow flag ──
     let dense = matches!(
@@ -233,15 +241,15 @@ pub fn layout_grid(
         }
 
         // Resolve explicit grid placement using the helper that handles negative lines
-        let col_start = resolve_grid_line(&child_style.grid_column.start, num_col_lines);
+        let col_start = resolve_grid_line(&child_style.grid_column.start, num_col_lines, &area_line_names, "col", true);
         let col_end = match &child_style.grid_column.end {
             GridLine::Span(n) => col_start.map(|s| s + *n as usize),
-            other => resolve_grid_line(other, num_col_lines),
+            other => resolve_grid_line(other, num_col_lines, &area_line_names, "col", false),
         };
-        let row_start = resolve_grid_line(&child_style.grid_row.start, num_row_lines);
+        let row_start = resolve_grid_line(&child_style.grid_row.start, num_row_lines, &area_line_names, "row", true);
         let row_end = match &child_style.grid_row.end {
             GridLine::Span(n) => row_start.map(|s| s + *n as usize),
-            other => resolve_grid_line(other, num_row_lines),
+            other => resolve_grid_line(other, num_row_lines, &area_line_names, "row", false),
         };
 
         if col_start.is_some() || row_start.is_some() {
@@ -389,7 +397,43 @@ pub fn layout_grid(
 
         // Layout child in cell (dispatch to correct layout mode)
         let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
-        let child_box = if child_style.is_flex_container() {
+
+        // Handle text node children — measure them directly instead of
+        // delegating to layout_block (which would create a 0×0 box).
+        let child_box = if let Some(child_node) = doc.get(item.node_id) {
+            if child_node.is_text() {
+                if let Some(text) = child_node.text_content() {
+                    let text_props = crate::TextProperties::from_style(&child_style);
+                    let metrics = text_measurer.measure(
+                        text,
+                        child_style.font_size,
+                        &child_style.font_family,
+                        child_style.font_weight,
+                        Some(cell_width),
+                        &text_props,
+                    );
+                    let text_box = tree.alloc(
+                        item.node_id,
+                        BoxType::Text {
+                            line_boxes: Vec::new(),
+                        },
+                    );
+                    if let Some(tb) = tree.get_mut(text_box) {
+                        tb.content_rect = Rect::new(0.0, 0.0, metrics.width, metrics.height);
+                        tb.padding_rect = tb.content_rect;
+                        tb.border_rect = tb.content_rect;
+                        tb.margin_rect = tb.content_rect;
+                        tb.baseline = Some(metrics.baseline);
+                    }
+                    tree.add_child(box_id, text_box);
+                    text_box
+                } else {
+                    // Empty text node — still needs a box
+                    let text_box = tree.alloc(item.node_id, BoxType::Text { line_boxes: Vec::new() });
+                    tree.add_child(box_id, text_box);
+                    text_box
+                }
+            } else if child_style.is_flex_container() {
             crate::flex::layout_flex(
                 doc,
                 item.node_id,
@@ -422,6 +466,24 @@ pub fn layout_grid(
                 base_font_size,
             )
         } else {
+            crate::block::layout_block(
+                doc,
+                item.node_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                cell_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
+            )
+        }
+        } else {
+            // Node not found — create a placeholder
             crate::block::layout_block(
                 doc,
                 item.node_id,
@@ -802,7 +864,14 @@ fn resolve_dim(
 /// - Negative lines (-1, -2, -3...) count from the end
 ///
 /// `num_lines` is the total number of lines (= num_tracks + 1).
-fn resolve_grid_line(line: &GridLine, num_lines: usize) -> Option<usize> {
+/// `area_names` maps names like "header-start-row" → 0 for named grid area lookup.
+fn resolve_grid_line(
+    line: &GridLine,
+    num_lines: usize,
+    area_names: &std::collections::HashMap<String, usize>,
+    axis: &str,
+    is_start: bool,
+) -> Option<usize> {
     match line {
         GridLine::Line(n) => {
             if *n > 0 {
@@ -821,6 +890,12 @@ fn resolve_grid_line(line: &GridLine, num_lines: usize) -> Option<usize> {
                 // Line 0 is invalid in CSS Grid, treat as auto
                 None
             }
+        }
+        GridLine::Named(name) => {
+            // Look up "name-start-row", "name-end-col", etc. from grid-template-areas
+            let suffix = if is_start { "start" } else { "end" };
+            let key = format!("{}-{}-{}", name, suffix, axis);
+            area_names.get(&key).copied()
         }
         GridLine::Span(_) | GridLine::Auto => None,
     }

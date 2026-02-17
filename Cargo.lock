@@ -2842,9 +2842,11 @@ dependencies = [
  "liquide-common",
  "liquide-compositor",
  "liquide-font-rasterizer",
+ "liquide-paint",
  "liquide-renderer-css",
  "liquide-text-engine",
  "liquide-theme-css",
+ "miniz_oxide",
  "thiserror 2.0.18",
  "tracing",
 ]

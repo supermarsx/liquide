@@ -153,7 +153,9 @@ impl Hyphenator {
 
         for point in &points {
             // Find the character index for this byte offset
-            let char_idx = chars.iter().position(|(off, _)| *off == point.offset)?;
+            let Some(char_idx) = chars.iter().position(|(off, _)| *off == point.offset) else {
+                continue;
+            };
 
             // Calculate width up to this point plus hyphen
             let width: f32 = char_widths[..char_idx].iter().sum::<f32>() + hyphen_width;

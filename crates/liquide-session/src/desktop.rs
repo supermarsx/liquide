@@ -1506,6 +1506,7 @@ fn scene_node_kind_name(kind: &SceneNodeKind) -> &'static str {
         SceneNodeKind::Filter { .. } => "Filter",
         SceneNodeKind::Image { .. } => "Image",
         SceneNodeKind::GradientFill { .. } => "GradientFill",
+        SceneNodeKind::SvgPath { .. } => "SvgPath",
         SceneNodeKind::BackdropFilter { .. } => "BackdropFilter",
         SceneNodeKind::BackgroundFill { .. } => "BackgroundFill",
         SceneNodeKind::Outline { .. } => "Outline",

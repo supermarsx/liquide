@@ -1,5 +1,6 @@
 //! Layout tree — the output of the layout engine.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 use liquide_dom::NodeId;
@@ -131,6 +132,8 @@ pub struct LayoutTree {
     pub boxes: Vec<LayoutBox>,
     /// The root box.
     pub root: LayoutBoxId,
+    /// Node → box index for O(1) lookup.
+    node_index: HashMap<NodeId, LayoutBoxId>,
 }
 
 impl LayoutTree {
@@ -138,6 +141,7 @@ impl LayoutTree {
         Self {
             boxes: Vec::new(),
             root: 0,
+            node_index: HashMap::new(),
         }
     }
 
@@ -155,6 +159,7 @@ impl LayoutTree {
     pub fn alloc(&mut self, node: NodeId, box_type: BoxType) -> LayoutBoxId {
         let id = self.boxes.len();
         self.boxes.push(LayoutBox::new(id, node, box_type));
+        self.node_index.insert(node, id);
         id
     }
 
@@ -175,14 +180,14 @@ impl LayoutTree {
         }
     }
 
-    /// Find the layout box for a given DOM node.
+    /// Find the layout box for a given DOM node (O(1) via index).
     pub fn find_by_node(&self, node_id: NodeId) -> Option<&LayoutBox> {
-        self.boxes.iter().find(|b| b.node == node_id)
+        self.node_index.get(&node_id).and_then(|&id| self.boxes.get(id))
     }
 
-    /// Find the layout box ID for a given DOM node.
+    /// Find the layout box ID for a given DOM node (O(1) via index).
     pub fn find_box_id_by_node(&self, node_id: NodeId) -> Option<LayoutBoxId> {
-        self.boxes.iter().position(|b| b.node == node_id)
+        self.node_index.get(&node_id).copied()
     }
 
     /// Total number of boxes.

@@ -98,6 +98,12 @@ pub struct StyleEngine {
     supported_properties: std::collections::HashSet<&'static str>,
     /// Registered custom properties from `@property` rules.
     registered_properties: std::collections::HashMap<String, RegisteredPropertyDef>,
+    /// System color-scheme preference: `"light"` or `"dark"`.
+    pub preferred_color_scheme: String,
+    /// Whether the user prefers reduced motion.
+    pub prefers_reduced_motion: bool,
+    /// `@keyframes` rules keyed by animation name.
+    pub keyframes: std::collections::HashMap<String, liquide_theme_css::value::KeyframesRule>,
 }
 
 /// A registered custom property definition (from `@property`).
@@ -123,6 +129,9 @@ impl StyleEngine {
             font_faces: Vec::new(),
             supported_properties: Self::build_supported_properties(),
             registered_properties: std::collections::HashMap::new(),
+            preferred_color_scheme: "light".into(),
+            prefers_reduced_motion: false,
+            keyframes: std::collections::HashMap::new(),
         }
     }
 
@@ -388,6 +397,11 @@ impl StyleEngine {
                     initial_value: prop.initial_value.clone(),
                 },
             );
+        }
+
+        // ── @keyframes rules ────────────────────────────────────────────
+        for (name, kf_rule) in stylesheet.keyframes() {
+            self.keyframes.insert(name.clone(), kf_rule.clone());
         }
 
         // ── Extract variables ───────────────────────────────────────────
@@ -722,10 +736,22 @@ impl StyleEngine {
         let style = Arc::new(style);
         map.insert_shared(node_id, style.clone());
 
-        // Recurse into children (text nodes pass through parent scope)
+        // Recurse into children (text nodes pass through parent scope).
+        // Shadow DOM boundary: when entering a ShadowRoot, reset author-style
+        // scope — only inherited properties pass through.
         let children = doc.children(node_id).to_vec();
         for child_id in children {
-            self.restyle_node(doc, child_id, Some(&style), map, scope_vars);
+            let is_shadow = doc
+                .get(child_id)
+                .map(|n| matches!(n.data, liquide_dom::node::NodeData::ShadowRoot))
+                .unwrap_or(false);
+            if is_shadow {
+                // Shadow roots inherit from their host but don't match host
+                // document author rules. Pass parent style for inheritance.
+                self.restyle_node(doc, child_id, Some(&style), map, &std::collections::HashMap::new());
+            } else {
+                self.restyle_node(doc, child_id, Some(&style), map, scope_vars);
+            }
         }
     }
 
@@ -4166,13 +4192,17 @@ impl StyleEngine {
                                         style.font_weight = 300;
                                         idx += 1;
                                     }
-                                    w if w.parse::<u16>().is_ok()
-                                        && w.parse::<u16>().unwrap() % 100 == 0 =>
-                                    {
-                                        style.font_weight = w.parse::<u16>().unwrap_or(400);
-                                        idx += 1;
+                                    _ => {
+                                        // Try numeric weight (100, 200, ... 900)
+                                        if let Ok(n) = tokens[idx].parse::<u16>() {
+                                            if n % 100 == 0 {
+                                                style.font_weight = n;
+                                                idx += 1;
+                                                continue;
+                                            }
+                                        }
+                                        break; // This should be the font-size
                                     }
-                                    _ => break, // This should be the font-size
                                 }
                             }
                             // Parse size[/line-height]
@@ -5848,8 +5878,10 @@ impl StyleEngine {
                     }
                 }
                 "prefers-color-scheme" => {
-                    // Default to "light"; dark mode support can be wired up later.
-                    return value_str == "light";
+                    return value_str == self.preferred_color_scheme;
+                }
+                "prefers-reduced-motion" => {
+                    return (value_str == "reduce") == self.prefers_reduced_motion;
                 }
                 _ => {}
             }

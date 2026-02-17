@@ -12,7 +12,7 @@
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{
-    AlignContent, AlignItems, AspectRatio, Display, FlexDirection, FlexWrap, JustifyContent, Position,
+    AlignContent, AlignItems, AspectRatio, BoxSizing, Display, FlexDirection, FlexWrap, JustifyContent, Position,
 };
 use liquide_style_engine::dimension::Dimension;
 
@@ -40,7 +40,7 @@ pub fn layout_flex(
     let box_id = tree.alloc(node_id, BoxType::Flex);
 
     let font_size = style.font_size;
-    let width = style
+    let explicit_width = style
         .width
         .resolve_px(
             container_width,
@@ -48,8 +48,8 @@ pub fn layout_flex(
             font_size,
             viewport_w,
             viewport_h,
-        )
-        .unwrap_or(container_width);
+        );
+    let width = explicit_width.unwrap_or(container_width);
 
     let pad_top = rdim(
         &style.padding.top,
@@ -122,7 +122,16 @@ pub fn layout_flex(
     let border_bottom = style.border_width.bottom;
     let border_left = style.border_width.left;
 
-    let content_width = (width - pad_left - pad_right - border_left - border_right).max(0.0);
+    // box-sizing: content-box (default) — `width` is the content width
+    // box-sizing: border-box — `width` includes padding + border
+    // width: auto — fills container, subtract padding + border regardless
+    let content_width = match (explicit_width, style.box_sizing) {
+        (Some(w), BoxSizing::ContentBox) => w,
+        (Some(w), BoxSizing::BorderBox) => {
+            (w - pad_left - pad_right - border_left - border_right).max(0.0)
+        }
+        (None, _) => (width - pad_left - pad_right - border_left - border_right).max(0.0),
+    };
     let content_x = offset_x + mar_left + border_left + pad_left;
     let content_y = offset_y + mar_top + border_top + pad_top;
 
@@ -175,6 +184,57 @@ pub fn layout_flex(
         }
         if matches!(child_style.position, Position::Absolute | Position::Fixed) {
             continue;
+        }
+
+        // Handle text node children — measure them directly instead of
+        // delegating to layout_block (which would create a 0×0 box because
+        // text nodes have no DOM children of their own).
+        if let Some(child_node) = doc.get(child_id) {
+            if child_node.is_text() {
+                if let Some(text) = child_node.text_content() {
+                    let text_props = crate::TextProperties::from_style(&child_style);
+                    let max_w = if is_row { None } else { Some(content_width) };
+                    let metrics = text_measurer.measure(
+                        text,
+                        child_style.font_size,
+                        &child_style.font_family,
+                        child_style.font_weight,
+                        max_w,
+                        &text_props,
+                    );
+                    let text_box = tree.alloc(
+                        child_id,
+                        BoxType::Text {
+                            line_boxes: Vec::new(),
+                        },
+                    );
+                    if let Some(tb) = tree.get_mut(text_box) {
+                        tb.content_rect = Rect::new(0.0, 0.0, metrics.width, metrics.height);
+                        tb.padding_rect = tb.content_rect;
+                        tb.border_rect = tb.content_rect;
+                        tb.margin_rect = tb.content_rect;
+                        tb.baseline = Some(metrics.baseline);
+                    }
+                    tree.add_child(box_id, text_box);
+
+                    let intrinsic = Rect::new(0.0, 0.0, metrics.width, metrics.height);
+                    let main_size = if is_row { intrinsic.width } else { intrinsic.height };
+                    items.push(FlexItem {
+                        node_id: child_id,
+                        box_id: text_box,
+                        main_size,
+                        base_main_size: main_size,
+                        cross_size: if is_row { intrinsic.height } else { intrinsic.width },
+                        flex_grow: 0.0,
+                        flex_shrink: 0.0,
+                        min_main: 0.0,
+                        max_main: f32::INFINITY,
+                        order: child_style.order,
+                        baseline: metrics.baseline,
+                    });
+                    continue;
+                }
+            }
         }
 
         let child_box = if child_style.is_flex_container() {

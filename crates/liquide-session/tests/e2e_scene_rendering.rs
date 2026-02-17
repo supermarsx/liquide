@@ -264,7 +264,7 @@ fn scene_walk_visits_all_nodes() {
 
     let scene = shell.build_scene();
     let mut count = 0u64;
-    scene.walk(&mut |_node, _transform| {
+    scene.walk(&mut |_node, _transform, _opacity| {
         count += 1;
     });
 

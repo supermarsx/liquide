@@ -42,7 +42,7 @@ pub enum PseudoClassSelector {
     LastChild,
     NthChild(AnB),
     NthLastChild(AnB),
-    Not(Box<ComplexSelector>),
+    Not(Vec<ComplexSelector>),
     FocusWithin,
     FocusVisible,
     PlaceholderShown,
@@ -189,7 +189,10 @@ impl CompoundSelector {
         for pc in &self.pseudo_classes {
             match pc {
                 PseudoClassSelector::Not(inner) => {
-                    extra = extra.add(inner.specificity());
+                    // :not() adds the specificity of its most specific argument
+                    if let Some(max_spec) = inner.iter().map(|s| s.specificity()).max() {
+                        extra = extra.add(max_spec);
+                    }
                 }
                 PseudoClassSelector::Is(selectors) => {
                     // :is() adds the specificity of its most specific argument
@@ -291,9 +294,9 @@ impl CompoundSelector {
                 }
                 false
             }
-            PseudoClassSelector::Not(inner) => {
-                // :not(S) matches if S does NOT match
-                !inner.matches(doc, node.id)
+            PseudoClassSelector::Not(selectors) => {
+                // :not(S1, S2, ...) matches if NONE of the selectors match
+                !selectors.iter().any(|s| s.matches(doc, node.id))
             }
             PseudoClassSelector::Is(selectors) | PseudoClassSelector::Where(selectors) => {
                 selectors.iter().any(|s| s.matches(doc, node.id))
@@ -874,8 +877,7 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
             if selectors.is_empty() {
                 None
             } else {
-                // For simplicity, wrap first selector; full impl would use all
-                Some(PseudoClassSelector::Not(Box::new(selectors.into_iter().next().unwrap())))
+                Some(PseudoClassSelector::Not(selectors))
             }
         }
         _ if name.starts_with("nth-of-type(") && name.ends_with(')') => {

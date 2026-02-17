@@ -837,6 +837,17 @@ pub enum SceneNodeKind {
     },
     /// Gradient fill across the node bounds.
     GradientFill { gradient: GradientSpec },
+    /// SVG path element with fill and stroke.
+    SvgPath {
+        /// SVG `d` path data string.
+        d: String,
+        /// Fill color (None = no fill).
+        fill: Option<Color>,
+        /// Stroke color.
+        stroke: Color,
+        /// Stroke width in pixels.
+        stroke_width: f32,
+    },
     /// Full background specification (color + image + gradients).
     BackgroundFill { background: BackgroundSpec },
     /// Outline (rendered outside the border box).
@@ -925,26 +936,29 @@ impl SceneNode {
     }
 
     /// Walk the tree depth-first in z-order, calling the visitor on each node
-    /// with the accumulated absolute transform.
-    pub fn walk<F: FnMut(&SceneNode, &Affine2D)>(&self, visitor: &mut F) {
-        self.walk_inner(&Affine2D::identity(), visitor);
+    /// with the accumulated absolute transform and effective opacity.
+    pub fn walk<F: FnMut(&SceneNode, &Affine2D, f32)>(&self, visitor: &mut F) {
+        self.walk_inner(&Affine2D::identity(), 1.0, visitor);
     }
 
-    fn walk_inner<F: FnMut(&SceneNode, &Affine2D)>(
+    fn walk_inner<F: FnMut(&SceneNode, &Affine2D, f32)>(
         &self,
         parent_transform: &Affine2D,
+        parent_opacity: f32,
         visitor: &mut F,
     ) {
         if !self.properties.visible {
             return;
         }
 
+        let effective_opacity = parent_opacity * self.properties.opacity;
+
         // Compose: translation from bounds origin + local transform
         let local = Affine2D::translation(self.properties.bounds.x, self.properties.bounds.y)
             .then(&self.properties.transform);
         let absolute = local.then(parent_transform);
 
-        visitor(self, &absolute);
+        visitor(self, &absolute, effective_opacity);
 
         // Sort children by z-order before walking.
         // Use a stack-allocated array for small child counts to avoid
@@ -953,7 +967,7 @@ impl SceneNode {
         if n <= 1 {
             // 0 or 1 children — no sorting needed
             for child in &self.children {
-                child.walk_inner(&absolute, visitor);
+                child.walk_inner(&absolute, effective_opacity, visitor);
             }
         } else if n <= 16 {
             // Small child count — use stack array
@@ -963,14 +977,14 @@ impl SceneNode {
             }
             indices[..n].sort_by_key(|&i| self.children[i as usize].properties.z_order);
             for &i in &indices[..n] {
-                self.children[i as usize].walk_inner(&absolute, visitor);
+                self.children[i as usize].walk_inner(&absolute, effective_opacity, visitor);
             }
         } else {
             // Fallback to heap-allocated sort for large child counts
             let mut sorted_indices: Vec<usize> = (0..n).collect();
             sorted_indices.sort_by_key(|&i| self.children[i].properties.z_order);
             for &i in &sorted_indices {
-                self.children[i].walk_inner(&absolute, visitor);
+                self.children[i].walk_inner(&absolute, effective_opacity, visitor);
             }
         }
     }
@@ -1119,7 +1133,7 @@ impl SceneNode {
     #[must_use]
     pub fn flatten(&self) -> Vec<FlatNode> {
         let mut result = Vec::new();
-        self.walk(&mut |node, abs_transform| {
+        self.walk(&mut |node, abs_transform, effective_opacity| {
             // Skip non-visual structural nodes (Root, Workspace containers)
             let is_visual = !matches!(
                 node.kind,
@@ -1140,7 +1154,7 @@ impl SceneNode {
                     absolute_bounds: abs_bounds,
                     absolute_transform: *abs_transform,
                     clip: node.properties.clip,
-                    opacity: node.properties.opacity,
+                    opacity: effective_opacity,
                     z_order: node.properties.z_order,
                     corner_radius: node.properties.corner_radius,
                     clip_radius: node.properties.clip_radius,
@@ -1164,7 +1178,7 @@ pub struct FlatNode {
     pub absolute_transform: Affine2D,
     /// Clip rectangle in absolute coordinates (if any).
     pub clip: Option<Rect>,
-    /// Effective opacity (not yet multiplied with parent).
+    /// Effective opacity (accumulated from ancestors).
     pub opacity: f32,
     /// Z-order within parent.
     pub z_order: u32,

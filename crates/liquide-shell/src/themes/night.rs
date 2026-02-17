@@ -44,6 +44,8 @@ statusbar-slot {
     display: flex;
     align-items: center;
     flex-grow: 1;
+    flex-shrink: 1;
+    flex-basis: 0;
     gap: 8;
 }
 

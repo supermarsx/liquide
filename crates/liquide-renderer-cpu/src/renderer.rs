@@ -520,8 +520,6 @@ impl Renderer for SoftwareRenderer {
                 .insert(glyph.key, &glyph.bitmap, &glyph.metrics);
         }
 
-        let classified_tiles: Vec<DamageTile> = damage.tiles.clone();
-
         // Render each node exactly once in z-order.
         // Note: Dirty rect culling is disabled by default - it requires explicit
         // dirty tracking from the compositor. Enable by manually calling mark_dirty().
@@ -534,7 +532,7 @@ impl Renderer for SoftwareRenderer {
             self.render_node_with_lod(node, fb, lod_level);
         }
 
-        Ok(classified_tiles)
+        Ok(damage.tiles.to_vec())
     }
 }
 
@@ -572,8 +570,12 @@ impl SoftwareRenderer {
                 let has_radius = r_tl > 0.5 || r_tr > 0.5 || r_br > 0.5 || r_bl > 0.5;
                 if has_radius {
                     self.fill_rounded_rect_per_corner(fb, bounds, c, r_tl, r_tr, r_br, r_bl, BlendMode::SrcOver);
-                } else {
+                } else if c.a == 255 {
+                    // Fully opaque — safe to overwrite (Src is faster)
                     rasterizer::fill_rect(fb, bounds, c, BlendMode::Src);
+                } else {
+                    // Semi-transparent — must blend over existing content
+                    rasterizer::fill_rect(fb, bounds, c, BlendMode::SrcOver);
                 }
             }
 
@@ -1746,6 +1748,53 @@ impl SoftwareRenderer {
                 self.render_gradient(fb, bounds, gradient, opacity, node.corner_radius);
             }
 
+            // ── SVG Path ────────────────────────────────────────────
+            SceneNodeKind::SvgPath { d, fill, stroke, stroke_width } => {
+                use liquide_paint::svg_path::{parse_svg_path, flatten_path};
+                let commands = parse_svg_path(d);
+                let segments = flatten_path(&commands);
+                // Draw fill (simple scanline fill approximation for convex paths)
+                if let Some(fill_color) = fill {
+                    let mut fc = *fill_color;
+                    if opacity < 1.0 {
+                        fc.a = (fc.a as f32 * opacity + 0.5) as u8;
+                    }
+                    // Approximate fill: draw filled triangles from first point to each segment
+                    if !segments.is_empty() {
+                        let ox = bounds.x;
+                        let oy = bounds.y;
+                        for seg in &segments {
+                            // For each segment in the path, draw a line with fill color
+                            let r = Rect::new(
+                                ox + seg.x1.min(seg.x2),
+                                oy + seg.y1.min(seg.y2),
+                                (seg.x2 - seg.x1).abs().max(1.0),
+                                (seg.y2 - seg.y1).abs().max(1.0),
+                            );
+                            rasterizer::fill_rect(fb, r, fc, BlendMode::SrcOver);
+                        }
+                    }
+                }
+                // Draw stroke
+                if *stroke_width > 0.0 {
+                    let mut sc = *stroke;
+                    if opacity < 1.0 {
+                        sc.a = (sc.a as f32 * opacity + 0.5) as u8;
+                    }
+                    let ox = bounds.x;
+                    let oy = bounds.y;
+                    for seg in &segments {
+                        rasterizer::draw_line(
+                            fb,
+                            ox + seg.x1, oy + seg.y1,
+                            ox + seg.x2, oy + seg.y2,
+                            sc,
+                            *stroke_width,
+                        );
+                    }
+                }
+            }
+
             // ── Background Fill (color + optional gradient/image) ───
             SceneNodeKind::BackgroundFill { background } => {
                 // Solid color first
@@ -1865,22 +1914,77 @@ impl SoftwareRenderer {
             // ── Clip-path rendering ─────────────────────────────────
             SceneNodeKind::ClipPath { clip_kind } => {
                 use liquide_compositor::scene::ClipPathKind;
-                // For clip-path we render children into a temp buffer,
-                // then composite only the clipped region.
-                // Simplified implementation: use rect intersection for now.
+                // Apply clip masks by zeroing pixels outside the clip shape.
+                // The clip node's bounds define the clipping region. Children were
+                // rendered before this node in the flat list (or will be),
+                // so we apply the mask to the framebuffer region now.
                 match clip_kind {
                     ClipPathKind::RoundedRect { corner_radius } => {
-                        // Clip to the rounded rect bounds — render children with the same bounds
-                        // For now, this is effectively a no-op since we already clip to bounds
-                        // in our rounded rect drawing. The clip-path is recorded for stacking.
+                        // Apply SDF-based rounded-rect alpha mask: pixels outside the
+                        // rounded rect get their alpha multiplied by the SDF coverage,
+                        // effectively erasing the corners.
+                        let r = *corner_radius;
+                        let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
+                        let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
+                        let bx1 = (bounds.right().ceil() as u32).min(fb.width);
+                        let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                        for y in by0..by1 {
+                            let fy = y as f32 + 0.5;
+                            for x in bx0..bx1 {
+                                let fx = x as f32 + 0.5;
+                                let d = rasterizer::sdf_rounded_rect_per_corner(
+                                    fx, fy, &bounds, r, r, r, r,
+                                );
+                                let coverage = (-d + 0.5).clamp(0.0, 1.0);
+                                if coverage >= 1.0 {
+                                    continue; // inside — no change
+                                }
+                                let mut px = fb.get_pixel(x, y);
+                                if coverage <= 0.0 {
+                                    // outside rounded rect — fully transparent
+                                    px.a = 0;
+                                    px.r = 0;
+                                    px.g = 0;
+                                    px.b = 0;
+                                } else {
+                                    // anti-aliased edge
+                                    px.a = (px.a as f32 * coverage + 0.5) as u8;
+                                    px.r = (px.r as f32 * coverage + 0.5) as u8;
+                                    px.g = (px.g as f32 * coverage + 0.5) as u8;
+                                    px.b = (px.b as f32 * coverage + 0.5) as u8;
+                                }
+                                fb.set_pixel(x, y, px);
+                            }
+                        }
                     }
                     ClipPathKind::Circle {
                         center_x,
                         center_y,
                         radius,
                     } => {
-                        // Circle clip: paint a circle mask
-                        // Approximation: treat as a rectangular region bounding the circle
+                        // Circle clip: apply circular SDF mask
+                        let cx = bounds.x + center_x * bounds.width;
+                        let cy = bounds.y + center_y * bounds.height;
+                        let r = radius * bounds.width.min(bounds.height);
+                        let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
+                        let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
+                        let bx1 = (bounds.right().ceil() as u32).min(fb.width);
+                        let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                        for y in by0..by1 {
+                            let fy = y as f32 + 0.5;
+                            for x in bx0..bx1 {
+                                let fx = x as f32 + 0.5;
+                                let d = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() - r;
+                                let coverage = (-d + 0.5).clamp(0.0, 1.0);
+                                if coverage >= 1.0 { continue; }
+                                let mut px = fb.get_pixel(x, y);
+                                px.a = (px.a as f32 * coverage + 0.5) as u8;
+                                px.r = (px.r as f32 * coverage + 0.5) as u8;
+                                px.g = (px.g as f32 * coverage + 0.5) as u8;
+                                px.b = (px.b as f32 * coverage + 0.5) as u8;
+                                fb.set_pixel(x, y, px);
+                            }
+                        }
                     }
                     ClipPathKind::Ellipse {
                         center_x,
@@ -1888,10 +1992,71 @@ impl SoftwareRenderer {
                         rx,
                         ry,
                     } => {
-                        // Ellipse clip: similar approximation
+                        // Ellipse clip: apply elliptical SDF mask
+                        let cx = bounds.x + center_x * bounds.width;
+                        let cy = bounds.y + center_y * bounds.height;
+                        let erx = rx * bounds.width;
+                        let ery = ry * bounds.height;
+                        let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
+                        let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
+                        let bx1 = (bounds.right().ceil() as u32).min(fb.width);
+                        let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                        for y in by0..by1 {
+                            let fy = y as f32 + 0.5;
+                            for x in bx0..bx1 {
+                                let fx = x as f32 + 0.5;
+                                // Approximate ellipse SDF
+                                let nx = (fx - cx) / erx;
+                                let ny = (fy - cy) / ery;
+                                let d = (nx * nx + ny * ny).sqrt() - 1.0;
+                                let coverage = (-d * erx.min(ery) + 0.5).clamp(0.0, 1.0);
+                                if coverage >= 1.0 { continue; }
+                                let mut px = fb.get_pixel(x, y);
+                                px.a = (px.a as f32 * coverage + 0.5) as u8;
+                                px.r = (px.r as f32 * coverage + 0.5) as u8;
+                                px.g = (px.g as f32 * coverage + 0.5) as u8;
+                                px.b = (px.b as f32 * coverage + 0.5) as u8;
+                                fb.set_pixel(x, y, px);
+                            }
+                        }
                     }
                     ClipPathKind::Polygon { points } => {
-                        // Polygon clip: would need scanline rasterization
+                        // Polygon clip: point-in-polygon test via winding number
+                        if points.len() < 3 { /* skip degenerate polygon */ }
+                        else {
+                            let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
+                            let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
+                            let bx1 = (bounds.right().ceil() as u32).min(fb.width);
+                            let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                            let pts: Vec<(f32, f32)> = points
+                                .iter()
+                                .map(|p| (bounds.x + p.0 * bounds.width, bounds.y + p.1 * bounds.height))
+                                .collect();
+                            for y in by0..by1 {
+                                let fy = y as f32 + 0.5;
+                                for x in bx0..bx1 {
+                                    let fx = x as f32 + 0.5;
+                                    // Winding number test
+                                    let mut winding = 0i32;
+                                    for i in 0..pts.len() {
+                                        let j = (i + 1) % pts.len();
+                                        let (x0, y0) = pts[i];
+                                        let (x1, y1) = pts[j];
+                                        if y0 <= fy {
+                                            if y1 > fy && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) > 0.0 {
+                                                winding += 1;
+                                            }
+                                        } else if y1 <= fy && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) < 0.0 {
+                                            winding -= 1;
+                                        }
+                                    }
+                                    if winding == 0 {
+                                        // Outside polygon — clear pixel
+                                        fb.set_pixel(x, y, Color { r: 0, g: 0, b: 0, a: 0 });
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2371,23 +2536,60 @@ impl SoftwareRenderer {
 
                     if shadow.inset {
                         // Inset shadow: darken inside edges of the element
-                        // Top edge
-                        let edge_h = shadow.blur_radius.max(shadow.spread_radius).max(1.0);
+                        let blur = shadow.blur_radius.max(1.0);
+                        let spread = shadow.spread_radius;
+                        let ox = shadow.offset_x;
+                        let oy = shadow.offset_y;
+                        // The inset region is shrunk by spread on each side
+                        let ix = bounds.x + spread;
+                        let iy = bounds.y + spread;
+                        let iw = (bounds.width - spread * 2.0).max(0.0);
+                        let ih = (bounds.height - spread * 2.0).max(0.0);
+                        let edge_h = blur;
+                        let edge_w = blur;
                         let mut c = shadow_color;
-                        c.a = c.a / 2; // soften inset shadow
-                        rasterizer::fill_rect(
-                            fb,
-                            Rect::new(bounds.x, bounds.y, bounds.width, edge_h),
-                            c,
-                            BlendMode::SrcOver,
-                        );
-                        // Bottom edge
-                        rasterizer::fill_rect(
-                            fb,
-                            Rect::new(bounds.x, bounds.bottom() - edge_h, bounds.width, edge_h),
-                            c,
-                            BlendMode::SrcOver,
-                        );
+                        // Simple linear fade: full alpha at edge, zero at blur distance
+                        // Draw multiple sub-rects for a gradient approximation
+                        let steps = (blur as u32).max(1).min(8);
+                        for i in 0..steps {
+                            let frac = (steps - i) as f32 / steps as f32;
+                            let mut sc = c;
+                            sc.a = (c.a as f32 * frac * 0.5) as u8;
+                            if sc.a == 0 { continue; }
+                            let t = i as f32;
+                            // Top edge (shifted by offset_y)
+                            let top_y = iy + oy.max(0.0) + t;
+                            if top_y < iy + ih {
+                                rasterizer::fill_rect(
+                                    fb, Rect::new(ix, top_y, iw, 1.0_f32.min(ih)),
+                                    sc, BlendMode::SrcOver,
+                                );
+                            }
+                            // Bottom edge
+                            let bot_y = iy + ih - 1.0 + oy.min(0.0) - t;
+                            if bot_y >= iy {
+                                rasterizer::fill_rect(
+                                    fb, Rect::new(ix, bot_y, iw, 1.0_f32.min(ih)),
+                                    sc, BlendMode::SrcOver,
+                                );
+                            }
+                            // Left edge (shifted by offset_x)
+                            let left_x = ix + ox.max(0.0) + t;
+                            if left_x < ix + iw {
+                                rasterizer::fill_rect(
+                                    fb, Rect::new(left_x, iy, 1.0_f32.min(iw), ih),
+                                    sc, BlendMode::SrcOver,
+                                );
+                            }
+                            // Right edge
+                            let right_x = ix + iw - 1.0 + ox.min(0.0) - t;
+                            if right_x >= ix {
+                                rasterizer::fill_rect(
+                                    fb, Rect::new(right_x, iy, 1.0_f32.min(iw), ih),
+                                    sc, BlendMode::SrcOver,
+                                );
+                            }
+                        }
                     } else {
                         // Outer shadow: use the existing shadow effect system
                         let lod_blur = (shadow.blur_radius * quality_factor) as u32;

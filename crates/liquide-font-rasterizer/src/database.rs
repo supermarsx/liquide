@@ -336,40 +336,80 @@ impl FontDatabase {
     ///
     /// Parses the fvar table if present to find available axes.
     fn extract_variation_axes(raw_data: &[u8]) -> Vec<VariationAxis> {
-        // Try to parse with rustybuzz to get variation axes
-        let Some(face) = rustybuzz::Face::from_slice(raw_data, 0) else {
+        // Locate the fvar table by scanning the font's table directory.
+        // An OpenType font starts with an offset table:
+        //   - sfVersion (4 bytes), numTables (u16), ...
+        // Each table record: tag(4) + checkSum(4) + offset(4) + length(4) = 16 bytes
+        if raw_data.len() < 12 {
             return Vec::new();
+        }
+        let num_tables = u16::from_be_bytes([raw_data[4], raw_data[5]]) as usize;
+        let table_dir_start = 12;
+        let mut fvar_offset = 0usize;
+        let mut fvar_length = 0usize;
+
+        for i in 0..num_tables {
+            let rec = table_dir_start + i * 16;
+            if rec + 16 > raw_data.len() { break; }
+            if &raw_data[rec..rec + 4] == b"fvar" {
+                fvar_offset = u32::from_be_bytes([
+                    raw_data[rec + 8], raw_data[rec + 9],
+                    raw_data[rec + 10], raw_data[rec + 11],
+                ]) as usize;
+                fvar_length = u32::from_be_bytes([
+                    raw_data[rec + 12], raw_data[rec + 13],
+                    raw_data[rec + 14], raw_data[rec + 15],
+                ]) as usize;
+                break;
+            }
+        }
+
+        if fvar_offset == 0 || fvar_length < 16 {
+            return Vec::new(); // No fvar table → not a variable font
+        }
+
+        let fvar = match raw_data.get(fvar_offset..fvar_offset + fvar_length) {
+            Some(d) => d,
+            None => return Vec::new(),
         };
 
-        // rustybuzz Face doesn't directly expose fvar, but we can use ttf-parser
-        // For now, try common known axes if the font has variations
-        // This is a simplified implementation - full implementation would parse fvar table
-        let mut axes = Vec::new();
+        // fvar header:
+        //   majorVersion (u16), minorVersion (u16),
+        //   axesArrayOffset (u16), reserved (u16),
+        //   axisCount (u16), axisSize (u16),
+        //   instanceCount (u16), instanceSize (u16)
+        if fvar.len() < 16 { return Vec::new(); }
+        let axes_offset = u16::from_be_bytes([fvar[4], fvar[5]]) as usize;
+        let axis_count = u16::from_be_bytes([fvar[8], fvar[9]]) as usize;
+        let axis_size = u16::from_be_bytes([fvar[10], fvar[11]]) as usize;
+        if axis_size < 20 { return Vec::new(); }
 
-        // Check if font supports weight variations
-        if face.units_per_em() > 0 {
-            // Add standard axes that most variable fonts support
-            // In production, this would parse the actual fvar table
+        let mut axes = Vec::with_capacity(axis_count);
+        for i in 0..axis_count {
+            let off = axes_offset + i * axis_size;
+            if off + 20 > fvar.len() { break; }
+
+            let tag = [fvar[off], fvar[off + 1], fvar[off + 2], fvar[off + 3]];
+            let min_val = i32::from_be_bytes([fvar[off + 4], fvar[off + 5], fvar[off + 6], fvar[off + 7]]) as f32 / 65536.0;
+            let def_val = i32::from_be_bytes([fvar[off + 8], fvar[off + 9], fvar[off + 10], fvar[off + 11]]) as f32 / 65536.0;
+            let max_val = i32::from_be_bytes([fvar[off + 12], fvar[off + 13], fvar[off + 14], fvar[off + 15]]) as f32 / 65536.0;
+            // fvar[off+16..off+18] = flags, fvar[off+18..off+20] = axisNameID
+
+            let name = match &tag {
+                b"wght" => "Weight".to_string(),
+                b"wdth" => "Width".to_string(),
+                b"ital" => "Italic".to_string(),
+                b"slnt" => "Slant".to_string(),
+                b"opsz" => "Optical Size".to_string(),
+                _ => String::from_utf8_lossy(&tag).to_string(),
+            };
+
             axes.push(VariationAxis {
-                tag: VariationAxis::WEIGHT,
-                name: "Weight".to_string(),
-                min_value: 100.0,
-                default_value: 400.0,
-                max_value: 900.0,
-            });
-            axes.push(VariationAxis {
-                tag: VariationAxis::WIDTH,
-                name: "Width".to_string(),
-                min_value: 75.0,
-                default_value: 100.0,
-                max_value: 125.0,
-            });
-            axes.push(VariationAxis {
-                tag: VariationAxis::OPTICAL_SIZE,
-                name: "Optical Size".to_string(),
-                min_value: 8.0,
-                default_value: 14.0,
-                max_value: 144.0,
+                tag,
+                name,
+                min_value: min_val,
+                default_value: def_val,
+                max_value: max_val,
             });
         }
 

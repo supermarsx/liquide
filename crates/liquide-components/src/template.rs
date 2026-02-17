@@ -313,6 +313,11 @@ impl TemplateRenderer {
             if needs_set {
                 doc.set_id(node_id, id);
             }
+        } else {
+            // Clear stale element id if the template no longer specifies one
+            if doc.get(node_id).and_then(|n| n.element_id.as_deref()).is_some() {
+                doc.set_id(node_id, "");
+            }
         }
 
         // ── Patch classes ───────────────────────────────────
@@ -368,8 +373,11 @@ impl TemplateRenderer {
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        // Remove attributes not in desired (skip internal ones like data-key)
+        // Remove attributes not in desired (skip internal data-key managed by reconciliation)
         for key in &current_keys {
+            if key == "data-key" {
+                continue;
+            }
             if !desired_map.contains_key(key.as_str()) {
                 doc.remove_attribute(node_id, key);
             }
@@ -481,9 +489,20 @@ impl TemplateRenderer {
             let matched = if let Some(ref key) = desired.key {
                 key_map.remove(key)
             } else {
-                // Match by position among unkeyed
-                let m = unkeyed_old.get(unkeyed_idx).copied();
+                // Match by position among unkeyed — but only if tag names match
+                let m = unkeyed_old.get(unkeyed_idx).copied().filter(|&nid| {
+                    // For text nodes, check both are text; for elements, compare tag names
+                    if desired.is_text() {
+                        doc.get(nid).map_or(false, |n| n.is_text())
+                    } else {
+                        doc.get(nid)
+                            .map_or(false, |n| n.tag_name() == desired.tag)
+                    }
+                });
                 if m.is_some() {
+                    unkeyed_idx += 1;
+                } else if unkeyed_old.get(unkeyed_idx).is_some() {
+                    // Tag mismatch — skip this old node (will be removed later)
                     unkeyed_idx += 1;
                 }
                 m
@@ -574,6 +593,9 @@ impl TemplateRenderer {
             PseudoStateFlags::FOCUS,
             PseudoStateFlags::DISABLED,
             PseudoStateFlags::CHECKED,
+            PseudoStateFlags::FIRST_CHILD,
+            PseudoStateFlags::LAST_CHILD,
+            PseudoStateFlags::ROOT,
         ];
         for flag in &all_flags {
             if template.pseudo_states.contains(*flag) {

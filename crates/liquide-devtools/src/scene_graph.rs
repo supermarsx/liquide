@@ -198,6 +198,7 @@ fn kind_label(kind: &SceneNodeKind) -> String {
         SceneNodeKind::BackdropFilter { .. } => "BackdropFilter".into(),
         SceneNodeKind::Image { image_id, .. } => format!("Image({})", image_id),
         SceneNodeKind::GradientFill { .. } => "GradientFill".into(),
+        SceneNodeKind::SvgPath { .. } => "SvgPath".into(),
         SceneNodeKind::BackgroundFill { .. } => "BackgroundFill".into(),
         SceneNodeKind::Outline { .. } => "Outline".into(),
         SceneNodeKind::BoxShadows { .. } => "BoxShadows".into(),

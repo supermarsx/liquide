@@ -578,8 +578,9 @@ pub fn blit_alpha(
             ]);
             if opacity < 1.0 {
                 s.a = (s.a as f32 * opacity + 0.5) as u8;
-                s = s.premultiply();
             }
+            // blend_src_over expects premultiplied input — always premultiply
+            s = s.premultiply();
             let dx = dst_x + col;
             let d = fb.get_pixel(dx, dy);
             let result = blend::blend_src_over(d, s);
@@ -847,4 +848,74 @@ pub fn sdf_rounded_rect_per_corner(
     let inside = qx.max(qy).min(0.0);
 
     outside + inside - r
+}
+
+/// Draw an anti-aliased line segment using Bresenham-style pixel walking.
+///
+/// Supports arbitrary stroke width by expanding perpendicular to the line.
+pub fn draw_line(
+    fb: &mut FrameBuffer,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    color: Color,
+    width: f32,
+) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 0.001 { return; }
+
+    let steps = (len * 2.0).ceil() as i32;
+    let half_w = width * 0.5;
+
+    // Normal vector perpendicular to the line
+    let _nx = -dy / len;
+    let _ny = dx / len;
+
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let cx = x1 + dx * t;
+        let cy = y1 + dy * t;
+
+        // Expand perpendicular to line direction
+        let y_start = (cy - half_w).floor() as i32;
+        let y_end = (cy + half_w).ceil() as i32;
+        let x_start = (cx - half_w).floor() as i32;
+        let x_end = (cx + half_w).ceil() as i32;
+
+        for py in y_start..=y_end {
+            for px in x_start..=x_end {
+                if px < 0 || py < 0 || px as u32 >= fb.width || py as u32 >= fb.height {
+                    continue;
+                }
+                // Distance from pixel center to line segment
+                let fx = px as f32 + 0.5;
+                let fy = py as f32 + 0.5;
+                let proj = ((fx - x1) * dx + (fy - y1) * dy) / (len * len);
+                let proj = proj.clamp(0.0, 1.0);
+                let near_x = x1 + dx * proj;
+                let near_y = y1 + dy * proj;
+                let dist = ((fx - near_x) * (fx - near_x) + (fy - near_y) * (fy - near_y)).sqrt();
+                if dist <= half_w + 0.5 {
+                    let coverage = (half_w + 0.5 - dist).clamp(0.0, 1.0);
+                    let alpha = (color.a as f32 * coverage) as u8;
+                    if alpha > 0 {
+                        let c = Color { r: color.r, g: color.g, b: color.b, a: alpha };
+                        let idx = py as usize * fb.stride as usize + px as usize * 4;
+                        if idx + 3 < fb.pixels.len() {
+                            let sa = c.a as f32 / 255.0;
+                            let da = 1.0 - sa;
+                            // BGRA layout in the framebuffer
+                            fb.pixels[idx]     = (c.b as f32 * sa + fb.pixels[idx]     as f32 * da) as u8;
+                            fb.pixels[idx + 1] = (c.g as f32 * sa + fb.pixels[idx + 1] as f32 * da) as u8;
+                            fb.pixels[idx + 2] = (c.r as f32 * sa + fb.pixels[idx + 2] as f32 * da) as u8;
+                            fb.pixels[idx + 3] = (c.a.max(fb.pixels[idx + 3])) as u8;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

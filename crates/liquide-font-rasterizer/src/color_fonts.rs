@@ -187,14 +187,19 @@ pub fn rasterize_colr_v0(
     let ascent = scaled.ascent();
 
     // Determine bounding box from the base glyph
-    let base_glyph_ab = ab_glyph::GlyphId(glyph_id as u16).with_scale_and_position(scale, ab_glyph::point(0.0, ascent));
+    // Guard against glyph_id truncation: ab_glyph::GlyphId wraps u16
+    if glyph_id > u16::MAX as u32 {
+        return None;
+    }
+    let gid = ab_glyph::GlyphId(glyph_id as u16);
+    let base_glyph_ab = gid.with_scale_and_position(scale, ab_glyph::point(0.0, ascent));
     let outline = face.font.outline_glyph(base_glyph_ab)?;
     let bounds = outline.px_bounds();
     let w = bounds.width().ceil() as u32;
     let h = bounds.height().ceil() as u32;
     if w == 0 || h == 0 { return None; }
 
-    let advance = scaled.h_advance(ab_glyph::GlyphId(glyph_id as u16));
+    let advance = scaled.h_advance(gid);
     let mut rgba = vec![0u8; (w * h * 4) as usize];
 
     // Composite each layer

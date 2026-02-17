@@ -627,10 +627,13 @@ impl ParagraphLayouter {
 
             total_width = total_width.max(line_width);
 
+            let line_start = raw.items.first().map(|it| it.byte_offset).unwrap_or(0);
+            let line_end = raw.items.last().map(|it| it.byte_offset + it.glyph.cluster as usize).unwrap_or(0);
+
             lines.push(LayoutLine {
                 glyphs: positioned,
-                start: 0,
-                end: 0,
+                start: line_start,
+                end: line_end,
                 baseline_y: baseline,
                 ascent: raw.ascent,
                 descent: raw.descent,

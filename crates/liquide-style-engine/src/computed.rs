@@ -245,6 +245,8 @@ pub enum GridLine {
     Auto,
     Line(i32),
     Span(u32),
+    /// Named grid line or grid-area name (e.g. `grid-area: header`).
+    Named(String),
 }
 
 impl Default for GridLine {

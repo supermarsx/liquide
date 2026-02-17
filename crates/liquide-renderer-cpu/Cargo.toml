@@ -10,9 +10,11 @@ rust-version.workspace = true
 liquide-common.workspace = true
 liquide-compositor.workspace = true
 liquide-font-rasterizer.workspace = true
+liquide-paint.workspace = true
 liquide-renderer-css.workspace = true
 liquide-text-engine.workspace = true
 liquide-theme-css.workspace = true
+miniz_oxide.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

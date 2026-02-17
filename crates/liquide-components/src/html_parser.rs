@@ -32,6 +32,69 @@
 use crate::template::TemplateNode;
 use std::fmt;
 
+// ── HTML entity decoding ─────────────────────────────────────────
+
+/// Decode common HTML entities into their character equivalents.
+fn decode_html_entities(input: &str) -> String {
+    if !input.contains('&') {
+        return input.to_string();
+    }
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '&' {
+            let mut entity = String::new();
+            for c in chars.by_ref() {
+                if c == ';' {
+                    break;
+                }
+                entity.push(c);
+                if entity.len() > 10 {
+                    // Not a real entity — emit raw
+                    result.push('&');
+                    result.push_str(&entity);
+                    entity.clear();
+                    break;
+                }
+            }
+            if entity.is_empty() {
+                continue;
+            }
+            match entity.as_str() {
+                "amp" => result.push('&'),
+                "lt" => result.push('<'),
+                "gt" => result.push('>'),
+                "quot" => result.push('"'),
+                "apos" => result.push('\''),
+                "nbsp" => result.push('\u{00A0}'),
+                s if s.starts_with('#') => {
+                    let code = if s.starts_with("#x") || s.starts_with("#X") {
+                        u32::from_str_radix(&s[2..], 16).ok()
+                    } else {
+                        s[1..].parse::<u32>().ok()
+                    };
+                    if let Some(c) = code.and_then(char::from_u32) {
+                        result.push(c);
+                    } else {
+                        result.push('&');
+                        result.push_str(&entity);
+                        result.push(';');
+                    }
+                }
+                _ => {
+                    // Unknown entity — preserve raw
+                    result.push('&');
+                    result.push_str(&entity);
+                    result.push(';');
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 // ── Error type ───────────────────────────────────────────────────
 
 /// An error encountered while parsing an HTML template string.
@@ -409,8 +472,11 @@ impl<'a> Cursor<'a> {
                     self.advance(ch.len_utf8());
                 }
                 let value = self.input[start..self.pos].to_string();
-                self.advance(1); // closing quote
-                Ok(value)
+                // Gracefully handle unterminated quotes at EOF instead of panicking
+                if self.peek() == Some(q) {
+                    self.advance(1); // closing quote
+                }
+                Ok(decode_html_entities(&value))
             }
             // Unquoted value (until whitespace or `>`)
             Some(_) => {
@@ -421,7 +487,7 @@ impl<'a> Cursor<'a> {
                     }
                     self.advance(ch.len_utf8());
                 }
-                Ok(self.input[start..self.pos].to_string())
+                Ok(decode_html_entities(&self.input[start..self.pos]))
             }
             None => Err(self.error("unexpected end of input in attribute value")),
         }
@@ -458,7 +524,7 @@ impl<'a> Cursor<'a> {
                 prev_ws = false;
             }
         }
-        result
+        decode_html_entities(&result)
     }
 
     // ── Utility ──────────────────────────────────────────────

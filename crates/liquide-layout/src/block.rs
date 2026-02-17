@@ -2,7 +2,7 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{AspectRatio, BoxSizing, Display, LineClamp, ListStylePosition, ListStyleType, Overflow, Position};
+use liquide_style_engine::computed::{AspectRatio, BoxSizing, Display, Float, LineClamp, ListStylePosition, ListStyleType, Overflow, Position};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::style_map::PseudoKind;
 
@@ -282,6 +282,33 @@ pub fn layout_block(
             continue;
         }
 
+        // Delegate floated children to the float layout engine
+        if child_style.float != Float::None {
+            let cx = offset_x + mar_left + border_left + pad_left;
+            let cy = offset_y + mar_top + border_top + pad_top;
+            let float_height = crate::float::layout_block_with_floats(
+                doc,
+                node_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                cx,
+                cy + child_y,
+                viewport_w,
+                viewport_h,
+                base_font_size,
+                box_id,
+            );
+            child_y += float_height;
+            continue;
+        }
+        if matches!(child_style.position, Position::Absolute | Position::Fixed) {
+            continue;
+        }
+
         // Check if child is a text node
         if let Some(child_node) = doc.get(child_id) {
             if child_node.is_text() {
@@ -355,8 +382,9 @@ pub fn layout_block(
         if let Some(prev_mb) = prev_margin_bottom {
             let collapsed = collapse_margins(prev_mb, child_mar_top);
             // We already added prev_margin_bottom to child_y when we advanced
-            // past the previous child. Remove it and replace with collapsed.
-            child_y = child_y - prev_mb + collapsed;
+            // past the previous child. Remove both prev_mb and child_mar_top,
+            // then add the single collapsed margin to avoid double-counting.
+            child_y = child_y - prev_mb - child_mar_top + collapsed;
         } else if can_collapse_top && first_child_margin_top == Some(child_mar_top) {
             // First child: if parent-child top margin collapsing applies,
             // the child's top margin should be collapsed with parent's top margin

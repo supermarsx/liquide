@@ -38,11 +38,21 @@ pub struct PathSegment {
 }
 
 /// Parse an SVG `d` attribute into path commands.
+///
+/// Relative commands (lowercase letters) are converted to absolute
+/// coordinates during parsing, so all emitted `PathCommand` values
+/// use absolute coordinates.
 pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
     let mut commands = Vec::new();
     let mut chars = d.chars().peekable();
     let mut current_cmd = ' ';
     let mut relative = false;
+    // Current pen position (for converting relative → absolute).
+    let mut cx = 0.0_f32;
+    let mut cy = 0.0_f32;
+    // Start of current sub-path (set by MoveTo, used by Close).
+    let mut sx = 0.0_f32;
+    let mut sy = 0.0_f32;
 
     fn skip_ws_comma(chars: &mut std::iter::Peekable<std::str::Chars>) {
         while let Some(&c) = chars.peek() {
@@ -112,54 +122,70 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
 
         match current_cmd.to_ascii_uppercase() {
             'M' => {
-                if let (Some(x), Some(y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                if let (Some(mut x), Some(mut y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                    if relative { x += cx; y += cy; }
+                    cx = x; cy = y; sx = x; sy = y;
                     commands.push(PathCommand::MoveTo { x, y });
                     // Subsequent coords are implicit LineTo
                     current_cmd = if relative { 'l' } else { 'L' };
                 }
             }
             'L' => {
-                if let (Some(x), Some(y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                if let (Some(mut x), Some(mut y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                    if relative { x += cx; y += cy; }
+                    cx = x; cy = y;
                     commands.push(PathCommand::LineTo { x, y });
                 }
             }
             'H' => {
-                if let Some(x) = parse_number(&mut chars) {
+                if let Some(mut x) = parse_number(&mut chars) {
+                    if relative { x += cx; }
+                    cx = x;
                     commands.push(PathCommand::HLineTo { x });
                 }
             }
             'V' => {
-                if let Some(y) = parse_number(&mut chars) {
+                if let Some(mut y) = parse_number(&mut chars) {
+                    if relative { y += cy; }
+                    cy = y;
                     commands.push(PathCommand::VLineTo { y });
                 }
             }
             'C' => {
-                if let (Some(x1), Some(y1), Some(x2), Some(y2), Some(x), Some(y)) = (
+                if let (Some(mut x1), Some(mut y1), Some(mut x2), Some(mut y2), Some(mut x), Some(mut y)) = (
                     parse_number(&mut chars), parse_number(&mut chars),
                     parse_number(&mut chars), parse_number(&mut chars),
                     parse_number(&mut chars), parse_number(&mut chars),
                 ) {
+                    if relative { x1 += cx; y1 += cy; x2 += cx; y2 += cy; x += cx; y += cy; }
+                    cx = x; cy = y;
                     commands.push(PathCommand::CubicTo { x1, y1, x2, y2, x, y });
                 }
             }
             'S' => {
-                if let (Some(x2), Some(y2), Some(x), Some(y)) = (
+                if let (Some(mut x2), Some(mut y2), Some(mut x), Some(mut y)) = (
                     parse_number(&mut chars), parse_number(&mut chars),
                     parse_number(&mut chars), parse_number(&mut chars),
                 ) {
+                    if relative { x2 += cx; y2 += cy; x += cx; y += cy; }
+                    cx = x; cy = y;
                     commands.push(PathCommand::SmoothCubicTo { x2, y2, x, y });
                 }
             }
             'Q' => {
-                if let (Some(x1), Some(y1), Some(x), Some(y)) = (
+                if let (Some(mut x1), Some(mut y1), Some(mut x), Some(mut y)) = (
                     parse_number(&mut chars), parse_number(&mut chars),
                     parse_number(&mut chars), parse_number(&mut chars),
                 ) {
+                    if relative { x1 += cx; y1 += cy; x += cx; y += cy; }
+                    cx = x; cy = y;
                     commands.push(PathCommand::QuadTo { x1, y1, x, y });
                 }
             }
             'T' => {
-                if let (Some(x), Some(y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                if let (Some(mut x), Some(mut y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                    if relative { x += cx; y += cy; }
+                    cx = x; cy = y;
                     commands.push(PathCommand::SmoothQuadTo { x, y });
                 }
             }
@@ -169,7 +195,9 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                     parse_number(&mut chars),
                 ) {
                     if let (Some(la), Some(sf)) = (parse_flag(&mut chars), parse_flag(&mut chars)) {
-                        if let (Some(x), Some(y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                        if let (Some(mut x), Some(mut y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
+                            if relative { x += cx; y += cy; }
+                            cx = x; cy = y;
                             commands.push(PathCommand::ArcTo {
                                 rx, ry, rotation: rot, large_arc: la, sweep: sf, x, y,
                             });
@@ -178,6 +206,7 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                 }
             }
             'Z' => {
+                cx = sx; cy = sy;
                 commands.push(PathCommand::Close);
             }
             _ => {

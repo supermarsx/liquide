@@ -592,7 +592,8 @@ pub fn parse_grid_line_str(s: &str) -> GridLine {
     } else if let Ok(n) = s.parse::<i32>() {
         GridLine::Line(n)
     } else {
-        GridLine::Auto
+        // Treat as a named grid line / grid-area name (e.g. "header")
+        GridLine::Named(s.to_string())
     }
 }
 

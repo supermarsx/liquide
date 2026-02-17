@@ -15,13 +15,13 @@ pub struct Tag(u32);
 impl Tag {
     /// Intern a tag name string. Returns the same `Tag` for the same string.
     pub fn intern(name: &str) -> Self {
-        let mut interner = INTERNER.lock().unwrap();
+        let mut interner = INTERNER.lock().unwrap_or_else(|e| e.into_inner());
         interner.intern(name)
     }
 
     /// Get the string representation of the tag.
     pub fn as_str(&self) -> String {
-        let interner = INTERNER.lock().unwrap();
+        let interner = INTERNER.lock().unwrap_or_else(|e| e.into_inner());
         interner.resolve(self.0).unwrap_or_default()
     }
 
