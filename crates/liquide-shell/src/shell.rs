@@ -2042,7 +2042,12 @@ impl Shell {
                         KeyCode::Backspace => {
                             let q = self.launcher.query().to_string();
                             if !q.is_empty() {
-                                let new_q = &q[..q.len() - 1];
+                                // Safe UTF-8 handling: find last char boundary
+                                let new_q = if let Some((idx, _)) = q.char_indices().last() {
+                                    &q[..idx]
+                                } else {
+                                    ""
+                                };
                                 self.launcher.set_query(new_q);
                             }
                             return Some(ShellAction::Redraw);

@@ -250,30 +250,48 @@ impl TcpTransport {
             buffers.push(buf);
         }
 
-        let slices: Vec<IoSlice<'_>> = buffers.iter().map(|b| IoSlice::new(b)).collect();
-
         let mut w = writer.lock().await;
-        let total: usize = slices.iter().map(|s| s.len()).sum();
-        let mut written = 0;
+        
+        // Track position: which buffer and offset within that buffer
+        let mut buf_idx = 0;
+        let mut byte_offset = 0;
 
-        // write_vectored may not write everything in one call
-        while written < total {
-            // Recompute slices for remaining data
+        while buf_idx < buffers.len() {
+            // Build IoSlice array from current position
+            let mut slices: Vec<IoSlice<'_>> = Vec::with_capacity(buffers.len() - buf_idx);
+            
+            // First slice starts at byte_offset
+            if buf_idx < buffers.len() {
+                slices.push(IoSlice::new(&buffers[buf_idx][byte_offset..]));
+            }
+            // Remaining buffers start at 0
+            for buf in &buffers[buf_idx + 1..] {
+                slices.push(IoSlice::new(buf));
+            }
+            
+            if slices.is_empty() {
+                break;
+            }
+
             let n = w.write_vectored(&slices).await?;
             if n == 0 {
                 return Err(crate::TransportError::ConnectionReset);
             }
-            written += n;
-            if written < total {
-                // Fallback: write remaining bytes individually
-                for buf in &buffers {
-                    // Skip already-written prefix
-                    let remaining_start = written.saturating_sub(total - buf.len());
-                    if remaining_start < buf.len() {
-                        w.write_all(&buf[remaining_start..]).await?;
-                    }
+
+            // Advance position by n bytes
+            let mut remaining = n;
+            while remaining > 0 && buf_idx < buffers.len() {
+                let buf_remaining = buffers[buf_idx].len() - byte_offset;
+                if remaining >= buf_remaining {
+                    // Fully wrote this buffer, move to next
+                    remaining -= buf_remaining;
+                    buf_idx += 1;
+                    byte_offset = 0;
+                } else {
+                    // Partially wrote this buffer
+                    byte_offset += remaining;
+                    remaining = 0;
                 }
-                break;
             }
         }
 
@@ -329,9 +347,9 @@ impl crate::Transport for TcpTransport {
     async fn close(&mut self) -> crate::Result<()> {
         // Attempt a graceful shutdown on the write half.
         if let Some(writer) = self.writer.take() {
-            if let Ok(mut w) = Arc::try_unwrap(writer) {
-                let _ = w.get_mut().shutdown().await;
-            }
+            // Use lock-based shutdown to work even with other references
+            let mut w = writer.lock().await;
+            let _ = w.shutdown().await;
         }
         self.reader = None;
         self.remote = None;

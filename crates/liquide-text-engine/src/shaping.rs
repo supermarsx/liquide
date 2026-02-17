@@ -99,9 +99,36 @@ impl Default for ShaperConfig {
     }
 }
 
+/// External shaping backend trait — allows plugging in a real shaper
+/// (e.g., rustybuzz via liquide-font-rasterizer) for production-quality
+/// complex script shaping.
+///
+/// When no backend is set, the built-in fallback shaper (Latin-only,
+/// approximate metrics) is used. The `liquide-font-rasterizer` crate
+/// provides a `RustybuzzShaperBackend` that implements this trait.
+pub trait ShaperBackend: Send + Sync {
+    /// Shape text using the real shaping engine.
+    ///
+    /// Returns glyphs with real metrics from the font, or `None` if the
+    /// font/text cannot be shaped (fallback shaper will be used).
+    fn shape(
+        &self,
+        text: &str,
+        font_id: FontId,
+        size: f32,
+        direction: Direction,
+        config: &ShaperConfig,
+    ) -> Option<Vec<ShapedGlyph>>;
+}
+
 /// Text shaper that converts characters into positioned glyphs.
+///
+/// Supports a pluggable backend for production shaping. When a backend is
+/// set, it is tried first; on `None` return, the built-in fallback shaper
+/// is used (hardcoded Latin metrics).
 pub struct TextShaper {
     config: ShaperConfig,
+    backend: Option<Box<dyn ShaperBackend>>,
 }
 
 impl TextShaper {
@@ -109,20 +136,59 @@ impl TextShaper {
     pub fn new() -> Self {
         Self {
             config: ShaperConfig::default(),
+            backend: None,
         }
     }
 
     #[must_use]
     pub fn with_config(config: ShaperConfig) -> Self {
-        Self { config }
+        Self { config, backend: None }
+    }
+
+    /// Set the shaping backend (e.g., rustybuzz).
+    /// When set, the backend is tried first for all `shape()` calls.
+    pub fn set_backend(&mut self, backend: Box<dyn ShaperBackend>) {
+        self.backend = Some(backend);
+    }
+
+    /// Create a shaper with a backend already attached.
+    #[must_use]
+    pub fn with_backend(config: ShaperConfig, backend: Box<dyn ShaperBackend>) -> Self {
+        Self { config, backend: Some(backend) }
     }
 
     /// Shape a run of text using a specific font.
     ///
-    /// This provides built-in shaping for basic scripts and delegates
-    /// to HarfBuzz for complex scripts when available.
+    /// If a backend is set, tries it first (real OpenType shaping).
+    /// Falls back to the built-in approximate shaper for basic scripts.
     #[must_use]
     pub fn shape(
+        &self,
+        text: &str,
+        font_id: FontId,
+        size: f32,
+        direction: Direction,
+    ) -> ShapedRun {
+        // Try the real backend first
+        if let Some(ref backend) = self.backend {
+            if let Some(glyphs) = backend.shape(text, font_id, size, direction, &self.config) {
+                return ShapedRun {
+                    glyphs,
+                    font_id,
+                    size,
+                    direction,
+                    start: 0,
+                    end: text.len(),
+                };
+            }
+        }
+
+        // Fallback: built-in approximate shaping
+        self.shape_fallback(text, font_id, size, direction)
+    }
+
+    /// Built-in fallback shaping for basic Latin scripts.
+    fn shape_fallback(
         &self,
         text: &str,
         font_id: FontId,

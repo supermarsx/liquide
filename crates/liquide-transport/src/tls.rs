@@ -138,9 +138,9 @@ impl crate::Transport for TlsTcpTransport {
 
     async fn close(&mut self) -> crate::Result<()> {
         if let Some(writer) = self.writer.take() {
-            if let Ok(mut w) = Arc::try_unwrap(writer) {
-                let _ = w.get_mut().shutdown().await;
-            }
+            // Use lock-based shutdown to work even with other references
+            let mut w = writer.lock().await;
+            let _ = w.shutdown().await;
         }
         self.reader = None;
         self.remote = None;

@@ -19,15 +19,34 @@ pub enum SubpixelMode {
     HorizontalBgr,
 }
 
+/// Font hinting mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum HintingMode {
+    /// No hinting — outlines are rendered as-is.
+    None,
+    /// Light hinting — minimal adjustment for vertical stems only.
+    Light,
+    /// Full hinting — snap to pixel grid horizontally and vertically.
+    #[default]
+    Full,
+}
+
 /// Configuration for glyph rasterization.
 #[derive(Debug, Clone, Copy)]
 pub struct RasterConfig {
     /// Subpixel rendering mode.
     pub subpixel: SubpixelMode,
     /// Whether to apply hinting (snapping to pixel grid).
+    /// Kept for backward compatibility — maps to HintingMode.
     pub hinting: bool,
+    /// Fine-grained hinting control.
+    pub hinting_mode: HintingMode,
     /// Synthetic bold: extra stroke width in pixels (0 = none).
     pub synthetic_bold: f32,
+    /// Synthetic oblique: shear angle in degrees (0 = none).
+    pub synthetic_oblique: f32,
+    /// Target DPI for hinting (96 = standard, 144 = HiDPI).
+    pub target_dpi: f32,
 }
 
 impl Default for RasterConfig {
@@ -35,7 +54,10 @@ impl Default for RasterConfig {
         Self {
             subpixel: SubpixelMode::Grayscale,
             hinting: true,
+            hinting_mode: HintingMode::Full,
             synthetic_bold: 0.0,
+            synthetic_oblique: 0.0,
+            target_dpi: 96.0,
         }
     }
 }

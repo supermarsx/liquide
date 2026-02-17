@@ -80,6 +80,68 @@ impl Document {
         id
     }
 
+    /// Create a comment node (detached).
+    pub fn create_comment(&mut self, data: &str) -> NodeId {
+        let id = self.alloc_id();
+        let node = Node {
+            id,
+            tag: Tag::intern("#comment"),
+            parent: None,
+            children: Vec::new(),
+            attrs: crate::attrs::AttributeMap::new(),
+            inline_styles: crate::attrs::AttributeMap::new(),
+            classes: crate::class_list::ClassList::new(),
+            element_id: None,
+            pseudo_states: PseudoStateFlags::empty(),
+            data: crate::node::NodeData::Comment(data.to_string()),
+            dirty: crate::dirty::DirtyFlags::all_dirty(),
+        };
+        self.nodes.insert(id, node);
+        id
+    }
+
+    /// Create a document fragment (lightweight detached container).
+    pub fn create_document_fragment(&mut self) -> NodeId {
+        let id = self.alloc_id();
+        let node = Node {
+            id,
+            tag: Tag::intern("#document-fragment"),
+            parent: None,
+            children: Vec::new(),
+            attrs: crate::attrs::AttributeMap::new(),
+            inline_styles: crate::attrs::AttributeMap::new(),
+            classes: crate::class_list::ClassList::new(),
+            element_id: None,
+            pseudo_states: PseudoStateFlags::empty(),
+            data: crate::node::NodeData::DocumentFragment,
+            dirty: crate::dirty::DirtyFlags::all_dirty(),
+        };
+        self.nodes.insert(id, node);
+        id
+    }
+
+    /// Create a shadow root node (detached).
+    ///
+    /// Attach to a host element with `append_child` to form a shadow tree.
+    pub fn create_shadow_root(&mut self) -> NodeId {
+        let id = self.alloc_id();
+        let node = Node {
+            id,
+            tag: Tag::intern("#shadow-root"),
+            parent: None,
+            children: Vec::new(),
+            attrs: crate::attrs::AttributeMap::new(),
+            inline_styles: crate::attrs::AttributeMap::new(),
+            classes: crate::class_list::ClassList::new(),
+            element_id: None,
+            pseudo_states: PseudoStateFlags::empty(),
+            data: crate::node::NodeData::ShadowRoot,
+            dirty: crate::dirty::DirtyFlags::all_dirty(),
+        };
+        self.nodes.insert(id, node);
+        id
+    }
+
     /// Create a pseudo-element node (detached).
     ///
     /// The node is inserted as a synthetic DOM child during style resolution.

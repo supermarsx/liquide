@@ -145,11 +145,18 @@ pub fn crc32c(data: &[u8]) -> u32 {
 }
 
 /// Compute CRC-32C for a tile region within a frame buffer.
+/// Returns 0 if the tile is out of bounds.
 #[must_use]
 pub fn crc32c_tile(fb: &FrameBuffer, tile_x: u32, tile_y: u32, tile_size: u32) -> u32 {
     let bpp = fb.format.bytes_per_pixel();
     let px = tile_x * tile_size;
     let py = tile_y * tile_size;
+    
+    // Check if tile is completely outside the framebuffer
+    if px >= fb.width || py >= fb.height {
+        return 0;
+    }
+    
     let tw = tile_size.min(fb.width.saturating_sub(px));
     let th = tile_size.min(fb.height.saturating_sub(py));
 
@@ -157,6 +164,10 @@ pub fn crc32c_tile(fb: &FrameBuffer, tile_x: u32, tile_y: u32, tile_size: u32) -
     for row in 0..th {
         let offset = ((py + row) * fb.stride + px * bpp) as usize;
         let end = offset + (tw * bpp) as usize;
+        // Bounds check before slicing
+        if end > fb.pixels.len() {
+            continue;
+        }
         for &byte in &fb.pixels[offset..end] {
             crc = CRC32C_TABLE[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
         }

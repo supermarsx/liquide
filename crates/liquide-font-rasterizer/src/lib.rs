@@ -21,15 +21,25 @@
 //! liquide-renderer-cpu (glyph atlas, rendering)
 //! ```
 
+pub mod backend;
+pub mod color_fonts;
 pub mod database;
+pub mod font_face;
+pub mod glyph_cache;
 pub mod metrics;
 pub mod rasterize;
 pub mod shaper;
+pub mod synthesis;
 
-pub use database::{FontDatabase, FontFaceId, LoadedFace};
+pub use backend::RustybuzzShaperBackend;
+pub use color_fonts::{ColorGlyph, ColorGlyphFormat};
+pub use database::{FontDatabase, FontFaceId, LoadedFace, VariationAxis, VariationSettings};
+pub use font_face::{FontDisplay, FontFaceLoader, FontFaceRule, FontLoadState};
+pub use glyph_cache::{CacheStats, GlyphCache, GlyphCacheKey};
 pub use metrics::FontMetricsProvider;
-pub use rasterize::{GlyphBitmap, GlyphRasterizer, RasterConfig, SubpixelMode};
-pub use shaper::{ShapedGlyph, TextShaper};
+pub use rasterize::{GlyphBitmap, GlyphRasterizer, HintingMode, RasterConfig, SubpixelMode};
+pub use shaper::{FontFeature, ShapedGlyph, TextShaper};
+pub use synthesis::{SynthesisConfig, apply_synthesis, apply_synthetic_bold, apply_synthetic_oblique};
 
 use thiserror::Error;
 

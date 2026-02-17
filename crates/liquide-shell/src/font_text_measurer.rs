@@ -45,7 +45,7 @@ impl TextMeasurer for FontTextMeasurer {
 
         // Measure text width using real glyph advances when possible.
         let transformed = props.transform_text(text);
-        let (text_width, text_height) = if let Some(fid) = face_id {
+        let (text_width, _text_height) = if let Some(fid) = face_id {
             let (w, _h) = provider.measure_text(fid, font_size, &transformed);
             // Apply letter-spacing and word-spacing adjustments.
             let extra_spacing = transformed.chars().count() as f32 * props.letter_spacing

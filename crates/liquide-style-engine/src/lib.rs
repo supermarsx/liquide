@@ -13,6 +13,7 @@ pub mod engine;
 pub mod inheritance;
 pub mod rules;
 pub mod selector;
+pub mod shadow_dom;
 pub mod shorthand;
 pub mod specificity;
 pub mod style_map;

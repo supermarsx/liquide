@@ -196,6 +196,11 @@ fn tokenise_text(
         return items;
     }
 
+    // Apply text-transform before tokenization so word boundaries are correct
+    // (e.g., German ß → SS in uppercase changes word length).
+    let transformed = props.transform_text(text);
+    let text = transformed.as_ref();
+
     let collapse = collapses_whitespace(ws);
     let keep_nl = preserves_newlines(ws);
 

@@ -6,6 +6,9 @@ use std::io::Cursor;
 
 use crate::ProtocolError;
 
+/// Maximum size of decompressed data (64 MiB) to prevent decompression bombs.
+pub const MAX_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
+
 /// Compression algorithm identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -61,13 +64,58 @@ pub fn compress(
 }
 
 /// Decompress data using the specified algorithm.
+///
+/// Returns an error if decompressed size exceeds [`MAX_DECOMPRESSED_SIZE`].
 pub fn decompress(data: &[u8], algorithm: CompressionAlgorithm) -> crate::Result<Vec<u8>> {
     match algorithm {
-        CompressionAlgorithm::None => Ok(data.to_vec()),
-        CompressionAlgorithm::Lz4 => lz4_flex::decompress_size_prepended(data)
-            .map_err(|e| ProtocolError::Compression(e.to_string())),
-        CompressionAlgorithm::Zstd => zstd::decode_all(Cursor::new(data))
-            .map_err(|e| ProtocolError::Compression(e.to_string())),
+        CompressionAlgorithm::None => {
+            if data.len() > MAX_DECOMPRESSED_SIZE {
+                return Err(ProtocolError::Compression(format!(
+                    "uncompressed data too large: {} bytes (max {})",
+                    data.len(),
+                    MAX_DECOMPRESSED_SIZE
+                )));
+            }
+            Ok(data.to_vec())
+        }
+        CompressionAlgorithm::Lz4 => {
+            // LZ4 prepends the decompressed size - validate before allocating
+            if data.len() < 4 {
+                return Err(ProtocolError::Compression("LZ4 data too short".to_string()));
+            }
+            let decompressed_size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+            if decompressed_size > MAX_DECOMPRESSED_SIZE {
+                return Err(ProtocolError::Compression(format!(
+                    "LZ4 decompressed size too large: {} bytes (max {})",
+                    decompressed_size,
+                    MAX_DECOMPRESSED_SIZE
+                )));
+            }
+            lz4_flex::decompress_size_prepended(data)
+                .map_err(|e| ProtocolError::Compression(e.to_string()))
+        }
+        CompressionAlgorithm::Zstd => {
+            // Use streaming decoder with size limit
+            let mut decoder = zstd::Decoder::new(Cursor::new(data))
+                .map_err(|e| ProtocolError::Compression(e.to_string()))?;
+            let mut result = Vec::new();
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = std::io::Read::read(&mut decoder, &mut buf)
+                    .map_err(|e| ProtocolError::Compression(e.to_string()))?;
+                if n == 0 {
+                    break;
+                }
+                if result.len() + n > MAX_DECOMPRESSED_SIZE {
+                    return Err(ProtocolError::Compression(format!(
+                        "Zstd decompressed size exceeds limit of {} bytes",
+                        MAX_DECOMPRESSED_SIZE
+                    )));
+                }
+                result.extend_from_slice(&buf[..n]);
+            }
+            Ok(result)
+        }
     }
 }
 

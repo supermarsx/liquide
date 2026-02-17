@@ -46,6 +46,15 @@ impl FrameCodec {
                     // Peek at the header without consuming yet
                     let mut peek = buf.clone();
                     let header = FrameHeader::decode(&mut peek)?;
+                    
+                    // Validate payload size against maximum allowed
+                    if header.payload_len as u32 > crate::MAX_FRAME_PAYLOAD {
+                        return Err(ProtocolError::PayloadTooLarge {
+                            size: header.payload_len as u32,
+                            max: crate::MAX_FRAME_PAYLOAD,
+                        });
+                    }
+                    
                     // We successfully parsed the header, now check if we have enough for payload + CRC
                     let total_needed = FrameHeader::WIRE_SIZE
                         + header.payload_len as usize
@@ -134,8 +143,27 @@ pub fn cbor_encode<T: serde::Serialize>(value: &T) -> crate::Result<Bytes> {
     Ok(Bytes::from(buf))
 }
 
+/// Maximum size for CBOR-encoded messages (16 MiB).
+pub const MAX_CBOR_SIZE: usize = 16 * 1024 * 1024;
+
+/// Maximum recursion depth for CBOR structures.
+pub const MAX_CBOR_DEPTH: usize = 128;
+
 /// Decode a CBOR payload into a typed value.
+///
+/// Enforces size limits to prevent denial-of-service attacks.
+/// Returns an error if:
+/// - Input data exceeds [`MAX_CBOR_SIZE`]
+/// - Parsing fails
 pub fn cbor_decode<T: serde::de::DeserializeOwned>(data: &[u8]) -> crate::Result<T> {
+    // Validate input size
+    if data.len() > MAX_CBOR_SIZE {
+        return Err(ProtocolError::Cbor(format!(
+            "CBOR data too large: {} bytes (max {})",
+            data.len(),
+            MAX_CBOR_SIZE
+        )));
+    }
     ciborium::from_reader(data).map_err(|e| ProtocolError::Cbor(e.to_string()))
 }
 

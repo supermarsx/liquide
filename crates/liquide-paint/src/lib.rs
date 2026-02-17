@@ -10,7 +10,9 @@ pub mod display_list;
 pub mod icons;
 pub mod paint_filter;
 pub mod painter;
+pub mod svg_path;
 
 pub use display_list::{DisplayItem, DisplayList};
 pub use paint_filter::{PaintFilter, PixelBuffer};
 pub use painter::Painter;
+pub use svg_path::{paint_svg_path, parse_svg_path, flatten_path, PathCommand, PathSegment};

@@ -5,6 +5,7 @@
 //! Implements block, inline, flexbox, grid, and positioned layout.
 
 pub mod block;
+pub mod container_query;
 pub mod engine;
 pub mod flex;
 pub mod float;
@@ -14,8 +15,10 @@ pub mod inline;
 pub mod intrinsic;
 pub mod multicol;
 pub mod positioned;
+pub mod ruby;
 pub mod table;
 pub mod tree;
+pub mod writing_mode;
 
 pub use engine::LayoutEngine;
 pub use geometry::{Point, Rect, Size};

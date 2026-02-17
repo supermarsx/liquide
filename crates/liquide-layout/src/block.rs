@@ -2,7 +2,7 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{AspectRatio, BoxSizing, Contain, Display, LineClamp, ListStylePosition, ListStyleType, Overflow, Position};
+use liquide_style_engine::computed::{AspectRatio, BoxSizing, Display, LineClamp, ListStylePosition, ListStyleType, Overflow, Position};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::style_map::PseudoKind;
 
@@ -65,6 +65,15 @@ pub fn layout_block(
     } else {
         explicit_width
     };
+
+    // Early check for explicit height (needed for margin collapsing detection)
+    let has_explicit_height = style.height.resolve_px(
+        container_height,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    ).is_some();
 
     let width = explicit_width.unwrap_or(container_width);
 
@@ -201,13 +210,33 @@ pub fn layout_block(
     let mut child_y = 0.0f32;
     let mut prev_margin_bottom: Option<f32> = None;
 
-    // Parent-child margin collapsing: if no top border/padding, the parent's
-    // top margin collapses with the first child's top margin. We track this
-    // but apply a simplified version (just collapse between siblings here).
-    // BFC detection — used to prevent parent-child margin collapsing
-    let _parent_establishes_bfc = style.is_flex_container()
+    // Parent-child margin collapsing detection
+    // A new BFC prevents margin collapsing with children
+    let parent_establishes_bfc = style.is_flex_container()
         || style.is_grid_container()
-        || matches!(style.position, Position::Absolute | Position::Fixed);
+        || matches!(style.position, Position::Absolute | Position::Fixed)
+        || matches!(style.overflow_x, liquide_style_engine::computed::Overflow::Hidden | liquide_style_engine::computed::Overflow::Scroll | liquide_style_engine::computed::Overflow::Auto)
+        || matches!(style.overflow_y, liquide_style_engine::computed::Overflow::Hidden | liquide_style_engine::computed::Overflow::Scroll | liquide_style_engine::computed::Overflow::Auto);
+
+    // Parent's top margin can collapse with first child's top margin if:
+    // - No top border/padding separating them
+    // - Parent doesn't establish a BFC
+    let can_collapse_top = !parent_establishes_bfc 
+        && border_top == 0.0 
+        && pad_top == 0.0;
+
+    // Parent's bottom margin can collapse with last child's bottom margin if:
+    // - No bottom border/padding separating them
+    // - No explicit height on parent
+    // - Parent doesn't establish a BFC
+    let can_collapse_bottom = !parent_establishes_bfc 
+        && border_bottom == 0.0 
+        && pad_bottom == 0.0
+        && !has_explicit_height;
+
+    // Track first and last child margins for parent-child collapsing
+    let mut first_child_margin_top: Option<f32> = None;
+    let mut last_child_margin_bottom: Option<f32> = None;
 
     let children = doc.children(node_id).to_vec();
 
@@ -314,6 +343,13 @@ pub fn layout_block(
             viewport_h,
         );
 
+        // Track first child margin for parent-child collapsing
+        if first_child_margin_top.is_none() {
+            first_child_margin_top = Some(child_mar_top);
+        }
+        // Always update last child margin (will be last non-skipped child)
+        last_child_margin_bottom = Some(child_mar_bottom);
+
         // Collapse adjacent margins: instead of prev_margin_bottom + child_margin_top,
         // use the larger of the two (for positive margins) or the more negative.
         if let Some(prev_mb) = prev_margin_bottom {
@@ -321,6 +357,11 @@ pub fn layout_block(
             // We already added prev_margin_bottom to child_y when we advanced
             // past the previous child. Remove it and replace with collapsed.
             child_y = child_y - prev_mb + collapsed;
+        } else if can_collapse_top && first_child_margin_top == Some(child_mar_top) {
+            // First child: if parent-child top margin collapsing applies,
+            // the child's top margin should be collapsed with parent's top margin
+            // This is handled by the parent's margin calculation, so we don't
+            // add the child's top margin here as extra space
         }
 
         // Recurse for element children — pass 0.0 as offset, we position after
@@ -690,6 +731,30 @@ pub fn layout_block(
     };
 
     if let Some(b) = tree.get_mut(box_id) {
+        // Calculate effective margins after parent-child collapsing
+        // If parent's top margin can collapse with first child's top margin,
+        // the effective margin is the max of the two (margin transfer)
+        let effective_mar_top = if can_collapse_top {
+            if let Some(child_top) = first_child_margin_top {
+                collapse_margins(mar_top, child_top)
+            } else {
+                mar_top
+            }
+        } else {
+            mar_top
+        };
+
+        // Similarly for bottom margin collapsing
+        let effective_mar_bottom = if can_collapse_bottom {
+            if let Some(child_bottom) = last_child_margin_bottom {
+                collapse_margins(mar_bottom, child_bottom)
+            } else {
+                mar_bottom
+            }
+        } else {
+            mar_bottom
+        };
+
         b.content_rect = Rect::new(content_x, content_y, content_width, content_height);
         b.padding_rect = Rect::new(
             content_x - pad_left,
@@ -705,9 +770,9 @@ pub fn layout_block(
         );
         b.margin_rect = Rect::new(
             b.border_rect.x - mar_left,
-            b.border_rect.y - mar_top,
+            b.border_rect.y - effective_mar_top,
             b.border_rect.width + mar_left + mar_right,
-            b.border_rect.height + mar_top + mar_bottom,
+            b.border_rect.height + effective_mar_top + effective_mar_bottom,
         );
         b.scroll_size = scroll_size;
     }

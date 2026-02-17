@@ -294,6 +294,16 @@ pub fn layout_flex(
                 .unwrap_or(f32::INFINITY)
         };
 
+        // Calculate baseline for this item
+        // For text items, use the baseline stored in the layout box
+        // For other items, default to the bottom of the content box
+        let item_baseline = tree.get(child_box)
+            .and_then(|b| b.baseline)
+            .unwrap_or_else(|| {
+                // Default baseline: use content height for row layout, width for column
+                if is_row { intrinsic.height } else { intrinsic.width }
+            });
+
         items.push(FlexItem {
             box_id: child_box,
             node_id: child_id,
@@ -318,6 +328,7 @@ pub fn layout_flex(
             min_main,
             max_main,
             order: child_style.order,
+            baseline: item_baseline,
         });
 
         tree.add_child(box_id, child_box);
@@ -600,6 +611,24 @@ pub fn layout_flex(
     let mut _line_cross_y = 0.0f32;
     for (li, line) in lines.iter().enumerate() {
         let line_cross = line_cross_sizes[li];
+        
+        // Calculate the maximum baseline among all baseline-aligned items in this line
+        let mut max_baseline = 0.0f32;
+        for idx in line.start..line.end {
+            let item = &items[idx];
+            let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
+            let uses_baseline = match child_style.align_self {
+                liquide_style_engine::computed::AlignSelf::Baseline => true,
+                liquide_style_engine::computed::AlignSelf::Auto => {
+                    matches!(style.align_items, AlignItems::Baseline)
+                }
+                _ => false,
+            };
+            if uses_baseline {
+                max_baseline = max_baseline.max(item.baseline);
+            }
+        }
+        
         for idx in line.start..line.end {
             let item = &items[idx];
             let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
@@ -639,7 +668,11 @@ pub fn layout_flex(
                         b.margin_rect.height += dh;
                         0.0
                     }
-                    AlignItems::Baseline => 0.0, // simplified
+                    AlignItems::Baseline => {
+                        // Align items so their baselines match
+                        // Move item down by (max_baseline - item_baseline)
+                        max_baseline - item.baseline
+                    }
                 };
 
                 let (dx, dy) = if is_row {
@@ -715,6 +748,10 @@ struct FlexItem {
     min_main: f32,
     max_main: f32,
     order: i32,
+    /// Baseline offset from the cross-start edge (for baseline alignment).
+    /// For text items, this is the distance from the top of the box to the first
+    /// baseline. For non-text items, defaults to the bottom of margin box.
+    baseline: f32,
 }
 
 struct FlexLine {

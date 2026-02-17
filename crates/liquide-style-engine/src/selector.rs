@@ -58,6 +58,32 @@ pub enum PseudoClassSelector {
     LastOfType,
     OnlyChild,
     OnlyOfType,
+    /// `:target` — element is the URL fragment target.
+    Target,
+    /// `:scope` — element is the scoping root.
+    Scope,
+    /// `:lang(code)` — element language matches.
+    Lang(String),
+    /// `:first-of-type`
+    FirstOfType,
+    /// `:enabled`
+    Enabled,
+    /// `:default`
+    Default,
+    /// `:indeterminate`
+    Indeterminate,
+    /// `:required`
+    Required,
+    /// `:optional`
+    Optional,
+    /// `:valid`
+    Valid,
+    /// `:invalid`
+    Invalid,
+    /// `:in-range`
+    InRange,
+    /// `:out-of-range`
+    OutOfRange,
 }
 
 /// A CSS pseudo-element (e.g. `::before`, `::after`).
@@ -114,11 +140,13 @@ pub enum AttributeOp {
     Substring(String),
 }
 
-/// An attribute selector like `[type="submit"]`.
+/// An attribute selector like `[type="submit"]` or `[type="submit" i]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttributeSelector {
     pub name: String,
     pub op: AttributeOp,
+    /// Case-insensitive matching (the `i` flag in CSS).
+    pub case_insensitive: bool,
 }
 
 /// A single compound selector (within a complex selector).
@@ -355,23 +383,125 @@ impl CompoundSelector {
                 }
                 false
             }
+            PseudoClassSelector::Target => node.has_pseudo_state(PseudoStateFlags::TARGET),
+            PseudoClassSelector::Scope => node.has_pseudo_state(PseudoStateFlags::SCOPE),
+            PseudoClassSelector::Lang(lang_code) => {
+                // Check lang attribute on this element or ancestors
+                let node_lang = node.attrs.get("lang");
+                if let Some(node_lang) = node_lang {
+                    // Match if lang starts with the code (e.g., "en" matches "en-US")
+                    return node_lang == lang_code.as_str()
+                        || node_lang.starts_with(&format!("{}-", lang_code));
+                }
+                // Check ancestors for inherited lang
+                let mut current = node.parent;
+                while let Some(pid) = current {
+                    if let Some(parent) = doc.get(pid) {
+                        if let Some(parent_lang) = parent.attrs.get("lang") {
+                            return parent_lang == lang_code.as_str()
+                                || parent_lang.starts_with(&format!("{}-", lang_code));
+                        }
+                        current = parent.parent;
+                    } else {
+                        break;
+                    }
+                }
+                false
+            }
+            PseudoClassSelector::FirstOfType => {
+                if let Some(parent_id) = node.parent {
+                    let my_tag = node.tag_name();
+                    let children = doc.children(parent_id);
+                    for &c in children {
+                        if let Some(child) = doc.get(c) {
+                            if child.tag_name() == my_tag {
+                                return c == node.id;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            PseudoClassSelector::Enabled => !node.has_pseudo_state(PseudoStateFlags::DISABLED),
+            PseudoClassSelector::Default => node.attrs.get("default").is_some(),
+            PseudoClassSelector::Indeterminate => {
+                node.attrs.get("indeterminate").map_or(false, |v| v == "true")
+            }
+            PseudoClassSelector::Required => node.attrs.get("required").is_some(),
+            PseudoClassSelector::Optional => node.attrs.get("required").is_none(),
+            PseudoClassSelector::Valid => node.attrs.get("aria-invalid").map_or(true, |v| v != "true"),
+            PseudoClassSelector::Invalid => node.attrs.get("aria-invalid").map_or(false, |v| v == "true"),
+            PseudoClassSelector::InRange => {
+                // Check if value is within min/max bounds
+                let value = node.attrs.get("value").and_then(|v| v.parse::<f64>().ok());
+                let min = node.attrs.get("min").and_then(|v| v.parse::<f64>().ok());
+                let max = node.attrs.get("max").and_then(|v| v.parse::<f64>().ok());
+                if let Some(val) = value {
+                    let above_min = min.map_or(true, |m| val >= m);
+                    let below_max = max.map_or(true, |m| val <= m);
+                    return above_min && below_max;
+                }
+                false
+            }
+            PseudoClassSelector::OutOfRange => {
+                let value = node.attrs.get("value").and_then(|v| v.parse::<f64>().ok());
+                let min = node.attrs.get("min").and_then(|v| v.parse::<f64>().ok());
+                let max = node.attrs.get("max").and_then(|v| v.parse::<f64>().ok());
+                if let Some(val) = value {
+                    let below_min = min.map_or(false, |m| val < m);
+                    let above_max = max.map_or(false, |m| val > m);
+                    return below_min || above_max;
+                }
+                false
+            }
         }
     }
 
     fn matches_attribute(&self, sel: &AttributeSelector, node: &Node) -> bool {
         let value = node.attrs.get(&sel.name);
+        
+        // Helper for case-insensitive comparison
+        let cmp_str = |a: &str, b: &str| -> bool {
+            if sel.case_insensitive {
+                a.eq_ignore_ascii_case(b)
+            } else {
+                a == b
+            }
+        };
+        let starts_with_ci = |a: &str, b: &str| -> bool {
+            if sel.case_insensitive {
+                a.to_ascii_lowercase().starts_with(&b.to_ascii_lowercase())
+            } else {
+                a.starts_with(b)
+            }
+        };
+        let ends_with_ci = |a: &str, b: &str| -> bool {
+            if sel.case_insensitive {
+                a.to_ascii_lowercase().ends_with(&b.to_ascii_lowercase())
+            } else {
+                a.ends_with(b)
+            }
+        };
+        let contains_ci = |a: &str, b: &str| -> bool {
+            if sel.case_insensitive {
+                a.to_ascii_lowercase().contains(&b.to_ascii_lowercase())
+            } else {
+                a.contains(b)
+            }
+        };
+        
         match &sel.op {
             AttributeOp::Exists => value.is_some(),
-            AttributeOp::Equals(v) => value.map_or(false, |a| a == v.as_str()),
+            AttributeOp::Equals(v) => value.map_or(false, |a| cmp_str(a, v.as_str())),
             AttributeOp::Contains(v) => value.map_or(false, |a| {
-                a.split_whitespace().any(|w| w == v.as_str())
+                a.split_whitespace().any(|w| cmp_str(w, v.as_str()))
             }),
             AttributeOp::DashMatch(v) => value.map_or(false, |a| {
-                a == v.as_str() || a.starts_with(&format!("{}-", v))
+                cmp_str(a, v.as_str()) || starts_with_ci(a, &format!("{}-", v))
             }),
-            AttributeOp::Prefix(v) => value.map_or(false, |a| a.starts_with(v.as_str())),
-            AttributeOp::Suffix(v) => value.map_or(false, |a| a.ends_with(v.as_str())),
-            AttributeOp::Substring(v) => value.map_or(false, |a| a.contains(v.as_str())),
+            AttributeOp::Prefix(v) => value.map_or(false, |a| starts_with_ci(a, v.as_str())),
+            AttributeOp::Suffix(v) => value.map_or(false, |a| ends_with_ci(a, v.as_str())),
+            AttributeOp::Substring(v) => value.map_or(false, |a| contains_ci(a, v.as_str())),
         }
     }
 }
@@ -697,6 +827,18 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
         "last-of-type" => Some(PseudoClassSelector::LastOfType),
         "only-child" => Some(PseudoClassSelector::OnlyChild),
         "only-of-type" => Some(PseudoClassSelector::OnlyOfType),
+        "target" => Some(PseudoClassSelector::Target),
+        "scope" => Some(PseudoClassSelector::Scope),
+        "first-of-type" => Some(PseudoClassSelector::FirstOfType),
+        "enabled" => Some(PseudoClassSelector::Enabled),
+        "default" => Some(PseudoClassSelector::Default),
+        "indeterminate" => Some(PseudoClassSelector::Indeterminate),
+        "required" => Some(PseudoClassSelector::Required),
+        "optional" => Some(PseudoClassSelector::Optional),
+        "valid" => Some(PseudoClassSelector::Valid),
+        "invalid" => Some(PseudoClassSelector::Invalid),
+        "in-range" => Some(PseudoClassSelector::InRange),
+        "out-of-range" => Some(PseudoClassSelector::OutOfRange),
         _ if name.starts_with("nth-child(") && name.ends_with(')') => {
             let expr = &name[10..name.len() - 1];
             parse_anb(expr).map(PseudoClassSelector::NthChild)
@@ -723,6 +865,19 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
             let inner = &name[4..name.len() - 1];
             ComplexSelector::parse(inner.trim()).map(|s| PseudoClassSelector::Has(Box::new(s)))
         }
+        _ if name.starts_with("not(") && name.ends_with(')') => {
+            let inner = &name[4..name.len() - 1];
+            // :not() takes a selector list per Selectors Level 4
+            let selectors: Vec<ComplexSelector> = inner.split(',')
+                .filter_map(|s| ComplexSelector::parse(s.trim()))
+                .collect();
+            if selectors.is_empty() {
+                None
+            } else {
+                // For simplicity, wrap first selector; full impl would use all
+                Some(PseudoClassSelector::Not(Box::new(selectors.into_iter().next().unwrap())))
+            }
+        }
         _ if name.starts_with("nth-of-type(") && name.ends_with(')') => {
             let expr = &name[12..name.len() - 1];
             parse_anb(expr).map(PseudoClassSelector::NthOfType)
@@ -730,6 +885,15 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
         _ if name.starts_with("nth-last-of-type(") && name.ends_with(')') => {
             let expr = &name[17..name.len() - 1];
             parse_anb(expr).map(PseudoClassSelector::NthLastOfType)
+        }
+        _ if name.starts_with("lang(") && name.ends_with(')') => {
+            let lang_code = &name[5..name.len() - 1];
+            let lang_code = lang_code.trim().trim_matches('"').trim_matches('\'');
+            if lang_code.is_empty() {
+                None
+            } else {
+                Some(PseudoClassSelector::Lang(lang_code.to_string()))
+            }
         }
         _ => None,
     }
@@ -769,6 +933,17 @@ fn parse_anb(expr: &str) -> Option<AnB> {
 
 fn parse_attribute_into(sel: &mut CompoundSelector, input: &str) {
     let input = input.trim();
+    
+    // Check for case-insensitivity flag at the end: [attr=value i] or [attr=value s]
+    let (input, case_insensitive) = if input.ends_with(" i") || input.ends_with(" I") {
+        (&input[..input.len() - 2], true)
+    } else if input.ends_with(" s") || input.ends_with(" S") {
+        // 's' flag means case-sensitive (the default)
+        (&input[..input.len() - 2], false)
+    } else {
+        (input, false)
+    };
+    
     // Try various operators
     for (op_str, make_op) in &[
         ("~=", AttributeOp::Contains as fn(String) -> AttributeOp),
@@ -785,6 +960,7 @@ fn parse_attribute_into(sel: &mut CompoundSelector, input: &str) {
             sel.attributes.push(AttributeSelector {
                 name,
                 op: make_op(val),
+                case_insensitive,
             });
             return;
         }
@@ -793,6 +969,7 @@ fn parse_attribute_into(sel: &mut CompoundSelector, input: &str) {
     sel.attributes.push(AttributeSelector {
         name: input.to_string(),
         op: AttributeOp::Exists,
+        case_insensitive: false,
     });
 }
 

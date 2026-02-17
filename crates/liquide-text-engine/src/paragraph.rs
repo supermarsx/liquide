@@ -103,6 +103,8 @@ pub struct ParagraphStyle {
     pub paragraph_spacing: f32,
     /// Base direction for the paragraph.
     pub direction: Direction,
+    /// Use Knuth-Plass optimal line breaking instead of greedy.
+    pub use_optimal_breaking: bool,
 }
 
 impl Default for ParagraphStyle {
@@ -118,6 +120,7 @@ impl Default for ParagraphStyle {
             line_height_factor: 1.2,
             paragraph_spacing: 0.0,
             direction: Direction::Ltr,
+            use_optimal_breaking: false,
         }
     }
 }
@@ -248,7 +251,11 @@ impl ParagraphLayouter {
 
         // Break into lines.
         let max_width = self.style.max_width.unwrap_or(f32::INFINITY);
-        let raw_lines = self.break_lines(text, &items, max_width);
+        let raw_lines = if self.style.use_optimal_breaking && max_width.is_finite() {
+            self.break_lines_knuth_plass(text, &items, max_width)
+        } else {
+            self.break_lines(text, &items, max_width)
+        };
 
         // Apply alignment and produce final layout.
         self.position_lines(raw_lines, max_width)
@@ -381,6 +388,171 @@ impl ParagraphLayouter {
         }
 
         lines
+    }
+
+    /// Knuth-Plass optimal line breaking.
+    ///
+    /// Uses dynamic programming to minimise the sum of squared badness
+    /// (deviation from the target line width) across all lines. This gives
+    /// a globally optimal paragraph layout instead of the locally optimal
+    /// greedy approach.
+    ///
+    /// Reference: D.E. Knuth & M.F. Plass, "Breaking Paragraphs into Lines",
+    /// Software — Practice and Experience, Vol. 11, 1981.
+    fn break_lines_knuth_plass(
+        &self,
+        text: &str,
+        items: &[LayoutItem],
+        max_width: f32,
+    ) -> Vec<RawLine> {
+        if items.is_empty() {
+            return Vec::new();
+        }
+
+        let n = items.len();
+
+        // Precompute prefix sums of advance widths for O(1) range queries.
+        let mut prefix_w = vec![0.0f32; n + 1];
+        for (i, item) in items.iter().enumerate() {
+            prefix_w[i + 1] = prefix_w[i] + item.glyph.x_advance;
+        }
+
+        // Identify break opportunities (after spaces or hard breaks).
+        let mut break_points: Vec<usize> = vec![0]; // Start of paragraph is a break
+        for (i, item) in items.iter().enumerate() {
+            let ch = text[item.byte_offset..].chars().next().unwrap_or(' ');
+            if ch == '\n' || ch == ' ' || ch == '\t' {
+                break_points.push(i + 1);
+            }
+        }
+        if *break_points.last().unwrap_or(&0) != n {
+            break_points.push(n);
+        }
+
+        let bp_count = break_points.len();
+
+        // cost[i] = minimum total cost to typeset from break_points[i] to end.
+        // parent[i] = which break_points[j] follows break_points[i] in optimal solution.
+        let mut cost = vec![f64::INFINITY; bp_count];
+        let mut parent = vec![0usize; bp_count];
+        cost[bp_count - 1] = 0.0; // End of paragraph has zero cost.
+
+        // Penalty constants
+        const INFINITY_PENALTY: f64 = 1e10;
+        const HYPHEN_PENALTY: f64 = 50.0; // Would be used for hyphenation
+
+        // Work backwards
+        for i in (0..bp_count - 1).rev() {
+            let start = break_points[i];
+            let indent = if i == 0 { self.style.indent } else { 0.0 };
+            let effective_width = max_width - indent;
+
+            for j in (i + 1)..bp_count {
+                let end = break_points[j];
+
+                // Compute line width for items[start..end], trimming trailing space.
+                let mut line_w = prefix_w[end] - prefix_w[start];
+
+                // Trim trailing whitespace advance
+                if end > start {
+                    let last_ch = text[items[end - 1].byte_offset..].chars().next().unwrap_or('x');
+                    if last_ch == ' ' || last_ch == '\t' || last_ch == '\n' {
+                        line_w -= items[end - 1].glyph.x_advance;
+                    }
+                }
+
+                if line_w > effective_width * 1.0001 && j > i + 1 {
+                    // Line is too wide — stop trying wider spans (they'll only be worse).
+                    break;
+                }
+
+                // Check for hard break
+                let is_hard = if end > start {
+                    let ch = text[items[end - 1].byte_offset..].chars().next().unwrap_or('x');
+                    ch == '\n'
+                } else {
+                    false
+                };
+
+                // Compute badness: (excess whitespace / total stretch) ^3
+                let shortfall = effective_width - line_w;
+                let line_cost = if j == bp_count - 1 {
+                    // Last line: only penalise if it's far too long.
+                    if line_w > effective_width * 1.0001 {
+                        INFINITY_PENALTY
+                    } else {
+                        0.0  // Last line can be any width ≤ max
+                    }
+                } else if is_hard {
+                    // Forced break: no badness for the break itself.
+                    0.0
+                } else if shortfall < 0.0 {
+                    // Overfull line
+                    let ratio = (-shortfall / effective_width.max(1.0)) as f64;
+                    INFINITY_PENALTY * ratio * ratio
+                } else {
+                    // Normal line: penalise large deviations
+                    let ratio = (shortfall / effective_width.max(1.0)) as f64;
+                    ratio * ratio * ratio * 100.0
+                };
+
+                let total = line_cost + cost[j];
+                if total < cost[i] {
+                    cost[i] = total;
+                    parent[i] = j;
+                }
+            }
+        }
+
+        // Reconstruct optimal break sequence
+        let mut breaks = Vec::new();
+        let mut idx = 0;
+        while idx < bp_count - 1 {
+            let next = parent[idx];
+            let start = break_points[idx];
+            let end = break_points[next];
+
+            // Determine if this was a hard break
+            let is_hard = if end > start {
+                let ch = text[items[end - 1].byte_offset..].chars().next().unwrap_or('x');
+                ch == '\n'
+            } else {
+                false
+            };
+
+            // Trim the line: exclude trailing whitespace/newline items
+            let mut actual_end = end;
+            while actual_end > start {
+                let ch = text[items[actual_end - 1].byte_offset..].chars().next().unwrap_or('x');
+                if ch == ' ' || ch == '\t' || ch == '\n' {
+                    actual_end -= 1;
+                } else {
+                    break;
+                }
+            }
+
+            let line_items = items[start..actual_end].to_vec();
+            let line_w: f32 = line_items.iter().map(|it| it.glyph.x_advance).sum();
+            let line_ascent = line_items.iter().map(|it| it.metrics.ascent).fold(0.0f32, f32::max);
+            let line_descent = line_items.iter().map(|it| it.metrics.descent).fold(0.0f32, f32::max);
+
+            breaks.push(RawLine {
+                items: line_items,
+                width: line_w,
+                ascent: if line_ascent > 0.0 { line_ascent } else { 12.0 },
+                descent: if line_descent > 0.0 { line_descent } else { 4.0 },
+                hard_break: is_hard,
+            });
+
+            idx = next;
+        }
+
+        // Enforce max_lines.
+        if let Some(max_lines) = self.style.max_lines {
+            breaks.truncate(max_lines);
+        }
+
+        breaks
     }
 
     /// Position lines according to alignment and produce the final layout.

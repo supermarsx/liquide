@@ -77,6 +77,8 @@ pub enum DisplayItem {
         outset: (f32, f32, f32, f32),
         repeat_x: BorderImageRepeat,
         repeat_y: BorderImageRepeat,
+        /// Whether to fill the center of the border image (9-slice fill keyword).
+        fill: bool,
     },
 
     // ── Shadows ──

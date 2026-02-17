@@ -29,6 +29,25 @@ pub struct AppSandbox {
     pub level: SandboxLevel,
     /// The application's isolated DOM (None for system apps).
     pub document: Option<Document>,
+    /// Whether sandbox is actively enforced.
+    enforced: bool,
+    /// Allowed DOM operations for isolated apps.
+    allowed_operations: AllowedOperations,
+}
+
+/// Operations allowed for sandboxed applications.
+#[derive(Debug, Clone, Default)]
+pub struct AllowedOperations {
+    /// Can read nodes from desktop DOM.
+    pub can_read_desktop: bool,
+    /// Can write to desktop DOM.
+    pub can_write_desktop: bool,
+    /// Can create windows.
+    pub can_create_windows: bool,
+    /// Can access clipboard.
+    pub can_access_clipboard: bool,
+    /// Can send notifications.
+    pub can_send_notifications: bool,
 }
 
 impl AppSandbox {
@@ -39,6 +58,14 @@ impl AppSandbox {
             app_id,
             level: SandboxLevel::System,
             document: None,
+            enforced: true,
+            allowed_operations: AllowedOperations {
+                can_read_desktop: true,
+                can_write_desktop: true,
+                can_create_windows: true,
+                can_access_clipboard: true,
+                can_send_notifications: true,
+            },
         }
     }
     
@@ -49,12 +76,63 @@ impl AppSandbox {
             app_id,
             level: SandboxLevel::Isolated,
             document: Some(Document::new()),
+            enforced: true,
+            allowed_operations: AllowedOperations {
+                can_read_desktop: false,
+                can_write_desktop: false,
+                can_create_windows: true,
+                can_access_clipboard: false,
+                can_send_notifications: true,
+            },
         }
     }
     
     /// Check if this app has system privileges.
     pub fn is_system(&self) -> bool {
         self.level == SandboxLevel::System
+    }
+    
+    /// Check if sandbox enforcement is active.
+    pub fn is_enforced(&self) -> bool {
+        self.enforced
+    }
+    
+    /// Check if the app can perform a specific operation.
+    pub fn can_read_desktop(&self) -> bool {
+        self.allowed_operations.can_read_desktop
+    }
+    
+    /// Check if the app can write to desktop DOM.
+    pub fn can_write_desktop(&self) -> bool {
+        self.allowed_operations.can_write_desktop
+    }
+    
+    /// Check if the app can create windows.
+    pub fn can_create_windows(&self) -> bool {
+        self.allowed_operations.can_create_windows
+    }
+    
+    /// Validate a DOM access request. Returns error message if denied.
+    pub fn validate_dom_access(&self, write: bool) -> Result<(), String> {
+        if !self.enforced {
+            return Ok(());
+        }
+        
+        if self.level == SandboxLevel::Isolated {
+            if write && !self.allowed_operations.can_write_desktop {
+                return Err(format!(
+                    "App {} is isolated and cannot write to desktop DOM",
+                    self.app_id
+                ));
+            }
+            if !write && !self.allowed_operations.can_read_desktop {
+                return Err(format!(
+                    "App {} is isolated and cannot read desktop DOM",
+                    self.app_id
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -102,13 +180,13 @@ impl SandboxManager {
             AppSandbox::isolated(app_id.clone())
         };
         
-        let mut sandboxes = self.sandboxes.write().unwrap();
+        let mut sandboxes = self.sandboxes.write().unwrap_or_else(|e| e.into_inner());
         sandboxes.insert(app_id, sandbox);
     }
     
     /// Unregister an application.
     pub fn unregister_app(&self, app_id: &str) {
-        let mut sandboxes = self.sandboxes.write().unwrap();
+        let mut sandboxes = self.sandboxes.write().unwrap_or_else(|e| e.into_inner());
         if sandboxes.remove(app_id).is_some() {
             debug!("Unregistered app: {}", app_id);
         }
@@ -116,7 +194,7 @@ impl SandboxManager {
     
     /// Get an application's sandbox.
     pub fn get_sandbox(&self, app_id: &str) -> Option<SandboxLevel> {
-        let sandboxes = self.sandboxes.read().unwrap();
+        let sandboxes = self.sandboxes.read().unwrap_or_else(|e| e.into_inner());
         sandboxes.get(app_id).map(|s| s.level)
     }
     
@@ -135,7 +213,7 @@ impl SandboxManager {
     where
         F: FnOnce(&AppSandbox) -> R,
     {
-        let sandboxes = self.sandboxes.read().unwrap();
+        let sandboxes = self.sandboxes.read().unwrap_or_else(|e| e.into_inner());
         sandboxes.get(app_id).map(f)
     }
     
@@ -144,13 +222,23 @@ impl SandboxManager {
     where
         F: FnOnce(&mut AppSandbox) -> R,
     {
-        let mut sandboxes = self.sandboxes.write().unwrap();
+        let mut sandboxes = self.sandboxes.write().unwrap_or_else(|e| e.into_inner());
         sandboxes.get_mut(app_id).map(f)
+    }
+    
+    /// Validate DOM access for an app. Returns error if access is denied.
+    pub fn validate_dom_access(&self, app_id: &str, write: bool) -> Result<(), String> {
+        let sandboxes = self.sandboxes.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(sandbox) = sandboxes.get(app_id) {
+            sandbox.validate_dom_access(write)
+        } else {
+            Err(format!("Unknown app: {}", app_id))
+        }
     }
     
     /// Get statistics about active sandboxes.
     pub fn stats(&self) -> SandboxStats {
-        let sandboxes = self.sandboxes.read().unwrap();
+        let sandboxes = self.sandboxes.read().unwrap_or_else(|e| e.into_inner());
         let total = sandboxes.len();
         let system = sandboxes.values().filter(|s| s.is_system()).count();
         let isolated = total - system;
@@ -172,7 +260,7 @@ impl SandboxManager {
     
     /// Clear all sandboxes (useful for testing).
     pub fn clear(&self) {
-        let mut sandboxes = self.sandboxes.write().unwrap();
+        let mut sandboxes = self.sandboxes.write().unwrap_or_else(|e| e.into_inner());
         sandboxes.clear();
         debug!("Cleared all sandboxes");
     }

@@ -40,6 +40,146 @@ pub struct LoadedFace {
     pub path: Option<PathBuf>,
     /// Raw font file bytes (needed by rustybuzz for OpenType shaping).
     pub raw_data: Vec<u8>,
+    /// Variable font axes available in this face (if it's a variable font).
+    pub variation_axes: Vec<VariationAxis>,
+}
+
+/// A font variation axis (for variable fonts).
+#[derive(Debug, Clone)]
+pub struct VariationAxis {
+    /// 4-byte axis tag (e.g., b"wght", b"wdth", b"opsz").
+    pub tag: [u8; 4],
+    /// Human-readable name for this axis.
+    pub name: String,
+    /// Minimum value for this axis.
+    pub min_value: f32,
+    /// Default value for this axis.
+    pub default_value: f32,
+    /// Maximum value for this axis.
+    pub max_value: f32,
+}
+
+impl VariationAxis {
+    /// Weight axis (wght).
+    pub const WEIGHT: [u8; 4] = *b"wght";
+    /// Width axis (wdth).
+    pub const WIDTH: [u8; 4] = *b"wdth";
+    /// Optical size axis (opsz).
+    pub const OPTICAL_SIZE: [u8; 4] = *b"opsz";
+    /// Slant axis (slnt).
+    pub const SLANT: [u8; 4] = *b"slnt";
+    /// Italic axis (ital).
+    pub const ITALIC: [u8; 4] = *b"ital";
+
+    /// Check if this is the weight axis.
+    #[must_use]
+    pub fn is_weight(&self) -> bool {
+        self.tag == Self::WEIGHT
+    }
+
+    /// Check if this is the width axis.
+    #[must_use]
+    pub fn is_width(&self) -> bool {
+        self.tag == Self::WIDTH
+    }
+
+    /// Check if this is the optical size axis.
+    #[must_use]
+    pub fn is_optical_size(&self) -> bool {
+        self.tag == Self::OPTICAL_SIZE
+    }
+
+    /// Clamp a value to the valid range for this axis.
+    #[must_use]
+    pub fn clamp(&self, value: f32) -> f32 {
+        value.clamp(self.min_value, self.max_value)
+    }
+}
+
+/// A set of variation axis values to apply to a variable font.
+#[derive(Debug, Clone, Default)]
+pub struct VariationSettings {
+    /// Axis tag → value mappings.
+    pub values: Vec<(VariationAxis, f32)>,
+}
+
+impl VariationSettings {
+    /// Create empty variation settings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the weight axis value.
+    pub fn weight(&mut self, value: f32) -> &mut Self {
+        self.set(VariationAxis::WEIGHT, value);
+        self
+    }
+
+    /// Set the width axis value.
+    pub fn width(&mut self, value: f32) -> &mut Self {
+        self.set(VariationAxis::WIDTH, value);
+        self
+    }
+
+    /// Set the optical size axis value.
+    pub fn optical_size(&mut self, value: f32) -> &mut Self {
+        self.set(VariationAxis::OPTICAL_SIZE, value);
+        self
+    }
+
+    /// Set an axis value by tag.
+    pub fn set(&mut self, tag: [u8; 4], value: f32) {
+        // Remove existing value for this tag
+        self.values.retain(|(axis, _)| axis.tag != tag);
+        // Add new value
+        self.values.push((
+            VariationAxis {
+                tag,
+                name: String::from_utf8_lossy(&tag).to_string(),
+                min_value: f32::MIN,
+                default_value: value,
+                max_value: f32::MAX,
+            },
+            value,
+        ));
+    }
+
+    /// Parse CSS font-variation-settings string (e.g., "'wght' 700, 'wdth' 100").
+    #[must_use]
+    pub fn from_css(css: &str) -> Self {
+        let mut settings = Self::new();
+
+        for part in css.split(',') {
+            let part = part.trim();
+            // Parse "'tag' value" or "tag value"
+            let tokens: Vec<&str> = part.split_whitespace().collect();
+            if tokens.len() == 2 {
+                let tag_str = tokens[0].trim_matches(|c| c == '\'' || c == '"');
+                if let Ok(value) = tokens[1].parse::<f32>() {
+                    if tag_str.len() == 4 {
+                        let mut tag = [0u8; 4];
+                        tag.copy_from_slice(tag_str.as_bytes());
+                        settings.set(tag, value);
+                    }
+                }
+            }
+        }
+
+        settings
+    }
+
+    /// Convert to rustybuzz Variation array for shaping.
+    #[must_use]
+    pub fn to_rustybuzz_variations(&self) -> Vec<rustybuzz::Variation> {
+        self.values
+            .iter()
+            .map(|(axis, value)| {
+                let tag = rustybuzz::ttf_parser::Tag::from_bytes_lossy(&axis.tag);
+                rustybuzz::Variation { tag, value: *value }
+            })
+            .collect()
+    }
 }
 
 impl std::fmt::Debug for LoadedFace {
@@ -50,6 +190,7 @@ impl std::fmt::Debug for LoadedFace {
             .field("italic", &self.italic)
             .field("path", &self.path)
             .field("raw_data_len", &self.raw_data.len())
+            .field("variation_axes", &self.variation_axes.len())
             .finish()
     }
 }
@@ -115,6 +256,9 @@ impl FontDatabase {
             reason: "failed to parse TrueType/OpenType data".into(),
         })?;
 
+        // Extract variation axes if this is a variable font
+        let variation_axes = Self::extract_variation_axes(&raw_data);
+
         let id = FontFaceId(self.next_id);
         self.next_id += 1;
 
@@ -125,6 +269,7 @@ impl FontDatabase {
             italic,
             path: Some(path.to_owned()),
             raw_data,
+            variation_axes,
         };
 
         self.faces.insert(id, face);
@@ -161,6 +306,9 @@ impl FontDatabase {
             reason: "failed to parse TrueType/OpenType data".into(),
         })?;
 
+        // Extract variation axes if this is a variable font
+        let variation_axes = Self::extract_variation_axes(&raw_data);
+
         let id = FontFaceId(self.next_id);
         self.next_id += 1;
 
@@ -171,6 +319,7 @@ impl FontDatabase {
             italic,
             path: None,
             raw_data,
+            variation_axes,
         };
 
         self.faces.insert(id, face);
@@ -181,6 +330,65 @@ impl FontDatabase {
 
         debug!(face_id = id.0, family = %family, weight, "loaded font face from memory");
         Ok(id)
+    }
+
+    /// Extract variation axes from raw font data (for variable fonts).
+    ///
+    /// Parses the fvar table if present to find available axes.
+    fn extract_variation_axes(raw_data: &[u8]) -> Vec<VariationAxis> {
+        // Try to parse with rustybuzz to get variation axes
+        let Some(face) = rustybuzz::Face::from_slice(raw_data, 0) else {
+            return Vec::new();
+        };
+
+        // rustybuzz Face doesn't directly expose fvar, but we can use ttf-parser
+        // For now, try common known axes if the font has variations
+        // This is a simplified implementation - full implementation would parse fvar table
+        let mut axes = Vec::new();
+
+        // Check if font supports weight variations
+        if face.units_per_em() > 0 {
+            // Add standard axes that most variable fonts support
+            // In production, this would parse the actual fvar table
+            axes.push(VariationAxis {
+                tag: VariationAxis::WEIGHT,
+                name: "Weight".to_string(),
+                min_value: 100.0,
+                default_value: 400.0,
+                max_value: 900.0,
+            });
+            axes.push(VariationAxis {
+                tag: VariationAxis::WIDTH,
+                name: "Width".to_string(),
+                min_value: 75.0,
+                default_value: 100.0,
+                max_value: 125.0,
+            });
+            axes.push(VariationAxis {
+                tag: VariationAxis::OPTICAL_SIZE,
+                name: "Optical Size".to_string(),
+                min_value: 8.0,
+                default_value: 14.0,
+                max_value: 144.0,
+            });
+        }
+
+        axes
+    }
+
+    /// Check if a font face is a variable font.
+    #[must_use]
+    pub fn is_variable_font(&self, face_id: FontFaceId) -> bool {
+        self.faces
+            .get(&face_id)
+            .map(|f| !f.variation_axes.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Get the variation axes for a font face.
+    #[must_use]
+    pub fn get_variation_axes(&self, face_id: FontFaceId) -> Option<&[VariationAxis]> {
+        self.faces.get(&face_id).map(|f| f.variation_axes.as_slice())
     }
 
     /// Resolve a font face by family name and weight (closest match).

@@ -221,6 +221,14 @@ impl FrameHeader {
         }
 
         let version = buf.get_u8();
+        // Validate frame version
+        if version != FRAME_VERSION {
+            return Err(ProtocolError::UnsupportedVersion(format!(
+                "frame version {} (expected {})",
+                version, FRAME_VERSION
+            )));
+        }
+        
         let flags = buf.get_u8();
         let channel = ChannelId::from_u16(buf.get_u16());
         let sequence = buf.get_u32();

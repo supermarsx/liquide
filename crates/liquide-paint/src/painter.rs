@@ -445,10 +445,10 @@ impl Painter {
         if let Some(ref bi_source) = style.border_image_source {
             if !bi_source.is_empty() {
                 // Parse border-image-slice (default: 100%)
-                let slice = parse_border_image_quad(
-                    style.border_image_slice.as_deref().unwrap_or("100%"),
-                    100.0,
-                );
+                let slice_str = style.border_image_slice.as_deref().unwrap_or("100%");
+                let fill = slice_str.contains("fill");
+                let slice_clean = slice_str.replace("fill", "").trim().to_string();
+                let slice = parse_border_image_quad(&slice_clean, 100.0);
                 // Parse border-image-width (defaults to border widths)
                 let widths = style.border_image_width.as_deref().map_or(
                     (
@@ -476,6 +476,7 @@ impl Painter {
                     outset,
                     repeat_x: rep_x,
                     repeat_y: rep_y,
+                    fill,
                 });
             }
         }

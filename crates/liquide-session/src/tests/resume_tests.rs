@@ -158,9 +158,14 @@ fn test_resume_manager_token_ids_increment() {
     let mut mgr = ResumeManager::new(make_resume_config());
     let t1 = mgr.issue_token("s1", "u1", "fp").unwrap();
     let t2 = mgr.issue_token("s2", "u2", "fp").unwrap();
+    // Tokens should be unique
     assert_ne!(t1, t2);
-    assert_eq!(t1, "resume-1");
-    assert_eq!(t2, "resume-2");
+    // Tokens should start with "resume-" prefix and have random hex suffix
+    assert!(t1.starts_with("resume-"), "token should start with 'resume-': {}", t1);
+    assert!(t2.starts_with("resume-"), "token should start with 'resume-': {}", t2);
+    // Token ID portion should be 32 hex characters (128 bits)
+    assert_eq!(t1.len(), 7 + 32, "token should be 'resume-' + 32 hex chars");
+    assert_eq!(t2.len(), 7 + 32, "token should be 'resume-' + 32 hex chars");
     assert_eq!(mgr.token_count(), 2);
 }
 

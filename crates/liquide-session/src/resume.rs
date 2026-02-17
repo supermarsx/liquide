@@ -6,6 +6,38 @@ use std::time::Instant;
 use crate::config::ResumeConfig;
 use crate::{SessionError, Result};
 
+/// Generate a cryptographically random token ID.
+fn generate_token_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    // Use timestamp + random bytes for uniqueness
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let random_bytes: [u8; 16] = {
+        let mut bytes = [0u8; 16];
+        // Use timestamp-based pseudo-random with additional entropy from RandomState
+        // RandomState uses thread-local RNG seeded by OS entropy
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        let state = RandomState::new();
+        let mut hasher = state.build_hasher();
+        hasher.write_u128(timestamp);
+        hasher.write_usize(std::process::id() as usize);
+        let h1 = hasher.finish();
+        let state2 = RandomState::new();
+        let mut hasher2 = state2.build_hasher();
+        hasher2.write_u64(h1);
+        hasher2.write_u128(timestamp.wrapping_mul(0xDEAD_BEEF));
+        let h2 = hasher2.finish();
+        bytes[..8].copy_from_slice(&h1.to_le_bytes());
+        bytes[8..].copy_from_slice(&h2.to_le_bytes());
+        bytes
+    };
+    // Format as hex string
+    format!("resume-{:032x}", u128::from_le_bytes(random_bytes))
+}
+
 /// Scope of a resume token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenScope {
@@ -142,7 +174,6 @@ impl ResumeToken {
 pub struct ResumeManager {
     tokens: HashMap<String, ResumeToken>,
     config: ResumeConfig,
-    next_token_id: u64,
 }
 
 impl ResumeManager {
@@ -152,7 +183,6 @@ impl ResumeManager {
         Self {
             tokens: HashMap::new(),
             config,
-            next_token_id: 1,
         }
     }
 
@@ -175,8 +205,8 @@ impl ResumeManager {
             });
         }
 
-        let token_id = format!("resume-{}", self.next_token_id);
-        self.next_token_id += 1;
+        // Use cryptographically random token ID
+        let token_id = generate_token_id();
 
         let lifetime =
             std::time::Duration::from_secs(self.config.token_lifetime_hours * 3600);

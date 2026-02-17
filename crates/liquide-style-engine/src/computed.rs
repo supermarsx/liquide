@@ -189,6 +189,17 @@ impl Default for AlignContent {
 
 // ── Grid ────────────────────────────────────────────────────────────────────
 
+/// Repeat mode for grid track definitions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RepeatMode {
+    /// Fixed count: repeat(3, 100px)
+    Count(u32),
+    /// Auto-fill: repeat as many tracks as fit, keeping empty tracks
+    AutoFill,
+    /// Auto-fit: repeat as many tracks as fit, collapsing empty tracks
+    AutoFit,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TrackSize {
     Px(f32),
@@ -201,6 +212,11 @@ pub enum TrackSize {
     FitContent(f32),
     /// CSS Subgrid — inherits tracks from parent grid.
     Subgrid,
+    /// CSS repeat() function for track repetition.
+    Repeat {
+        mode: RepeatMode,
+        tracks: Vec<TrackSize>,
+    },
 }
 
 impl Default for TrackSize {

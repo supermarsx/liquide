@@ -123,20 +123,48 @@ impl FrameBuffer {
     /// Get the BGRA pixel at `(x, y)` as a [`Color`].
     ///
     /// Assumes `Bgra8` format. For other formats the result is approximate.
+    /// Returns transparent black if coordinates are out of bounds.
     #[must_use]
     pub fn get_pixel(&self, x: u32, y: u32) -> Color {
+        if x >= self.width || y >= self.height {
+            return Color::TRANSPARENT;
+        }
         let off = self.pixel_offset(x, y);
-        Color::from_bgra_bytes([
-            self.pixels[off],
-            self.pixels[off + 1],
-            self.pixels[off + 2],
-            self.pixels[off + 3],
-        ])
+        let bpp = self.format.bytes_per_pixel() as usize;
+        if off + bpp > self.pixels.len() {
+            return Color::TRANSPARENT;
+        }
+        match self.format {
+            PixelFormat::Bgra8 | PixelFormat::Rgba8 => {
+                Color::from_bgra_bytes([
+                    self.pixels[off],
+                    self.pixels[off + 1],
+                    self.pixels[off + 2],
+                    self.pixels[off + 3],
+                ])
+            }
+            PixelFormat::Rgb8 => {
+                Color {
+                    b: self.pixels[off],
+                    g: self.pixels[off + 1],
+                    r: self.pixels[off + 2],
+                    a: 255,
+                }
+            }
+            _ => Color::TRANSPARENT,
+        }
     }
 
     /// Set the BGRA pixel at `(x, y)`.
+    /// Does nothing if coordinates are out of bounds.
     pub fn set_pixel(&mut self, x: u32, y: u32, color: Color) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
         let off = self.pixel_offset(x, y);
+        if off + 4 > self.pixels.len() {
+            return;
+        }
         let bgra = color.to_bgra_bytes();
         self.pixels[off..off + 4].copy_from_slice(&bgra);
     }

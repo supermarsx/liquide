@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use quinn::{ClientConfig, Endpoint, RecvStream, SendStream, TransportConfig, VarInt};
+use quinn::{ClientConfig, Endpoint, RecvStream, SendStream, VarInt};
 use tokio::sync::Mutex;
 
 use crate::codec;
@@ -39,10 +39,15 @@ impl QuicTransport {
 
     /// Build a QUIC client config that skips server certificate verification.
     ///
-    /// **Only for testing / development.** Production deployments must supply
-    /// a proper [`rustls::ClientConfig`] with certificate verification.
+    /// # Safety
+    /// **DANGEROUS: Only for testing / development.** This config accepts ANY
+    /// certificate without validation, making it vulnerable to MITM attacks.
+    /// Production deployments MUST supply a proper [`rustls::ClientConfig`]
+    /// with certificate verification via [`Self::with_client_config()`].
     #[must_use]
+    #[cfg(any(test, feature = "dangerous_insecure_quic"))]
     pub fn insecure_client_config() -> ClientConfig {
+        use quinn::TransportConfig;
         let crypto = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(SkipVerification))
@@ -110,10 +115,11 @@ impl crate::Transport for QuicTransport {
         let endpoint = if let Some(ref ep) = self.endpoint {
             ep.clone()
         } else {
-            let mut ep = Endpoint::client("0.0.0.0:0".parse().unwrap())?;
-            ep.set_default_client_config(Self::insecure_client_config());
-            self.endpoint = Some(ep.clone());
-            ep
+            // Require explicit client config - no insecure default
+            return Err(crate::TransportError::Protocol(
+                "QUIC transport requires explicit ClientConfig via with_client_config(). \
+                 Use QuicTransport::insecure_client_config() only for testing.".to_string()
+            ));
         };
 
         self.local = endpoint.local_addr().ok();
@@ -196,9 +202,11 @@ impl crate::Transport for QuicTransport {
 // Certificate verification skip (testing only)
 // ---------------------------------------------------------------------------
 
+#[cfg(any(test, feature = "dangerous_insecure_quic"))]
 #[derive(Debug)]
 struct SkipVerification;
 
+#[cfg(any(test, feature = "dangerous_insecure_quic"))]
 impl rustls::client::danger::ServerCertVerifier for SkipVerification {
     fn verify_server_cert(
         &self,

@@ -20,6 +20,7 @@ pub mod cluster;
 pub mod editing;
 pub mod font_fallback;
 pub mod hit_test;
+pub mod hyphenation;
 pub mod line_breaking;
 pub mod paragraph;
 pub mod rasterizer;
@@ -34,12 +35,13 @@ pub use cluster::{GraphemeCluster, grapheme_clusters};
 pub use editing::{EditAction, TextEditor, UndoEntry};
 pub use font_fallback::{FallbackChain, FontId, FontDescriptor, FontWeight, FontStyle};
 pub use hit_test::{HitTestResult, HitTester};
+pub use hyphenation::{HyphenationConfig, HyphenPoint, Hyphenator, HyphensMode, soft_hyphen_breaks};
 pub use line_breaking::{BreakAction, BreakOpportunity, LineBreaker};
 pub use paragraph::{GlyphRun, LayoutLine, ParagraphLayout, ParagraphLayouter, TextAlignment};
 pub use rasterizer::{FontMetrics, HintingMode, RasterizedGlyph, FontRasterizer, SoftRasterizer};
 pub use script::{Script, ScriptDetector, ScriptRun};
 pub use selection::{Selection, SelectionSet, TextOffset};
-pub use shaping::{ShapedGlyph, ShapedRun, TextShaper, ShaperConfig};
+pub use shaping::{ShapedGlyph, ShapedRun, TextShaper, ShaperConfig, ShaperBackend};
 
 use thiserror::Error;
 

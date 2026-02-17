@@ -199,9 +199,24 @@ pub fn layout_grid(
     let col_tracks = if has_subgrid_cols && !parent_col_tracks.is_empty() {
         parent_col_tracks
     } else {
-        resolve_tracks(&style.grid_template_columns, content_width, gap_col)
+        // First expand any repeat() definitions
+        let expanded_cols = expand_repeat_tracks(&style.grid_template_columns, content_width, gap_col);
+        resolve_tracks(&expanded_cols, content_width, gap_col)
     };
     let num_cols = col_tracks.len().max(1);
+    // Number of column lines = num_cols + 1 (lines are edges of tracks)
+    let num_col_lines = num_cols + 1;
+    
+    // Calculate explicit row count for resolving negative row lines
+    // The explicit grid is defined by grid-template-rows, grid-template-areas, etc.
+    let explicit_row_count = if !style.grid_template_rows.is_empty() {
+        style.grid_template_rows.len()
+    } else if !style.grid_template_areas.is_empty() {
+        style.grid_template_areas.len()
+    } else {
+        1 // Minimum 1 row
+    };
+    let num_row_lines = explicit_row_count + 1;
 
     // Collect children, resolve explicit placement
     let children = doc.children(node_id).to_vec();
@@ -217,24 +232,16 @@ pub fn layout_grid(
             continue;
         }
 
-        // Resolve explicit grid placement
-        let col_start = match child_style.grid_column.start {
-            GridLine::Line(n) => Some((n - 1).max(0) as usize),
-            _ => None,
+        // Resolve explicit grid placement using the helper that handles negative lines
+        let col_start = resolve_grid_line(&child_style.grid_column.start, num_col_lines);
+        let col_end = match &child_style.grid_column.end {
+            GridLine::Span(n) => col_start.map(|s| s + *n as usize),
+            other => resolve_grid_line(other, num_col_lines),
         };
-        let col_end = match child_style.grid_column.end {
-            GridLine::Line(n) => Some((n - 1).max(0) as usize),
-            GridLine::Span(n) => col_start.map(|s| s + n as usize),
-            _ => None,
-        };
-        let row_start = match child_style.grid_row.start {
-            GridLine::Line(n) => Some((n - 1).max(0) as usize),
-            _ => None,
-        };
-        let row_end = match child_style.grid_row.end {
-            GridLine::Line(n) => Some((n - 1).max(0) as usize),
-            GridLine::Span(n) => row_start.map(|s| s + n as usize),
-            _ => None,
+        let row_start = resolve_grid_line(&child_style.grid_row.start, num_row_lines);
+        let row_end = match &child_style.grid_row.end {
+            GridLine::Span(n) => row_start.map(|s| s + *n as usize),
+            other => resolve_grid_line(other, num_row_lines),
         };
 
         if col_start.is_some() || row_start.is_some() {
@@ -346,7 +353,9 @@ pub fn layout_grid(
         // Use grid-auto-rows for all implicit rows (instead of 0)
         vec![implicit_row_px; num_rows]
     } else {
-        let mut rt = resolve_tracks(&style.grid_template_rows, available_h_for_rows, gap_row);
+        // First expand any repeat() definitions
+        let expanded_rows = expand_repeat_tracks(&style.grid_template_rows, available_h_for_rows, gap_row);
+        let mut rt = resolve_tracks(&expanded_rows, available_h_for_rows, gap_row);
         // Extend with implicit row size (grid-auto-rows) for tracks beyond the template
         while rt.len() < num_rows {
             rt.push(implicit_row_px);
@@ -622,6 +631,11 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
                 // Subgrid inherits parent grid tracks — treat as auto for now
                 fr_total += 1.0;
             }
+            TrackSize::Repeat { .. } => {
+                // Repeat tracks should have been expanded before reaching here
+                // Treat as auto fallback
+                fr_total += 1.0;
+            }
         }
     }
 
@@ -643,8 +657,8 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
                     sizes[i] += grow;
                 }
                 TrackSize::Px(_) | TrackSize::Percent(_) | TrackSize::FitContent(_) => {} // already set
-                TrackSize::Subgrid => {
-                    // Subgrid: treat like auto for distribution
+                TrackSize::Subgrid | TrackSize::Repeat { .. } => {
+                    // Subgrid/Repeat: treat like auto for distribution
                     sizes[i] = remaining * (1.0 / fr_total);
                 }
             }
@@ -663,6 +677,75 @@ fn resolve_track_px(track: &TrackSize, available: f32) -> f32 {
         TrackSize::Auto | TrackSize::MinContent | TrackSize::MaxContent | TrackSize::Subgrid => 0.0,
         TrackSize::MinMax(min, _) => resolve_track_px(min, available),
         TrackSize::FitContent(pct) => available * pct / 100.0,
+        TrackSize::Repeat { .. } => 0.0, // Should be expanded before here
+    }
+}
+
+/// Expand repeat() track definitions into concrete tracks.
+///
+/// - `repeat(N, track)` → N copies of track
+/// - `repeat(auto-fill, track)` → as many tracks as fit in available space
+/// - `repeat(auto-fit, track)` → same as auto-fill, but empty tracks collapse
+///
+/// Note: auto-fit collapsing is handled during layout, not here.
+fn expand_repeat_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<TrackSize> {
+    use liquide_style_engine::computed::RepeatMode;
+    
+    let mut expanded = Vec::new();
+    
+    for track in tracks {
+        match track {
+            TrackSize::Repeat { mode, tracks: inner } => {
+                match mode {
+                    RepeatMode::Count(n) => {
+                        // Fixed count: repeat N times
+                        for _ in 0..*n {
+                            expanded.extend(inner.clone());
+                        }
+                    }
+                    RepeatMode::AutoFill | RepeatMode::AutoFit => {
+                        // Calculate how many repetitions fit
+                        // First, calculate the minimum size of one repetition
+                        let rep_size: f32 = inner.iter()
+                            .map(|t| min_track_size(t, available))
+                            .sum();
+                        
+                        if rep_size > 0.0 {
+                            // Calculate how many can fit
+                            // Available = (count * rep_size) + ((count - 1) * gap)
+                            // Solve for count: count = (available + gap) / (rep_size + gap)
+                            let count = ((available + gap) / (rep_size + gap)).floor() as u32;
+                            let count = count.max(1); // At least one
+                            
+                            for _ in 0..count {
+                                expanded.extend(inner.clone());
+                            }
+                        } else {
+                            // Fallback: at least one instance
+                            expanded.extend(inner.clone());
+                        }
+                    }
+                }
+            }
+            other => {
+                expanded.push(other.clone());
+            }
+        }
+    }
+    
+    expanded
+}
+
+/// Calculate the minimum intrinsic size of a track.
+fn min_track_size(track: &TrackSize, available: f32) -> f32 {
+    match track {
+        TrackSize::Px(v) => *v,
+        TrackSize::Percent(v) => available * v / 100.0,
+        TrackSize::Fr(_) => 0.0, // fr tracks have no minimum
+        TrackSize::MinMax(min, _) => min_track_size(min, available),
+        TrackSize::FitContent(pct) => available * pct / 100.0,
+        TrackSize::Auto | TrackSize::MinContent | TrackSize::MaxContent | TrackSize::Subgrid => 0.0,
+        TrackSize::Repeat { .. } => 0.0, // Nested repeat not supported
     }
 }
 
@@ -710,4 +793,35 @@ fn resolve_dim(
 ) -> f32 {
     dim.resolve_px(parent_px, base_font_size, font_size, vw, vh)
         .unwrap_or(0.0)
+}
+
+/// Resolve a GridLine to a zero-based line index.
+///
+/// CSS grid lines are 1-indexed:
+/// - Positive lines (1, 2, 3...) count from the start
+/// - Negative lines (-1, -2, -3...) count from the end
+///
+/// `num_lines` is the total number of lines (= num_tracks + 1).
+fn resolve_grid_line(line: &GridLine, num_lines: usize) -> Option<usize> {
+    match line {
+        GridLine::Line(n) => {
+            if *n > 0 {
+                // Positive: 1 => index 0, 2 => index 1, etc.
+                Some((*n - 1) as usize)
+            } else if *n < 0 {
+                // Negative: -1 => last line, -2 => second-to-last, etc.
+                // -1 => num_lines - 1, -2 => num_lines - 2
+                let abs_n = (-*n) as usize;
+                if abs_n <= num_lines {
+                    Some(num_lines - abs_n)
+                } else {
+                    Some(0) // Clamped to first line
+                }
+            } else {
+                // Line 0 is invalid in CSS Grid, treat as auto
+                None
+            }
+        }
+        GridLine::Span(_) | GridLine::Auto => None,
+    }
 }

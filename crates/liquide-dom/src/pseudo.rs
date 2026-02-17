@@ -42,6 +42,10 @@ bitflags! {
         const ROOT             = 0x4000;
         /// Internal: drag is in progress over this element.
         const DRAG_OVER        = 0x8000;
+        /// `:target` — element is the current URL fragment target.
+        const TARGET           = 0x10000;
+        /// `:scope` — element is the scoping root (context element).
+        const SCOPE            = 0x20000;
     }
 }
 
@@ -108,6 +112,12 @@ impl PseudoStateFlags {
         if self.contains(Self::ROOT) {
             names.push("root");
         }
+        if self.contains(Self::TARGET) {
+            names.push("target");
+        }
+        if self.contains(Self::SCOPE) {
+            names.push("scope");
+        }
         names
     }
 
@@ -129,6 +139,8 @@ impl PseudoStateFlags {
             "read-write" => Some(Self::READ_WRITE),
             "empty" => Some(Self::EMPTY),
             "root" => Some(Self::ROOT),
+            "target" => Some(Self::TARGET),
+            "scope" => Some(Self::SCOPE),
             _ => None,
         }
     }

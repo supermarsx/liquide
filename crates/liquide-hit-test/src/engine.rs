@@ -107,10 +107,9 @@ impl HitTestEngine {
         if style.content_visibility == ContentVisibility::Hidden {
             return None;
         }
-        // pointer-events: none — skip this and children
-        if style.pointer_events == PointerEvents::None {
-            return None;
-        }
+        // pointer-events: none — skip this element but still check children
+        // Per CSS spec, children can override with pointer-events: auto
+        let this_receives_events = style.pointer_events != PointerEvents::None;
 
         // ── Transform: inverse-map the point into local space ─────────
         let local_point = if !style.transform.is_empty() {
@@ -246,8 +245,8 @@ impl HitTestEngine {
         }
 
         // ── No child matched — this box is the target ─────────────────
-        // But only if visibility is not hidden
-        if style.visibility == Visibility::Hidden {
+        // But only if visibility is not hidden and pointer-events allows it
+        if style.visibility == Visibility::Hidden || !this_receives_events {
             return None;
         }
 
@@ -387,10 +386,8 @@ fn inverse_transform_point(
     origin_x: f32,
     origin_y: f32,
 ) -> Option<Point> {
-    let (tx, ty, sx, sy, rotate_deg, skx_deg, _sky_deg) = flatten_transforms(transforms);
-
-    // Build the forward affine matrix and invert it
-    let (a, b, c, d, e, f) = build_transform_matrix(tx, ty, sx, sy, rotate_deg, skx_deg, origin_x, origin_y);
+    // Use proper matrix composition for correct transform handling
+    let (a, b, c, d, e, f) = flatten_transforms_to_matrix(transforms, origin_x, origin_y);
 
     // Invert the 2x2 part: [a c; b d]
     let det = a * d - b * c;
@@ -418,6 +415,7 @@ fn inverse_transform_point(
 ///   screen_y = b * local_x + d * local_y + f
 ///
 /// Incorporates transform-origin by pre/post translating.
+#[allow(dead_code)]
 fn build_transform_matrix(
     tx: f32, ty: f32,
     sx: f32, sy: f32,
@@ -451,8 +449,85 @@ fn build_transform_matrix(
     (a, b, c, d, e, f)
 }
 
+/// Flatten a list of CSS transforms into a single 2D affine matrix.
+/// Returns the combined matrix coefficients (a, b, c, d, e, f).
+///
+/// CSS transforms are applied right-to-left (last in list is applied first to the coordinates).
+/// However, for matrix composition, we multiply left-to-right: M = T1 * T2 * T3...
+fn flatten_transforms_to_matrix(
+    transforms: &[liquide_style_engine::computed::Transform],
+    origin_x: f32,
+    origin_y: f32,
+) -> (f32, f32, f32, f32, f32, f32) {
+    use liquide_style_engine::computed::Transform;
+    
+    // Start with identity matrix
+    let mut a = 1.0f32;
+    let mut b = 0.0f32;
+    let mut c = 0.0f32;
+    let mut d = 1.0f32;
+    let mut e = 0.0f32;
+    let mut f = 0.0f32;
+
+    // Helper to multiply current matrix by a new transform matrix
+    // [a c e]   [na nc ne]   [a*na+c*nb  a*nc+c*nd  a*ne+c*nf+e]
+    // [b d f] * [nb nd nf] = [b*na+d*nb  b*nc+d*nd  b*ne+d*nf+f]
+    // [0 0 1]   [0  0  1 ]   [0          0          1          ]
+    let mut multiply = |na: f32, nb: f32, nc: f32, nd: f32, ne: f32, nf: f32| {
+        let new_a = a * na + c * nb;
+        let new_b = b * na + d * nb;
+        let new_c = a * nc + c * nd;
+        let new_d = b * nc + d * nd;
+        let new_e = a * ne + c * nf + e;
+        let new_f = b * ne + d * nf + f;
+        a = new_a;
+        b = new_b;
+        c = new_c;
+        d = new_d;
+        e = new_e;
+        f = new_f;
+    };
+
+    // Pre-translate by -origin (undo origin shift)
+    multiply(1.0, 0.0, 0.0, 1.0, -origin_x, -origin_y);
+
+    // Apply transforms in order (CSS applies right-to-left, but we compose left-to-right)
+    for t in transforms {
+        match t {
+            Transform::Translate(tx, ty) => {
+                multiply(1.0, 0.0, 0.0, 1.0, *tx, *ty);
+            }
+            Transform::Scale(sx, sy) => {
+                multiply(*sx, 0.0, 0.0, *sy, 0.0, 0.0);
+            }
+            Transform::Rotate(deg) => {
+                let r = deg.to_radians();
+                let cos_r = r.cos();
+                let sin_r = r.sin();
+                multiply(cos_r, sin_r, -sin_r, cos_r, 0.0, 0.0);
+            }
+            Transform::Skew(ax, ay) => {
+                let tan_ax = ax.to_radians().tan();
+                let tan_ay = ay.to_radians().tan();
+                multiply(1.0, tan_ay, tan_ax, 1.0, 0.0, 0.0);
+            }
+            Transform::Matrix(ma, mb, mc, md, me, mf) => {
+                multiply(*ma, *mb, *mc, *md, *me, *mf);
+            }
+        }
+    }
+
+    // Post-translate by +origin (restore origin shift)  
+    multiply(1.0, 0.0, 0.0, 1.0, origin_x, origin_y);
+
+    (a, b, c, d, e, f)
+}
+
 /// Flatten a list of CSS transforms into accumulated components.
 /// Returns (translate_x, translate_y, scale_x, scale_y, rotate_deg, skew_x_deg, skew_y_deg).
+/// 
+/// DEPRECATED: Use flatten_transforms_to_matrix for correct composition.
+#[allow(dead_code)]
 fn flatten_transforms(transforms: &[liquide_style_engine::computed::Transform]) -> (f32, f32, f32, f32, f32, f32, f32) {
     use liquide_style_engine::computed::Transform;
     let mut tx = 0.0f32;

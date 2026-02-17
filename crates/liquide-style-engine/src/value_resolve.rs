@@ -702,26 +702,177 @@ fn parse_degrees(s: &str) -> Option<f32> {
     }
 }
 
+/// Parse a single track size token.
+fn parse_single_track(token: &str) -> Option<TrackSize> {
+    let token = token.trim();
+    if let Some(v) = token.strip_suffix("fr") {
+        v.parse::<f32>().ok().map(TrackSize::Fr)
+    } else if let Some(v) = token.strip_suffix("px") {
+        v.parse::<f32>().ok().map(TrackSize::Px)
+    } else if let Some(v) = token.strip_suffix('%') {
+        v.parse::<f32>().ok().map(TrackSize::Percent)
+    } else if token == "auto" {
+        Some(TrackSize::Auto)
+    } else if token == "min-content" {
+        Some(TrackSize::MinContent)
+    } else if token == "max-content" {
+        Some(TrackSize::MaxContent)
+    } else {
+        token.parse::<f32>().ok().map(TrackSize::Px)
+    }
+}
+
 /// Parse a CSS grid track list string like "100px 200px" or "1fr 2fr" into TrackSize values.
+/// Also handles repeat() functions: repeat(3, 100px), repeat(auto-fill, 100px), repeat(auto-fit, minmax(100px, 1fr))
 pub fn parse_track_list(css: &str) -> Vec<TrackSize> {
-    css.split_whitespace()
-        .filter_map(|token| {
-            let token = token.trim();
-            if let Some(v) = token.strip_suffix("fr") {
-                v.parse::<f32>().ok().map(TrackSize::Fr)
-            } else if let Some(v) = token.strip_suffix("px") {
-                v.parse::<f32>().ok().map(TrackSize::Px)
-            } else if let Some(v) = token.strip_suffix('%') {
-                v.parse::<f32>().ok().map(TrackSize::Percent)
-            } else if token == "auto" {
-                Some(TrackSize::Auto)
-            } else if token == "min-content" {
-                Some(TrackSize::MinContent)
-            } else if token == "max-content" {
-                Some(TrackSize::MaxContent)
-            } else {
-                token.parse::<f32>().ok().map(TrackSize::Px)
+    use crate::computed::RepeatMode;
+    
+    let css = css.trim();
+    if css.is_empty() {
+        return Vec::new();
+    }
+    
+    let mut result = Vec::new();
+    let mut i = 0;
+    let chars: Vec<char> = css.chars().collect();
+    
+    while i < chars.len() {
+        // Skip whitespace
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        
+        if i >= chars.len() {
+            break;
+        }
+        
+        // Check for repeat() function
+        if css[i..].to_lowercase().starts_with("repeat(") {
+            // Find matching closing paren
+            let start = i + 7; // after "repeat("
+            let mut depth = 1;
+            let mut end = start;
+            while end < chars.len() && depth > 0 {
+                match chars[end] {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                if depth > 0 {
+                    end += 1;
+                }
             }
-        })
-        .collect()
+            
+            if depth == 0 {
+                let inner: String = chars[start..end].iter().collect();
+                // Parse repeat() arguments: mode, tracks
+                if let Some(comma_idx) = find_first_comma(&inner) {
+                    let mode_str = inner[..comma_idx].trim();
+                    let tracks_str = inner[comma_idx + 1..].trim();
+                    
+                    let mode = match mode_str.to_lowercase().as_str() {
+                        "auto-fill" => Some(RepeatMode::AutoFill),
+                        "auto-fit" => Some(RepeatMode::AutoFit),
+                        _ => mode_str.parse::<u32>().ok().map(RepeatMode::Count),
+                    };
+                    
+                    if let Some(mode) = mode {
+                        // Parse the tracks inside repeat()
+                        let inner_tracks = if tracks_str.starts_with("minmax(") {
+                            // Handle minmax() inside repeat()
+                            vec![parse_minmax(tracks_str).unwrap_or(TrackSize::Auto)]
+                        } else {
+                            parse_track_list_simple(tracks_str)
+                        };
+                        
+                        if !inner_tracks.is_empty() {
+                            result.push(TrackSize::Repeat { mode, tracks: inner_tracks });
+                        }
+                    }
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+        
+        // Check for minmax() function
+        if css[i..].to_lowercase().starts_with("minmax(") {
+            let start = i + 7;
+            let mut depth = 1;
+            let mut end = start;
+            while end < chars.len() && depth > 0 {
+                match chars[end] {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                if depth > 0 {
+                    end += 1;
+                }
+            }
+            
+            if depth == 0 {
+                let inner: String = chars[i..=end].iter().collect();
+                if let Some(track) = parse_minmax(&inner) {
+                    result.push(track);
+                }
+                i = end + 1;
+                continue;
+            }
+        }
+        
+        // Regular token - find end
+        let start = i;
+        while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '(' {
+            i += 1;
+        }
+        
+        if i > start {
+            let token: String = chars[start..i].iter().collect();
+            if let Some(track) = parse_single_track(&token) {
+                result.push(track);
+            }
+        }
+    }
+    
+    result
+}
+
+/// Find the first comma at depth 0 (not inside parentheses).
+fn find_first_comma(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            ',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Parse minmax(min, max) into TrackSize::MinMax.
+fn parse_minmax(s: &str) -> Option<TrackSize> {
+    let s = s.trim();
+    if !s.to_lowercase().starts_with("minmax(") || !s.ends_with(')') {
+        return None;
+    }
+    
+    let inner = &s[7..s.len() - 1];
+    let comma_idx = find_first_comma(inner)?;
+    
+    let min_str = inner[..comma_idx].trim();
+    let max_str = inner[comma_idx + 1..].trim();
+    
+    let min = parse_single_track(min_str)?;
+    let max = parse_single_track(max_str)?;
+    
+    Some(TrackSize::MinMax(Box::new(min), Box::new(max)))
+}
+
+/// Simple track list parser for space-separated tokens (no functions).
+fn parse_track_list_simple(css: &str) -> Vec<TrackSize> {
+    css.split_whitespace()
+        .filter_map(|token| parse_single_track(token))        .collect()
 }

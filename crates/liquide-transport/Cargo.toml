@@ -11,6 +11,8 @@ tls = ["dep:tokio-rustls", "dep:rustls-pemfile"]
 quic = ["dep:quinn"]
 websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
 full = ["tls", "quic", "websocket"]
+# DANGEROUS: Enables insecure QUIC certificate verification for testing only
+dangerous_insecure_quic = []
 
 [dependencies]
 liquide-common.workspace = true

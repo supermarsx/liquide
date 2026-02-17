@@ -45,6 +45,10 @@ pub enum NodeData {
     Element,
     /// Text content node.
     Text(String),
+    /// Comment node (<!-- comment -->).
+    Comment(String),
+    /// Document fragment (lightweight container for multiple nodes).
+    DocumentFragment,
     /// Image element.
     Image {
         src: String,
@@ -147,6 +151,16 @@ impl Node {
         matches!(self.data, NodeData::Text(_))
     }
 
+    /// Check if this is a comment node.
+    pub fn is_comment(&self) -> bool {
+        matches!(self.data, NodeData::Comment(_))
+    }
+
+    /// Check if this is a document fragment.
+    pub fn is_document_fragment(&self) -> bool {
+        matches!(self.data, NodeData::DocumentFragment)
+    }
+
     /// Check if this is an element node.
     pub fn is_element(&self) -> bool {
         matches!(
@@ -158,6 +172,14 @@ impl Node {
     /// Check if this is a pseudo-element node.
     pub fn is_pseudo_element(&self) -> bool {
         matches!(self.data, NodeData::PseudoElement { .. })
+    }
+
+    /// Get comment content, if this is a comment node.
+    pub fn comment_content(&self) -> Option<&str> {
+        match &self.data {
+            NodeData::Comment(s) => Some(s),
+            _ => None,
+        }
     }
 
     /// Get the pseudo-element type, if any.

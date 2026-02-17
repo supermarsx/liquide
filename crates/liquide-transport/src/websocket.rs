@@ -137,9 +137,9 @@ impl crate::Transport for WebSocketTransport {
 
     async fn close(&mut self) -> crate::Result<()> {
         if let Some(sink) = self.sink.take() {
-            if let Ok(mut s) = Arc::<Mutex<WsSink>>::try_unwrap(sink) {
-                let _ = s.get_mut().close().await;
-            }
+            // Use lock-based close to work even with other references
+            let mut s = sink.lock().await;
+            let _ = s.close().await;
         }
         self.stream = None;
         self.remote = None;

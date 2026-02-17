@@ -4120,7 +4120,7 @@ impl StyleEngine {
             "font" => {
                 let s = val.as_string().unwrap_or_default().to_string();
                 // Parse CSS font shorthand: [style] [variant] [weight] [stretch] size[/line-height] family
-                let mut tokens: Vec<&str> = s.split_whitespace().collect();
+                let tokens: Vec<&str> = s.split_whitespace().collect();
                 if tokens.is_empty() { /* skip */
                 } else {
                     // System font keywords

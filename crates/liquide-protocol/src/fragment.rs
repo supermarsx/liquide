@@ -14,6 +14,15 @@ use crate::frame::{FrameFlags, FrameHeader};
 /// Maximum payload per fragment frame.
 pub const MAX_FRAGMENT_PAYLOAD: usize = u16::MAX as usize;
 
+/// Maximum number of concurrent reassembly operations per reassembler.
+pub const MAX_PENDING_REASSEMBLIES: usize = 256;
+
+/// Maximum number of fragments allowed per message.
+pub const MAX_FRAGMENTS_PER_MESSAGE: u32 = 1024;
+
+/// Maximum total reassembled message size (64 MiB).
+pub const MAX_REASSEMBLED_SIZE: usize = 64 * 1024 * 1024;
+
 /// Fragment a large payload into multiple frame-sized chunks.
 ///
 /// Returns a list of `(flags_to_add, payload_chunk)` pairs. The caller
@@ -64,17 +73,25 @@ pub fn fragment(data: &[u8], max_payload: usize) -> Vec<(u8, Bytes)> {
 /// tracked per channel: the first fragment (with `FRAGMENTED` flag and
 /// a 4-byte total prepended) starts a new reassembly, and the final
 /// fragment (without `FRAGMENTED` flag) completes it.
+///
+/// **Security Limits:**
+/// - Maximum [`MAX_PENDING_REASSEMBLIES`] concurrent reassemblies
+/// - Maximum [`MAX_FRAGMENTS_PER_MESSAGE`] fragments per message
+/// - Maximum [`MAX_REASSEMBLED_SIZE`] bytes per reassembled message
 #[derive(Debug, Default)]
 pub struct Reassembler {
     /// In-progress reassembly keyed by channel ID.
     pending: HashMap<u16, ReassemblyState>,
+    /// Current total bytes held across all pending reassemblies.
+    current_bytes: usize,
 }
 
 #[derive(Debug)]
 struct ReassemblyState {
-    #[allow(dead_code)] // stored for future validation of fragment count
     total_fragments: u32,
     fragments: Vec<Bytes>,
+    /// Accumulated byte count for this reassembly.
+    accumulated_bytes: usize,
 }
 
 impl Reassembler {
@@ -86,7 +103,7 @@ impl Reassembler {
     ///
     /// Returns `Some(complete_payload)` when the last fragment arrives
     /// and the message is fully reassembled. Returns `None` if more
-    /// fragments are needed.
+    /// fragments are needed or if security limits are exceeded.
     pub fn feed(&mut self, header: &FrameHeader, payload: Bytes) -> Option<Bytes> {
         let ch = header.channel.as_u16();
 
@@ -96,24 +113,72 @@ impl Reassembler {
                 if payload.len() < 4 {
                     return None;
                 }
+                
+                // Check if we've hit the max pending limit
+                if self.pending.len() >= MAX_PENDING_REASSEMBLIES {
+                    // Reject new reassemblies when at capacity
+                    return None;
+                }
+                
                 let total =
                     u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                
+                // Reject messages with too many fragments
+                if total > MAX_FRAGMENTS_PER_MESSAGE || total == 0 {
+                    return None;
+                }
+                
                 let data = payload.slice(4..);
+                let data_len = data.len();
+                
                 self.pending.insert(
                     ch,
                     ReassemblyState {
                         total_fragments: total,
                         fragments: vec![data],
+                        accumulated_bytes: data_len,
                     },
                 );
+                self.current_bytes += data_len;
             } else {
                 // Middle fragment
-                self.pending.get_mut(&ch).unwrap().fragments.push(payload);
+                let state = self.pending.get_mut(&ch).unwrap();
+                let payload_len = payload.len();
+                
+                // Check if we'd exceed max reassembled size
+                if state.accumulated_bytes + payload_len > MAX_REASSEMBLED_SIZE {
+                    // Drop this reassembly - it's too large
+                    self.current_bytes -= state.accumulated_bytes;
+                    self.pending.remove(&ch);
+                    return None;
+                }
+                
+                // Check fragment count
+                if state.fragments.len() >= state.total_fragments as usize {
+                    // More fragments than expected - protocol error
+                    self.current_bytes -= state.accumulated_bytes;
+                    self.pending.remove(&ch);
+                    return None;
+                }
+                
+                state.fragments.push(payload);
+                state.accumulated_bytes += payload_len;
+                self.current_bytes += payload_len;
             }
             None
         } else if let Some(mut state) = self.pending.remove(&ch) {
             // Last fragment (no FRAGMENTED flag)
+            let payload_len = payload.len();
+            
+            // Final size check
+            if state.accumulated_bytes + payload_len > MAX_REASSEMBLED_SIZE {
+                self.current_bytes -= state.accumulated_bytes;
+                return None;
+            }
+            
+            self.current_bytes -= state.accumulated_bytes;
             state.fragments.push(payload);
+            
             let total_len: usize = state.fragments.iter().map(|b| b.len()).sum();
             let mut buf = BytesMut::with_capacity(total_len);
             for chunk in state.fragments {
@@ -129,11 +194,18 @@ impl Reassembler {
     /// Remove any pending reassembly for the given channel.
     /// Call periodically to prevent memory leaks from lost fragments.
     pub fn expire(&mut self, channel_id: u16) {
-        self.pending.remove(&channel_id);
+        if let Some(state) = self.pending.remove(&channel_id) {
+            self.current_bytes -= state.accumulated_bytes;
+        }
     }
 
     /// Number of in-progress reassemblies.
     pub fn pending_count(&self) -> usize {
         self.pending.len()
+    }
+    
+    /// Current memory usage across all pending reassemblies.
+    pub fn current_bytes(&self) -> usize {
+        self.current_bytes
     }
 }
