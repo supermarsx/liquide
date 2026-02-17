@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::computed::{ComputedStyle, TimingFunction, TransitionDef};
+use crate::computed::{ComputedStyle, TimingFunction};
 use liquide_dom::NodeId;
 
 /// A single running transition for one property on one node.

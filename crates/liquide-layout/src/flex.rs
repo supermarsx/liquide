@@ -701,7 +701,6 @@ pub fn layout_flex(
                 liquide_style_engine::computed::AlignSelf::Stretch => AlignItems::Stretch,
             };
 
-            let cross_offset_val;
             if let Some(b) = tree.get_mut(item.box_id) {
                 // Use margin_rect for cross size since line_cross is margin-box based
                 let item_cross = if is_row {
@@ -709,7 +708,7 @@ pub fn layout_flex(
                 } else {
                     b.margin_rect.width
                 };
-                cross_offset_val = match align {
+                let cross_offset_val = match align {
                     AlignItems::FlexStart => 0.0,
                     AlignItems::FlexEnd => line_cross - item_cross,
                     AlignItems::Center => (line_cross - item_cross) / 2.0,
@@ -741,8 +740,6 @@ pub fn layout_flex(
                     (cross_offset_val, 0.0)
                 };
                 shift_box(b, dx, dy);
-            } else {
-                cross_offset_val = 0.0;
             }
         }
         _line_cross_y += line_cross_sizes[li] + cross_gap;

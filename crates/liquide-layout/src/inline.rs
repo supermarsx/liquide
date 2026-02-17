@@ -70,11 +70,13 @@ impl InlineEdges {
 enum InlineItem {
     /// A word (non-whitespace run) with its measured width.
     Word {
+        #[allow(dead_code)] // Retained for debugging/future use
         text: String,
         width: f32,
         height: f32,
         baseline: f32,
         node_id: NodeId,
+        #[allow(dead_code)] // Retained for future font-size-dependent operations
         font_size: f32,
     },
     /// A whitespace run (may collapse to a single space).
@@ -83,6 +85,7 @@ enum InlineItem {
     ForcedBreak,
     /// Opening of an inline box (e.g. `<span>`) — pushes edges.
     OpenInline {
+        #[allow(dead_code)] // Retained for debugging/future use
         node_id: NodeId,
         box_id: LayoutBoxId,
         edges: InlineEdges,
@@ -91,6 +94,7 @@ enum InlineItem {
     },
     /// Closing of an inline box.
     CloseInline {
+        #[allow(dead_code)] // Retained for debugging/future use
         node_id: NodeId,
         box_id: LayoutBoxId,
         edges: InlineEdges,
@@ -104,7 +108,9 @@ enum InlineItem {
 struct PlacedFragment {
     x: f32,
     width: f32,
+    #[allow(dead_code)] // Used for vertical alignment calculations
     height: f32,
+    #[allow(dead_code)] // Used for baseline alignment calculations  
     baseline: f32,
     node_id: NodeId,
 }

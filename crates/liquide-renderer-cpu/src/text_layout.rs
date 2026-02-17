@@ -125,27 +125,111 @@ impl TextLayoutEngine {
         let mut total_height = 0.0_f32;
         let mut max_width_actual = 0.0_f32;
 
+        let is_last_line = wrapped_lines.len();
         for (i, (glyphs, line_width)) in wrapped_lines.iter().enumerate() {
             let baseline_y = (i as f32 + 1.0) * effective_line_height;
+            let is_last = i == is_last_line - 1;
 
             // Apply horizontal alignment offset.
-            let x_offset = match alignment {
-                TextAlignment::Start => 0.0,
-                TextAlignment::End => (max_width - line_width).max(0.0),
-                TextAlignment::Center => ((max_width - line_width) / 2.0).max(0.0),
-                TextAlignment::Justify => 0.0, // TODO: expand spaces
+            let positioned: Vec<PositionedGlyph> = match alignment {
+                TextAlignment::Start => glyphs
+                    .iter()
+                    .map(|g| PositionedGlyph {
+                        codepoint: g.codepoint,
+                        glyph_id: g.glyph_id,
+                        x: g.x_offset,
+                        y: baseline_y,
+                        advance: g.x_advance,
+                    })
+                    .collect(),
+                TextAlignment::End => {
+                    let x_offset = (max_width - line_width).max(0.0);
+                    glyphs
+                        .iter()
+                        .map(|g| PositionedGlyph {
+                            codepoint: g.codepoint,
+                            glyph_id: g.glyph_id,
+                            x: g.x_offset + x_offset,
+                            y: baseline_y,
+                            advance: g.x_advance,
+                        })
+                        .collect()
+                }
+                TextAlignment::Center => {
+                    let x_offset = ((max_width - line_width) / 2.0).max(0.0);
+                    glyphs
+                        .iter()
+                        .map(|g| PositionedGlyph {
+                            codepoint: g.codepoint,
+                            glyph_id: g.glyph_id,
+                            x: g.x_offset + x_offset,
+                            y: baseline_y,
+                            advance: g.x_advance,
+                        })
+                        .collect()
+                }
+                TextAlignment::Justify => {
+                    // Don't justify the last line — treat it as Start-aligned
+                    if is_last || glyphs.is_empty() {
+                        glyphs
+                            .iter()
+                            .map(|g| PositionedGlyph {
+                                codepoint: g.codepoint,
+                                glyph_id: g.glyph_id,
+                                x: g.x_offset,
+                                y: baseline_y,
+                                advance: g.x_advance,
+                            })
+                            .collect()
+                    } else {
+                        // Count spaces (word break opportunities)
+                        let space_count = glyphs
+                            .iter()
+                            .filter(|g| g.codepoint == ' ')
+                            .count();
+                        
+                        if space_count == 0 {
+                            // No spaces to expand, just use Start alignment
+                            glyphs
+                                .iter()
+                                .map(|g| PositionedGlyph {
+                                    codepoint: g.codepoint,
+                                    glyph_id: g.glyph_id,
+                                    x: g.x_offset,
+                                    y: baseline_y,
+                                    advance: g.x_advance,
+                                })
+                                .collect()
+                        } else {
+                            // Distribute extra space across word gaps
+                            let extra_space = (max_width - line_width).max(0.0);
+                            let space_expansion = extra_space / space_count as f32;
+                            let mut accumulated_expansion = 0.0_f32;
+                            
+                            glyphs
+                                .iter()
+                                .map(|g| {
+                                    let x = g.x_offset + accumulated_expansion;
+                                    if g.codepoint == ' ' {
+                                        accumulated_expansion += space_expansion;
+                                    }
+                                    PositionedGlyph {
+                                        codepoint: g.codepoint,
+                                        glyph_id: g.glyph_id,
+                                        x,
+                                        y: baseline_y,
+                                        advance: if g.codepoint == ' ' {
+                                            g.x_advance + space_expansion
+                                        } else {
+                                            g.x_advance
+                                        },
+                                    }
+                                })
+                                .collect()
+                        }
+                    }
+                }
             };
-
-            let positioned: Vec<PositionedGlyph> = glyphs
-                .iter()
-                .map(|g| PositionedGlyph {
-                    codepoint: g.codepoint,
-                    glyph_id: g.glyph_id,
-                    x: g.x_offset + x_offset,
-                    y: baseline_y,
-                    advance: g.x_advance,
-                })
-                .collect();
 
             max_width_actual = max_width_actual.max(*line_width);
             total_height = baseline_y + metrics.descent;

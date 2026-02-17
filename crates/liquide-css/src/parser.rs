@@ -469,14 +469,12 @@ mod tests {
     fn hex_8_digit() {
         let css = ".x { color: #ff000080; }";
         let sheet = parse(css).unwrap();
-        if let CssValue::Color(c) = &sheet.rules[0].declarations[0].1 {
-            assert_eq!(c.r, 255);
-            assert_eq!(c.g, 0);
-            assert_eq!(c.b, 0);
-            assert!((c.a - 128.0 / 255.0).abs() < 0.01);
-        } else {
-            panic!("expected Color");
-        }
+        let value = &sheet.rules[0].declarations[0].1;
+        assert!(
+            matches!(value, CssValue::Color(c) if c.r == 255 && c.g == 0 && c.b == 0 && (c.a - 128.0 / 255.0).abs() < 0.01),
+            "expected Color with r=255, g=0, b=0, a~=0.5, got {:?}",
+            value
+        );
     }
 
     #[test]

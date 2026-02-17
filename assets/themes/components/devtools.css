@@ -339,6 +339,7 @@ devtools-style-section {
     display: flex;
     flex-direction: column;
     margin-bottom: 2px;
+    width: 100%;
 }
 
 devtools-section-header {
@@ -355,6 +356,8 @@ devtools-section-header {
     border-bottom-width: 1px;
     border-bottom-style: solid;
     border-bottom-color: rgba(45, 45, 45, 1.0);
+    width: 100%;
+    box-sizing: border-box;
 }
 
 devtools-section-header:hover {
@@ -369,6 +372,8 @@ devtools-prop {
     min-height: 16px;
     max-height: 16px;
     padding-left: 12px;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 devtools-prop-name {
@@ -377,6 +382,9 @@ devtools-prop-name {
     font-size: 10px;
     margin-right: 4px;
     white-space: nowrap;
+    min-width: 120px;
+    width: 120px;
+    flex-shrink: 0;
 }
 
 devtools-prop-value {
@@ -385,6 +393,7 @@ devtools-prop-value {
     font-size: 10px;
     white-space: nowrap;
     flex-grow: 1;
+    overflow: hidden;
 }
 
 devtools-prop-value.editable {
