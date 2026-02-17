@@ -3,10 +3,7 @@
 use std::sync::Arc;
 
 use liquide_compositor::pixel::Color;
-use liquide_theme_css::{
-    engine::ThemeEngine,
-    value::LengthUnit,
-};
+use liquide_theme_css::{engine::ThemeEngine, value::LengthUnit};
 
 use crate::{
     Result,
@@ -332,8 +329,23 @@ impl StyleResolver {
             Some(LengthUnit::Vh(vh)) => Some(vh),
             Some(LengthUnit::Vmin(vmin)) => Some(vmin),
             Some(LengthUnit::Vmax(vmax)) => Some(vmax),
-            Some(LengthUnit::Ch(ch)) => Some(ch * 8.0),   // Approximate: 1ch ≈ 8px
-            Some(LengthUnit::Ex(ex)) => Some(ex * 8.0),   // Approximate: 1ex ≈ 8px
+            Some(LengthUnit::Ch(ch)) => Some(ch * 8.0), // Approximate: 1ch ≈ 8px
+            Some(LengthUnit::Ex(ex)) => Some(ex * 8.0), // Approximate: 1ex ≈ 8px
+            // Dynamic viewport units → same as regular viewport
+            Some(LengthUnit::Dvw(v) | LengthUnit::Svw(v) | LengthUnit::Lvw(v)) => Some(v),
+            Some(LengthUnit::Dvh(v) | LengthUnit::Svh(v) | LengthUnit::Lvh(v)) => Some(v),
+            // Container query units → approximate as percentage
+            Some(
+                LengthUnit::Cqw(v)
+                | LengthUnit::Cqh(v)
+                | LengthUnit::Cqi(v)
+                | LengthUnit::Cqb(v)
+                | LengthUnit::Cqmin(v)
+                | LengthUnit::Cqmax(v),
+            ) => Some(v),
+            // Line-height units → approximate as em/rem × 1.2
+            Some(LengthUnit::Lh(v)) => Some(v * 16.0 * 1.2),
+            Some(LengthUnit::Rlh(v)) => Some(v * 16.0 * 1.2),
             None => None,
         })
     }

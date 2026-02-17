@@ -28,6 +28,14 @@ pub struct NodeProperties {
     pub visible: bool,
     /// Z-order within the parent (higher = on top).
     pub z_order: u32,
+    /// Per-corner border radius (top-left, top-right, bottom-right, bottom-left).
+    /// Used for rounded backgrounds, gradient fills, images, and clip paths.
+    #[serde(default)]
+    pub corner_radius: (f32, f32, f32, f32),
+    /// Per-corner clip radius for rounded overflow clipping (top-left, top-right, bottom-right, bottom-left).
+    /// When set with a clip rect, creates a rounded clip mask.
+    #[serde(default)]
+    pub clip_radius: (f32, f32, f32, f32),
 }
 
 impl NodeProperties {
@@ -41,6 +49,8 @@ impl NodeProperties {
             clip: None,
             visible: true,
             z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
         }
     }
 
@@ -77,6 +87,20 @@ impl NodeProperties {
     pub fn with_visible(mut self, visible: bool) -> Self {
         self.visible = visible;
         self
+    }
+
+    /// Set corner radii (top-left, top-right, bottom-right, bottom-left).
+    #[must_use]
+    pub fn with_corner_radius(mut self, radius: (f32, f32, f32, f32)) -> Self {
+        self.corner_radius = radius;
+        self
+    }
+
+    /// Returns `true` if any corner radius is non-zero.
+    #[must_use]
+    pub fn has_border_radius(&self) -> bool {
+        let (tl, tr, br, bl) = self.corner_radius;
+        tl > 0.5 || tr > 0.5 || br > 0.5 || bl > 0.5
     }
 }
 
@@ -181,6 +205,19 @@ pub struct TextDecoration {
     pub style: TextDecorationStyle,
     pub color: Option<Color>,
     pub thickness: f32,
+    /// text-underline-offset in px (default 0.0).
+    #[serde(default)]
+    pub underline_offset: f32,
+    /// text-underline-position: under shifts line below descenders.
+    #[serde(default)]
+    pub underline_position_under: bool,
+    /// text-decoration-skip-ink: auto (true) skips over glyph ink.
+    #[serde(default = "default_skip_ink")]
+    pub skip_ink: bool,
+}
+
+fn default_skip_ink() -> bool {
+    true
 }
 
 /// Which line(s) to render for text-decoration.
@@ -1094,6 +1131,8 @@ impl SceneNode {
                     clip: node.properties.clip,
                     opacity: node.properties.opacity,
                     z_order: node.properties.z_order,
+                    corner_radius: node.properties.corner_radius,
+                    clip_radius: node.properties.clip_radius,
                 });
             }
         });
@@ -1118,4 +1157,8 @@ pub struct FlatNode {
     pub opacity: f32,
     /// Z-order within parent.
     pub z_order: u32,
+    /// Per-corner border radius (top-left, top-right, bottom-right, bottom-left).
+    pub corner_radius: (f32, f32, f32, f32),
+    /// Per-corner clip radius for rounded overflow clipping.
+    pub clip_radius: (f32, f32, f32, f32),
 }

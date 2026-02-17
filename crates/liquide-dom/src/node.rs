@@ -149,7 +149,10 @@ impl Node {
 
     /// Check if this is an element node.
     pub fn is_element(&self) -> bool {
-        matches!(self.data, NodeData::Element | NodeData::ShadowRoot | NodeData::PseudoElement { .. })
+        matches!(
+            self.data,
+            NodeData::Element | NodeData::ShadowRoot | NodeData::PseudoElement { .. }
+        )
     }
 
     /// Check if this is a pseudo-element node.

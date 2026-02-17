@@ -30,6 +30,8 @@ fn render_background() {
         clip: None,
         opacity: 1.0,
         z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
     };
 
     renderer.render(&[node], &mut fb, &damage).unwrap();
@@ -57,6 +59,8 @@ fn render_surface_node() {
         clip: None,
         opacity: 1.0,
         z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
     };
 
     // Should not error even with no buffer
@@ -82,6 +86,8 @@ fn render_glass_node() {
         clip: None,
         opacity: 1.0,
         z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
     };
 
     let result = renderer.render(&[node], &mut fb, &damage);
@@ -115,6 +121,8 @@ fn render_decoration_node() {
         clip: None,
         opacity: 1.0,
         z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
     };
 
     let result = renderer.render(&[node], &mut fb, &damage);
@@ -151,6 +159,8 @@ fn render_lock_screen_node() {
         clip: None,
         opacity: 1.0,
         z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
     };
 
     let result = renderer.render(&[node], &mut fb, &damage);

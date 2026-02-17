@@ -99,8 +99,145 @@ impl Color {
             return Self::parse_color_mix(input);
         }
 
+        // Try color(display-p3 r g b / alpha) and other predefined color spaces
+        if input.starts_with("color(") {
+            return Self::parse_color_function(input);
+        }
+
         // Fall back to csscolorparser
         Self::from_hex(input)
+    }
+
+    /// Parse `color(colorspace r g b / alpha)` — CSS Color Level 4.
+    ///
+    /// Supports `srgb`, `srgb-linear`, `display-p3`, `a98-rgb`, `prophoto-rgb`,
+    /// `rec2020`, and `xyz`/`xyz-d50`/`xyz-d65` color spaces.  Non-sRGB inputs
+    /// are converted to sRGB for storage.
+    fn parse_color_function(input: &str) -> Result<Self> {
+        let inner = input
+            .strip_prefix("color(")
+            .and_then(|s| s.strip_suffix(')'))
+            .ok_or_else(|| {
+                ThemeError::ColorParse(input.to_string(), "invalid color() syntax".to_string())
+            })?;
+
+        let (values, alpha) = if let Some((vals, a)) = inner.split_once('/') {
+            (vals.trim(), a.trim().parse::<f32>().unwrap_or(1.0))
+        } else {
+            (inner.trim(), 1.0)
+        };
+
+        let parts: Vec<&str> = values.split_whitespace().collect();
+        if parts.len() < 4 {
+            return Err(ThemeError::ColorParse(
+                input.to_string(),
+                "need colorspace + 3 values".to_string(),
+            ));
+        }
+
+        let colorspace = parts[0];
+        let c0 = parts[1].parse::<f32>().unwrap_or(0.0);
+        let c1 = parts[2].parse::<f32>().unwrap_or(0.0);
+        let c2 = parts[3].parse::<f32>().unwrap_or(0.0);
+
+        // Convert to linear sRGB first, then gamma-correct.
+        let (lr, lg, lb) = match colorspace {
+            "srgb" => {
+                // Already sRGB — just gamma-expand and we'll re-encode below.
+                (srgb_to_linear(c0), srgb_to_linear(c1), srgb_to_linear(c2))
+            }
+            "srgb-linear" => (c0, c1, c2),
+            "display-p3" => {
+                // display-p3 → linear display-p3 → linear sRGB
+                let lp0 = srgb_to_linear(c0);
+                let lp1 = srgb_to_linear(c1);
+                let lp2 = srgb_to_linear(c2);
+                // Matrix: display-p3 linear → sRGB linear
+                let r = 1.2249401 * lp0 - 0.2249402 * lp1 + 0.0000001 * lp2;
+                let g = -0.0420569 * lp0 + 1.0420571 * lp1 - 0.0000001 * lp2;
+                let b = -0.0196376 * lp0 - 0.0786361 * lp1 + 1.0982735 * lp2;
+                (r, g, b)
+            }
+            "a98-rgb" => {
+                // Adobe RGB 1998 → linear sRGB
+                let lp0 = c0.abs().powf(563.0 / 256.0) * c0.signum();
+                let lp1 = c1.abs().powf(563.0 / 256.0) * c1.signum();
+                let lp2 = c2.abs().powf(563.0 / 256.0) * c2.signum();
+                let r = 1.3945217 * lp0 - 0.3982585 * lp1 + 0.0037369 * lp2;
+                let g = -0.1337322 * lp0 + 1.1162295 * lp1 + 0.0175027 * lp2;
+                let b = -0.0002298 * lp0 - 0.0150206 * lp1 + 1.0152505 * lp2;
+                (r, g, b)
+            }
+            "prophoto-rgb" => {
+                // ProPhoto RGB → linear sRGB
+                let lp0 = if c0 <= 16.0 / 512.0 {
+                    c0 / 16.0
+                } else {
+                    c0.powf(1.8)
+                };
+                let lp1 = if c1 <= 16.0 / 512.0 {
+                    c1 / 16.0
+                } else {
+                    c1.powf(1.8)
+                };
+                let lp2 = if c2 <= 16.0 / 512.0 {
+                    c2 / 16.0
+                } else {
+                    c2.powf(1.8)
+                };
+                let r = 1.3459433 * lp0 - 0.2556075 * lp1 - 0.0511118 * lp2;
+                let g = -0.0544599 * lp0 + 1.5081673 * lp1 + 0.0205351 * lp2;
+                let b = 0.0000000 * lp0 - 0.0028833 * lp1 + 0.5733234 * lp2;
+                (r, g, b)
+            }
+            "rec2020" => {
+                // Rec. 2020 → linear sRGB
+                let a_coeff = 1.09929682680944;
+                let b_coeff = 0.018053968510807;
+                let linearize = |c: f32| -> f32 {
+                    if c < b_coeff * 4.5 {
+                        c / 4.5
+                    } else {
+                        ((c + a_coeff - 1.0) / a_coeff).powf(1.0 / 0.45)
+                    }
+                };
+                let lp0 = linearize(c0);
+                let lp1 = linearize(c1);
+                let lp2 = linearize(c2);
+                let r = 1.6605 * lp0 - 0.5876 * lp1 - 0.0728 * lp2;
+                let g = -0.1246 * lp0 + 1.1329 * lp1 - 0.0083 * lp2;
+                let b = -0.0182 * lp0 - 0.1006 * lp1 + 1.1187 * lp2;
+                (r, g, b)
+            }
+            "xyz" | "xyz-d65" => {
+                // CIE XYZ D65 → linear sRGB
+                let r = 3.2404542 * c0 - 1.5371385 * c1 - 0.4985314 * c2;
+                let g = -0.9692660 * c0 + 1.8760108 * c1 + 0.0415560 * c2;
+                let b = 0.0556434 * c0 - 0.2040259 * c1 + 1.0572252 * c2;
+                (r, g, b)
+            }
+            "xyz-d50" => {
+                // CIE XYZ D50 → D65 via Bradford, then linear sRGB
+                let x65 = 0.9555766 * c0 - 0.0230393 * c1 + 0.0631636 * c2;
+                let y65 = -0.0282895 * c0 + 1.0099416 * c1 + 0.0210077 * c2;
+                let z65 = 0.0122982 * c0 - 0.0204830 * c1 + 1.3299098 * c2;
+                let r = 3.2404542 * x65 - 1.5371385 * y65 - 0.4985314 * z65;
+                let g = -0.9692660 * x65 + 1.8760108 * y65 + 0.0415560 * z65;
+                let b = 0.0556434 * x65 - 0.2040259 * y65 + 1.0572252 * z65;
+                (r, g, b)
+            }
+            _ => {
+                // Unknown color space — fall back to treating values as sRGB
+                (srgb_to_linear(c0), srgb_to_linear(c1), srgb_to_linear(c2))
+            }
+        };
+
+        Ok(Color::new(
+            linear_to_srgb_u8(lr),
+            linear_to_srgb_u8(lg),
+            linear_to_srgb_u8(lb),
+            (alpha.clamp(0.0, 1.0) * 255.0) as u8,
+        ))
     }
 
     fn parse_oklch(input: &str) -> Result<Self> {
@@ -286,6 +423,26 @@ fn parse_color_and_percent(s: &str) -> (&str, Option<f32>) {
     (s, None)
 }
 
+/// sRGB gamma decode: sRGB component [0,1] → linear light [0,1].
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Linear light [0,1] → sRGB gamma-encoded u8 [0,255].
+fn linear_to_srgb_u8(c: f32) -> u8 {
+    let c = c.clamp(0.0, 1.0);
+    let s = if c <= 0.0031308 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    };
+    (s * 255.0).round() as u8
+}
+
 impl fmt::Display for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_hex())
@@ -306,6 +463,39 @@ pub enum LengthUnit {
     Vmax(f32),
     Ch(f32),
     Ex(f32),
+    // Dynamic viewport units (CSS Values Level 4)
+    /// Dynamic viewport width — excludes dynamic UA UI (e.g. mobile address bar).
+    Dvw(f32),
+    /// Dynamic viewport height.
+    Dvh(f32),
+    // Small viewport units
+    /// Small viewport width — assumes maximum UA UI is showing.
+    Svw(f32),
+    /// Small viewport height.
+    Svh(f32),
+    // Large viewport units
+    /// Large viewport width — assumes minimum UA UI is showing.
+    Lvw(f32),
+    /// Large viewport height.
+    Lvh(f32),
+    // Line-height relative units
+    /// Relative to the element's computed `line-height`.
+    Lh(f32),
+    /// Relative to the root element's computed `line-height`.
+    Rlh(f32),
+    // Container query length units
+    /// 1% of query container's width.
+    Cqw(f32),
+    /// 1% of query container's height.
+    Cqh(f32),
+    /// 1% of query container's inline size.
+    Cqi(f32),
+    /// 1% of query container's block size.
+    Cqb(f32),
+    /// Smaller of `cqi` and `cqb`.
+    Cqmin(f32),
+    /// Larger of `cqi` and `cqb`.
+    Cqmax(f32),
 }
 
 impl LengthUnit {
@@ -328,6 +518,20 @@ impl LengthUnit {
             LengthUnit::Vmax(v) => v * vw.max(vh) / 100.0,
             LengthUnit::Ch(v) => v * base_px * 0.5, // approximate
             LengthUnit::Ex(v) => v * base_px * 0.5, // approximate
+            // Dynamic viewport units — in a desktop compositor there is no dynamic
+            // UA chrome, so these resolve identically to vw/vh.
+            LengthUnit::Dvw(v) | LengthUnit::Svw(v) | LengthUnit::Lvw(v) => v * vw / 100.0,
+            LengthUnit::Dvh(v) | LengthUnit::Svh(v) | LengthUnit::Lvh(v) => v * vh / 100.0,
+            // Line-height units — approximate as 1.2em / 1.2rem.
+            LengthUnit::Lh(v) => v * base_px * 1.2,
+            LengthUnit::Rlh(v) => v * base_px * 1.2,
+            // Container query units — approximate: use viewport as fallback when
+            // no container context is available.  The style engine resolves these
+            // properly at layout time via container size information.
+            LengthUnit::Cqw(v) | LengthUnit::Cqi(v) => v * vw / 100.0,
+            LengthUnit::Cqh(v) | LengthUnit::Cqb(v) => v * vh / 100.0,
+            LengthUnit::Cqmin(v) => v * vw.min(vh) / 100.0,
+            LengthUnit::Cqmax(v) => v * vw.max(vh) / 100.0,
         }
     }
 }

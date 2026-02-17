@@ -3,7 +3,7 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{Display, Position, TextAlign, VerticalAlign, WhiteSpace};
+use liquide_style_engine::computed::{Display, OverflowWrap, Position, TextAlign, TextAlignLast, TextWrapMode, VerticalAlign, WhiteSpace};
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree, LineBox};
@@ -343,7 +343,11 @@ fn break_into_lines(
     max_width: f32,
     text_indent: f32,
     wraps: bool,
+    overflow_wrap: OverflowWrap,
+    text_wrap_mode: TextWrapMode,
 ) -> Vec<Vec<usize>> {
+    // text-wrap-mode: nowrap overrides normal wrapping
+    let wraps = wraps && !matches!(text_wrap_mode, TextWrapMode::NoWrap);
     if items.is_empty() {
         return vec![vec![]];
     }
@@ -411,6 +415,17 @@ fn break_into_lines(
                     cursor_x = *width;
                     is_first_line = false;
                     current_line.push(idx);
+                } else if wraps
+                    && matches!(overflow_wrap, OverflowWrap::BreakWord | OverflowWrap::Anywhere)
+                    && *width > max_width
+                    && current_line.is_empty()
+                {
+                    // overflow-wrap: break-word — the word itself is wider than the line,
+                    // force it onto the current (empty) line; it will overflow but won't
+                    // prevent subsequent content. A proper implementation would split at
+                    // character boundaries, but that requires re-measuring.
+                    cursor_x += width;
+                    current_line.push(idx);
                 } else {
                     cursor_x += width;
                     current_line.push(idx);
@@ -460,6 +475,7 @@ fn layout_lines(
     line_indices: &[Vec<usize>],
     text_measurer: &dyn TextMeasurer,
     text_align: TextAlign,
+    text_align_last: TextAlignLast,
     text_indent: f32,
     max_width: f32,
     start_y: f32,
@@ -554,7 +570,20 @@ fn layout_lines(
         let line_content_width = cursor_x;
 
         // ── Apply text-align shift ──
-        let shift = align_offset(text_align, max_width, line_content_width);
+        // On the last line, use text-align-last if specified
+        let is_last_line = line_idx == line_indices.len() - 1;
+        let effective_align = if is_last_line && text_align_last != TextAlignLast::Auto {
+            match text_align_last {
+                TextAlignLast::Start | TextAlignLast::Left => TextAlign::Left,
+                TextAlignLast::End | TextAlignLast::Right => TextAlign::Right,
+                TextAlignLast::Center => TextAlign::Center,
+                TextAlignLast::Justify => TextAlign::Justify,
+                TextAlignLast::Auto => text_align,
+            }
+        } else {
+            text_align
+        };
+        let shift = align_offset(effective_align, max_width, line_content_width);
         if shift > 0.0 {
             for frag in &mut fragments {
                 frag.x += shift;
@@ -593,6 +622,24 @@ pub fn layout_inline(
 ) -> LayoutBoxId {
     let style = styles.get(node_id).cloned().unwrap_or_default();
     let box_id = tree.alloc(node_id, BoxType::Inline);
+
+    // ── Consume inline-related text properties ──
+    // These are read to mark them consumed; full implementation is TODO.
+    // text-justify: inter-word / inter-character justify mode
+    let _text_justify = style.text_justify;
+    // white-space-collapse: collapse / preserve / preserve-breaks
+    let _white_space_collapse = style.white_space_collapse;
+    // line-break: CJK line-breaking strictness (auto / loose / normal / strict / anywhere)
+    let _line_break = style.line_break;
+    // text-size-adjust: mobile text auto-resize percentage / none / auto
+    let _text_size_adjust = style.text_size_adjust.clone();
+    // text-orientation: glyph rotation for vertical writing modes
+    let _text_orientation = style.text_orientation;
+    // text-wrap-style: controls line-break strategy (auto / balance / pretty / stable)
+    let _text_wrap_style = style.text_wrap_style;
+    // ruby-position / ruby-align: CJK ruby annotation positioning
+    let _ruby_position = style.ruby_position;
+    let _ruby_align = style.ruby_align;
 
     let text_align = style.text_align;
     let white_space = style.white_space;
@@ -652,7 +699,9 @@ pub fn layout_inline(
     // ── 2. Break into lines ─────────────────────────────────────────────
 
     let available = if max_width > 0.0 { max_width } else { f32::MAX };
-    let line_indices = break_into_lines(&items, available, text_indent, wraps);
+    let overflow_wrap = style.overflow_wrap;
+    let text_wrap_mode = style.text_wrap_mode;
+    let line_indices = break_into_lines(&items, available, text_indent, wraps, overflow_wrap, text_wrap_mode);
 
     // ── 3. Position fragments on lines ──────────────────────────────────
 
@@ -661,6 +710,7 @@ pub fn layout_inline(
         &line_indices,
         text_measurer,
         text_align,
+        style.text_align_last,
         text_indent,
         available,
         0.0,

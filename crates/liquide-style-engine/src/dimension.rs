@@ -97,7 +97,11 @@ impl CalcExpr {
                 .iter()
                 .map(|e| e.resolve(parent_px, root_font_size, font_size, viewport_w, viewport_h))
                 .fold(f32::NEG_INFINITY, f32::max),
-            CalcExpr::Clamp { min, preferred, max } => {
+            CalcExpr::Clamp {
+                min,
+                preferred,
+                max,
+            } => {
                 let min_v =
                     min.resolve(parent_px, root_font_size, font_size, viewport_w, viewport_h);
                 let pref =
@@ -192,8 +196,14 @@ impl Dimension {
             Dimension::Vmax(v) => Some(viewport_w.max(viewport_h) * v / 100.0),
             Dimension::Ch(v) => Some(font_size * 0.5 * v), // approximate
             Dimension::Zero => Some(0.0),
-            Dimension::Calc(expr) => Some(expr.resolve(parent_px, root_font_size, font_size, viewport_w, viewport_h)),
-            Dimension::Auto | Dimension::None | Dimension::MinContent | Dimension::MaxContent | Dimension::FitContent(_) => None,
+            Dimension::Calc(expr) => {
+                Some(expr.resolve(parent_px, root_font_size, font_size, viewport_w, viewport_h))
+            }
+            Dimension::Auto
+            | Dimension::None
+            | Dimension::MinContent
+            | Dimension::MaxContent
+            | Dimension::FitContent(_) => None,
         }
     }
 }
@@ -282,11 +292,26 @@ mod tests {
 
     #[test]
     fn resolve_px() {
-        assert_eq!(Dimension::Px(10.0).resolve_px(200.0, 16.0, 16.0, 1920.0, 1080.0), Some(10.0));
-        assert_eq!(Dimension::Percent(50.0).resolve_px(200.0, 16.0, 16.0, 1920.0, 1080.0), Some(100.0));
-        assert_eq!(Dimension::Em(2.0).resolve_px(200.0, 16.0, 14.0, 1920.0, 1080.0), Some(28.0));
-        assert_eq!(Dimension::Rem(2.0).resolve_px(200.0, 16.0, 14.0, 1920.0, 1080.0), Some(32.0));
-        assert_eq!(Dimension::Auto.resolve_px(200.0, 16.0, 16.0, 1920.0, 1080.0), None);
+        assert_eq!(
+            Dimension::Px(10.0).resolve_px(200.0, 16.0, 16.0, 1920.0, 1080.0),
+            Some(10.0)
+        );
+        assert_eq!(
+            Dimension::Percent(50.0).resolve_px(200.0, 16.0, 16.0, 1920.0, 1080.0),
+            Some(100.0)
+        );
+        assert_eq!(
+            Dimension::Em(2.0).resolve_px(200.0, 16.0, 14.0, 1920.0, 1080.0),
+            Some(28.0)
+        );
+        assert_eq!(
+            Dimension::Rem(2.0).resolve_px(200.0, 16.0, 14.0, 1920.0, 1080.0),
+            Some(32.0)
+        );
+        assert_eq!(
+            Dimension::Auto.resolve_px(200.0, 16.0, 16.0, 1920.0, 1080.0),
+            None
+        );
     }
 
     #[test]

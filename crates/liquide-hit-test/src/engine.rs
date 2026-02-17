@@ -42,6 +42,11 @@ impl HitTestEngine {
         &self.layout
     }
 
+    /// Get a mutable reference to the layout tree (for scroll offset updates).
+    pub fn layout_mut(&mut self) -> &mut LayoutTree {
+        &mut self.layout
+    }
+
     /// Get a reference to the style map.
     pub fn styles(&self) -> &StyleMap {
         &self.styles
@@ -83,10 +88,12 @@ impl HitTestEngine {
             }
         }
 
-        // Child paint offset = parent offset + parent content area origin
+        // Child paint offset = parent offset + parent content area origin,
+        // minus scroll offset for scroll containers.
+        let (scroll_x, scroll_y) = layout_box.scroll_offset;
         let child_offset = (
-            ox + layout_box.content_rect.x,
-            oy + layout_box.content_rect.y,
+            ox + layout_box.content_rect.x - scroll_x,
+            oy + layout_box.content_rect.y - scroll_y,
         );
 
         // Test children in reverse order (topmost first, z-order)
@@ -159,10 +166,11 @@ impl HitTestEngine {
             ancestors: Vec::new(), // simplified for all-results mode
         });
 
-        // Recurse children with accumulated offset
+        // Recurse children with accumulated offset, minus scroll offset.
+        let (scroll_x, scroll_y) = layout_box.scroll_offset;
         let child_offset = (
-            ox + layout_box.content_rect.x,
-            oy + layout_box.content_rect.y,
+            ox + layout_box.content_rect.x - scroll_x,
+            oy + layout_box.content_rect.y - scroll_y,
         );
         let children = layout_box.children.clone();
         for &child_id in children.iter().rev() {

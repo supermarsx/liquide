@@ -21,20 +21,20 @@
 //! - Mutation observers are synchronous Rust traits
 //! - `Send` — the tree can be shared across threads with appropriate locking
 
-pub mod node;
-pub mod document;
-pub mod tag;
 pub mod attrs;
 pub mod class_list;
-pub mod pseudo;
 pub mod dirty;
+pub mod document;
+pub mod node;
+pub mod pseudo;
+pub mod tag;
 pub mod visitor;
 
-pub use node::{Node, NodeData, NodeId, PseudoType};
-pub use document::Document;
-pub use tag::Tag;
 pub use attrs::AttributeMap;
 pub use class_list::ClassList;
-pub use pseudo::PseudoStateFlags;
 pub use dirty::DirtyFlags;
-pub use visitor::{Visitor, MutationObserver};
+pub use document::Document;
+pub use node::{Node, NodeData, NodeId, PseudoType};
+pub use pseudo::PseudoStateFlags;
+pub use tag::Tag;
+pub use visitor::{MutationObserver, Visitor};

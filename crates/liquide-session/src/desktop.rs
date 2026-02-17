@@ -136,9 +136,52 @@ impl DesktopCompositor {
         let font_count = font_db.load_default_fonts("assets");
         info!(fonts_loaded = font_count, "loaded TrueType font faces");
 
+        let shell = Shell::new(width as f32, height as f32);
+
+        // Load @font-face rules from CSS stylesheets into the font database.
+        let mut css_font_count = 0usize;
+        for face in shell.font_faces() {
+            use liquide_theme_css::value::FontSource;
+            let weight = face.weight.map(|(lo, _)| lo).unwrap_or(400);
+            let italic = face.style.as_deref() == Some("italic");
+            for src in &face.sources {
+                match src {
+                    FontSource::Url { url, .. } => {
+                        // Resolve relative to assets directory
+                        let path = if url.starts_with('/') || url.contains("://") {
+                            std::path::PathBuf::from(url)
+                        } else {
+                            std::path::PathBuf::from("assets").join(url)
+                        };
+                        if path.exists() {
+                            if font_db
+                                .load_file(&path, &face.family, weight, italic)
+                                .is_ok()
+                            {
+                                css_font_count += 1;
+                                break; // First successful source wins
+                            }
+                        }
+                    }
+                    FontSource::Local(name) => {
+                        // Check if already loaded by family name
+                        if font_db.resolve(name, weight, italic).is_some() {
+                            break; // Already available
+                        }
+                    }
+                }
+            }
+        }
+        if css_font_count > 0 {
+            info!(
+                css_fonts = css_font_count,
+                "loaded @font-face fonts from CSS"
+            );
+        }
+
         let tile_size = 64;
         Self {
-            shell: Shell::new(width as f32, height as f32),
+            shell,
             compositor: Some(Compositor::new(
                 width,
                 height,

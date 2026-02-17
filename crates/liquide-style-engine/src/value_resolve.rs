@@ -13,12 +13,12 @@ use crate::dimension::{CalcExpr, Dimension};
 /// Supports common inline patterns like "100", "100px", "auto", "#rgb".
 pub fn parse_inline_value(value: &str) -> PropertyValue {
     let value = value.trim();
-    
+
     // Try numeric (with optional unit)
     if let Some(px) = try_parse_px(value) {
         return PropertyValue::Number(px);
     }
-    
+
     // Try color
     if value.starts_with('#') || value.starts_with("rgb") || value.starts_with("rgba") {
         if let Some(c) = try_parse_color(value) {
@@ -30,7 +30,7 @@ pub fn parse_inline_value(value: &str) -> PropertyValue {
             });
         }
     }
-    
+
     // Keyword fallback
     PropertyValue::Keyword(value.to_string())
 }
@@ -107,13 +107,28 @@ fn length_unit_to_dimension(lu: &liquide_theme_css::value::LengthUnit) -> Dimens
         LengthUnit::Vmax(v) => Dimension::Vmax(*v),
         LengthUnit::Ch(v) => Dimension::Ch(*v),
         LengthUnit::Ex(v) => Dimension::Em(*v * 0.5), // approximate
+        // Dynamic viewport units — map to regular viewport (no dynamic chrome distinction yet)
+        LengthUnit::Dvw(v) | LengthUnit::Svw(v) | LengthUnit::Lvw(v) => Dimension::Vw(*v),
+        LengthUnit::Dvh(v) | LengthUnit::Svh(v) | LengthUnit::Lvh(v) => Dimension::Vh(*v),
+        // Container query units — approximate as percentage of parent
+        LengthUnit::Cqw(v) | LengthUnit::Cqi(v) => Dimension::Percent(*v),
+        LengthUnit::Cqh(v) | LengthUnit::Cqb(v) => Dimension::Percent(*v),
+        LengthUnit::Cqmin(v) => Dimension::Percent(*v),
+        LengthUnit::Cqmax(v) => Dimension::Percent(*v),
+        // Line-height units — approximate as 1.2× font-size
+        LengthUnit::Lh(v) => Dimension::Em(*v * 1.2),
+        LengthUnit::Rlh(v) => Dimension::Rem(*v * 1.2),
     }
 }
 
 fn length_unit_to_calc(lu: &liquide_theme_css::value::LengthUnit) -> CalcExpr {
     use liquide_theme_css::value::LengthUnit;
     match lu {
-        LengthUnit::Px(v) | LengthUnit::Pt(v) => CalcExpr::Px(if matches!(lu, LengthUnit::Pt(_)) { *v * 1.333 } else { *v }),
+        LengthUnit::Px(v) | LengthUnit::Pt(v) => CalcExpr::Px(if matches!(lu, LengthUnit::Pt(_)) {
+            *v * 1.333
+        } else {
+            *v
+        }),
         LengthUnit::Em(v) => CalcExpr::Em(*v),
         LengthUnit::Rem(v) => CalcExpr::Rem(*v),
         LengthUnit::Percent(v) => CalcExpr::Percent(*v),
@@ -121,7 +136,24 @@ fn length_unit_to_calc(lu: &liquide_theme_css::value::LengthUnit) -> CalcExpr {
         LengthUnit::Vh(v) => CalcExpr::Vh(*v),
         LengthUnit::Vmin(v) => CalcExpr::Vmin(*v),
         LengthUnit::Vmax(v) => CalcExpr::Vmax(*v),
-        LengthUnit::Ch(v) | LengthUnit::Ex(v) => CalcExpr::Em(if matches!(lu, LengthUnit::Ex(_)) { *v * 0.5 } else { *v }),
+        LengthUnit::Ch(v) | LengthUnit::Ex(v) => CalcExpr::Em(if matches!(lu, LengthUnit::Ex(_)) {
+            *v * 0.5
+        } else {
+            *v
+        }),
+        // Dynamic viewport units → regular viewport
+        LengthUnit::Dvw(v) | LengthUnit::Svw(v) | LengthUnit::Lvw(v) => CalcExpr::Vw(*v),
+        LengthUnit::Dvh(v) | LengthUnit::Svh(v) | LengthUnit::Lvh(v) => CalcExpr::Vh(*v),
+        // Container query units → percentage approximation
+        LengthUnit::Cqw(v)
+        | LengthUnit::Cqi(v)
+        | LengthUnit::Cqh(v)
+        | LengthUnit::Cqb(v)
+        | LengthUnit::Cqmin(v)
+        | LengthUnit::Cqmax(v) => CalcExpr::Percent(*v),
+        // Line-height units → em/rem × 1.2
+        LengthUnit::Lh(v) => CalcExpr::Em(*v * 1.2),
+        LengthUnit::Rlh(v) => CalcExpr::Rem(*v * 1.2),
     }
 }
 
@@ -132,13 +164,29 @@ fn math_expr_to_calc(expr: &liquide_theme_css::value::CssMathExpr) -> CalcExpr {
     match expr {
         CssMathExpr::Value(lu) => length_unit_to_calc(lu),
         CssMathExpr::Number(n) => CalcExpr::Number(*n),
-        CssMathExpr::Add(a, b) => CalcExpr::Add(Box::new(math_expr_to_calc(a)), Box::new(math_expr_to_calc(b))),
-        CssMathExpr::Sub(a, b) => CalcExpr::Sub(Box::new(math_expr_to_calc(a)), Box::new(math_expr_to_calc(b))),
-        CssMathExpr::Mul(a, b) => CalcExpr::Mul(Box::new(math_expr_to_calc(a)), Box::new(math_expr_to_calc(b))),
-        CssMathExpr::Div(a, b) => CalcExpr::Div(Box::new(math_expr_to_calc(a)), Box::new(math_expr_to_calc(b))),
+        CssMathExpr::Add(a, b) => CalcExpr::Add(
+            Box::new(math_expr_to_calc(a)),
+            Box::new(math_expr_to_calc(b)),
+        ),
+        CssMathExpr::Sub(a, b) => CalcExpr::Sub(
+            Box::new(math_expr_to_calc(a)),
+            Box::new(math_expr_to_calc(b)),
+        ),
+        CssMathExpr::Mul(a, b) => CalcExpr::Mul(
+            Box::new(math_expr_to_calc(a)),
+            Box::new(math_expr_to_calc(b)),
+        ),
+        CssMathExpr::Div(a, b) => CalcExpr::Div(
+            Box::new(math_expr_to_calc(a)),
+            Box::new(math_expr_to_calc(b)),
+        ),
         CssMathExpr::Min(args) => CalcExpr::Min(args.iter().map(math_expr_to_calc).collect()),
         CssMathExpr::Max(args) => CalcExpr::Max(args.iter().map(math_expr_to_calc).collect()),
-        CssMathExpr::Clamp { min, preferred, max } => CalcExpr::Clamp {
+        CssMathExpr::Clamp {
+            min,
+            preferred,
+            max,
+        } => CalcExpr::Clamp {
             min: Box::new(math_expr_to_calc(min)),
             preferred: Box::new(math_expr_to_calc(preferred)),
             max: Box::new(math_expr_to_calc(max)),
@@ -570,14 +618,23 @@ pub fn parse_transform_list(css: &str) -> Vec<Transform> {
                     }
                     "translate" => {
                         let parts: Vec<&str> = args.split(',').collect();
-                        let x = parts.first().and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
+                        let x = parts
+                            .first()
+                            .and_then(|s| parse_px(s.trim()))
+                            .unwrap_or(0.0);
                         let y = parts.get(1).and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
                         result.push(Transform::Translate(x, y));
                     }
                     "scale" => {
                         let parts: Vec<&str> = args.split(',').collect();
-                        let x = parts.first().and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(1.0);
-                        let y = parts.get(1).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(x);
+                        let x = parts
+                            .first()
+                            .and_then(|s| s.trim().parse::<f32>().ok())
+                            .unwrap_or(1.0);
+                        let y = parts
+                            .get(1)
+                            .and_then(|s| s.trim().parse::<f32>().ok())
+                            .unwrap_or(x);
                         result.push(Transform::Scale(x, y));
                     }
                     "scaleX" => {
@@ -597,8 +654,14 @@ pub fn parse_transform_list(css: &str) -> Vec<Transform> {
                     }
                     "skew" | "skewX" => {
                         let parts: Vec<&str> = args.split(',').collect();
-                        let x = parts.first().and_then(|s| parse_degrees(s.trim())).unwrap_or(0.0);
-                        let y = parts.get(1).and_then(|s| parse_degrees(s.trim())).unwrap_or(0.0);
+                        let x = parts
+                            .first()
+                            .and_then(|s| parse_degrees(s.trim()))
+                            .unwrap_or(0.0);
+                        let y = parts
+                            .get(1)
+                            .and_then(|s| parse_degrees(s.trim()))
+                            .unwrap_or(0.0);
                         result.push(Transform::Skew(x, y));
                     }
                     "skewY" => {

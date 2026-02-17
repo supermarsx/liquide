@@ -3,9 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 use liquide_compositor::pixel::{BlendMode, Color};
+pub use liquide_compositor::scene::Overflow;
 use liquide_compositor::scene::{
     BackdropFilterSpec, BackgroundSpec, BorderImageSpec, BoxShadowSpec, FilterSpec, MaskSpec,
-    OutlineSpec, Overflow, TextDecoration, TextShadow,
+    OutlineSpec, TextDecoration, TextShadow,
 };
 
 use crate::dimension::{Corners, Dimension, Sides, Size};
@@ -3181,8 +3182,14 @@ impl ComputedStyle {
             || self.is_flex_container()
             || self.is_grid_container()
             || matches!(self.position, Position::Absolute | Position::Fixed)
-            || matches!(self.overflow_x, Overflow::Hidden | Overflow::Scroll | Overflow::Auto)
-            || matches!(self.overflow_y, Overflow::Hidden | Overflow::Scroll | Overflow::Auto)
+            || matches!(
+                self.overflow_x,
+                Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+            )
+            || matches!(
+                self.overflow_y,
+                Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+            )
             || self.display == Display::InlineBlock
             || self.is_table_wrapper()
             || self.column_count.is_some()

@@ -36,6 +36,22 @@ pub enum BoxType {
     Fixed,
     /// Sticky positioned.
     Sticky,
+    /// List marker (bullet, number, etc.) for display: list-item.
+    ListMarker,
+    /// Pseudo-element box (::before, ::after) with its generated content.
+    PseudoElement {
+        /// Which pseudo-element this is (before/after).
+        kind: PseudoElementKind,
+        /// The generated text content.
+        content: String,
+    },
+}
+
+/// Which pseudo-element a PseudoElement box represents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PseudoElementKind {
+    Before,
+    After,
 }
 
 /// A line box within a text layout.
@@ -77,8 +93,14 @@ pub struct LayoutBox {
     pub parent: Option<LayoutBoxId>,
     /// First baseline for flex alignment.
     pub baseline: Option<f32>,
-    /// Scrollable content size (if overflow).
+    /// Scrollable content size (if overflow creates a scroll container).
     pub scroll_size: Option<Size>,
+    /// Current scroll offset (how far the user has scrolled).
+    pub scroll_offset: (f32, f32),
+    /// Resolved grid column track sizes (for subgrid inheritance by children).
+    pub grid_col_tracks: Vec<f32>,
+    /// Resolved grid row track sizes (for subgrid inheritance by children).
+    pub grid_row_tracks: Vec<f32>,
 }
 
 impl LayoutBox {
@@ -96,6 +118,9 @@ impl LayoutBox {
             parent: None,
             baseline: None,
             scroll_size: None,
+            scroll_offset: (0.0, 0.0),
+            grid_col_tracks: Vec::new(),
+            grid_row_tracks: Vec::new(),
         }
     }
 }
@@ -153,6 +178,11 @@ impl LayoutTree {
     /// Find the layout box for a given DOM node.
     pub fn find_by_node(&self, node_id: NodeId) -> Option<&LayoutBox> {
         self.boxes.iter().find(|b| b.node == node_id)
+    }
+
+    /// Find the layout box ID for a given DOM node.
+    pub fn find_box_id_by_node(&self, node_id: NodeId) -> Option<LayoutBoxId> {
+        self.boxes.iter().position(|b| b.node == node_id)
     }
 
     /// Total number of boxes.
@@ -232,8 +262,8 @@ impl LayoutTree {
         let mut current = self.get(box_id).and_then(|b| b.parent);
         while let Some(pid) = current {
             if let Some(p) = self.get(pid) {
-                ox += p.content_rect.x;
-                oy += p.content_rect.y;
+                ox += p.content_rect.x - p.scroll_offset.0;
+                oy += p.content_rect.y - p.scroll_offset.1;
                 current = p.parent;
             } else {
                 break;
@@ -246,5 +276,41 @@ impl LayoutTree {
 impl Default for LayoutTree {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl LayoutTree {
+    /// Set the scroll offset for a layout box (scroll container).
+    /// Clamps to the scrollable range based on `scroll_size`.
+    pub fn set_scroll_offset(&mut self, box_id: LayoutBoxId, dx: f32, dy: f32) {
+        if let Some(b) = self.get_mut(box_id) {
+            if let Some(ref ss) = b.scroll_size {
+                let max_x = (ss.width - b.content_rect.width).max(0.0);
+                let max_y = (ss.height - b.content_rect.height).max(0.0);
+                b.scroll_offset.0 = (b.scroll_offset.0 + dx).clamp(0.0, max_x);
+                b.scroll_offset.1 = (b.scroll_offset.1 + dy).clamp(0.0, max_y);
+            }
+        }
+    }
+
+    /// Get the current scroll offset for a layout box.
+    pub fn scroll_offset(&self, box_id: LayoutBoxId) -> (f32, f32) {
+        self.get(box_id).map(|b| b.scroll_offset).unwrap_or((0.0, 0.0))
+    }
+
+    /// Find the nearest scroll container ancestor for a given box.
+    pub fn find_scroll_container(&self, box_id: LayoutBoxId) -> Option<LayoutBoxId> {
+        let mut current = self.get(box_id).and_then(|b| b.parent);
+        while let Some(pid) = current {
+            if let Some(p) = self.get(pid) {
+                if p.scroll_size.is_some() {
+                    return Some(pid);
+                }
+                current = p.parent;
+            } else {
+                break;
+            }
+        }
+        None
     }
 }

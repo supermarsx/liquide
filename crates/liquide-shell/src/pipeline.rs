@@ -43,6 +43,9 @@ pub struct DesktopPipeline {
     pub last_styles: Option<StyleMap>,
     /// Last computed layout tree (cached for hit-testing).
     pub last_layout: Option<LayoutTree>,
+    /// Image URLs referenced during the last scene build, mapped to their hashed image_id.
+    /// The host should load these and register them with the renderer.
+    pending_images: Vec<(u64, String)>,
 }
 
 /// Configuration for the pipeline.
@@ -94,12 +97,27 @@ impl DesktopPipeline {
             next_scene_id: 1_000_000,
             last_styles: None,
             last_layout: None,
+            pending_images: Vec::new(),
         }
+    }
+
+    /// Return the list of image URLs referenced during the last scene build.
+    /// Each entry is `(image_id, url)`. The host should load each image and
+    /// call `renderer.register_image(image_id, data)` with the decoded bytes.
+    pub fn pending_images(&self) -> &[(u64, String)] {
+        &self.pending_images
     }
 
     /// Load an additional stylesheet (e.g. a user theme override).
     pub fn add_stylesheet(&mut self, css: &str) {
         self.style_engine.add_stylesheet(css);
+    }
+
+    /// Get the list of @font-face rules parsed from loaded stylesheets.
+    /// The caller (e.g. DesktopCompositor) can iterate these and load fonts
+    /// into the FontDatabase.
+    pub fn font_faces(&self) -> &[liquide_style_engine::engine::PreparedFontFace] {
+        self.style_engine.font_faces()
     }
 
     /// Replace styles with a named theme preset.
@@ -124,12 +142,28 @@ impl DesktopPipeline {
         let image_measurer = liquide_layout::DefaultImageMeasurer;
 
         // 1. Style
-        let styles = self.style_engine.restyle_all(doc);
+        let mut styles = self.style_engine.restyle_all(doc);
 
         // 2. Layout
         let layout = self
             .layout_engine
             .layout(doc, &styles, &text_measurer, &image_measurer);
+
+        // 2b. Populate container sizes for the next @container evaluation.
+        // Elements with container-type != normal get their resolved dimensions
+        // stored in the StyleMap so that `evaluate_container_condition` can use
+        // real dimensions instead of falling back to the viewport.
+        for layout_box in &layout.boxes {
+            if let Some(style) = styles.get(layout_box.node) {
+                if style.is_container_query_host() {
+                    styles.set_container_size(
+                        layout_box.node,
+                        layout_box.content_rect.width,
+                        layout_box.content_rect.height,
+                    );
+                }
+            }
+        }
 
         // 3. Paint
         let display_list = self.painter.paint(doc, &layout, &styles);
@@ -229,10 +263,14 @@ impl DesktopPipeline {
     pub fn display_list_to_scene(&mut self, list: &DisplayList, base_z: u32) -> Vec<SceneNode> {
         use liquide_compositor::geometry::Affine2D;
 
+        // Clear image tracking for this build
+        self.pending_images.clear();
+
         /// Active state from Push items.
         #[derive(Clone)]
         struct PipelineState {
             clip: Option<CRect>,
+            clip_radius: (f32, f32, f32, f32),
             opacity: f32,
             transform: Affine2D,
         }
@@ -241,6 +279,7 @@ impl DesktopPipeline {
             fn default() -> Self {
                 Self {
                     clip: None,
+                    clip_radius: (0.0, 0.0, 0.0, 0.0),
                     opacity: 1.0,
                     transform: Affine2D::identity(),
                 }
@@ -255,14 +294,20 @@ impl DesktopPipeline {
         for item in &list.items {
             match item {
                 // ── Push state items ────────────────────────
-                DisplayItem::PushClip { rect, .. } => {
+                DisplayItem::PushClip { rect, radius } => {
                     stack.push(current.clone());
                     let clip_rect = to_compositor_rect(rect);
+                    let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
                     // Intersect with existing clip
                     current.clip = Some(match current.clip {
                         Some(existing) => intersect_rects(&existing, &clip_rect),
                         None => clip_rect,
                     });
+                    // Keep the most specific (innermost) clip radius
+                    let has_r = r.0 > 0.5 || r.1 > 0.5 || r.2 > 0.5 || r.3 > 0.5;
+                    if has_r {
+                        current.clip_radius = r;
+                    }
                 }
                 DisplayItem::PopClip => {
                     if let Some(prev) = stack.pop() {
@@ -311,10 +356,24 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::PushBlendMode { .. } => {
-                    // Blend mode affects composition but we use flat node list.
-                    // Just push state so Pop is balanced.
+                DisplayItem::PushBlendMode { mode } => {
                     stack.push(current.clone());
+                    // Emit a RenderLayer node for blend mode compositing
+                    use liquide_compositor::pixel::BlendMode;
+                    let is_non_default = !matches!(mode, BlendMode::SrcOver);
+                    if is_non_default {
+                        let id = self.alloc_id();
+                        let node = SceneNode::new(
+                            id,
+                            SceneNodeKind::RenderLayer {
+                                blend_mode: *mode,
+                                isolate: true,
+                            },
+                            NodeProperties::new(CRect::new(0.0, 0.0, 0.0, 0.0)).with_z_order(z),
+                        );
+                        nodes.push(node);
+                        z += 1;
+                    }
                 }
                 DisplayItem::PopBlendMode => {
                     if let Some(prev) = stack.pop() {
@@ -332,8 +391,23 @@ impl DesktopPipeline {
                 }
 
                 // ── New state ops: filter, backdrop-filter, mask, save/restore ──
-                DisplayItem::PushFilter { .. } => {
+                DisplayItem::PushFilter { filters } => {
                     stack.push(current.clone());
+                    // Emit a Filter scene node so the renderer can apply CSS filter effects
+                    if !filters.is_empty() {
+                        let filter_specs = filters.iter().filter_map(|f| filter_op_to_spec(f)).collect::<Vec<_>>();
+                        if !filter_specs.is_empty() {
+                            let id = self.alloc_id();
+                            // Use a small bounding rect — the filter applies to preceding content
+                            let node = SceneNode::new(
+                                id,
+                                SceneNodeKind::Filter { filters: filter_specs },
+                                NodeProperties::new(CRect::new(0.0, 0.0, 0.0, 0.0)).with_z_order(z),
+                            );
+                            nodes.push(node);
+                            z += 1;
+                        }
+                    }
                 }
                 DisplayItem::PopFilter => {
                     if let Some(prev) = stack.pop() {
@@ -341,8 +415,34 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::PushBackdropFilter { .. } => {
+                DisplayItem::PushBackdropFilter { filters, bounds } => {
                     stack.push(current.clone());
+                    // Emit a BackdropFilter scene node so the renderer can apply CSS backdrop-filter
+                    if !filters.is_empty() {
+                        let backdrop_specs = filters.iter().filter_map(|f| filter_op_to_backdrop_spec(f)).collect::<Vec<_>>();
+                        if !backdrop_specs.is_empty() {
+                            let id = self.alloc_id();
+                            let b = to_compositor_rect(bounds);
+                            let mut node = SceneNode::new(
+                                id,
+                                SceneNodeKind::BackdropFilter { filters: backdrop_specs },
+                                NodeProperties::new(b).with_z_order(z),
+                            );
+                            // Apply accumulated state
+                            if current.opacity < 1.0 {
+                                node.properties.opacity *= current.opacity;
+                            }
+                            if let Some(ref clip) = current.clip {
+                                node.properties.clip = Some(*clip);
+                            }
+                            if !current.transform.is_identity() {
+                                node.properties.transform =
+                                    node.properties.transform.then(&current.transform);
+                            }
+                            nodes.push(node);
+                            z += 1;
+                        }
+                    }
                 }
                 DisplayItem::PopBackdropFilter => {
                     if let Some(prev) = stack.pop() {
@@ -372,8 +472,8 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::Annotate { .. } | DisplayItem::Noop => {
-                    // Non-renderable — skip
+                DisplayItem::Annotate { .. } | DisplayItem::Noop | DisplayItem::SetCursor { .. } | DisplayItem::ScrollContainerHints { .. } | DisplayItem::AnimationHints { .. } | DisplayItem::TimelineHints { .. } => {
+                    // Non-renderable metadata — skip
                 }
 
                 // ── Renderable items ────────────────────────
@@ -385,6 +485,11 @@ impl DesktopPipeline {
                         }
                         if let Some(ref clip) = current.clip {
                             node.properties.clip = Some(*clip);
+                            // Propagate rounded clip radius
+                            let cr = current.clip_radius;
+                            if cr.0 > 0.5 || cr.1 > 0.5 || cr.2 > 0.5 || cr.3 > 0.5 {
+                                node.properties.clip_radius = cr;
+                            }
                         }
                         if !current.transform.is_identity() {
                             node.properties.transform =
@@ -609,15 +714,16 @@ impl DesktopPipeline {
         let id = self.alloc_id();
 
         match item {
-            DisplayItem::SolidColor { rect, color, .. } => {
+            DisplayItem::SolidColor { rect, color, radius } => {
                 if color.a == 0 {
                     return None; // Skip fully transparent
                 }
                 let bounds = to_compositor_rect(rect);
+                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Background { color: *color },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
                 );
                 Some(node)
             }
@@ -754,23 +860,29 @@ impl DesktopPipeline {
                 Some(node)
             }
 
-            DisplayItem::Image { rect, src, .. } => {
+            DisplayItem::Image { rect, src, radius } => {
                 let bounds = to_compositor_rect(rect);
+                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
+                let img_id = hash_string(src);
+                self.pending_images.push((img_id, src.clone()));
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Image {
-                        image_id: hash_string(src),
+                        image_id: img_id,
                         width: bounds.width as u32,
                         height: bounds.height as u32,
                         fit: liquide_compositor::scene::ImageFit::Cover,
                     },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
                 );
                 Some(node)
             }
 
-            DisplayItem::ImageRect { rect, src, fit, .. } => {
+            DisplayItem::ImageRect { rect, src, fit, radius, .. } => {
                 let bounds = to_compositor_rect(rect);
+                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
+                let img_id = hash_string(src);
+                self.pending_images.push((img_id, src.clone()));
                 let scene_fit = match fit {
                     liquide_paint::display_list::ImageFit::Fill => liquide_compositor::scene::ImageFit::Fill,
                     liquide_paint::display_list::ImageFit::Contain => liquide_compositor::scene::ImageFit::Contain,
@@ -780,18 +892,19 @@ impl DesktopPipeline {
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Image {
-                        image_id: hash_string(src),
+                        image_id: img_id,
                         width: bounds.width as u32,
                         height: bounds.height as u32,
                         fit: scene_fit,
                     },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
                 );
                 Some(node)
             }
 
-            DisplayItem::LinearGradient { rect, angle_deg, stops, .. } => {
+            DisplayItem::LinearGradient { rect, angle_deg, stops, radius } => {
                 let bounds = to_compositor_rect(rect);
+                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
                 // Convert angle to start/end points (normalized 0..1)
                 let angle_rad = angle_deg.to_radians();
                 let (start_x, start_y, end_x, end_y) = (
@@ -807,7 +920,7 @@ impl DesktopPipeline {
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::GradientFill { gradient },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
                 );
                 Some(node)
             }
@@ -976,6 +1089,10 @@ impl DesktopPipeline {
             | DisplayItem::SaveLayer { .. }
             | DisplayItem::RestoreLayer
             | DisplayItem::Annotate { .. }
+            | DisplayItem::SetCursor { .. }
+            | DisplayItem::ScrollContainerHints { .. }
+            | DisplayItem::AnimationHints { .. }
+            | DisplayItem::TimelineHints { .. }
             | DisplayItem::Noop => {
                 None // state ops should be handled by the display_list_to_scene loop
             }
@@ -1090,6 +1207,49 @@ fn intersect_rects(a: &CRect, b: &CRect) -> CRect {
     let right = (a.x + a.width).min(b.x + b.width);
     let bottom = (a.y + a.height).min(b.y + b.height);
     CRect::new(x, y, (right - x).max(0.0), (bottom - y).max(0.0))
+}
+
+/// Convert a paint FilterOp to a compositor FilterSpec.
+fn filter_op_to_spec(op: &liquide_compositor::property_tree::FilterOp) -> Option<liquide_compositor::scene::FilterSpec> {
+    use liquide_compositor::property_tree::FilterOp;
+    use liquide_compositor::scene::FilterSpec;
+    match op {
+        FilterOp::Blur(r) => Some(FilterSpec::Blur { radius: *r }),
+        FilterOp::Brightness(v) => Some(FilterSpec::Brightness(*v)),
+        FilterOp::Contrast(v) => Some(FilterSpec::Contrast(*v)),
+        FilterOp::Saturate(v) => Some(FilterSpec::Saturate(*v)),
+        FilterOp::HueRotate(v) => Some(FilterSpec::HueRotate(*v)),
+        FilterOp::Grayscale(v) => Some(FilterSpec::Grayscale(*v)),
+        FilterOp::Sepia(v) => Some(FilterSpec::Sepia(*v)),
+        FilterOp::Invert(v) => Some(FilterSpec::Invert(*v)),
+        FilterOp::Opacity(v) => Some(FilterSpec::Opacity(*v)),
+        FilterOp::DropShadow { offset_x, offset_y, blur_radius, color } => Some(FilterSpec::DropShadow {
+            offset_x: *offset_x,
+            offset_y: *offset_y,
+            blur: *blur_radius,
+            color: *color,
+        }),
+        FilterOp::Reference(url) => Some(FilterSpec::Url(url.clone())),
+        _ => None,
+    }
+}
+
+/// Convert a paint FilterOp to a compositor BackdropFilterSpec.
+fn filter_op_to_backdrop_spec(op: &liquide_compositor::property_tree::FilterOp) -> Option<liquide_compositor::scene::BackdropFilterSpec> {
+    use liquide_compositor::property_tree::FilterOp;
+    use liquide_compositor::scene::BackdropFilterSpec;
+    match op {
+        FilterOp::Blur(r) => Some(BackdropFilterSpec::Blur { radius: *r }),
+        FilterOp::Brightness(v) => Some(BackdropFilterSpec::Brightness(*v)),
+        FilterOp::Contrast(v) => Some(BackdropFilterSpec::Contrast(*v)),
+        FilterOp::Saturate(v) => Some(BackdropFilterSpec::Saturate(*v)),
+        FilterOp::HueRotate(v) => Some(BackdropFilterSpec::HueRotate(*v)),
+        FilterOp::Grayscale(v) => Some(BackdropFilterSpec::Grayscale(*v)),
+        FilterOp::Sepia(v) => Some(BackdropFilterSpec::Sepia(*v)),
+        FilterOp::Invert(v) => Some(BackdropFilterSpec::Invert(*v)),
+        FilterOp::Opacity(v) => Some(BackdropFilterSpec::Opacity(*v)),
+        _ => None, // DropShadow, ColorMatrix, Reference not applicable to backdrop
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────
@@ -1208,6 +1368,10 @@ mod tests {
             text_indent: 0.0,
             text_decoration: None,
             text_shadows: Vec::new(),
+            text_emphasis_style: None,
+            text_emphasis_color: None,
+            text_emphasis_position: None,
+            caret_color: None,
         });
 
         let nodes = pipeline.display_list_to_scene(&list, 100);

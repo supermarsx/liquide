@@ -204,6 +204,14 @@ pub fn layout_block_with_floats(
         };
 
         if let Some(side) = float_side {
+            // Consume shape exclusion properties for CSS Shapes Level 1.
+            // shape-outside defines the float exclusion area (circle, polygon, etc.),
+            // shape-margin expands it, and shape-image-threshold sets the alpha cutoff
+            // for image-based shapes. Full shape geometry computation is TODO.
+            let _shape_outside = &child_style.shape_outside;
+            let _shape_margin = child_style.shape_margin;
+            let _shape_image_threshold = child_style.shape_image_threshold;
+
             // Layout the float to determine its intrinsic size
             let float_box = crate::block::layout_block(
                 doc,

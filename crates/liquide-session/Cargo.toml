@@ -25,6 +25,7 @@ liquide-renderer-cpu.workspace = true
 liquide-font-rasterizer.workspace = true
 liquide-encoder.workspace = true
 liquide-shell.workspace = true
+liquide-theme-css.workspace = true
 liquide-plugin-host.workspace = true
 liquide-css.workspace = true
 liquide-input.workspace = true

@@ -9,8 +9,10 @@ use liquide_compositor::pixel::{BlendMode, Color};
 use liquide_compositor::property_tree::FilterOp;
 use liquide_layout::Rect;
 use liquide_style_engine::computed::{
-    BorderLineStyle, FontStyle, Isolation, LineHeight, TextAlign, TextOverflow, TextTransform,
-    WhiteSpace, WordBreak,
+    BorderLineStyle, Cursor, FontStyle, ImageOrientation, ImageRendering, Isolation, LineHeight,
+    OverflowAnchor, OverscrollBehavior, ScrollBehavior, ScrollSnapAlign, ScrollSnapStop,
+    ScrollSnapType, TextAlign, TextOverflow, TextTransform,
+    TouchAction, WhiteSpace, WordBreak,
 };
 use liquide_style_engine::dimension::Corners;
 
@@ -118,6 +120,10 @@ pub enum DisplayItem {
         text_indent: f32,
         text_decoration: Option<liquide_compositor::scene::TextDecoration>,
         text_shadows: Vec<liquide_compositor::scene::TextShadow>,
+        text_emphasis_style: Option<String>,
+        text_emphasis_color: Option<Color>,
+        text_emphasis_position: Option<String>,
+        caret_color: Option<Color>,
     },
 
     /// Single line of pre-measured text (for optimized text rendering).
@@ -145,6 +151,9 @@ pub enum DisplayItem {
         src_rect: Option<Rect>,
         radius: Corners<f32>,
         fit: ImageFit,
+        image_rendering: ImageRendering,
+        /// EXIF auto-rotation: `FromImage` respects EXIF orientation, `None` ignores it.
+        image_orientation: ImageOrientation,
     },
 
     // ── Icons (built-in vector icons) ──
@@ -257,6 +266,60 @@ pub enum DisplayItem {
     Surface {
         rect: Rect,
         surface_id: u64,
+    },
+
+    /// Set the cursor for a hit-test region.
+    SetCursor {
+        rect: Rect,
+        cursor: Cursor,
+    },
+
+    /// Scroll container behaviour hints for the shell input subsystem.
+    ScrollContainerHints {
+        rect: Rect,
+        scroll_behavior: ScrollBehavior,
+        overscroll_x: OverscrollBehavior,
+        overscroll_y: OverscrollBehavior,
+        overflow_anchor: OverflowAnchor,
+        touch_action: TouchAction,
+        /// Scroll padding (top, right, bottom, left) — defines snap alignment target area.
+        scroll_padding: (f32, f32, f32, f32),
+        /// Scroll margin (top, right, bottom, left) — defines snap area margin.
+        scroll_margin: (f32, f32, f32, f32),
+        /// Scroll snap type (axis + strictness).
+        scroll_snap_type: ScrollSnapType,
+        /// Scroll snap alignment for this container's children.
+        scroll_snap_align: ScrollSnapAlign,
+        /// Whether snap points are mandatory stop points.
+        scroll_snap_stop: ScrollSnapStop,
+    },
+
+    /// Animation & transition property hints for the animation scheduler.
+    AnimationHints {
+        rect: Rect,
+        animation_name: Option<String>,
+        animation_duration: Option<String>,
+        animation_timing_function: Option<String>,
+        animation_delay: Option<String>,
+        animation_iteration_count: String,
+        animation_direction: String,
+        animation_fill_mode: String,
+        animation_play_state: String,
+        transition_property: Option<String>,
+        transition_duration: Option<String>,
+        transition_timing_function: Option<String>,
+        transition_delay: Option<String>,
+    },
+
+    /// Scroll / view timeline hints for scroll-driven animations.
+    TimelineHints {
+        rect: Rect,
+        scroll_timeline_name: Option<String>,
+        scroll_timeline_axis: Option<String>,
+        view_timeline_name: Option<String>,
+        view_timeline_axis: Option<String>,
+        view_timeline_inset: Option<String>,
+        timeline_scope: Option<String>,
     },
 
     /// Annotation (debug label for a region).
@@ -444,6 +507,10 @@ fn item_bounds(item: &DisplayItem) -> Option<Rect> {
         | DisplayItem::FillRect { rect, .. }
         | DisplayItem::StrokeRoundedRect { rect, .. }
         | DisplayItem::Surface { rect, .. }
+        | DisplayItem::SetCursor { rect, .. }
+        | DisplayItem::ScrollContainerHints { rect, .. }
+        | DisplayItem::AnimationHints { rect, .. }
+        | DisplayItem::TimelineHints { rect, .. }
         | DisplayItem::PushClip { rect, .. }
         | DisplayItem::PushBackdropFilter { bounds: rect, .. }
         | DisplayItem::PushMask { rect, .. }

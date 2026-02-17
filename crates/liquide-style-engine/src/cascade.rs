@@ -126,7 +126,14 @@ impl Ord for CascadePriority {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.effective_level()
             .cmp(&other.effective_level())
-            .then(self.layer_order.cmp(&other.layer_order))
+            .then(if self.important {
+                // CSS Cascading Level 5 §6.4.4: For !important declarations,
+                // earlier layers (lower layer_order) win — reverse the order.
+                other.layer_order.cmp(&self.layer_order)
+            } else {
+                // Normal declarations: later layers win — ascending order.
+                self.layer_order.cmp(&other.layer_order)
+            })
             .then(self.is_inline.cmp(&other.is_inline))
             .then(self.specificity.cmp(&other.specificity))
             .then(self.source_order.cmp(&other.source_order))

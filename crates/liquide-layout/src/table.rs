@@ -179,6 +179,21 @@ pub fn layout_table(
 
     let border_spacing = style.border_spacing;
 
+    // Table-specific CSS properties:
+    // border-collapse: separate (default) uses border-spacing between cells;
+    // border-collapse: collapse merges adjacent borders (not yet rendered collapsed).
+    let use_collapsed = style.border_collapse == liquide_style_engine::computed::BorderCollapse::Collapse;
+    let effective_spacing = if use_collapsed { 0.0 } else { border_spacing };
+
+    // caption-side: top (default) or bottom — controls caption placement.
+    let caption_bottom = style.caption_side == liquide_style_engine::computed::CaptionSide::Bottom;
+
+    // empty-cells: show (default) or hide — hides borders/bg of empty cells.
+    let _hide_empty = style.empty_cells == liquide_style_engine::computed::EmptyCells::Hide;
+
+    // table-layout: auto (default) or fixed — fixed uses first-row widths only.
+    let _table_layout_fixed = style.table_layout == liquide_style_engine::computed::TableLayout::Fixed;
+
     // ── Step 0: Layout captions ──
     let children = doc.children(node_id).to_vec();
     let mut captions: Vec<TableCaption> = Vec::new();
@@ -219,23 +234,26 @@ pub fn layout_table(
         }
     }
 
-    // Position captions above the grid; compute total caption height.
+    // Position captions above or below the grid depending on caption-side.
     // Captions use LOCAL coordinates relative to the table's content area.
+    // When caption_bottom is true, we defer positioning until after grid layout.
     let mut caption_y = 0.0f32;
-    for cap in &captions {
-        if let Some(b) = tree.get_mut(cap.box_id) {
-            let dx = 0.0 - b.content_rect.x;
-            let dy = caption_y - b.content_rect.y;
-            b.content_rect.x += dx;
-            b.content_rect.y += dy;
-            b.padding_rect.x += dx;
-            b.padding_rect.y += dy;
-            b.border_rect.x += dx;
-            b.border_rect.y += dy;
-            b.margin_rect.x += dx;
-            b.margin_rect.y += dy;
+    if !caption_bottom {
+        for cap in &captions {
+            if let Some(b) = tree.get_mut(cap.box_id) {
+                let dx = 0.0 - b.content_rect.x;
+                let dy = caption_y - b.content_rect.y;
+                b.content_rect.x += dx;
+                b.content_rect.y += dy;
+                b.padding_rect.x += dx;
+                b.padding_rect.y += dy;
+                b.border_rect.x += dx;
+                b.border_rect.y += dy;
+                b.margin_rect.x += dx;
+                b.margin_rect.y += dy;
+            }
+            caption_y += cap.height;
         }
-        caption_y += cap.height;
     }
 
     // ── Step 1: Collect rows and cells ──
@@ -472,7 +490,7 @@ pub fn layout_table(
                     continue;
                 }
                 let spanned_spacing = if span > 1 {
-                    (span - 1) as f32 * border_spacing
+                    (span - 1) as f32 * effective_spacing
                 } else {
                     0.0
                 };
@@ -490,7 +508,7 @@ pub fn layout_table(
 
     // Total intrinsic width
     let total_spacing = if num_cols > 1 {
-        (num_cols - 1) as f32 * border_spacing
+        (num_cols - 1) as f32 * effective_spacing
     } else {
         0.0
     };
@@ -519,7 +537,7 @@ pub fn layout_table(
         col_x_positions.push(cx);
         cx += cw;
         if ci < num_cols - 1 {
-            cx += border_spacing;
+            cx += effective_spacing;
         }
     }
 
@@ -544,7 +562,7 @@ pub fn layout_table(
                     continue;
                 }
                 let spanned_spacing = if span > 1 {
-                    (span - 1) as f32 * border_spacing
+                    (span - 1) as f32 * effective_spacing
                 } else {
                     0.0
                 };
@@ -568,7 +586,7 @@ pub fn layout_table(
             row_y_positions.push(ry);
             ry += rh;
             if ri < num_rows - 1 {
-                ry += border_spacing;
+                ry += effective_spacing;
             }
         }
     }
@@ -583,13 +601,13 @@ pub fn layout_table(
             // Spanned width = sum of column widths + internal spacing
             let mut cell_w: f32 = col_widths[gc..end_col].iter().sum();
             if end_col > gc + 1 {
-                cell_w += (end_col - gc - 1) as f32 * border_spacing;
+                cell_w += (end_col - gc - 1) as f32 * effective_spacing;
             }
 
             // Spanned height = sum of row heights + internal spacing
             let mut cell_h: f32 = row_heights[ri..end_row].iter().sum();
             if end_row > ri + 1 {
-                cell_h += (end_row - ri - 1) as f32 * border_spacing;
+                cell_h += (end_row - ri - 1) as f32 * effective_spacing;
             }
 
             // Cell position is LOCAL to the table's content area
@@ -629,6 +647,27 @@ pub fn layout_table(
     } else {
         0.0
     };
+
+    // Position bottom captions after the grid
+    if caption_bottom {
+        let mut cap_y = grid_height;
+        for cap in &captions {
+            if let Some(b) = tree.get_mut(cap.box_id) {
+                let dx = 0.0 - b.content_rect.x;
+                let dy = cap_y - b.content_rect.y;
+                b.content_rect.x += dx;
+                b.content_rect.y += dy;
+                b.padding_rect.x += dx;
+                b.padding_rect.y += dy;
+                b.border_rect.x += dx;
+                b.border_rect.y += dy;
+                b.margin_rect.x += dx;
+                b.margin_rect.y += dy;
+            }
+            cap_y += cap.height;
+        }
+        caption_y = cap_y - grid_height; // total caption height for overall sizing
+    }
 
     let total_content_height = caption_y + grid_height;
     let content_height = style

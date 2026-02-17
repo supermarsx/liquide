@@ -12,7 +12,7 @@
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{
-    AlignContent, AlignItems, Display, FlexDirection, FlexWrap, JustifyContent, Position,
+    AlignContent, AlignItems, AspectRatio, Display, FlexDirection, FlexWrap, JustifyContent, Position,
 };
 use liquide_style_engine::dimension::Dimension;
 
@@ -301,10 +301,19 @@ pub fn layout_flex(
             flex_shrink: child_style.flex_shrink,
             base_main_size: main_size,
             main_size,
-            cross_size: if is_row {
-                intrinsic.height
-            } else {
-                intrinsic.width
+            cross_size: {
+                let intrinsic_cross = if is_row {
+                    intrinsic.height
+                } else {
+                    intrinsic.width
+                };
+                // Apply aspect-ratio when cross size is 0 (no explicit dimension)
+                match child_style.aspect_ratio {
+                    AspectRatio::Ratio(w, h) if intrinsic_cross <= 0.0 && w > 0.0 => {
+                        if is_row { main_size * (h / w) } else { main_size * (w / h) }
+                    }
+                    _ => intrinsic_cross,
+                }
             },
             min_main,
             max_main,

@@ -26,4 +26,4 @@ pub use rules::{ElementRule, RuleEngine, Severity, ValidationReport, Violation};
 pub use selector::{Combinator, ComplexSelector, CompoundSelector, PseudoClassSelector};
 pub use shorthand::expand_shorthand;
 pub use specificity::Specificity;
-pub use style_map::StyleMap;
+pub use style_map::{PseudoKind, StyleMap};

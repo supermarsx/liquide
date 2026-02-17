@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{Display, GridAutoFlow, GridLine, Position, TrackSize};
+use liquide_style_engine::computed::{Display, GridAutoFlow, GridLine, JustifyItems, JustifySelf, Position, TrackSize};
 use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
@@ -165,8 +165,42 @@ pub fn layout_grid(
     let implicit_row_size =
         |available: f32| -> f32 { resolve_track_px(&style.grid_auto_rows, available) };
 
-    // Resolve column track sizes
-    let col_tracks = resolve_tracks(&style.grid_template_columns, content_width, gap_col);
+    // Resolve column track sizes (check for subgrid)
+    let has_subgrid_cols = style
+        .grid_template_columns
+        .iter()
+        .any(|t| matches!(t, TrackSize::Subgrid));
+    let has_subgrid_rows = style
+        .grid_template_rows
+        .iter()
+        .any(|t| matches!(t, TrackSize::Subgrid));
+
+    // For subgrid, try to inherit tracks from the parent grid container
+    let parent_col_tracks = if has_subgrid_cols {
+        // Walk up the tree to find parent grid box to inherit column tracks
+        tree.get(box_id)
+            .and_then(|b| b.parent)
+            .and_then(|pid| tree.get(pid))
+            .map(|p| p.grid_col_tracks.clone())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let parent_row_tracks = if has_subgrid_rows {
+        tree.get(box_id)
+            .and_then(|b| b.parent)
+            .and_then(|pid| tree.get(pid))
+            .map(|p| p.grid_row_tracks.clone())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let col_tracks = if has_subgrid_cols && !parent_col_tracks.is_empty() {
+        parent_col_tracks
+    } else {
+        resolve_tracks(&style.grid_template_columns, content_width, gap_col)
+    };
     let num_cols = col_tracks.len().max(1);
 
     // Collect children, resolve explicit placement
@@ -302,7 +336,13 @@ pub fn layout_grid(
         .unwrap_or(container_height);
     let implicit_row_px = implicit_row_size(available_h_for_rows);
 
-    let row_tracks = if style.grid_template_rows.is_empty() {
+    let row_tracks = if has_subgrid_rows && !parent_row_tracks.is_empty() {
+        let mut rt = parent_row_tracks;
+        while rt.len() < num_rows {
+            rt.push(implicit_row_px);
+        }
+        rt
+    } else if style.grid_template_rows.is_empty() {
         // Use grid-auto-rows for all implicit rows (instead of 0)
         vec![implicit_row_px; num_rows]
     } else {
@@ -479,7 +519,21 @@ pub fn layout_grid(
         }
 
         if let Some(b) = tree.get_mut(child_box_id) {
-            b.content_rect = Rect::new(cell_x, cell_y, cell_w, cell_h);
+            // Apply justify-items / justify-self alignment within the grid cell
+            let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
+            let child_w = b.margin_rect.width.min(cell_w);
+            let alignment = match child_style.justify_self {
+                JustifySelf::Auto | JustifySelf::Normal | JustifySelf::Stretch => style.justify_items,
+                JustifySelf::Center => JustifyItems::Center,
+                JustifySelf::Start | JustifySelf::SelfStart | JustifySelf::FlexStart => JustifyItems::Start,
+                JustifySelf::End | JustifySelf::SelfEnd | JustifySelf::FlexEnd => JustifyItems::End,
+            };
+            let x_offset = match alignment {
+                JustifyItems::Center => (cell_w - child_w) / 2.0,
+                JustifyItems::End | JustifyItems::FlexEnd | JustifyItems::SelfEnd | JustifyItems::Right => cell_w - child_w,
+                _ => 0.0, // Start, Stretch, Normal
+            };
+            b.content_rect = Rect::new(cell_x + x_offset, cell_y, cell_w, cell_h);
             b.padding_rect = b.content_rect;
             b.border_rect = b.content_rect;
             b.margin_rect = b.content_rect;
@@ -508,6 +562,9 @@ pub fn layout_grid(
             b.border_rect.width + mar_left + mar_right,
             b.border_rect.height + mar_top + mar_bottom,
         );
+        // Store resolved grid tracks so subgrid children can inherit them
+        b.grid_col_tracks = col_tracks.clone();
+        b.grid_row_tracks = row_heights.clone();
     }
 
     box_id

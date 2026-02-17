@@ -5,7 +5,7 @@ use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::Position;
 
 use crate::geometry::{Rect, Size};
-use crate::tree::LayoutTree;
+use crate::tree::{LayoutBoxId, LayoutTree};
 use crate::{ImageMeasurer, TextMeasurer};
 
 /// The layout engine. Computes geometry for all elements in the document.
@@ -147,7 +147,119 @@ impl LayoutEngine {
             image_measurer,
         );
 
+        // Third pass: adjust sticky-positioned elements based on scroll offsets
+        Self::apply_sticky_offsets(&mut tree, styles, doc);
+
         tree
+    }
+
+    /// Apply scroll-aware sticky positioning.
+    ///
+    /// For each element with `position: sticky`, we clamp its position so it
+    /// stays within the visible scrollport of the nearest scroll ancestor.
+    fn apply_sticky_offsets(tree: &mut LayoutTree, styles: &StyleMap, _doc: &Document) {
+        // Collect all box IDs first to avoid borrow issues.
+        let all_ids: Vec<LayoutBoxId> = (0..tree.boxes.len()).collect();
+
+        for box_id in all_ids {
+            let node_id = match tree.get(box_id) {
+                Some(b) => b.node,
+                None => continue,
+            };
+            let style = match styles.get(node_id) {
+                Some(s) => s.clone(),
+                None => continue,
+            };
+            if style.position != Position::Sticky {
+                continue;
+            }
+
+            let font_size = style.font_size;
+            let base_font_size = 16.0f32; // TODO: propagate from engine
+
+            // Find the nearest scroll-container ancestor in the layout tree.
+            let mut scroll_ancestor = tree.get(box_id).and_then(|b| b.parent);
+            let mut scroll_offset = (0.0f32, 0.0f32);
+            let mut scroll_viewport = (0.0f32, 0.0f32);
+            while let Some(ancestor_id) = scroll_ancestor {
+                if let Some(ancestor) = tree.get(ancestor_id) {
+                    if ancestor.scroll_size.is_some() {
+                        scroll_offset = ancestor.scroll_offset;
+                        scroll_viewport = (ancestor.content_rect.width, ancestor.content_rect.height);
+                        break;
+                    }
+                    scroll_ancestor = ancestor.parent;
+                } else {
+                    break;
+                }
+            }
+
+            // Resolve sticky offsets (top/right/bottom/left)
+            let vw = scroll_viewport.0.max(1.0);
+            let vh = scroll_viewport.1.max(1.0);
+            let top = style.top.resolve_px(vh, base_font_size, font_size, vw, vh);
+            let bottom = style.bottom.resolve_px(vh, base_font_size, font_size, vw, vh);
+            let left = style.left.resolve_px(vw, base_font_size, font_size, vw, vh);
+            let right = style.right.resolve_px(vw, base_font_size, font_size, vw, vh);
+
+            // The element's current (normal-flow) position is stored in its border_rect.
+            let bx = tree.get(box_id).map(|b| b.border_rect.x).unwrap_or(0.0);
+            let by = tree.get(box_id).map(|b| b.border_rect.y).unwrap_or(0.0);
+            let bw = tree.get(box_id).map(|b| b.border_rect.width).unwrap_or(0.0);
+            let bh = tree.get(box_id).map(|b| b.border_rect.height).unwrap_or(0.0);
+
+            // Compute clamped position based on scroll offset.
+            // The sticky constraint is: the element must stay within the
+            // scrollport bounds offset by the specified edges.
+            let mut new_x = bx;
+            let mut new_y = by;
+
+            // Vertical sticky clamping
+            if let Some(top_val) = top {
+                // Element must not go above (scroll_offset.y + top)
+                let min_y = scroll_offset.1 + top_val;
+                if new_y < min_y {
+                    new_y = min_y;
+                }
+            }
+            if let Some(bottom_val) = bottom {
+                // Element must not go below (scroll_offset.y + viewport_h - bottom - element_h)
+                let max_y = scroll_offset.1 + scroll_viewport.1 - bottom_val - bh;
+                if new_y > max_y {
+                    new_y = max_y;
+                }
+            }
+
+            // Horizontal sticky clamping
+            if let Some(left_val) = left {
+                let min_x = scroll_offset.0 + left_val;
+                if new_x < min_x {
+                    new_x = min_x;
+                }
+            }
+            if let Some(right_val) = right {
+                let max_x = scroll_offset.0 + scroll_viewport.0 - right_val - bw;
+                if new_x > max_x {
+                    new_x = max_x;
+                }
+            }
+
+            // Apply offset delta to all rects
+            let dx = new_x - bx;
+            let dy = new_y - by;
+            if dx.abs() > 0.001 || dy.abs() > 0.001 {
+                if let Some(b) = tree.get_mut(box_id) {
+                    b.content_rect.x += dx;
+                    b.content_rect.y += dy;
+                    b.padding_rect.x += dx;
+                    b.padding_rect.y += dy;
+                    b.border_rect.x += dx;
+                    b.border_rect.y += dy;
+                    b.margin_rect.x += dx;
+                    b.margin_rect.y += dy;
+                }
+            }
+        }
     }
 
     /// Layout positioned elements (absolute/fixed) in a second pass.

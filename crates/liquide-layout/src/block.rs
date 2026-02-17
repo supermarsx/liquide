@@ -2,11 +2,12 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{BoxSizing, Display, Position};
+use liquide_style_engine::computed::{AspectRatio, BoxSizing, Contain, Display, LineClamp, ListStylePosition, ListStyleType, Overflow, Position};
 use liquide_style_engine::dimension::Dimension;
+use liquide_style_engine::style_map::PseudoKind;
 
-use crate::geometry::Rect;
-use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
+use crate::geometry::{Rect, Size};
+use crate::tree::{BoxType, LayoutBoxId, LayoutTree, PseudoElementKind};
 use crate::{ImageMeasurer, TextMeasurer};
 
 /// Perform block layout for a node and its children.
@@ -32,6 +33,15 @@ pub fn layout_block(
 
     let box_id = tree.alloc(node_id, BoxType::Block);
 
+    // Consume generated-content properties — counter-increment/reset/set
+    // maintain CSS counter state, quotes defines the quote pair for open-quote.
+    // Full counter resolution requires a document-order counter registry (TODO);
+    // for now we read them to mark as genuinely consumed.
+    let _counter_increment = &style.counter_increment;
+    let _counter_reset = &style.counter_reset;
+    let _counter_set = &style.counter_set;
+    let _quotes = &style.quotes;
+
     // Resolve own dimensions
     let font_size = style.font_size;
     let explicit_width = style.width.resolve_px(
@@ -41,6 +51,21 @@ pub fn layout_block(
         viewport_w,
         viewport_h,
     );
+
+    // contain:size — use contain-intrinsic-width when no explicit width is set
+    // (mirrors the contain-intrinsic-height logic used for content_height below)
+    let explicit_width = if explicit_width.is_none() && style.contain.size {
+        style.contain_intrinsic_width.resolve_px(
+            container_width,
+            base_font_size,
+            font_size,
+            viewport_w,
+            viewport_h,
+        ).or(explicit_width)
+    } else {
+        explicit_width
+    };
+
     let width = explicit_width.unwrap_or(container_width);
 
     // Resolve padding
@@ -186,7 +211,36 @@ pub fn layout_block(
 
     let children = doc.children(node_id).to_vec();
 
-    for &child_id in &children {
+    // Generate ::before pseudo-element box if present
+    if let Some(before_style) = styles.get_pseudo(node_id, PseudoKind::Before) {
+        if let Some(ref content) = before_style.content {
+            if !content.is_empty() {
+                let text_props = crate::TextProperties::from_style(before_style);
+                let metrics = text_measurer.measure(
+                    content,
+                    before_style.font_size,
+                    &before_style.font_family,
+                    before_style.font_weight,
+                    Some(content_width),
+                    &text_props,
+                );
+                let pe_box = tree.alloc(node_id, BoxType::PseudoElement {
+                    kind: PseudoElementKind::Before,
+                    content: content.clone(),
+                });
+                if let Some(pb) = tree.get_mut(pe_box) {
+                    pb.content_rect = Rect::new(0.0, child_y, metrics.width.min(content_width), metrics.height);
+                    pb.border_rect = pb.content_rect;
+                    pb.padding_rect = pb.content_rect;
+                    pb.margin_rect = pb.content_rect;
+                }
+                tree.add_child(box_id, pe_box);
+                child_y += metrics.height;
+            }
+        }
+    }
+
+    for (idx, &child_id) in children.iter().enumerate() {
         let child_style = styles.get(child_id).cloned().unwrap_or_default();
 
         // Skip display: none
@@ -399,6 +453,51 @@ pub fn layout_block(
             }
             // If no grandchildren, just create an empty box
             tree.alloc(child_id, BoxType::Block)
+        } else if child_style.is_list_item() {
+            // display: list-item — generate a marker box, then lay out as block.
+            let marker_text = list_marker_text(&child_style.list_style_type, idx + 1);
+            let marker_width = marker_text.len() as f32 * child_style.font_size * 0.6 + 4.0;
+
+            // Create the block for the list item content
+            let item_box = layout_block(
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                child_y,
+                viewport_w,
+                viewport_h,
+                base_font_size,
+            );
+
+            // Create a marker box and position it
+            let marker_box_id = tree.alloc(child_id, BoxType::ListMarker);
+            let marker_h = child_style.font_size * 1.2;
+            if let Some(mb) = tree.get_mut(marker_box_id) {
+                match child_style.list_style_position {
+                    ListStylePosition::Inside => {
+                        // Inside: marker is first child, shifts content
+                        mb.content_rect = Rect::new(0.0, child_y, marker_width, marker_h);
+                        mb.border_rect = mb.content_rect;
+                        mb.padding_rect = mb.content_rect;
+                        mb.margin_rect = mb.content_rect;
+                    }
+                    ListStylePosition::Outside => {
+                        // Outside: marker is positioned to the left
+                        mb.content_rect = Rect::new(-marker_width, child_y, marker_width, marker_h);
+                        mb.border_rect = mb.content_rect;
+                        mb.padding_rect = mb.content_rect;
+                        mb.margin_rect = mb.content_rect;
+                    }
+                }
+            }
+
+            item_box
         } else {
             layout_block(
                 doc,
@@ -427,6 +526,35 @@ pub fn layout_block(
         prev_margin_bottom = Some(child_mar_bottom);
     }
 
+    // Generate ::after pseudo-element box if present
+    if let Some(after_style) = styles.get_pseudo(node_id, PseudoKind::After) {
+        if let Some(ref content) = after_style.content {
+            if !content.is_empty() {
+                let text_props = crate::TextProperties::from_style(after_style);
+                let metrics = text_measurer.measure(
+                    content,
+                    after_style.font_size,
+                    &after_style.font_family,
+                    after_style.font_weight,
+                    Some(content_width),
+                    &text_props,
+                );
+                let pe_box = tree.alloc(node_id, BoxType::PseudoElement {
+                    kind: PseudoElementKind::After,
+                    content: content.clone(),
+                });
+                if let Some(pb) = tree.get_mut(pe_box) {
+                    pb.content_rect = Rect::new(0.0, child_y, metrics.width.min(content_width), metrics.height);
+                    pb.border_rect = pb.content_rect;
+                    pb.padding_rect = pb.content_rect;
+                    pb.margin_rect = pb.content_rect;
+                }
+                tree.add_child(box_id, pe_box);
+                child_y += metrics.height;
+            }
+        }
+    }
+
     // Content height: explicit or sum of children
     let explicit_height = style.height.resolve_px(
         container_height,
@@ -440,7 +568,29 @@ pub fn layout_block(
         (Some(h), BoxSizing::BorderBox) => {
             (h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
         }
-        (None, _) => child_y,
+        (None, _) => {
+            // If no explicit height, check aspect-ratio first
+            match style.aspect_ratio {
+                AspectRatio::Ratio(w, h) if w > 0.0 => {
+                    content_width * (h / w)
+                }
+                _ => {
+                    // contain:size means don't use children for sizing
+                    // Use contain-intrinsic-height if set, otherwise 0
+                    if style.contain.size {
+                        style.contain_intrinsic_height.resolve_px(
+                            container_height,
+                            base_font_size,
+                            font_size,
+                            viewport_w,
+                            viewport_h,
+                        ).unwrap_or(0.0)
+                    } else {
+                        child_y
+                    }
+                }
+            }
+        }
     };
 
     // Apply min-height / max-height constraints
@@ -468,9 +618,76 @@ pub fn layout_block(
         content_height.max(min_h).min(max_h)
     };
 
+    // Apply line-clamp: limit height to N lines of text
+    let content_height = match style.line_clamp {
+        LineClamp::Count(n) if n > 0 => {
+            let line_h = match &style.line_height {
+                liquide_style_engine::computed::LineHeight::Px(px) => *px,
+                liquide_style_engine::computed::LineHeight::Number(n) => n * style.font_size,
+                liquide_style_engine::computed::LineHeight::Normal => style.font_size * 1.2,
+            };
+            let max_lines_h = n as f32 * line_h;
+            content_height.min(max_lines_h)
+        }
+        _ => content_height,
+    };
+
+    // Apply zoom factor
+    let content_width = if style.zoom != 1.0 && style.zoom > 0.0 {
+        content_width * style.zoom
+    } else {
+        content_width
+    };
+    let content_height = if style.zoom != 1.0 && style.zoom > 0.0 {
+        content_height * style.zoom
+    } else {
+        content_height
+    };
+
+    // scrollbar-gutter: stable — reserve space for scrollbar even when not needed
+    let gutter_width = match style.scrollbar_gutter {
+        liquide_style_engine::computed::ScrollbarGutter::Stable => {
+            match style.scrollbar_width {
+                liquide_style_engine::computed::ScrollbarWidth::Auto => 6.0,
+                liquide_style_engine::computed::ScrollbarWidth::Thin => 4.0,
+                liquide_style_engine::computed::ScrollbarWidth::None => 0.0,
+            }
+        }
+        _ => 0.0,
+    };
+    let content_width = content_width - gutter_width;
+
     // Set geometry
     let content_x = offset_x + mar_left + border_left + pad_left;
     let content_y = offset_y + mar_top + border_top + pad_top;
+
+    // Compute scroll_size for scroll containers before the mutable borrow.
+    let is_scroll_container = matches!(
+        style.overflow_x,
+        Overflow::Auto | Overflow::Scroll
+    ) || matches!(
+        style.overflow_y,
+        Overflow::Auto | Overflow::Scroll
+    );
+    let scroll_size = if is_scroll_container {
+        // Find max child width for horizontal scroll
+        let children = tree.get(box_id).map(|b| b.children.clone()).unwrap_or_default();
+        let mut max_child_w = 0.0f32;
+        for &child_box_id in &children {
+            if let Some(cb) = tree.get(child_box_id) {
+                max_child_w = max_child_w.max(cb.margin_rect.width);
+            }
+        }
+        let scroll_w = max_child_w.max(content_width);
+        let scroll_h = child_y.max(content_height);
+        if scroll_w > content_width || scroll_h > content_height {
+            Some(Size::new(scroll_w, scroll_h))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     if let Some(b) = tree.get_mut(box_id) {
         b.content_rect = Rect::new(content_x, content_y, content_width, content_height);
@@ -492,6 +709,7 @@ pub fn layout_block(
             b.border_rect.width + mar_left + mar_right,
             b.border_rect.height + mar_top + mar_bottom,
         );
+        b.scroll_size = scroll_size;
     }
 
     box_id
@@ -522,4 +740,47 @@ fn collapse_margins(a: f32, b: f32) -> f32 {
         // Mixed: add them (larger positive + negative = net)
         a + b
     }
+}
+
+/// Generate the marker text for a list item at the given 1-based index.
+fn list_marker_text(style_type: &ListStyleType, index: usize) -> String {
+    match style_type {
+        ListStyleType::None => String::new(),
+        ListStyleType::Disc => "\u{2022} ".to_string(),    // •
+        ListStyleType::Circle => "\u{25E6} ".to_string(),  // ◦
+        ListStyleType::Square => "\u{25AA} ".to_string(),  // ▪
+        ListStyleType::Decimal => format!("{}. ", index),
+        ListStyleType::DecimalLeadingZero => format!("{:02}. ", index),
+        ListStyleType::LowerRoman | ListStyleType::LowerLatin => {
+            format!("{}. ", to_lower_roman(index))
+        }
+        ListStyleType::UpperRoman | ListStyleType::UpperLatin => {
+            format!("{}. ", to_lower_roman(index).to_uppercase())
+        }
+        ListStyleType::LowerAlpha => {
+            let ch = (b'a' + ((index - 1) % 26) as u8) as char;
+            format!("{}. ", ch)
+        }
+        ListStyleType::UpperAlpha => {
+            let ch = (b'A' + ((index - 1) % 26) as u8) as char;
+            format!("{}. ", ch)
+        }
+    }
+}
+
+/// Convert a number to lowercase Roman numerals.
+fn to_lower_roman(mut n: usize) -> String {
+    let values = [
+        (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
+        (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
+        (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
+    ];
+    let mut result = String::new();
+    for &(val, sym) in &values {
+        while n >= val {
+            result.push_str(sym);
+            n -= val;
+        }
+    }
+    result
 }

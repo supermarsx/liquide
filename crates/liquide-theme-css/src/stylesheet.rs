@@ -32,6 +32,21 @@ pub struct StyleSheet {
 
     /// `@property` custom property registrations.
     registered_properties: Vec<RegisteredProperty>,
+
+    /// `@namespace` declarations.
+    namespaces: Vec<NamespaceRule>,
+
+    /// `@page` rules (print styling).
+    page_rules: Vec<PageRule>,
+
+    /// `@counter-style` custom counter definitions.
+    counter_styles: Vec<CounterStyleRule>,
+
+    /// `@scope` rules (CSS Cascading and Inheritance Level 6).
+    scope_rules: Vec<ScopeRule>,
+
+    /// `@starting-style` rules (CSS Transitions Level 2).
+    starting_style_rules: Vec<StyleRule>,
 }
 
 /// A `@container` query rule.
@@ -56,6 +71,62 @@ pub struct RegisteredProperty {
     pub inherits: bool,
     /// Initial value string.
     pub initial_value: Option<String>,
+}
+
+/// A `@namespace` declaration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamespaceRule {
+    /// Optional namespace prefix (e.g., `svg` in `@namespace svg url(…)`).
+    pub prefix: Option<String>,
+    /// The namespace URL.
+    pub url: String,
+}
+
+/// A `@page` rule for print styling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageRule {
+    /// Page selectors (e.g., `:first`, `:left`, `:right`, or named pages).
+    pub selectors: Vec<String>,
+    /// Declarations inside the `@page` block.
+    pub properties: PropertySet,
+}
+
+/// A `@counter-style` custom counter definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CounterStyleRule {
+    /// Counter style name.
+    pub name: String,
+    /// The `system` descriptor value.
+    pub system: Option<String>,
+    /// The `symbols` descriptor value.
+    pub symbols: Option<String>,
+    /// The `suffix` descriptor value.
+    pub suffix: Option<String>,
+    /// The `prefix` descriptor value.
+    pub prefix: Option<String>,
+    /// The `negative` descriptor value.
+    pub negative: Option<String>,
+    /// The `range` descriptor value.
+    pub range: Option<String>,
+    /// The `pad` descriptor value.
+    pub pad: Option<String>,
+    /// The `fallback` descriptor value.
+    pub fallback: Option<String>,
+    /// The `speak-as` descriptor value.
+    pub speak_as: Option<String>,
+    /// The `additive-symbols` descriptor value.
+    pub additive_symbols: Option<String>,
+}
+
+/// A `@scope` rule (CSS Cascading and Inheritance Level 6).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScopeRule {
+    /// Scope root selector (e.g., `.card` in `@scope (.card)`).
+    pub scope_start: Option<String>,
+    /// Scope limit selector (e.g., `.content` in `@scope (.card) to (.content)`).
+    pub scope_end: Option<String>,
+    /// Nested style rules.
+    pub rules: Vec<StyleRule>,
 }
 
 /// A single style rule
@@ -194,6 +265,15 @@ impl StyleSheet {
         self.keyframes.extend(other.keyframes.clone());
         self.font_faces.extend(other.font_faces.clone());
         self.imports.extend(other.imports.clone());
+        self.container_rules.extend(other.container_rules.clone());
+        self.registered_properties
+            .extend(other.registered_properties.clone());
+        self.namespaces.extend(other.namespaces.clone());
+        self.page_rules.extend(other.page_rules.clone());
+        self.counter_styles.extend(other.counter_styles.clone());
+        self.scope_rules.extend(other.scope_rules.clone());
+        self.starting_style_rules
+            .extend(other.starting_style_rules.clone());
     }
 
     // ── @keyframes ─────────────────────────────────────────────────────
@@ -280,6 +360,61 @@ impl StyleSheet {
     /// All registered custom properties.
     pub fn registered_properties(&self) -> &[RegisteredProperty] {
         &self.registered_properties
+    }
+
+    // ── @namespace ─────────────────────────────────────────────────────
+    /// Add a `@namespace` declaration.
+    pub fn add_namespace(&mut self, rule: NamespaceRule) {
+        self.namespaces.push(rule);
+    }
+
+    /// All `@namespace` declarations.
+    pub fn namespaces(&self) -> &[NamespaceRule] {
+        &self.namespaces
+    }
+
+    // ── @page ──────────────────────────────────────────────────────────
+    /// Add a `@page` rule.
+    pub fn add_page_rule(&mut self, rule: PageRule) {
+        self.page_rules.push(rule);
+    }
+
+    /// All `@page` rules.
+    pub fn page_rules(&self) -> &[PageRule] {
+        &self.page_rules
+    }
+
+    // ── @counter-style ─────────────────────────────────────────────────
+    /// Add a `@counter-style` rule.
+    pub fn add_counter_style(&mut self, rule: CounterStyleRule) {
+        self.counter_styles.push(rule);
+    }
+
+    /// All `@counter-style` rules.
+    pub fn counter_styles(&self) -> &[CounterStyleRule] {
+        &self.counter_styles
+    }
+
+    // ── @scope ─────────────────────────────────────────────────────────
+    /// Add a `@scope` rule.
+    pub fn add_scope_rule(&mut self, rule: ScopeRule) {
+        self.scope_rules.push(rule);
+    }
+
+    /// All `@scope` rules.
+    pub fn scope_rules(&self) -> &[ScopeRule] {
+        &self.scope_rules
+    }
+
+    // ── @starting-style ────────────────────────────────────────────────
+    /// Add a `@starting-style` rule.
+    pub fn add_starting_style_rule(&mut self, rule: StyleRule) {
+        self.starting_style_rules.push(rule);
+    }
+
+    /// All `@starting-style` rules.
+    pub fn starting_style_rules(&self) -> &[StyleRule] {
+        &self.starting_style_rules
     }
 }
 

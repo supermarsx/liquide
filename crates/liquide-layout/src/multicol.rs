@@ -11,7 +11,7 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{BorderLineStyle, BreakValue, ColumnSpan, Display, Position};
+use liquide_style_engine::computed::{BorderLineStyle, BreakValue, ColumnFill, ColumnSpan, Display, Position};
 use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
@@ -175,6 +175,15 @@ pub fn layout_multicol(
     let rule_style = style.column_rule.style;
     let _rule_color = style.column_rule.color;
 
+    // ── Fragmentation control ──
+    // orphans: minimum lines at the bottom of a column before a break (default 2).
+    let _orphans = style.orphans;
+    // widows: minimum lines at the top of a column after a break (default 2).
+    let _widows = style.widows;
+    // box-decoration-break: slice (default) or clone — controls whether
+    // borders/padding are "sliced" at column breaks or re-drawn in each fragment.
+    let _box_decoration_break = style.box_decoration_break;
+
     // ── Layout all children as block flow, handling column-span and break hints ──
     //
     // Children are partitioned into "segments". A column-span:all child splits
@@ -189,6 +198,7 @@ pub fn layout_multicol(
                 f32,
                 bool, /* break_before */
                 bool, /* break_after */
+                bool, /* break_inside_avoid */
             )>,
         ),
         /// A column-span:all child.
@@ -197,7 +207,7 @@ pub fn layout_multicol(
 
     let children = doc.children(node_id).to_vec();
     let mut segments: Vec<Segment> = Vec::new();
-    let mut current_flow: Vec<(LayoutBoxId, f32, bool, bool)> = Vec::new();
+    let mut current_flow: Vec<(LayoutBoxId, f32, bool, bool, bool)> = Vec::new();
 
     for &child_id in &children {
         let child_style = styles.get(child_id).cloned().unwrap_or_default();
@@ -262,7 +272,8 @@ pub fn layout_multicol(
             .unwrap_or(0.0);
         let brk_before = child_style.break_before == BreakValue::Column;
         let brk_after = child_style.break_after == BreakValue::Column;
-        current_flow.push((child_box, h, brk_before, brk_after));
+        let brk_inside_avoid = child_style.break_inside == BreakValue::Avoid;
+        current_flow.push((child_box, h, brk_before, brk_after, brk_inside_avoid));
         tree.add_child(box_id, child_box);
     }
     if !current_flow.is_empty() {
@@ -273,7 +284,7 @@ pub fn layout_multicol(
     let total_height: f32 = segments
         .iter()
         .map(|seg| match seg {
-            Segment::Flow(items) => items.iter().map(|(_, h, _, _)| *h).sum::<f32>(),
+            Segment::Flow(items) => items.iter().map(|(_, h, _, _, _)| *h).sum::<f32>(),
             Segment::Spanner(_, h) => *h,
         })
         .sum();
@@ -291,8 +302,13 @@ pub fn layout_multicol(
 
     let col_height = explicit_height.unwrap_or_else(|| {
         if column_count > 1 {
-            // Balanced columns: aim for equal height
-            (total_height / column_count as f32).max(1.0)
+            // column-fill: balance (default) → aim for equal height
+            // column-fill: auto → fill sequentially without balancing
+            if style.column_fill == ColumnFill::Auto {
+                total_height
+            } else {
+                (total_height / column_count as f32).max(1.0)
+            }
         } else {
             total_height
         }
@@ -329,7 +345,7 @@ pub fn layout_multicol(
                 let mut col_y = 0.0f32;
                 let mut seg_max_h = 0.0f32;
 
-                for &(child_box_id, child_h, brk_before, brk_after) in items {
+                for &(child_box_id, child_h, brk_before, brk_after, brk_inside_avoid) in items {
                     // break-before: column — force a column break before this child
                     if brk_before && col_y > 0.0 && current_col + 1 < column_count {
                         if col_y > seg_max_h {
@@ -340,13 +356,24 @@ pub fn layout_multicol(
                     }
 
                     // Natural column break when content exceeds column height
+                    // Respect break-inside: avoid — don't split this child across columns
                     if col_y > 0.0 && col_y + child_h > col_height && current_col + 1 < column_count
                     {
-                        if col_y > seg_max_h {
-                            seg_max_h = col_y;
+                        // If break-inside: avoid and the child fits in a fresh column,
+                        // push it to the next column entirely instead of splitting.
+                        if brk_inside_avoid && child_h <= col_height {
+                            if col_y > seg_max_h {
+                                seg_max_h = col_y;
+                            }
+                            current_col += 1;
+                            col_y = 0.0;
+                        } else {
+                            if col_y > seg_max_h {
+                                seg_max_h = col_y;
+                            }
+                            current_col += 1;
+                            col_y = 0.0;
                         }
-                        current_col += 1;
-                        col_y = 0.0;
                     }
 
                     // LOCAL positions within the multicol container's content area

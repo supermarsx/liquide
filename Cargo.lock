@@ -2906,6 +2906,7 @@ dependencies = [
  "liquide-protocol",
  "liquide-renderer-cpu",
  "liquide-shell",
+ "liquide-theme-css",
  "liquide-transport",
  "serde",
  "thiserror 2.0.18",

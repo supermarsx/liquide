@@ -1890,6 +1890,46 @@ impl Shell {
         use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
         use liquide_layout::geometry::Point as LayoutPoint;
 
+        // Handle scroll separately because we need &mut access for scroll_offset
+        if let MouseEvent::Scroll { x, y, axis, delta } = me {
+            let pos = LayoutPoint::new(*x, *y);
+            let (dx, dy) = match axis {
+                liquide_input::mouse::ScrollAxis::Horizontal => (*delta, 0.0),
+                liquide_input::mouse::ScrollAxis::Vertical => (0.0, *delta),
+            };
+
+            // Phase 1: dispatch DOM event and find scroll target (immutable borrow)
+            let scroll_target = {
+                let hit_test = match self.hit_test_engine.as_ref() {
+                    Some(ht) => ht,
+                    None => return,
+                };
+                self.event_dispatcher.dispatch_scroll(pos, dx, dy, hit_test);
+
+                hit_test.hit_test(pos).and_then(|hit| {
+                    let layout = hit_test.layout();
+                    layout.find_box_id_by_node(hit.node).and_then(|box_id| {
+                        if layout
+                            .get(box_id)
+                            .map_or(false, |b| b.scroll_size.is_some())
+                        {
+                            Some(box_id)
+                        } else {
+                            layout.find_scroll_container(box_id)
+                        }
+                    })
+                })
+            }; // immutable borrow dropped here
+
+            // Phase 2: apply scroll offset (mutable borrow)
+            if let Some(container_id) = scroll_target {
+                if let Some(ht_mut) = self.hit_test_engine.as_mut() {
+                    ht_mut.layout_mut().set_scroll_offset(container_id, dx, dy);
+                }
+            }
+            return;
+        }
+
         let hit_test = match self.hit_test_engine.as_ref() {
             Some(ht) => ht,
             None => return, // no layout yet
@@ -1932,14 +1972,6 @@ impl Shell {
                         );
                     }
                 }
-            }
-            MouseEvent::Scroll { x, y, axis, delta } => {
-                let pos = LayoutPoint::new(*x, *y);
-                let (dx, dy) = match axis {
-                    liquide_input::mouse::ScrollAxis::Horizontal => (*delta, 0.0),
-                    liquide_input::mouse::ScrollAxis::Vertical => (0.0, *delta),
-                };
-                self.event_dispatcher.dispatch_scroll(pos, dx, dy, hit_test);
             }
             _ => {}
         }
@@ -3008,5 +3040,11 @@ impl Shell {
     pub fn add_stylesheet(&mut self, css: &str) -> bool {
         self.css_pipeline.add_stylesheet(css);
         true
+    }
+
+    /// Get @font-face rules from all loaded stylesheets.
+    /// Used by the desktop compositor to load fonts into the FontDatabase.
+    pub fn font_faces(&self) -> &[liquide_style_engine::engine::PreparedFontFace] {
+        self.css_pipeline.font_faces()
     }
 }

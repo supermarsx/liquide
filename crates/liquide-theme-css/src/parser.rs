@@ -5,14 +5,17 @@ use crate::property::PropertySet;
 use crate::selector::Selector;
 use crate::stylesheet::StyleSheet;
 use crate::value::{
-    Color, FontFaceRule, FontSource, Keyframe, KeyframesRule, LengthUnit, PropertyValue,
+    Color, ColorStop, FontFaceRule, FontSource, Gradient, Keyframe, KeyframesRule, LengthUnit,
+    PropertyValue,
 };
 use std::path::Path;
 
 use lightningcss::printer::Printer;
 use lightningcss::properties::Property;
 use lightningcss::rules::CssRule;
-use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet as LightningStyleSheet};
+use lightningcss::stylesheet::{
+    ParserFlags, ParserOptions, PrinterOptions, StyleSheet as LightningStyleSheet,
+};
 use lightningcss::traits::ToCss;
 use lightningcss::values::color::CssColor;
 use lightningcss::values::length::LengthPercentageOrAuto;
@@ -34,8 +37,11 @@ impl ThemeParser {
 
     /// Parse CSS from a string
     pub fn parse_str(&self, css: &str) -> Result<StyleSheet> {
-        // Parse with lightningcss - use default options with static lifetime
-        let options = ParserOptions::default();
+        // Parse with lightningcss — enable CSS nesting support
+        let options = ParserOptions {
+            flags: ParserFlags::NESTING,
+            ..ParserOptions::default()
+        };
         let lightning_sheet =
             LightningStyleSheet::parse(css, options).map_err(|e| ThemeError::ParseError {
                 message: format!("lightningcss parse error: {:?}", e),
@@ -77,6 +83,20 @@ impl ThemeParser {
                     let properties = self.convert_declarations(&style_rule.declarations)?;
 
                     stylesheet.add_rule(our_selector, properties);
+                }
+                // CSS Nesting Level 1: process nested rules within this style rule.
+                // Nested rules inherit the parent selector context — `&` references
+                // are resolved by substituting the parent selector string.
+                if !style_rule.rules.0.is_empty() {
+                    let parent_selectors: Vec<String> = style_rule
+                        .selectors
+                        .0
+                        .iter()
+                        .filter_map(|s| self.selector_to_string(s).ok())
+                        .collect();
+                    for nested_rule in &style_rule.rules.0 {
+                        self.process_nested_rule(nested_rule, &parent_selectors, stylesheet)?;
+                    }
                 }
             }
             CssRule::Media(media) => {
@@ -285,7 +305,136 @@ impl ThemeParser {
                     initial_value,
                 });
             }
-            // Ignore rule types we don't yet handle
+            CssRule::Nesting(nesting) => {
+                // @nest (deprecated) — process the inner style rule
+                let style_rule = &nesting.style;
+                for selector in &style_rule.selectors.0 {
+                    let selector_str = self.selector_to_string(selector)?;
+                    let our_selector = Selector::parse(&selector_str)?;
+                    let properties = self.convert_declarations(&style_rule.declarations)?;
+                    stylesheet.add_rule(our_selector, properties);
+                }
+            }
+            CssRule::Page(page) => {
+                // @page [:first | :left | :right | name] { ... }
+                let selectors: Vec<String> = page
+                    .selectors
+                    .iter()
+                    .map(|s| self.to_css_string(s))
+                    .collect();
+                let properties = self.convert_declarations(&page.declarations)?;
+                stylesheet.add_page_rule(crate::stylesheet::PageRule {
+                    selectors,
+                    properties,
+                });
+            }
+            CssRule::Namespace(ns) => {
+                // @namespace [prefix] url(...)
+                let prefix = ns.prefix.as_ref().map(|p| p.0.to_string());
+                let url = ns.url.to_string();
+                stylesheet.add_namespace(crate::stylesheet::NamespaceRule { prefix, url });
+            }
+            CssRule::CounterStyle(cs) => {
+                // @counter-style name { system: ...; symbols: ...; ... }
+                let name = cs.name.0.to_string();
+                // Extract all counter-style descriptors from declarations
+                let mut system = None;
+                let mut symbols = None;
+                let mut suffix = None;
+                let mut prefix = None;
+                let mut negative = None;
+                let mut range = None;
+                let mut pad = None;
+                let mut fallback = None;
+                let mut speak_as = None;
+                let mut additive_symbols = None;
+
+                // Serialize the entire rule to extract descriptors
+                let rule_str = self.to_css_string(cs);
+                // Parse "name { system: ...; symbols: ...; }" by extracting
+                // the block contents between { and }.
+                if let Some(start) = rule_str.find('{') {
+                    let block = rule_str[start + 1..].trim_end_matches('}').trim();
+                    for decl_str in block.split(';') {
+                        let decl_str = decl_str.trim();
+                        if decl_str.is_empty() {
+                            continue;
+                        }
+                        if let Some((key, val)) = decl_str.split_once(':') {
+                            let key = key.trim();
+                            let val = val.trim().to_string();
+                            match key {
+                                "system" => system = Some(val),
+                                "symbols" => symbols = Some(val),
+                                "suffix" => suffix = Some(val),
+                                "prefix" => prefix = Some(val),
+                                "negative" => negative = Some(val),
+                                "range" => range = Some(val),
+                                "pad" => pad = Some(val),
+                                "fallback" => fallback = Some(val),
+                                "speak-as" => speak_as = Some(val),
+                                "additive-symbols" => additive_symbols = Some(val),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                stylesheet.add_counter_style(crate::stylesheet::CounterStyleRule {
+                    name,
+                    system,
+                    symbols,
+                    suffix,
+                    prefix,
+                    negative,
+                    range,
+                    pad,
+                    fallback,
+                    speak_as,
+                    additive_symbols,
+                });
+            }
+            CssRule::Scope(scope) => {
+                // @scope (.start) to (.end) { ... }
+                let scope_start = scope.scope_start.as_ref().map(|s| self.to_css_string(s));
+                let scope_end = scope.scope_end.as_ref().map(|s| self.to_css_string(s));
+                let mut scope_style_rules = Vec::new();
+                for nested_rule in &scope.rules.0 {
+                    if let CssRule::Style(style_rule) = nested_rule {
+                        for selector in &style_rule.selectors.0 {
+                            let selector_str = self.selector_to_string(selector)?;
+                            let our_selector = Selector::parse(&selector_str)?;
+                            let properties = self.convert_declarations(&style_rule.declarations)?;
+                            scope_style_rules
+                                .push(crate::stylesheet::StyleRule::new(our_selector, properties));
+                        }
+                    }
+                }
+                stylesheet.add_scope_rule(crate::stylesheet::ScopeRule {
+                    scope_start,
+                    scope_end,
+                    rules: scope_style_rules,
+                });
+            }
+            CssRule::StartingStyle(starting) => {
+                // @starting-style { ... } — initial styles for transition origins
+                for nested_rule in &starting.rules.0 {
+                    if let CssRule::Style(style_rule) = nested_rule {
+                        for selector in &style_rule.selectors.0 {
+                            let selector_str = self.selector_to_string(selector)?;
+                            let our_selector = Selector::parse(&selector_str)?;
+                            let properties = self.convert_declarations(&style_rule.declarations)?;
+                            stylesheet.add_starting_style_rule(crate::stylesheet::StyleRule::new(
+                                our_selector,
+                                properties,
+                            ));
+                        }
+                    }
+                }
+            }
+            // Ignored, deprecated, or niche at-rules that don't affect layout:
+            // @viewport (deprecated), @-moz-document (non-standard), @custom-media (draft),
+            // @font-palette-values, @font-feature-values, @view-transition, unknown rules.
             _ => {}
         }
 
@@ -359,6 +508,116 @@ impl ThemeParser {
         Ok(())
     }
 
+    /// Process a nested CSS rule (CSS Nesting Level 1).
+    ///
+    /// Resolves `&` references in nested selectors by substituting the parent
+    /// selector string. If the nested selector doesn't start with `&`, it is
+    /// implicitly treated as `& <nested-selector>` (descendant combinator).
+    fn process_nested_rule(
+        &self,
+        rule: &CssRule,
+        parent_selectors: &[String],
+        stylesheet: &mut StyleSheet,
+    ) -> Result<()> {
+        match rule {
+            CssRule::Style(style_rule) => {
+                for nested_sel in &style_rule.selectors.0 {
+                    let nested_str = self.selector_to_string(nested_sel)?;
+                    // For each parent selector, resolve the nested selector
+                    for parent_str in parent_selectors {
+                        let resolved = Self::resolve_nesting_selector(&nested_str, parent_str);
+                        let our_selector = Selector::parse(&resolved)?;
+                        let properties = self.convert_declarations(&style_rule.declarations)?;
+                        stylesheet.add_rule(our_selector, properties);
+                    }
+                }
+                // Recurse into further nested rules
+                if !style_rule.rules.0.is_empty() {
+                    // Build resolved parent selectors for this level
+                    let mut new_parents = Vec::new();
+                    for nested_sel in &style_rule.selectors.0 {
+                        let nested_str = self.selector_to_string(nested_sel)?;
+                        for parent_str in parent_selectors {
+                            new_parents
+                                .push(Self::resolve_nesting_selector(&nested_str, parent_str));
+                        }
+                    }
+                    for sub_rule in &style_rule.rules.0 {
+                        self.process_nested_rule(sub_rule, &new_parents, stylesheet)?;
+                    }
+                }
+            }
+            CssRule::Nesting(nesting) => {
+                // CssRule::Nesting wraps a StyleRule with explicit `&` usage.
+                // Process the inner style rule's selectors and declarations directly.
+                for nested_sel in &nesting.style.selectors.0 {
+                    let nested_str = self.selector_to_string(nested_sel)?;
+                    for parent_str in parent_selectors {
+                        let resolved = Self::resolve_nesting_selector(&nested_str, parent_str);
+                        let our_selector = Selector::parse(&resolved)?;
+                        let properties = self.convert_declarations(&nesting.style.declarations)?;
+                        stylesheet.add_rule(our_selector, properties);
+                    }
+                }
+                // Recurse into further nested rules
+                if !nesting.style.rules.0.is_empty() {
+                    let mut new_parents = Vec::new();
+                    for nested_sel in &nesting.style.selectors.0 {
+                        let nested_str = self.selector_to_string(nested_sel)?;
+                        for parent_str in parent_selectors {
+                            new_parents
+                                .push(Self::resolve_nesting_selector(&nested_str, parent_str));
+                        }
+                    }
+                    for sub_rule in &nesting.style.rules.0 {
+                        self.process_nested_rule(sub_rule, &new_parents, stylesheet)?;
+                    }
+                }
+            }
+            CssRule::Media(media) => {
+                // Nested @media inside a style rule — combine with parent selector
+                let condition = self.to_css_string(&media.query);
+                for nested_rule in &media.rules.0 {
+                    if let CssRule::Style(style_rule) = nested_rule {
+                        for nested_sel in &style_rule.selectors.0 {
+                            let nested_str = self.selector_to_string(nested_sel)?;
+                            for parent_str in parent_selectors {
+                                let resolved =
+                                    Self::resolve_nesting_selector(&nested_str, parent_str);
+                                let our_selector = Selector::parse(&resolved)?;
+                                let properties =
+                                    self.convert_declarations(&style_rule.declarations)?;
+                                stylesheet.add_conditional_rule(
+                                    our_selector,
+                                    properties,
+                                    condition.clone(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                // Other nested at-rules: process normally
+                self.process_rule(rule, stylesheet)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve `&` in a nested selector by substituting the parent selector.
+    ///
+    /// If the nested selector contains `&`, replace it with the parent.
+    /// Otherwise, prepend the parent with a descendant combinator.
+    fn resolve_nesting_selector(nested: &str, parent: &str) -> String {
+        if nested.contains('&') {
+            nested.replace('&', parent)
+        } else {
+            // Implicit `& <nested>` — descendant combinator
+            format!("{} {}", parent, nested)
+        }
+    }
+
     /// Evaluate a serialized @supports condition.
     ///
     /// Returns `true` if the condition is satisfied by our engine's property set.
@@ -391,7 +650,10 @@ impl ThemeParser {
             // Simple property: value declaration check
             if let Some(colon_pos) = inner.find(':') {
                 let property = inner[..colon_pos].trim();
-                return Self::is_supported_css_property(property);
+                let value = inner[colon_pos + 1..].trim();
+                // Check property is supported AND the value is parseable
+                return Self::is_supported_css_property(property)
+                    && Self::is_supported_css_value(property, value);
             }
             // Might be a nested condition
             return self.evaluate_supports_condition(inner);
@@ -495,6 +757,156 @@ impl ThemeParser {
         )
     }
 
+    /// Check if a CSS value is valid for the given property.
+    /// This goes beyond mere property-existence to validate specific values.
+    fn is_supported_css_value(property: &str, value: &str) -> bool {
+        let value = value.trim();
+        match property {
+            "display" => matches!(
+                value,
+                "block"
+                    | "inline"
+                    | "inline-block"
+                    | "flex"
+                    | "inline-flex"
+                    | "grid"
+                    | "inline-grid"
+                    | "none"
+                    | "contents"
+                    | "table"
+                    | "table-row"
+                    | "table-cell"
+                    | "list-item"
+                    | "flow-root"
+            ),
+            "position" => matches!(value, "static" | "relative" | "absolute" | "fixed" | "sticky"),
+            "visibility" => matches!(value, "visible" | "hidden" | "collapse"),
+            "overflow" | "overflow-x" | "overflow-y" => {
+                matches!(value, "visible" | "hidden" | "scroll" | "auto" | "clip")
+            }
+            "box-sizing" => matches!(value, "border-box" | "content-box"),
+            "text-align" => matches!(
+                value,
+                "left" | "right" | "center" | "justify" | "start" | "end"
+            ),
+            "text-transform" => {
+                matches!(value, "none" | "uppercase" | "lowercase" | "capitalize")
+            }
+            "text-overflow" => matches!(value, "clip" | "ellipsis"),
+            "white-space" => matches!(
+                value,
+                "normal" | "nowrap" | "pre" | "pre-wrap" | "pre-line" | "break-spaces"
+            ),
+            "flex-direction" => {
+                matches!(value, "row" | "row-reverse" | "column" | "column-reverse")
+            }
+            "flex-wrap" => matches!(value, "nowrap" | "wrap" | "wrap-reverse"),
+            "justify-content" => matches!(
+                value,
+                "flex-start"
+                    | "flex-end"
+                    | "center"
+                    | "space-between"
+                    | "space-around"
+                    | "space-evenly"
+                    | "start"
+                    | "end"
+                    | "stretch"
+            ),
+            "align-items" | "align-self" => matches!(
+                value,
+                "flex-start"
+                    | "flex-end"
+                    | "center"
+                    | "stretch"
+                    | "baseline"
+                    | "start"
+                    | "end"
+                    | "auto"
+                    | "normal"
+            ),
+            "cursor" => matches!(
+                value,
+                "auto"
+                    | "default"
+                    | "pointer"
+                    | "crosshair"
+                    | "text"
+                    | "move"
+                    | "grab"
+                    | "grabbing"
+                    | "not-allowed"
+                    | "wait"
+                    | "progress"
+                    | "help"
+                    | "none"
+            ),
+            "word-break" => matches!(value, "normal" | "break-all" | "keep-all" | "break-word"),
+            "pointer-events" => matches!(value, "auto" | "none"),
+            "border-style" => matches!(
+                value,
+                "none"
+                    | "solid"
+                    | "dashed"
+                    | "dotted"
+                    | "double"
+                    | "groove"
+                    | "ridge"
+                    | "inset"
+                    | "outset"
+                    | "hidden"
+            ),
+            // For any length-valued property, check if value parses as a length, number, or auto/none
+            "width" | "height" | "min-width" | "max-width" | "min-height" | "max-height"
+            | "margin" | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
+            | "padding" | "padding-top" | "padding-right" | "padding-bottom" | "padding-left"
+            | "top" | "right" | "bottom" | "left" | "gap" | "row-gap" | "column-gap"
+            | "border-radius" | "border-width" | "font-size" | "line-height"
+            | "letter-spacing" | "word-spacing" | "text-indent" | "flex-basis" => {
+                matches!(
+                    value,
+                    "auto" | "none" | "0" | "inherit" | "initial" | "unset"
+                        | "min-content" | "max-content" | "fit-content"
+                ) || value.ends_with("px")
+                    || value.ends_with("em")
+                    || value.ends_with("rem")
+                    || value.ends_with('%')
+                    || value.ends_with("vw")
+                    || value.ends_with("vh")
+                    || value.ends_with("pt")
+                    || value.ends_with("ch")
+                    || value.starts_with("calc(")
+                    || value.parse::<f32>().is_ok()
+            }
+            // Color properties — accept common color formats
+            "color" | "background-color" | "background" => {
+                value.starts_with('#')
+                    || value.starts_with("rgb")
+                    || value.starts_with("hsl")
+                    || value.starts_with("oklch")
+                    || value.starts_with("oklab")
+                    || value.starts_with("color(")
+                    || value.starts_with("hwb")
+                    || matches!(
+                        value,
+                        "transparent" | "currentColor" | "inherit" | "initial" | "unset" | "none"
+                    )
+                    || Color::from_hex(value).is_ok()
+                    || csscolorparser::parse(value).is_ok()
+            }
+            // Number properties
+            "opacity" | "flex-grow" | "flex-shrink" | "z-index" | "order" | "font-weight" => {
+                matches!(
+                    value,
+                    "auto" | "normal" | "bold" | "bolder" | "lighter"
+                        | "inherit" | "initial" | "unset"
+                ) || value.parse::<f32>().is_ok()
+            }
+            // Default: if property is known, assume value is valid
+            _ => Self::is_supported_css_property(property),
+        }
+    }
+
     /// Convert lightningcss selector to string
     fn selector_to_string(
         &self,
@@ -556,11 +968,85 @@ impl ThemeParser {
                 }
             }
             Property::Background(backgrounds) => {
-                // Extract color from first background layer
+                // Extract all background layer properties from the shorthand
                 if let Some(bg) = backgrounds.first() {
+                    // Color
                     if let Some(v) = self.convert_color(&bg.color) {
                         properties.insert("background".into(), v.clone());
                         properties.insert("background-color".into(), v);
+                    }
+
+                    // Image (URL or gradient)
+                    match &bg.image {
+                        lightningcss::values::image::Image::Url(url) => {
+                            properties.insert(
+                                "background-image".into(),
+                                PropertyValue::Keyword(format!("url({})", url.url)),
+                            );
+                        }
+                        lightningcss::values::image::Image::Gradient(grad) => {
+                            if let Some(our_grad) = self.convert_gradient(grad) {
+                                properties.insert(
+                                    "background-image".into(),
+                                    PropertyValue::Gradient(our_grad),
+                                );
+                            }
+                        }
+                        _ => {} // None or ImageSet — skip
+                    }
+
+                    // Position
+                    let pos_str = self.to_css_string(&bg.position);
+                    if pos_str != "0% 0%" && pos_str != "0 0" {
+                        properties.insert(
+                            "background-position".into(),
+                            PropertyValue::Keyword(pos_str),
+                        );
+                    }
+
+                    // Size
+                    let size_str = self.to_css_string(&bg.size);
+                    if size_str != "auto" && size_str != "auto auto" {
+                        properties.insert(
+                            "background-size".into(),
+                            PropertyValue::Keyword(size_str),
+                        );
+                    }
+
+                    // Repeat
+                    let repeat_str = self.to_css_string(&bg.repeat);
+                    if repeat_str != "repeat" && repeat_str != "repeat repeat" {
+                        properties.insert(
+                            "background-repeat".into(),
+                            PropertyValue::Keyword(repeat_str),
+                        );
+                    }
+
+                    // Attachment
+                    let attach_str = self.to_css_string(&bg.attachment);
+                    if attach_str != "scroll" {
+                        properties.insert(
+                            "background-attachment".into(),
+                            PropertyValue::Keyword(attach_str),
+                        );
+                    }
+
+                    // Origin
+                    let origin_str = self.to_css_string(&bg.origin);
+                    if origin_str != "padding-box" {
+                        properties.insert(
+                            "background-origin".into(),
+                            PropertyValue::Keyword(origin_str),
+                        );
+                    }
+
+                    // Clip
+                    let clip_str = self.to_css_string(&bg.clip);
+                    if clip_str != "border-box" {
+                        properties.insert(
+                            "background-clip".into(),
+                            PropertyValue::Keyword(clip_str),
+                        );
                     }
                 }
             }
@@ -1316,6 +1802,205 @@ impl ThemeParser {
         }
     }
 
+    /// Convert a lightningcss gradient to our Gradient type
+    fn convert_gradient(
+        &self,
+        grad: &lightningcss::values::gradient::Gradient,
+    ) -> Option<Gradient> {
+        use lightningcss::values::gradient::Gradient as LGrad;
+
+        match grad {
+            LGrad::Linear(lg) | LGrad::RepeatingLinear(lg) => {
+                let is_repeating = matches!(grad, LGrad::RepeatingLinear(_));
+                let angle = self.gradient_direction_to_degrees(&lg.direction);
+                let stops = self.convert_gradient_items(&lg.items);
+                if is_repeating {
+                    Some(Gradient::RepeatingLinear { angle, stops })
+                } else {
+                    Some(Gradient::Linear { angle, stops })
+                }
+            }
+            LGrad::Radial(rg) | LGrad::RepeatingRadial(rg) => {
+                let is_repeating = matches!(grad, LGrad::RepeatingRadial(_));
+                let stops = self.convert_gradient_items(&rg.items);
+                if is_repeating {
+                    Some(Gradient::RepeatingRadial { stops })
+                } else {
+                    Some(Gradient::Radial { stops })
+                }
+            }
+            LGrad::Conic(cg) | LGrad::RepeatingConic(cg) => {
+                let is_repeating = matches!(grad, LGrad::RepeatingConic(_));
+                let angle = self.angle_to_degrees(&cg.angle);
+                let pos_str = self.to_css_string(&cg.position);
+                let (at_x, at_y) = self.parse_position_percentages(&pos_str);
+                let stops = self.convert_conic_gradient_items(&cg.items);
+                if is_repeating {
+                    Some(Gradient::RepeatingConic {
+                        from_angle: angle,
+                        at_x,
+                        at_y,
+                        stops,
+                    })
+                } else {
+                    Some(Gradient::Conic {
+                        from_angle: angle,
+                        at_x,
+                        at_y,
+                        stops,
+                    })
+                }
+            }
+            _ => None, // WebKitGradient — skip
+        }
+    }
+
+    /// Convert gradient line direction to angle in degrees
+    fn gradient_direction_to_degrees(
+        &self,
+        direction: &lightningcss::values::gradient::LineDirection,
+    ) -> f32 {
+        use lightningcss::values::gradient::LineDirection;
+        match direction {
+            LineDirection::Angle(angle) => self.angle_to_degrees(angle),
+            LineDirection::Vertical(v) => {
+                let v_str = format!("{:?}", v);
+                match v_str.as_str() {
+                    "Top" => 0.0,
+                    "Bottom" => 180.0,
+                    _ => 180.0,
+                }
+            }
+            LineDirection::Horizontal(h) => {
+                let h_str = format!("{:?}", h);
+                match h_str.as_str() {
+                    "Left" => 270.0,
+                    "Right" => 90.0,
+                    _ => 90.0,
+                }
+            }
+            LineDirection::Corner { horizontal, vertical } => {
+                let h_str = format!("{:?}", horizontal);
+                let v_str = format!("{:?}", vertical);
+                match (h_str.as_str(), v_str.as_str()) {
+                    ("Right", "Top") => 45.0,
+                    ("Right", "Bottom") => 135.0,
+                    ("Left", "Bottom") => 225.0,
+                    ("Left", "Top") => 315.0,
+                    _ => 180.0,
+                }
+            }
+        }
+    }
+
+    /// Convert an Angle to degrees
+    fn angle_to_degrees(&self, angle: &lightningcss::values::angle::Angle) -> f32 {
+        self.parse_angle_string(&self.to_css_string(angle))
+    }
+
+    /// Parse an angle string like "180deg", "0.5turn", "3.14rad", "200grad" to degrees
+    fn parse_angle_string(&self, s: &str) -> f32 {
+        let s = s.trim();
+        if let Some(v) = s.strip_suffix("deg") {
+            v.trim().parse::<f32>().unwrap_or(0.0)
+        } else if let Some(v) = s.strip_suffix("turn") {
+            v.trim().parse::<f32>().unwrap_or(0.0) * 360.0
+        } else if let Some(v) = s.strip_suffix("rad") {
+            v.trim().parse::<f32>().unwrap_or(0.0) * (180.0 / std::f32::consts::PI)
+        } else if let Some(v) = s.strip_suffix("grad") {
+            v.trim().parse::<f32>().unwrap_or(0.0) * 0.9
+        } else {
+            s.parse::<f32>().unwrap_or(180.0)
+        }
+    }
+
+    /// Convert gradient items (color stops) with LengthPercentage positions
+    fn convert_gradient_items(
+        &self,
+        items: &[lightningcss::values::gradient::GradientItem<
+            lightningcss::values::length::LengthPercentage,
+        >],
+    ) -> Vec<ColorStop> {
+        let mut stops = Vec::new();
+        for item in items {
+            match item {
+                lightningcss::values::gradient::GradientItem::ColorStop(cs) => {
+                    let color_str = self.to_css_string(&cs.color);
+                    let color = Color::parse_css(&color_str).unwrap_or(Color::rgb(0, 0, 0));
+                    let position = cs.position.as_ref().map(|p| {
+                        let p_str = self.to_css_string(p);
+                        if let Some(pct) = p_str.strip_suffix('%') {
+                            pct.trim().parse::<f32>().unwrap_or(0.0) / 100.0
+                        } else if let Some(px) = p_str.strip_suffix("px") {
+                            // Absolute px — store raw, caller interprets
+                            px.trim().parse::<f32>().unwrap_or(0.0)
+                        } else {
+                            p_str.trim().parse::<f32>().unwrap_or(0.0)
+                        }
+                    });
+                    stops.push(ColorStop { color, position });
+                }
+                lightningcss::values::gradient::GradientItem::Hint(_) => {
+                    // Color hints (transition midpoints) — skip for now
+                }
+            }
+        }
+        stops
+    }
+
+    /// Convert conic gradient items (color stops) with AnglePercentage positions
+    fn convert_conic_gradient_items(
+        &self,
+        items: &[lightningcss::values::gradient::GradientItem<
+            lightningcss::values::angle::AnglePercentage,
+        >],
+    ) -> Vec<ColorStop> {
+        let mut stops = Vec::new();
+        for item in items {
+            match item {
+                lightningcss::values::gradient::GradientItem::ColorStop(cs) => {
+                    let color_str = self.to_css_string(&cs.color);
+                    let color = Color::parse_css(&color_str).unwrap_or(Color::rgb(0, 0, 0));
+                    let position = cs.position.as_ref().map(|p| {
+                        let p_str = self.to_css_string(p);
+                        if let Some(pct) = p_str.strip_suffix('%') {
+                            pct.trim().parse::<f32>().unwrap_or(0.0) / 100.0
+                        } else if let Some(deg) = p_str.strip_suffix("deg") {
+                            deg.trim().parse::<f32>().unwrap_or(0.0) / 360.0
+                        } else {
+                            p_str.trim().parse::<f32>().unwrap_or(0.0)
+                        }
+                    });
+                    stops.push(ColorStop { color, position });
+                }
+                lightningcss::values::gradient::GradientItem::Hint(_) => {}
+            }
+        }
+        stops
+    }
+
+    /// Parse position string like "50% 50%" into (x, y) as 0.0-1.0
+    fn parse_position_percentages(&self, pos_str: &str) -> (f32, f32) {
+        let parts: Vec<&str> = pos_str.split_whitespace().collect();
+        let parse_one = |s: &str| -> f32 {
+            match s {
+                "center" => 0.5,
+                "left" | "top" => 0.0,
+                "right" | "bottom" => 1.0,
+                other => {
+                    if let Some(pct) = other.strip_suffix('%') {
+                        pct.parse::<f32>().unwrap_or(50.0) / 100.0
+                    } else {
+                        other.parse::<f32>().unwrap_or(0.5)
+                    }
+                }
+            }
+        };
+        let x = parts.first().map(|s| parse_one(s)).unwrap_or(0.5);
+        let y = parts.get(1).map(|s| parse_one(s)).unwrap_or(0.5);
+        (x, y)
+    }
+
     /// Serialize any ToCss value to string
     fn to_css_string<T: ToCss>(&self, value: &T) -> String {
         let mut s = String::new();
@@ -1402,11 +2087,22 @@ impl ThemeParser {
                 .parse::<f32>()
                 .ok()
                 .map(|n| PropertyValue::Length(LengthUnit::Rem(n)))
+        } else if let Some(v) = s.strip_suffix("rlh") {
+            // Must check rlh before lh
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Rlh(n)))
         } else if let Some(v) = s.strip_suffix("em") {
             v.trim()
                 .parse::<f32>()
                 .ok()
                 .map(|n| PropertyValue::Length(LengthUnit::Em(n)))
+        } else if let Some(v) = s.strip_suffix("lh") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Lh(n)))
         } else if let Some(v) = s.strip_suffix("vmin") {
             v.trim()
                 .parse::<f32>()
@@ -1417,6 +2113,36 @@ impl ThemeParser {
                 .parse::<f32>()
                 .ok()
                 .map(|n| PropertyValue::Length(LengthUnit::Vmax(n)))
+        } else if let Some(v) = s.strip_suffix("dvw") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Dvw(n)))
+        } else if let Some(v) = s.strip_suffix("dvh") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Dvh(n)))
+        } else if let Some(v) = s.strip_suffix("svw") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Svw(n)))
+        } else if let Some(v) = s.strip_suffix("svh") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Svh(n)))
+        } else if let Some(v) = s.strip_suffix("lvw") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Lvw(n)))
+        } else if let Some(v) = s.strip_suffix("lvh") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Lvh(n)))
         } else if let Some(v) = s.strip_suffix("vw") {
             v.trim()
                 .parse::<f32>()
@@ -1427,6 +2153,36 @@ impl ThemeParser {
                 .parse::<f32>()
                 .ok()
                 .map(|n| PropertyValue::Length(LengthUnit::Vh(n)))
+        } else if let Some(v) = s.strip_suffix("cqmin") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Cqmin(n)))
+        } else if let Some(v) = s.strip_suffix("cqmax") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Cqmax(n)))
+        } else if let Some(v) = s.strip_suffix("cqw") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Cqw(n)))
+        } else if let Some(v) = s.strip_suffix("cqh") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Cqh(n)))
+        } else if let Some(v) = s.strip_suffix("cqi") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Cqi(n)))
+        } else if let Some(v) = s.strip_suffix("cqb") {
+            v.trim()
+                .parse::<f32>()
+                .ok()
+                .map(|n| PropertyValue::Length(LengthUnit::Cqb(n)))
         } else if let Some(v) = s.strip_suffix("ch") {
             v.trim()
                 .parse::<f32>()

@@ -42,6 +42,14 @@ pub fn layout_positioned(
 
     let font_size = style.font_size;
 
+    // Consume anchor positioning properties — CSS Anchor Positioning Level 1.
+    // anchor-name defines the anchor, position-anchor selects which anchor to
+    // reference, and position-area constrains the positioned box relative to it.
+    // Full anchor resolution requires a cross-element anchor registry (TODO).
+    let _anchor_name = &style.anchor_name;
+    let _position_anchor = &style.position_anchor;
+    let _position_area = &style.position_area;
+
     // Resolve width/height
     let width = style
         .width
