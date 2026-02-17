@@ -305,8 +305,9 @@ impl TextMeasurer for DefaultTextMeasurer {
             let effective_first_line = max_w - props.text_indent;
             if allows_wrap && total_width > effective_first_line && effective_first_line > 0.0 {
                 let chars_per_line = (effective_first_line / char_width).floor().max(1.0) as u32;
+                let char_count = transformed.chars().count() as u32;
                 let line_count =
-                    ((transformed.len() as u32 + chars_per_line - 1) / chars_per_line).max(1);
+                    ((char_count + chars_per_line - 1) / chars_per_line).max(1);
                 return TextMetrics {
                     width: max_w.min(total_width),
                     height: line_count as f32 * line_h,

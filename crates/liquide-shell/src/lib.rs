@@ -11,6 +11,7 @@ pub mod css_integration;
 pub mod decoration;
 pub mod desktop_dom;
 pub mod focus;
+pub mod font_text_measurer;
 pub mod history;
 pub mod launcher;
 pub mod layout;

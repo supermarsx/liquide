@@ -20,13 +20,17 @@ use liquide_compositor::property_tree::{
 };
 use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
+use std::sync::{Arc, Mutex};
+
 use liquide_dom::Document;
+use liquide_font_rasterizer::database::FontDatabase;
 use liquide_layout::{DefaultTextMeasurer, LayoutEngine, LayoutTree, Size};
 use liquide_paint::{DisplayItem, DisplayList, Painter};
 use liquide_style_engine::computed::BorderLineStyle;
 use liquide_style_engine::engine::ViewportSize;
 use liquide_style_engine::{StyleEngine, StyleMap};
 
+use crate::font_text_measurer::FontTextMeasurer;
 use crate::theme_loader;
 
 /// Holds the full pipeline state.
@@ -46,6 +50,8 @@ pub struct DesktopPipeline {
     /// Image URLs referenced during the last scene build, mapped to their hashed image_id.
     /// The host should load these and register them with the renderer.
     pending_images: Vec<(u64, String)>,
+    /// Optional font database for real text measurement.
+    font_db: Option<Arc<Mutex<FontDatabase>>>,
 }
 
 /// Configuration for the pipeline.
@@ -98,6 +104,7 @@ impl DesktopPipeline {
             last_styles: None,
             last_layout: None,
             pending_images: Vec::new(),
+            font_db: None,
         }
     }
 
@@ -134,11 +141,26 @@ impl DesktopPipeline {
         self.layout_engine.viewport = Size { width, height };
     }
 
+    /// Set the font database for real text measurement.
+    ///
+    /// When set, the pipeline will use real glyph metrics from loaded
+    /// fonts instead of the approximate `char_width = font_size * 0.6`
+    /// fallback.
+    pub fn set_font_db(&mut self, db: Arc<Mutex<FontDatabase>>) {
+        self.font_db = Some(db);
+    }
+
     /// Run the full pipeline: Style → Layout → Paint.
     ///
     /// Returns the style map, layout tree, and display list.
     pub fn run(&mut self, doc: &Document) -> PipelineOutput {
-        let text_measurer = DefaultTextMeasurer;
+        // Use real font metrics when a font database is available.
+        let font_measurer: Option<FontTextMeasurer> =
+            self.font_db.as_ref().map(|db| FontTextMeasurer::new(Arc::clone(db)));
+        let text_measurer: &dyn liquide_layout::TextMeasurer = match &font_measurer {
+            Some(fm) => fm,
+            None => &DefaultTextMeasurer,
+        };
         let image_measurer = liquide_layout::DefaultImageMeasurer;
 
         // 1. Style
@@ -147,7 +169,7 @@ impl DesktopPipeline {
         // 2. Layout
         let layout = self
             .layout_engine
-            .layout(doc, &styles, &text_measurer, &image_measurer);
+            .layout(doc, &styles, text_measurer, &image_measurer);
 
         // 2b. Populate container sizes for the next @container evaluation.
         // Elements with container-type != normal get their resolved dimensions
@@ -766,9 +788,10 @@ impl DesktopPipeline {
                 spread_radius,
                 color,
                 inset,
-                radius: _radius, // TODO: Use radius for rounded shadow mask
+                radius,
             } => {
                 let bounds = to_compositor_rect(rect);
+                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
                 let shadow = liquide_compositor::scene::BoxShadowSpec {
                     offset_x: *offset_x,
                     offset_y: *offset_y,
@@ -782,7 +805,7 @@ impl DesktopPipeline {
                     SceneNodeKind::BoxShadows {
                         shadows: vec![shadow],
                     },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
                 );
                 Some(node)
             }

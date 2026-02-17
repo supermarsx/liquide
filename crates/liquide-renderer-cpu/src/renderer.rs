@@ -541,24 +541,22 @@ impl Renderer for SoftwareRenderer {
 impl SoftwareRenderer {
     /// Render a single flattened node into the frame buffer with LOD support.
     fn render_node_with_lod(&mut self, node: &FlatNode, fb: &mut FrameBuffer, lod_level: LodLevel) {
-        // Apply rectangular clip by intersecting bounds with clip rect
-        let bounds = if let Some(ref clip) = node.clip {
-            let clipped = Rect::new(
-                node.absolute_bounds.x.max(clip.x),
-                node.absolute_bounds.y.max(clip.y),
-                0.0, 0.0,
-            );
-            let right = node.absolute_bounds.right().min(clip.right());
-            let bottom = node.absolute_bounds.bottom().min(clip.bottom());
-            let w = (right - clipped.x).max(0.0);
-            let h = (bottom - clipped.y).max(0.0);
-            if w <= 0.0 || h <= 0.0 {
-                return; // Fully clipped
+        // Compute the visible (clipped) region if a clip rect is set.
+        // We keep `bounds` as the original absolute_bounds so that drawing
+        // operations (pen position, text-align, etc.) use the correct
+        // coordinate system.  The `visible` rect is the intersection used
+        // only for early-out checks — if the node is entirely outside the
+        // clip rect we can skip it.
+        let bounds = node.absolute_bounds;
+        if let Some(ref clip) = node.clip {
+            let right = bounds.right().min(clip.right());
+            let bottom = bounds.bottom().min(clip.bottom());
+            let vis_x = bounds.x.max(clip.x);
+            let vis_y = bounds.y.max(clip.y);
+            if right <= vis_x || bottom <= vis_y {
+                return; // Fully clipped — nothing visible
             }
-            Rect::new(clipped.x, clipped.y, w, h)
-        } else {
-            node.absolute_bounds
-        };
+        }
         let opacity = node.opacity;
 
         // Apply LOD quality factor to certain effects
@@ -1208,7 +1206,9 @@ impl SoftwareRenderer {
                 //  - If font_size > 0, use that directly as the pixel height.
                 //  - Otherwise fall back to scale-based sizing (scale=1 → 16px).
                 let glyph_height = if *font_size > 0.0 {
-                    (*font_size).round() as u32
+                    // Use ceiling instead of rounding to avoid baseline drift;
+                    // truncating causes 1px misalignment at fractional sizes.
+                    (*font_size).ceil() as u32
                 } else {
                     16 * scale.max(&1)
                 };
@@ -1282,13 +1282,71 @@ impl SoftwareRenderer {
                 // still being rasterised.  This completely eliminates the
                 // old bitmap-fallback flash (crude 8×16 text for 1-2 frames).
                 {
-                    // Split text into lines and apply text-align per line
-                    let lines: Vec<&str> = render_text.split('\n').collect();
-                    let mut is_first_line = true;
                     // Estimated advance for a missing glyph (≈ 0.55 * font_size
                     // — a reasonable average for proportional Latin text).
                     let estimated_advance = glyph_height as f32 * 0.55;
-                    for line_text in &lines {
+
+                    // ── Word-wrap aware line splitting ───────────────────
+                    // white_space values: 0=Normal, 1=NoWrap, 2=Pre, 3=PreWrap, 4=PreLine, 5=BreakSpaces
+                    let white_space_val = node.kind.text_white_space().unwrap_or(0);
+                    let allows_wrap = matches!(white_space_val, 0 | 3 | 4 | 5);
+                    let max_line_width = bounds.width;
+
+                    // Helper closure: measure a char advance using atlas or estimate
+                    let char_advance = |ch: char| -> f32 {
+                        let key = GlyphKey {
+                            font_id,
+                            glyph_id: ch as u32,
+                            size_px,
+                            subpixel: false,
+                        };
+                        let base = if let Some(cached) = self.glyph_atlas.get(&key) {
+                            cached.advance
+                        } else {
+                            estimated_advance
+                        };
+                        let extra = if ch == ' ' { *word_spacing } else { 0.0 };
+                        base + *letter_spacing + extra
+                    };
+
+                    // Split into visual lines, performing word wrapping when
+                    // the white-space value allows it.
+                    let mut wrapped_lines: Vec<String> = Vec::new();
+                    for hard_line in render_text.split('\n') {
+                        if !allows_wrap || max_line_width <= 0.0 {
+                            // No wrapping — keep as-is
+                            wrapped_lines.push(hard_line.to_string());
+                        } else {
+                            // Word wrap: break at spaces when line exceeds bounds
+                            let indent = if wrapped_lines.is_empty() { *text_indent } else { 0.0 };
+                            let mut current_line = String::new();
+                            let mut current_width = indent;
+
+                            for word in WordSplitter::new(hard_line) {
+                                let word_width: f32 = word.chars().map(&char_advance).sum();
+
+                                if !current_line.is_empty()
+                                    && current_width + word_width > max_line_width
+                                {
+                                    // Wrap: push current line, start new one
+                                    wrapped_lines.push(current_line.trim_end().to_string());
+                                    current_line = String::new();
+                                    current_width = 0.0;
+                                }
+
+                                current_line.push_str(word);
+                                current_width += word_width;
+                            }
+                            if !current_line.is_empty() {
+                                wrapped_lines.push(current_line.trim_end().to_string());
+                            } else if hard_line.is_empty() {
+                                wrapped_lines.push(String::new());
+                            }
+                        }
+                    }
+
+                    let mut is_first_line = true;
+                    for line_text in &wrapped_lines {
                         // Measure line width for alignment
                         let mut line_width = 0.0f32;
                         if is_first_line {
@@ -3887,4 +3945,44 @@ fn sample_gradient_stops(stops: &[(f32, Color)], t: f32, opacity: f32) -> Color 
         c.a = (c.a as f32 * opacity + 0.5) as u8;
     }
     c
+}
+
+// ── Word splitting for text wrapping ────────────────────────────────
+
+/// Splits text into chunks suitable for word-wrapping.
+///
+/// Each yielded chunk is either a run of non-space characters (a "word")
+/// or a run of spaces. The caller can decide where to break by checking
+/// whether appending the next word would exceed the line width.
+///
+/// Example: `"Hello  World"` yields `["Hello", "  ", "World"]`.
+struct WordSplitter<'a> {
+    remaining: &'a str,
+}
+
+impl<'a> WordSplitter<'a> {
+    fn new(text: &'a str) -> Self {
+        Self { remaining: text }
+    }
+}
+
+impl<'a> Iterator for WordSplitter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        if self.remaining.is_empty() {
+            return None;
+        }
+        let bytes = self.remaining.as_bytes();
+        let is_space = bytes[0] == b' ';
+        let end = self.remaining
+            .char_indices()
+            .skip(1)
+            .find(|(_, ch)| (*ch == ' ') != is_space)
+            .map(|(i, _)| i)
+            .unwrap_or(self.remaining.len());
+        let chunk = &self.remaining[..end];
+        self.remaining = &self.remaining[end..];
+        Some(chunk)
+    }
 }

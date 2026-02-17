@@ -883,6 +883,17 @@ pub enum SceneNodeKind {
     CrashScreen,
 }
 
+impl SceneNodeKind {
+    /// Extract the `white_space` value from a `Text` variant, if applicable.
+    /// Returns `None` for non-text node kinds.
+    pub fn text_white_space(&self) -> Option<u8> {
+        match self {
+            SceneNodeKind::Text { white_space, .. } => Some(*white_space),
+            _ => None,
+        }
+    }
+}
+
 /// A node in the compositor's scene graph.
 #[derive(Debug, Clone)]
 pub struct SceneNode {
