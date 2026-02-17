@@ -347,30 +347,11 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::PushTransform {
-                    translate_x,
-                    translate_y,
-                    scale_x,
-                    scale_y,
-                    rotate,
-                    skew_x,
-                    skew_y,
-                } => {
+                DisplayItem::PushTransform { transform } => {
                     stack.push(current.clone());
-                    let mut xform = Affine2D::identity();
-                    if *translate_x != 0.0 || *translate_y != 0.0 {
-                        xform = xform.then(&Affine2D::translation(*translate_x, *translate_y));
-                    }
-                    if *scale_x != 1.0 || *scale_y != 1.0 {
-                        xform = xform.then(&Affine2D::scale(*scale_x, *scale_y));
-                    }
-                    if *rotate != 0.0 {
-                        xform = xform.then(&Affine2D::rotation(*rotate));
-                    }
-                    if *skew_x != 0.0 || *skew_y != 0.0 {
-                        xform = xform.then(&Affine2D::skew(skew_x.to_radians(), skew_y.to_radians()));
-                    }
-                    current.transform = current.transform.then(&xform);
+                    // Use the precomputed transform matrix directly - preserves exact
+                    // CSS transform composition order and transform-origin handling
+                    current.transform = current.transform.then(transform);
                 }
                 DisplayItem::PopTransform => {
                     if let Some(prev) = stack.pop() {
@@ -536,8 +517,6 @@ impl DesktopPipeline {
     /// - Correct render surface allocation (filters, opacity, blend modes)
     /// - Scroll-linked transforms and clip computation
     pub fn build_property_trees(&self, output: &PipelineOutput) -> PropertyTrees {
-        use liquide_compositor::geometry::Affine2D;
-
         let mut trees = PropertyTrees::new();
 
         // Track parent IDs as we walk the display list Push/Pop structure
@@ -547,32 +526,13 @@ impl DesktopPipeline {
 
         for item in &output.display_list.items {
             match item {
-                DisplayItem::PushTransform {
-                    translate_x,
-                    translate_y,
-                    scale_x,
-                    scale_y,
-                    rotate,
-                    skew_x,
-                    skew_y,
-                } => {
+                DisplayItem::PushTransform { transform } => {
                     let parent = *transform_stack.last().unwrap_or(&ROOT_NODE_ID);
-                    let mut local = Affine2D::identity();
-                    if *translate_x != 0.0 || *translate_y != 0.0 {
-                        local = local.then(&Affine2D::translation(*translate_x, *translate_y));
-                    }
-                    if *scale_x != 1.0 || *scale_y != 1.0 {
-                        local = local.then(&Affine2D::scale(*scale_x, *scale_y));
-                    }
-                    if *rotate != 0.0 {
-                        local = local.then(&Affine2D::rotation(*rotate));
-                    }
-                    if *skew_x != 0.0 || *skew_y != 0.0 {
-                        local = local.then(&Affine2D::skew(skew_x.to_radians(), skew_y.to_radians()));
-                    }
+                    // Use the precomputed transform matrix directly - preserves exact
+                    // CSS transform composition order and transform-origin handling
                     let node = TransformNode {
                         parent,
-                        local,
+                        local: *transform,
                         ..Default::default()
                     };
                     let id = trees.transform_tree.insert(node);

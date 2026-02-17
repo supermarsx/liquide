@@ -358,7 +358,7 @@ fn break_into_lines(
 
     let mut lines: Vec<Vec<usize>> = Vec::new();
     let mut current_line: Vec<usize> = Vec::new();
-    let first_indent = if text_indent > 0.0 { text_indent } else { 0.0 };
+    let first_indent = text_indent;
     let mut cursor_x: f32 = first_indent;
     let mut is_first_line = true;
 

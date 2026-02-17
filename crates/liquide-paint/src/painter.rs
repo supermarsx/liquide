@@ -1,11 +1,13 @@
 //! Painter — walks the layout tree and generates a display list.
 
+use liquide_compositor::geometry::Affine2D;
 use liquide_compositor::pixel::BlendMode;
 use liquide_compositor::property_tree::FilterOp;
 use liquide_compositor::scene::{BackdropFilterSpec, FilterSpec, MaskSpec};
 use liquide_dom::{Document, NodeData};
 use liquide_layout::tree::{BoxType, LayoutBoxId, LayoutTree};
 use liquide_style_engine::computed::*;
+use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
 
 use crate::display_list::{BorderEdge, DisplayItem, DisplayList};
@@ -160,16 +162,17 @@ impl Painter {
 
         // Push transform
         if !style.transform.is_empty() {
-            let (tx, ty, sx, sy, r, skx, sky) = flatten_transforms(&style.transform);
-            list.push(DisplayItem::PushTransform {
-                translate_x: tx,
-                translate_y: ty,
-                scale_x: sx,
-                scale_y: sy,
-                rotate: r,
-                skew_x: skx,
-                skew_y: sky,
-            });
+            // Compute transform origin in absolute coordinates
+            let origin_x = abs_border.x + resolve_origin_dimension(
+                &style.transform_origin.x,
+                abs_border.width,
+            );
+            let origin_y = abs_border.y + resolve_origin_dimension(
+                &style.transform_origin.y,
+                abs_border.height,
+            );
+            let transform = compose_transform_matrix(&style.transform, origin_x, origin_y);
+            list.push(DisplayItem::PushTransform { transform });
         }
 
         // Consume offset (motion-path) properties — these contribute to the
@@ -904,62 +907,96 @@ impl Default for Painter {
     }
 }
 
-/// Flatten a list of transforms into (translate_x, translate_y, scale_x, scale_y, rotate, skew_x, skew_y).
-fn flatten_transforms(transforms: &[Transform]) -> (f32, f32, f32, f32, f32, f32, f32) {
+/// Resolve a transform-origin dimension to pixels.
+///
+/// For transform-origin, percentages are relative to the box size.
+fn resolve_origin_dimension(dim: &Dimension, box_size: f32) -> f32 {
+    match dim {
+        Dimension::Px(v) => *v,
+        Dimension::Percent(p) => box_size * p / 100.0,
+        Dimension::Em(v) => v * 16.0, // Approximate with base font size
+        Dimension::Rem(v) => v * 16.0,
+        Dimension::Zero => 0.0,
+        // For keywords like "center", they should already be converted to 50%
+        // by the style engine. For other dimensions, default to center.
+        _ => box_size * 0.5,
+    }
+}
+
+/// Compose a list of CSS transforms into a single 2D affine matrix.
+///
+/// This properly handles transform-origin by pre-translating to the origin,
+/// applying all transforms in order, then post-translating back.
+/// The resulting matrix can be used directly for both painting and hit-testing.
+fn compose_transform_matrix(transforms: &[Transform], origin_x: f32, origin_y: f32) -> Affine2D {
+    // Start with identity matrix
+    // We use the convention: (a, b, c, d, tx, ty) where
+    //   x' = a * x + b * y + tx
+    //   y' = c * x + d * y + ty
+    let mut a = 1.0f32;
+    let mut b = 0.0f32;
+    let mut c = 0.0f32;
+    let mut d = 1.0f32;
     let mut tx = 0.0f32;
     let mut ty = 0.0f32;
-    let mut sx = 1.0f32;
-    let mut sy = 1.0f32;
-    let mut r = 0.0f32;
-    let mut skx = 0.0f32;
-    let mut sky = 0.0f32;
 
+    // Matrix multiplication: current = current * new_matrix
+    // [a  b  tx]   [na nb ne]   [a*na+b*nc  a*nb+b*nd  a*ne+b*nf+tx]
+    // [c  d  ty] * [nc nd nf] = [c*na+d*nc  c*nb+d*nd  c*ne+d*nf+ty]
+    // [0  0  1 ]   [0  0  1 ]   [0          0          1           ]
+    let mut mul = |na: f32, nb: f32, nc: f32, nd: f32, ne: f32, nf: f32| {
+        let new_a = a * na + b * nc;
+        let new_b = a * nb + b * nd;
+        let new_c = c * na + d * nc;
+        let new_d = c * nb + d * nd;
+        let new_tx = a * ne + b * nf + tx;
+        let new_ty = c * ne + d * nf + ty;
+        a = new_a;
+        b = new_b;
+        c = new_c;
+        d = new_d;
+        tx = new_tx;
+        ty = new_ty;
+    };
+
+    // Pre-translate by +origin (move origin to coordinate system origin)
+    mul(1.0, 0.0, 0.0, 1.0, origin_x, origin_y);
+
+    // Apply transforms in order
     for t in transforms {
         match t {
             Transform::Translate(x, y) => {
-                tx += x;
-                ty += y;
+                mul(1.0, 0.0, 0.0, 1.0, *x, *y);
             }
-            Transform::Scale(x, y) => {
-                sx *= x;
-                sy *= y;
+            Transform::Scale(sx, sy) => {
+                mul(*sx, 0.0, 0.0, *sy, 0.0, 0.0);
             }
             Transform::Rotate(deg) => {
-                r += deg;
+                let r = deg.to_radians();
+                let cos_r = r.cos();
+                let sin_r = r.sin();
+                // Rotation matrix: [cos, -sin; sin, cos]
+                mul(cos_r, -sin_r, sin_r, cos_r, 0.0, 0.0);
             }
             Transform::Skew(ax, ay) => {
-                skx += ax;
-                sky += ay;
+                let tan_ax = ax.to_radians().tan();
+                let tan_ay = ay.to_radians().tan();
+                // Skew matrix: [1, tan(ax); tan(ay), 1]
+                mul(1.0, tan_ax, tan_ay, 1.0, 0.0, 0.0);
             }
-            Transform::Matrix(a, b, c, d, e, f) => {
-                // Simplified decomposition of 2D affine matrix [a b; c d] + translate(e,f)
-                // Extract translation
-                tx += e;
-                ty += f;
-                // Extract scale
-                let sx_m = (a * a + b * b).sqrt();
-                let sy_m = (c * c + d * d).sqrt();
-                if sx_m > 1e-6 {
-                    sx *= sx_m;
-                }
-                if sy_m > 1e-6 {
-                    sy *= sy_m;
-                }
-                // Extract rotation (from the first column)
-                let rot = b.atan2(*a).to_degrees();
-                r += rot;
-                // Extract skew: angle between the two basis vectors minus 90°
-                // skew = atan2(a*c + b*d, sx_m * sy_m) in radians, converted to degrees
-                if sx_m > 1e-6 && sy_m > 1e-6 {
-                    let dot = a * c + b * d;
-                    let skew_rad = (dot / (sx_m * sy_m)).asin();
-                    skx += skew_rad.to_degrees();
-                }
+            Transform::Matrix(ma, mb, mc, md, me, mf) => {
+                // CSS matrix(a, b, c, d, e, f) = [a c e; b d f; 0 0 1]
+                // But Affine2D uses [a b tx; c d ty; 0 0 1]
+                // So CSS (a,b,c,d,e,f) maps to Affine2D (a, c, b, d, e, f)
+                mul(*ma, *mc, *mb, *md, *me, *mf);
             }
         }
     }
 
-    (tx, ty, sx, sy, r, skx, sky)
+    // Post-translate by -origin (restore origin shift)
+    mul(1.0, 0.0, 0.0, 1.0, -origin_x, -origin_y);
+
+    Affine2D { a, b, c, d, tx, ty }
 }
 
 /// Convert a CSS `filter` spec to a paint-layer `FilterOp`.

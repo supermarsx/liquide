@@ -57,6 +57,43 @@ impl StyleCategory {
         }
     }
 
+    /// Machine-readable identifier for data attributes.
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Layout => "layout",
+            Self::Box => "box",
+            Self::Typography => "typography",
+            Self::Background => "background",
+            Self::Border => "border",
+            Self::Flex => "flex",
+            Self::Grid => "grid",
+            Self::Position => "position",
+            Self::Visual => "visual",
+            Self::Transform => "transform",
+            Self::Animation => "animation",
+            Self::Other => "other",
+        }
+    }
+
+    /// Parse a category from its ID string.
+    pub fn from_id(id: &str) -> Option<StyleCategory> {
+        match id {
+            "layout" => Some(Self::Layout),
+            "box" => Some(Self::Box),
+            "typography" => Some(Self::Typography),
+            "background" => Some(Self::Background),
+            "border" => Some(Self::Border),
+            "flex" => Some(Self::Flex),
+            "grid" => Some(Self::Grid),
+            "position" => Some(Self::Position),
+            "visual" => Some(Self::Visual),
+            "transform" => Some(Self::Transform),
+            "animation" => Some(Self::Animation),
+            "other" => Some(Self::Other),
+            _ => None,
+        }
+    }
+
     /// Ordered list of all categories for display.
     pub fn all() -> &'static [StyleCategory] {
         &[

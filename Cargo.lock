@@ -2620,6 +2620,7 @@ dependencies = [
 name = "liquide-hit-test"
 version = "0.1.0"
 dependencies = [
+ "liquide-compositor",
  "liquide-dom",
  "liquide-layout",
  "liquide-style-engine",

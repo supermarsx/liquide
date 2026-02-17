@@ -117,6 +117,17 @@ impl SideTab {
         SideTab::Animations,
     ];
 
+    /// Machine-readable identifier for data attributes.
+    pub fn id(&self) -> &'static str {
+        match self {
+            SideTab::Styles => "styles",
+            SideTab::Layout => "layout",
+            SideTab::Computed => "computed",
+            SideTab::Fonts => "fonts",
+            SideTab::Animations => "animations",
+        }
+    }
+
     /// Human-readable label.
     pub fn label(&self) -> &'static str {
         match self {
@@ -658,11 +669,23 @@ impl DevToolsPanel {
         false
     }
 
-    /// Handle a click inside the panel at screen coordinates (x, y).
+    /// Handle a click inside the panel using the hit-test engine and
+    /// tag-based dispatch.
     ///
-    /// Dispatches to tab bar, element tree, style categories, etc.
+    /// This uses the internal hit-test mechanism to find which element was
+    /// clicked, then dispatches based on element type (tag name). This is
+    /// the proper internal mechanism - element identity determines action,
+    /// data attributes only carry payload (which tab, which node, etc.).
+    ///
     /// Returns `true` if the click was consumed.
-    pub fn on_panel_click(&mut self, x: f32, y: f32, styles: &StyleMap) -> bool {
+    pub fn on_panel_click(
+        &mut self,
+        x: f32,
+        y: f32,
+        styles: &StyleMap,
+        doc: &Document,
+        hit_test: &HitTestEngine,
+    ) -> bool {
         if !self.visible {
             return false;
         }
@@ -671,11 +694,9 @@ impl DevToolsPanel {
         // a menu item or dismiss the menu.
         if self.context_menu.is_visible() {
             if let Some((action, node_id)) = self.context_menu.on_click(x, y) {
-                // Dispatch the action immediately.
                 self.handle_context_action(action, node_id, styles);
                 return true;
             }
-            // Click was outside menu items → close the menu.
             self.context_menu.hide();
             return true;
         }
@@ -689,163 +710,172 @@ impl DevToolsPanel {
             return false;
         }
 
-        let tab_bar_h = 30.0;
-        let tab_bar_top = bounds.y + 1.0;
-        let tab_bar_bottom = tab_bar_top + tab_bar_h;
+        // ── Hit-test and tag-based dispatch ──
+        let point = liquide_layout::geometry::Point::new(x, y);
+        if let Some(result) = hit_test.hit_test(point) {
+            // Use find_ancestor to dispatch based on element tag name.
+            // This is the internal mechanism: element type → action.
 
-        // ── Tab bar click ──
-        if y >= tab_bar_top && y < tab_bar_bottom {
-            // Check toolbar buttons (right side of tab bar).
-            // Layout mirrors toolbar: [picker][detach][dock-bottom][dock-right][close]
-            // from right to left.
-            let btn_size = 20.0;
-            let btn_gap = 2.0;
-            let mut btn_right = bounds.x + bounds.width - 8.0;
+            // Check for main tab click (devtools-tab element)
+            if let Some(tab_node) = result.find_ancestor(|n| {
+                doc.tag_name(n).as_deref() == Some("devtools-tab")
+            }) {
+                // Get which tab from data-tab attribute (payload only)
+                if let Some(tab_id) = doc.get_attribute(tab_node, "data-tab") {
+                    if let Some(t) = Self::parse_tab_id(&tab_id) {
+                        self.set_tab(t);
+                        return true;
+                    }
+                }
+            }
 
-            // Close button
-            let close_left = btn_right - btn_size;
-            if x >= close_left && x < btn_right {
-                self.hide();
+            // Check for toolbar button click (devtools-btn element)
+            if let Some(btn_node) = result.find_ancestor(|n| {
+                doc.tag_name(n).as_deref() == Some("devtools-btn")
+            }) {
+                if let Some(action) = doc.get_attribute(btn_node, "data-action") {
+                    return self.handle_btn_action(&action);
+                }
+            }
+
+            // Check for side tab click (devtools-side-tab element)
+            if let Some(stab_node) = result.find_ancestor(|n| {
+                doc.tag_name(n).as_deref() == Some("devtools-side-tab")
+            }) {
+                if let Some(side_id) = doc.get_attribute(stab_node, "data-sidetab") {
+                    if let Some(st) = Self::parse_sidetab_id(&side_id) {
+                        self.side_tab = st;
+                        return true;
+                    }
+                }
+            }
+
+            // Check for tree arrow click (devtools-tree-arrow element)
+            if let Some(arrow_node) = result.find_ancestor(|n| {
+                doc.tag_name(n).as_deref() == Some("devtools-tree-arrow")
+            }) {
+                if let Some(node_id_str) = doc.get_attribute(arrow_node, "data-node") {
+                    if let Ok(target_id) = node_id_str.parse::<NodeId>() {
+                        self.inspector.toggle_expand(target_id);
+                        return true;
+                    }
+                }
+            }
+
+            // Check for tree row click (devtools-tree-row element)
+            if let Some(row_node) = result.find_ancestor(|n| {
+                doc.tag_name(n).as_deref() == Some("devtools-tree-row")
+            }) {
+                if let Some(node_id_str) = doc.get_attribute(row_node, "data-node") {
+                    if let Ok(target_id) = node_id_str.parse::<NodeId>() {
+                        self.select_node(target_id, styles);
+                        return true;
+                    }
+                }
+            }
+
+            // Check for scene row click (devtools-scene-row element)
+            if let Some(scene_node) = result.find_ancestor(|n| {
+                doc.tag_name(n).as_deref() == Some("devtools-scene-row")
+            }) {
+                if let Some(idx_str) = doc.get_attribute(scene_node, "data-scene-idx") {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        self.scene_debugger.select(Some(idx));
+                        return true;
+                    }
+                }
+            }
+
+            // Check for style category click (devtools-style-category element)
+            if let Some(cat_node) = result.find_ancestor(|n| {
+                doc.tag_name(n).as_deref() == Some("devtools-style-category")
+            }) {
+                if let Some(cat_str) = doc.get_attribute(cat_node, "data-style-category") {
+                    if let Some(cat) = crate::style_panel::StyleCategory::from_id(&cat_str) {
+                        self.style_inspector.toggle_category(cat);
+                        return true;
+                    }
+                }
+            }
+
+            // Check for style property click (devtools-style-value element)
+            if let Some(prop_node) = result.find_ancestor(|n| {
+                doc.tag_name(n).as_deref() == Some("devtools-style-value")
+            }) {
+                if let Some(prop_name) = doc.get_attribute(prop_node, "data-style-prop") {
+                    if let Some(prop_value) = doc.get_attribute(prop_node, "data-style-value") {
+                        if let Some(selected) = self.selected_node {
+                            self.style_editor.set_target(Some(selected));
+                        }
+                        self.style_editor.start_edit(&prop_name, &prop_value);
+                        return true;
+                    }
+                }
+            }
+
+            // Check for console area (devtools-console element)
+            if result.find_ancestor(|n| {
+                doc.tag_name(n).as_deref() == Some("devtools-console")
+            }).is_some() {
+                self.console_focused = true;
                 return true;
             }
-            btn_right = close_left - btn_gap;
+        }
 
-            // Dock-right button
-            let dr_left = btn_right - btn_size;
-            if x >= dr_left && x < btn_right {
-                self.config.dock_position = DockPosition::Right;
-                return true;
-            }
-            btn_right = dr_left - btn_gap;
+        // Click inside panel always consumed.
+        true
+    }
 
-            // Dock-bottom button
-            let db_left = btn_right - btn_size;
-            if x >= db_left && x < btn_right {
-                self.config.dock_position = DockPosition::Bottom;
-                return true;
-            }
-            btn_right = db_left - btn_gap;
+    /// Parse a tab ID string to DevToolsTab.
+    fn parse_tab_id(id: &str) -> Option<DevToolsTab> {
+        match id {
+            "elements" => Some(DevToolsTab::Elements),
+            "console" => Some(DevToolsTab::Console),
+            "sources" => Some(DevToolsTab::Sources),
+            "perf" => Some(DevToolsTab::Performance),
+            "mutations" => Some(DevToolsTab::Mutations),
+            "scene" => Some(DevToolsTab::Scene),
+            _ => None,
+        }
+    }
 
-            // Detach button
-            let det_left = btn_right - btn_size;
-            if x >= det_left && x < btn_right {
-                self.toggle_detach();
-                return true;
-            }
-            btn_right = det_left - btn_gap;
+    /// Parse a side tab ID string to SideTab.
+    fn parse_sidetab_id(id: &str) -> Option<SideTab> {
+        match id {
+            "styles" => Some(SideTab::Styles),
+            "layout" => Some(SideTab::Layout),
+            "computed" => Some(SideTab::Computed),
+            "fonts" => Some(SideTab::Fonts),
+            "animations" => Some(SideTab::Animations),
+            _ => None,
+        }
+    }
 
-            // Picker toggle button
-            let pk_left = btn_right - btn_size;
-            if x >= pk_left && x < btn_right {
+    /// Handle a devtools button action.
+    fn handle_btn_action(&mut self, action: &str) -> bool {
+        match action {
+            "picker" => {
                 self.toggle_picker();
-                return true;
+                true
             }
-
-            // Tab labels region
-            let mut tab_x = bounds.x + 8.0;
-            for tab in DevToolsTab::ALL {
-                let tab_w = tab.label().len() as f32 * 7.5 + 16.0;
-                if x >= tab_x && x < tab_x + tab_w {
-                    self.set_tab(*tab);
-                    return true;
-                }
-                tab_x += tab_w + 4.0;
+            "detach" => {
+                self.toggle_detach();
+                true
             }
-            return true; // consumed, even if between tabs
+            "dock-bottom" => {
+                self.config.dock_position = DockPosition::Bottom;
+                true
+            }
+            "dock-right" => {
+                self.config.dock_position = DockPosition::Right;
+                true
+            }
+            "close" => {
+                self.hide();
+                true
+            }
+            _ => false,
         }
-
-        // ── Content area click ──
-        let content_y = tab_bar_bottom + 1.0 + 8.0;
-        let status_y = bounds.y + bounds.height - 22.0;
-        if y >= content_y && y < status_y {
-            match self.active_tab {
-                DevToolsTab::Elements => {
-                    // Check if click is in the side panel region (right 260px).
-                    let side_w = 260.0f32;
-                    let side_left = bounds.x + bounds.width - side_w;
-
-                    if x >= side_left {
-                        // Side panel — check sub-tab bar (top 24px of side pane).
-                        let side_tab_bottom = content_y + 24.0;
-                        if y < side_tab_bottom {
-                            // Side tab click.
-                            let mut stab_x = side_left + 4.0;
-                            for stab in SideTab::ALL {
-                                let tw = stab.label().len() as f32 * 6.5 + 16.0;
-                                if x >= stab_x && x < stab_x + tw {
-                                    self.side_tab = *stab;
-                                    return true;
-                                }
-                                stab_x += tw;
-                            }
-                        }
-                        // Otherwise, side panel content click — handle in Styles sub-tab.
-                        if self.side_tab == SideTab::Styles {
-                            let side_content_y = content_y + 24.0;
-                            let line_h: f32 = 17.0;
-                            let line_idx = ((y - side_content_y) / line_h).floor() as usize;
-                            let groups = self.style_inspector.grouped_properties();
-                            let mut row = 0;
-                            for (cat, props) in &groups {
-                                if row == line_idx {
-                                    self.style_inspector.toggle_category(*cat);
-                                    return true;
-                                }
-                                row += 1;
-                                // Check if click is on a property row's value area.
-                                for prop in props {
-                                    if row == line_idx {
-                                        // Click on a property — start editing its value.
-                                        // Right half of the row is the value area.
-                                        let value_col_x = side_left + (side_w * 0.45);
-                                        if x >= value_col_x {
-                                            if let Some(node_id) = self.selected_node {
-                                                self.style_editor.set_target(Some(node_id));
-                                            }
-                                            self.style_editor.start_edit(&prop.name, &prop.value);
-                                            return true;
-                                        }
-                                    }
-                                    row += 1;
-                                }
-                            }
-                        }
-                        return true;
-                    }
-
-                    // Main pane — DOM tree click.
-                    let line_h: f32 = 20.0;
-                    let scroll_y = (y - content_y) + self.scroll_offset;
-                    let line_idx = (scroll_y / line_h).floor() as usize;
-                    let visible = self.inspector.visible_nodes();
-                    if let Some(node) = visible.get(line_idx) {
-                        let node_id = node.id;
-                        let indent_px: f32 = 16.0;
-                        let arrow_x = bounds.x + 8.0 + (node.depth as f32) * indent_px;
-
-                        if x < arrow_x + 16.0 && node.child_count > 0 {
-                            self.inspector.toggle_expand(node_id);
-                        } else {
-                            self.select_node(node_id, styles);
-                        }
-                        return true;
-                    }
-                }
-                DevToolsTab::Console => {
-                    self.console_focused = true;
-                }
-                DevToolsTab::Scene => {
-                    let line_h: f32 = 16.0;
-                    let scroll_y = (y - content_y) + self.scroll_offset;
-                    let line_idx = (scroll_y / line_h).floor() as usize;
-                    self.scene_debugger.select(Some(line_idx));
-                }
-                _ => {}
-            }
-            return true;
-        }
-
-        true // click inside panel, always consume
     }
 
     // ─── Scroll handling ──────────────────────────────────────
@@ -1243,6 +1273,8 @@ impl DevToolsPanel {
                             if node.child_count > 0 {
                                 row = row.child(
                                     TemplateNode::el("devtools-tree-arrow")
+                                        .attr("data-tree-arrow", "")
+                                        .attr("data-node", &node.id.to_string())
                                         .child(TemplateNode::text(arrow)),
                                 );
                             }
@@ -1287,8 +1319,10 @@ impl DevToolsPanel {
             // Sub-tab bar.
             let side_tabs = TemplateNode::el("devtools-side-tabs").children(
                 SideTab::ALL.iter().map(|st| {
+                    let id = st.id();
                     TemplateNode::el("devtools-side-tab")
                         .key(&format!("st-{}", st.label()))
+                        .attr("data-sidetab", id)
                         .class_if("active", *st == self.side_tab)
                         .child(TemplateNode::text(st.label()))
                 }),

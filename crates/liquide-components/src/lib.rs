@@ -37,6 +37,7 @@
 pub mod template;
 pub mod types;
 pub mod html_parser;
+pub mod accordion;
 pub mod dock;
 pub mod statusbar;
 pub mod launcher;

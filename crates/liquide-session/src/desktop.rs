@@ -1151,13 +1151,15 @@ impl DesktopCompositor {
                             // and element picker / viewport click-to-inspect.
                             if self.dev_mode {
                                 if let Some(ref mut devtools) = self.devtools {
-                                    if let Some(styles) = self.shell.style_map() {
-                                        if devtools.on_panel_click(*x, *y, styles) {
+                                    if let (Some(styles), Some(hit_test)) =
+                                        (self.shell.style_map(), self.shell.hit_test_engine())
+                                    {
+                                        let doc = self.shell.document();
+                                        if devtools.on_panel_click(*x, *y, styles, doc, hit_test) {
                                             needs_redraw = true;
                                         } else if devtools.on_click(styles) {
                                             needs_redraw = true;
-                                        } else if let Some(hit_test) = self.shell.hit_test_engine()
-                                        {
+                                        } else {
                                             // Click-to-inspect: clicking outside the panel
                                             // selects the element under the cursor.
                                             if devtools.on_viewport_click(*x, *y, hit_test, styles)

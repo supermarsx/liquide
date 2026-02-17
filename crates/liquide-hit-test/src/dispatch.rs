@@ -352,7 +352,8 @@ impl EventDispatcher {
             }
 
             // Bubble up through ancestors in the hover chain.
-            if !stopped {
+            // Only bubble events that are defined as bubbling per W3C spec.
+            if !stopped && event.bubbles {
                 for &ancestor in &self.hover_chain {
                     if ancestor == event.target {
                         continue; // already handled above
@@ -367,7 +368,8 @@ impl EventDispatcher {
                                 continue;
                             }
                         }
-                        let bubbled = DomEvent::new(ancestor, event.kind.clone());
+                        let mut bubbled = DomEvent::new(event.target, event.kind.clone());
+                        bubbled.current_target = ancestor;
                         let result = handler(&bubbled);
                         match result {
                             Propagation::StopImmediate | Propagation::StopPropagation => {

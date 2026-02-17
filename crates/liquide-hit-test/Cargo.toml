@@ -10,5 +10,6 @@ description = "CSS-aware hit testing and DOM event dispatch"
 liquide-dom = { path = "../liquide-dom" }
 liquide-style-engine = { path = "../liquide-style-engine" }
 liquide-layout = { path = "../liquide-layout" }
+liquide-compositor = { path = "../liquide-compositor" }
 serde = { workspace = true }
 tracing = { workspace = true }

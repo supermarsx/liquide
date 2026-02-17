@@ -307,6 +307,71 @@ impl TextMeasurer for DefaultTextMeasurer {
     ) -> TextMetrics {
         let space_extra = props.word_spacing;
         let transformed = props.transform_text(text);
+        let line_h = props.line_height_px(font_size);
+
+        // Handle embedded newlines for pre/pre-wrap/pre-line white-space modes
+        let preserves_newlines = matches!(
+            props.white_space,
+            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine
+        );
+
+        if preserves_newlines && transformed.contains('\n') {
+            let hard_lines: Vec<&str> = transformed.split('\n').collect();
+            let mut max_line_width = 0.0f32;
+            let mut total_lines: u32 = 0;
+
+            for (i, line_text) in hard_lines.iter().enumerate() {
+                let line_width: f32 = line_text
+                    .chars()
+                    .map(|ch| {
+                        let base = Self::approx_char_advance(ch, font_size);
+                        base + props.letter_spacing + if ch == ' ' { space_extra } else { 0.0 }
+                    })
+                    .sum();
+
+                // Apply text-indent to first line only
+                let indent = if i == 0 { props.text_indent.max(0.0) } else { 0.0 };
+
+                if let Some(max_w) = max_width {
+                    let allows_wrap = matches!(
+                        props.white_space,
+                        WhiteSpace::PreWrap | WhiteSpace::PreLine
+                    );
+                    let effective_w = if i == 0 { max_w - indent } else { max_w };
+                    if allows_wrap && line_width > effective_w && effective_w > 0.0 {
+                        let avg_char_w = if line_text.is_empty() {
+                            font_size * 0.6 + props.letter_spacing
+                        } else {
+                            line_width / line_text.chars().count() as f32
+                        };
+                        let cpl = (effective_w / avg_char_w).floor().max(1.0) as u32;
+                        let cc = line_text.chars().count() as u32;
+                        let wrapped = ((cc + cpl - 1) / cpl).max(1);
+                        total_lines += wrapped;
+                        max_line_width = max_line_width.max(max_w.min(line_width));
+                    } else {
+                        total_lines += 1;
+                        max_line_width = max_line_width.max(line_width + indent);
+                    }
+                } else {
+                    total_lines += 1;
+                    max_line_width = max_line_width.max(line_width + indent);
+                }
+            }
+
+            return TextMetrics {
+                width: if let Some(max_w) = max_width {
+                    max_w.min(max_line_width)
+                } else {
+                    max_line_width
+                },
+                height: total_lines as f32 * line_h,
+                baseline: font_size * 0.8,
+                line_count: total_lines,
+            };
+        }
+
+        // Single-line / normal wrapping path
         let total_width: f32 = transformed
             .chars()
             .map(|ch| {
@@ -319,7 +384,6 @@ impl TextMeasurer for DefaultTextMeasurer {
         } else {
             total_width / transformed.chars().count() as f32
         };
-        let line_h = props.line_height_px(font_size);
 
         if let Some(max_w) = max_width {
             // white-space: nowrap / pre — do NOT wrap
@@ -327,12 +391,18 @@ impl TextMeasurer for DefaultTextMeasurer {
                 props.white_space,
                 WhiteSpace::Normal | WhiteSpace::PreWrap | WhiteSpace::PreLine
             );
-            let effective_first_line = max_w - props.text_indent;
+            let effective_first_line = max_w - props.text_indent.max(0.0);
             if allows_wrap && total_width > effective_first_line && effective_first_line > 0.0 {
-                let chars_per_line = (effective_first_line / avg_char_w).floor().max(1.0) as u32;
+                // Use first-line width for line 1, full width for subsequent lines
+                let cpl_first = (effective_first_line / avg_char_w).floor().max(1.0) as u32;
+                let cpl_rest = (max_w / avg_char_w).floor().max(1.0) as u32;
                 let char_count = transformed.chars().count() as u32;
-                let line_count =
-                    ((char_count + chars_per_line - 1) / chars_per_line).max(1);
+                let line_count = if char_count <= cpl_first {
+                    1
+                } else {
+                    let remaining = char_count - cpl_first;
+                    1 + ((remaining + cpl_rest - 1) / cpl_rest)
+                };
                 return TextMetrics {
                     width: max_w.min(total_width),
                     height: line_count as f32 * line_h,

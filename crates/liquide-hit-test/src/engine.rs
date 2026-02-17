@@ -9,12 +9,14 @@
 //! - pointer-events: none
 //! - Z-index stacking order (CSS 2.1 §E)
 
+use liquide_compositor::geometry::Affine2D;
 use liquide_dom::NodeId;
 use liquide_layout::geometry::{Point, Rect};
 use liquide_layout::tree::{LayoutBoxId, LayoutTree};
 use liquide_style_engine::computed::{
-    ContentVisibility, Display, Float, Overflow, PointerEvents, Position, Visibility,
+    ContentVisibility, Display, Float, Overflow, PointerEvents, Position, Transform, Visibility,
 };
+use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::StyleMap;
 
 /// Result of a hit test.
@@ -24,8 +26,29 @@ pub struct HitTestResult {
     pub node: NodeId,
     /// The point relative to the node's content box.
     pub point_in_node: Point,
+    /// Absolute bounds of the hit element (border rect).
+    pub bounds: Rect,
     /// Ancestor chain from target up to root (bubble path).
     pub ancestors: Vec<NodeId>,
+}
+
+impl HitTestResult {
+    /// Returns an iterator over the hit node and all ancestors.
+    ///
+    /// Yields the target node first, then ancestors in order (parent, grandparent, etc.)
+    pub fn node_and_ancestors(&self) -> impl Iterator<Item = NodeId> + '_ {
+        std::iter::once(self.node).chain(self.ancestors.iter().copied())
+    }
+
+    /// Find the first node (including self) that satisfies a predicate.
+    ///
+    /// Useful for walking up the DOM to find specific element types.
+    pub fn find_ancestor<F>(&self, predicate: F) -> Option<NodeId>
+    where
+        F: Fn(NodeId) -> bool,
+    {
+        self.node_and_ancestors().find(|&n| predicate(n))
+    }
 }
 
 /// The hit test engine.
@@ -75,6 +98,45 @@ impl HitTestEngine {
         results
     }
 
+    // ─── Programmatic bounds queries ──────────────────────────────────
+
+    /// Get the absolute bounds (border rect) for a DOM node.
+    ///
+    /// Returns `None` if the node has no layout box (e.g., `display: none`).
+    pub fn bounds_for_node(&self, node_id: NodeId) -> Option<Rect> {
+        let box_id = self.layout.find_box_id_by_node(node_id)?;
+        Some(self.layout.absolute_border_rect(box_id))
+    }
+
+    /// Get the absolute content rect for a DOM node.
+    pub fn content_rect_for_node(&self, node_id: NodeId) -> Option<Rect> {
+        let box_id = self.layout.find_box_id_by_node(node_id)?;
+        Some(self.layout.absolute_content_rect(box_id))
+    }
+
+    /// Check if a point is inside a specific node's bounds (border box).
+    pub fn point_in_node(&self, point: Point, node_id: NodeId) -> bool {
+        self.bounds_for_node(node_id)
+            .map(|r| r.contains(point))
+            .unwrap_or(false)
+    }
+
+    /// Find all nodes under a point that satisfy a predicate.
+    ///
+    /// The predicate receives (NodeId, bounds) and returns true if the node
+    /// should be included. Useful for component-based hit testing where you
+    /// want to find specific types of elements.
+    pub fn hit_test_filter<F>(&self, point: Point, predicate: F) -> Vec<(NodeId, Rect)>
+    where
+        F: Fn(NodeId, &Rect) -> bool,
+    {
+        self.hit_test_all(point)
+            .into_iter()
+            .filter(|r| predicate(r.node, &r.bounds))
+            .map(|r| (r.node, r.bounds))
+            .collect()
+    }
+
     /// Core hit-test for a single box, returning the topmost match.
     ///
     /// `clip_rect` is the active overflow clip in absolute coordinates.
@@ -114,9 +176,15 @@ impl HitTestEngine {
         // ── Transform: inverse-map the point into local space ─────────
         let local_point = if !style.transform.is_empty() {
             let abs_border = layout_box.border_rect.offset(ox, oy);
-            // Transform origin defaults to center of the border box
-            let origin_x = abs_border.x + abs_border.width * 0.5;
-            let origin_y = abs_border.y + abs_border.height * 0.5;
+            // Compute transform origin from style (matching painter behavior)
+            let origin_x = abs_border.x + resolve_origin_dimension(
+                &style.transform_origin.x,
+                abs_border.width,
+            );
+            let origin_y = abs_border.y + resolve_origin_dimension(
+                &style.transform_origin.y,
+                abs_border.height,
+            );
             match inverse_transform_point(point, &style.transform, origin_x, origin_y) {
                 Some(p) => p,
                 None => return None, // Singular transform — can't hit
@@ -271,6 +339,7 @@ impl HitTestEngine {
         Some(HitTestResult {
             node: layout_box.node,
             point_in_node,
+            bounds: abs_border,
             ancestors,
         })
     }
@@ -297,15 +366,22 @@ impl HitTestEngine {
         if style.content_visibility == ContentVisibility::Hidden {
             return;
         }
-        if style.pointer_events == PointerEvents::None {
-            return;
-        }
+        // pointer-events: none — skip self but still recurse children
+        // (children may have pointer-events: auto)
+        let this_receives_events = style.pointer_events != PointerEvents::None;
 
         // Transform
         let local_point = if !style.transform.is_empty() {
             let abs_border = layout_box.border_rect.offset(ox, oy);
-            let origin_x = abs_border.x + abs_border.width * 0.5;
-            let origin_y = abs_border.y + abs_border.height * 0.5;
+            // Compute transform origin from style (matching painter behavior)
+            let origin_x = abs_border.x + resolve_origin_dimension(
+                &style.transform_origin.x,
+                abs_border.width,
+            );
+            let origin_y = abs_border.y + resolve_origin_dimension(
+                &style.transform_origin.y,
+                abs_border.height,
+            );
             match inverse_transform_point(point, &style.transform, origin_x, origin_y) {
                 Some(p) => p,
                 None => return,
@@ -326,8 +402,9 @@ impl HitTestEngine {
             }
         }
 
-        // Add this box (unless visibility:hidden)
-        if style.visibility != Visibility::Hidden {
+        // Add this box (unless visibility:hidden or pointer-events:none)
+        if style.visibility != Visibility::Hidden && this_receives_events {
+            let abs_border = layout_box.border_rect.offset(ox, oy);
             let abs_content = layout_box.content_rect.offset(ox, oy);
             let point_in_node = Point::new(
                 local_point.x - abs_content.x,
@@ -336,6 +413,7 @@ impl HitTestEngine {
             results.push(HitTestResult {
                 node: layout_box.node,
                 point_in_node,
+                bounds: abs_border,
                 ancestors: Vec::new(),
             });
         }
@@ -376,191 +454,137 @@ fn intersect_rects(a: &Rect, b: &Rect) -> Rect {
     Rect::new(x, y, (right - x).max(0.0), (bottom - y).max(0.0))
 }
 
+/// Resolve a transform-origin dimension to pixels.
+///
+/// For transform-origin, percentages are relative to the box size.
+/// This matches the painter's resolve_origin_dimension to ensure
+/// paint and hit-test use identical transform origins.
+fn resolve_origin_dimension(dim: &Dimension, box_size: f32) -> f32 {
+    match dim {
+        Dimension::Px(v) => *v,
+        Dimension::Percent(p) => box_size * p / 100.0,
+        Dimension::Em(v) => v * 16.0, // Approximate with base font size
+        Dimension::Rem(v) => v * 16.0,
+        Dimension::Zero => 0.0,
+        // For other dimensions, default to center (50%)
+        _ => box_size * 0.5,
+    }
+}
+
 /// Inverse-transform a screen-space point into the element's local coordinate
 /// space, accounting for the CSS transform and its origin.
 ///
 /// Returns `None` if the transform is singular (non-invertible).
 fn inverse_transform_point(
     point: Point,
-    transforms: &[liquide_style_engine::computed::Transform],
+    transforms: &[Transform],
     origin_x: f32,
     origin_y: f32,
 ) -> Option<Point> {
-    // Use proper matrix composition for correct transform handling
-    let (a, b, c, d, e, f) = flatten_transforms_to_matrix(transforms, origin_x, origin_y);
+    // Use the same matrix composition as the painter (Affine2D convention)
+    let transform = compose_transform_matrix(transforms, origin_x, origin_y);
 
-    // Invert the 2x2 part: [a c; b d]
-    let det = a * d - b * c;
+    // Invert the Affine2D matrix
+    // Affine2D: x' = a*x + b*y + tx, y' = c*x + d*y + ty
+    // Matrix: [a b tx; c d ty; 0 0 1]
+    // Determinant of 2x2 part: a*d - b*c
+    let det = transform.a * transform.d - transform.b * transform.c;
     if det.abs() < 1e-10 {
         return None; // Singular — can't hit-test
     }
     let inv_det = 1.0 / det;
-    let inv_a = d * inv_det;
-    let inv_b = -b * inv_det;
-    let inv_c = -c * inv_det;
-    let inv_d = a * inv_det;
-    let inv_e = -(inv_a * e + inv_c * f);
-    let inv_f = -(inv_b * e + inv_d * f);
 
+    // Inverse of [a b; c d] is 1/det * [d -b; -c a]
+    let inv_a = transform.d * inv_det;
+    let inv_b = -transform.b * inv_det;
+    let inv_c = -transform.c * inv_det;
+    let inv_d = transform.a * inv_det;
+
+    // Translation part of inverse: -(M^-1 * t)
+    let inv_tx = -(inv_a * transform.tx + inv_b * transform.ty);
+    let inv_ty = -(inv_c * transform.tx + inv_d * transform.ty);
+
+    // Apply inverse transform: p_local = M^-1 * p_screen
     Some(Point::new(
-        inv_a * point.x + inv_c * point.y + inv_e,
-        inv_b * point.x + inv_d * point.y + inv_f,
+        inv_a * point.x + inv_b * point.y + inv_tx,
+        inv_c * point.x + inv_d * point.y + inv_ty,
     ))
 }
 
-/// Build a 2D affine matrix (a, b, c, d, e, f) from flattened transform components.
+/// Compose a list of CSS transforms into a single 2D affine matrix.
 ///
-/// The matrix maps local coordinates to screen coordinates:
-///   screen_x = a * local_x + c * local_y + e
-///   screen_y = b * local_x + d * local_y + f
+/// This uses the EXACT same algorithm as the painter's compose_transform_matrix
+/// to ensure paint and hit-test transforms match precisely.
 ///
-/// Incorporates transform-origin by pre/post translating.
-#[allow(dead_code)]
-fn build_transform_matrix(
-    tx: f32, ty: f32,
-    sx: f32, sy: f32,
-    rotate_deg: f32,
-    skew_x_deg: f32,
-    origin_x: f32, origin_y: f32,
-) -> (f32, f32, f32, f32, f32, f32) {
-    let r = rotate_deg.to_radians();
-    let cos_r = r.cos();
-    let sin_r = r.sin();
-    let tan_skx = skew_x_deg.to_radians().tan();
-
-    // Combined = Rotate * SkewX * Scale
-    // R = [cos_r, -sin_r; sin_r, cos_r]
-    // SkewX = [1, tan_skx; 0, 1]
-    // Scale = [sx, 0; 0, sy]
-    // R * SkewX = [cos_r, cos_r*tan_skx - sin_r; sin_r, sin_r*tan_skx + cos_r]
-    // (R * SkewX) * Scale = [cos_r*sx, (cos_r*tan_skx - sin_r)*sy; sin_r*sx, (sin_r*tan_skx + cos_r)*sy]
-    let a = cos_r * sx;
-    let b = sin_r * sx;
-    let c = (cos_r * tan_skx - sin_r) * sy;
-    let d = (sin_r * tan_skx + cos_r) * sy;
-
-    // Apply transform-origin: translate(origin) * T * translate(-origin)
-    // Where T includes translation (tx, ty) and the rotation/scale/skew matrix
-    // Final: e = origin_x + tx - a*origin_x - c*origin_y
-    //        f = origin_y + ty - b*origin_x - d*origin_y
-    let e = origin_x + tx - a * origin_x - c * origin_y;
-    let f = origin_y + ty - b * origin_x - d * origin_y;
-
-    (a, b, c, d, e, f)
-}
-
-/// Flatten a list of CSS transforms into a single 2D affine matrix.
-/// Returns the combined matrix coefficients (a, b, c, d, e, f).
-///
-/// CSS transforms are applied right-to-left (last in list is applied first to the coordinates).
-/// However, for matrix composition, we multiply left-to-right: M = T1 * T2 * T3...
-fn flatten_transforms_to_matrix(
-    transforms: &[liquide_style_engine::computed::Transform],
-    origin_x: f32,
-    origin_y: f32,
-) -> (f32, f32, f32, f32, f32, f32) {
-    use liquide_style_engine::computed::Transform;
-    
+/// The resulting Affine2D uses the convention:
+///   x' = a * x + b * y + tx
+///   y' = c * x + d * y + ty
+fn compose_transform_matrix(transforms: &[Transform], origin_x: f32, origin_y: f32) -> Affine2D {
     // Start with identity matrix
     let mut a = 1.0f32;
     let mut b = 0.0f32;
     let mut c = 0.0f32;
     let mut d = 1.0f32;
-    let mut e = 0.0f32;
-    let mut f = 0.0f32;
+    let mut tx = 0.0f32;
+    let mut ty = 0.0f32;
 
-    // Helper to multiply current matrix by a new transform matrix
-    // [a c e]   [na nc ne]   [a*na+c*nb  a*nc+c*nd  a*ne+c*nf+e]
-    // [b d f] * [nb nd nf] = [b*na+d*nb  b*nc+d*nd  b*ne+d*nf+f]
-    // [0 0 1]   [0  0  1 ]   [0          0          1          ]
-    let mut multiply = |na: f32, nb: f32, nc: f32, nd: f32, ne: f32, nf: f32| {
-        let new_a = a * na + c * nb;
-        let new_b = b * na + d * nb;
-        let new_c = a * nc + c * nd;
-        let new_d = b * nc + d * nd;
-        let new_e = a * ne + c * nf + e;
-        let new_f = b * ne + d * nf + f;
+    // Matrix multiplication: current = current * new_matrix
+    // [a  b  tx]   [na nb ne]   [a*na+b*nc  a*nb+b*nd  a*ne+b*nf+tx]
+    // [c  d  ty] * [nc nd nf] = [c*na+d*nc  c*nb+d*nd  c*ne+d*nf+ty]
+    // [0  0  1 ]   [0  0  1 ]   [0          0          1           ]
+    let mut mul = |na: f32, nb: f32, nc: f32, nd: f32, ne: f32, nf: f32| {
+        let new_a = a * na + b * nc;
+        let new_b = a * nb + b * nd;
+        let new_c = c * na + d * nc;
+        let new_d = c * nb + d * nd;
+        let new_tx = a * ne + b * nf + tx;
+        let new_ty = c * ne + d * nf + ty;
         a = new_a;
         b = new_b;
         c = new_c;
         d = new_d;
-        e = new_e;
-        f = new_f;
+        tx = new_tx;
+        ty = new_ty;
     };
 
-    // Pre-translate by -origin (undo origin shift)
-    multiply(1.0, 0.0, 0.0, 1.0, -origin_x, -origin_y);
+    // Pre-translate by +origin (move origin to coordinate system origin)
+    mul(1.0, 0.0, 0.0, 1.0, origin_x, origin_y);
 
-    // Apply transforms in order (CSS applies right-to-left, but we compose left-to-right)
+    // Apply transforms in order
     for t in transforms {
         match t {
-            Transform::Translate(tx, ty) => {
-                multiply(1.0, 0.0, 0.0, 1.0, *tx, *ty);
+            Transform::Translate(x, y) => {
+                mul(1.0, 0.0, 0.0, 1.0, *x, *y);
             }
             Transform::Scale(sx, sy) => {
-                multiply(*sx, 0.0, 0.0, *sy, 0.0, 0.0);
+                mul(*sx, 0.0, 0.0, *sy, 0.0, 0.0);
             }
             Transform::Rotate(deg) => {
                 let r = deg.to_radians();
                 let cos_r = r.cos();
                 let sin_r = r.sin();
-                multiply(cos_r, sin_r, -sin_r, cos_r, 0.0, 0.0);
+                // Rotation matrix for Affine2D: [cos, -sin; sin, cos]
+                mul(cos_r, -sin_r, sin_r, cos_r, 0.0, 0.0);
             }
             Transform::Skew(ax, ay) => {
                 let tan_ax = ax.to_radians().tan();
                 let tan_ay = ay.to_radians().tan();
-                multiply(1.0, tan_ay, tan_ax, 1.0, 0.0, 0.0);
+                // Skew matrix for Affine2D: [1, tan(ax); tan(ay), 1]
+                mul(1.0, tan_ax, tan_ay, 1.0, 0.0, 0.0);
             }
             Transform::Matrix(ma, mb, mc, md, me, mf) => {
-                multiply(*ma, *mb, *mc, *md, *me, *mf);
+                // CSS matrix(a, b, c, d, e, f) = [a c e; b d f; 0 0 1]
+                // Affine2D uses [a b tx; c d ty; 0 0 1]
+                // So CSS (a,b,c,d,e,f) maps to Affine2D (a, c, b, d, e, f)
+                mul(*ma, *mc, *mb, *md, *me, *mf);
             }
         }
     }
 
-    // Post-translate by +origin (restore origin shift)  
-    multiply(1.0, 0.0, 0.0, 1.0, origin_x, origin_y);
+    // Post-translate by -origin (restore origin shift)
+    mul(1.0, 0.0, 0.0, 1.0, -origin_x, -origin_y);
 
-    (a, b, c, d, e, f)
-}
-
-/// Flatten a list of CSS transforms into accumulated components.
-/// Returns (translate_x, translate_y, scale_x, scale_y, rotate_deg, skew_x_deg, skew_y_deg).
-/// 
-/// DEPRECATED: Use flatten_transforms_to_matrix for correct composition.
-#[allow(dead_code)]
-fn flatten_transforms(transforms: &[liquide_style_engine::computed::Transform]) -> (f32, f32, f32, f32, f32, f32, f32) {
-    use liquide_style_engine::computed::Transform;
-    let mut tx = 0.0f32;
-    let mut ty = 0.0f32;
-    let mut sx = 1.0f32;
-    let mut sy = 1.0f32;
-    let mut r = 0.0f32;
-    let mut skx = 0.0f32;
-    let mut sky = 0.0f32;
-
-    for t in transforms {
-        match t {
-            Transform::Translate(x, y) => { tx += x; ty += y; }
-            Transform::Scale(x, y) => { sx *= x; sy *= y; }
-            Transform::Rotate(deg) => { r += deg; }
-            Transform::Skew(ax, ay) => { skx += ax; sky += ay; }
-            Transform::Matrix(a, b, c, d, e, f) => {
-                tx += e; ty += f;
-                let sx_m = (a * a + b * b).sqrt();
-                let sy_m = (c * c + d * d).sqrt();
-                if sx_m > 1e-6 { sx *= sx_m; }
-                if sy_m > 1e-6 { sy *= sy_m; }
-                let rot = b.atan2(*a).to_degrees();
-                r += rot;
-                if sx_m > 1e-6 && sy_m > 1e-6 {
-                    let dot = a * c + b * d;
-                    let skew_rad = (dot / (sx_m * sy_m)).asin();
-                    skx += skew_rad.to_degrees();
-                }
-            }
-        }
-    }
-    (tx, ty, sx, sy, r, skx, sky)
+    Affine2D { a, b, c, d, tx, ty }
 }
 
 #[cfg(test)]
@@ -568,7 +592,7 @@ mod tests {
     use super::*;
     use liquide_dom::Document;
     use liquide_layout::{DefaultImageMeasurer, DefaultTextMeasurer, LayoutEngine, Size};
-    use liquide_style_engine::engine::{StyleEngine, ViewportSize};
+    use liquide_style_engine::engine::StyleEngine;
 
     #[test]
     fn basic_hit_test() {
@@ -588,5 +612,91 @@ mod tests {
         let result = engine.hit_test(Point::new(100.0, 50.0));
 
         assert!(result.is_some(), "Should hit something within the viewport");
+    }
+
+    /// Test that transform + inverse_transform is identity (round-trip)
+    #[test]
+    fn transform_inverse_round_trip() {
+        // Test rotation
+        let transforms = vec![Transform::Rotate(45.0)];
+        let origin_x = 50.0;
+        let origin_y = 50.0;
+        
+        let matrix = compose_transform_matrix(&transforms, origin_x, origin_y);
+        let original = Point::new(75.0, 50.0);
+        
+        // Forward transform using Affine2D
+        let transformed = matrix.transform_point(liquide_compositor::geometry::Point::new(
+            original.x, original.y
+        ));
+        let transformed_point = Point::new(transformed.x, transformed.y);
+        
+        // Inverse transform
+        let recovered = inverse_transform_point(transformed_point, &transforms, origin_x, origin_y);
+        
+        assert!(recovered.is_some(), "Should be able to inverse transform");
+        let recovered = recovered.unwrap();
+        
+        assert!((recovered.x - original.x).abs() < 0.001, 
+            "X should round-trip: {} vs {}", recovered.x, original.x);
+        assert!((recovered.y - original.y).abs() < 0.001, 
+            "Y should round-trip: {} vs {}", recovered.y, original.y);
+    }
+
+    /// Test that multiple transforms compose correctly and round-trip
+    #[test]
+    fn multiple_transforms_round_trip() {
+        // Rotate then scale then translate
+        let transforms = vec![
+            Transform::Rotate(30.0),
+            Transform::Scale(2.0, 1.5),
+            Transform::Translate(100.0, 50.0),
+        ];
+        let origin_x = 100.0;
+        let origin_y = 100.0;
+        
+        let matrix = compose_transform_matrix(&transforms, origin_x, origin_y);
+        let original = Point::new(150.0, 75.0);
+        
+        // Forward transform
+        let transformed = matrix.transform_point(liquide_compositor::geometry::Point::new(
+            original.x, original.y
+        ));
+        let transformed_point = Point::new(transformed.x, transformed.y);
+        
+        // Inverse transform
+        let recovered = inverse_transform_point(transformed_point, &transforms, origin_x, origin_y);
+        
+        assert!(recovered.is_some(), "Should be able to inverse transform");
+        let recovered = recovered.unwrap();
+        
+        assert!((recovered.x - original.x).abs() < 0.001, 
+            "X should round-trip: {} vs {}", recovered.x, original.x);
+        assert!((recovered.y - original.y).abs() < 0.001, 
+            "Y should round-trip: {} vs {}", recovered.y, original.y);
+    }
+
+    /// Test skew transform round-trip
+    #[test]
+    fn skew_transform_round_trip() {
+        let transforms = vec![Transform::Skew(15.0, 10.0)];
+        let origin_x = 50.0;
+        let origin_y = 50.0;
+        
+        let matrix = compose_transform_matrix(&transforms, origin_x, origin_y);
+        let original = Point::new(80.0, 60.0);
+        
+        let transformed = matrix.transform_point(liquide_compositor::geometry::Point::new(
+            original.x, original.y
+        ));
+        let transformed_point = Point::new(transformed.x, transformed.y);
+        
+        let recovered = inverse_transform_point(transformed_point, &transforms, origin_x, origin_y);
+        
+        assert!(recovered.is_some());
+        let recovered = recovered.unwrap();
+        
+        assert!((recovered.x - original.x).abs() < 0.001);
+        assert!((recovered.y - original.y).abs() < 0.001);
     }
 }

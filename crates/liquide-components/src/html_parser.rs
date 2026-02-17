@@ -44,8 +44,10 @@ fn decode_html_entities(input: &str) -> String {
     while let Some(ch) = chars.next() {
         if ch == '&' {
             let mut entity = String::new();
+            let mut terminated = false;
             for c in chars.by_ref() {
                 if c == ';' {
+                    terminated = true;
                     break;
                 }
                 entity.push(c);
@@ -58,6 +60,10 @@ fn decode_html_entities(input: &str) -> String {
                 }
             }
             if entity.is_empty() {
+                if !terminated {
+                    // bare '&' at end of input
+                    result.push('&');
+                }
                 continue;
             }
             match entity.as_str() {
@@ -78,14 +84,19 @@ fn decode_html_entities(input: &str) -> String {
                     } else {
                         result.push('&');
                         result.push_str(&entity);
-                        result.push(';');
+                        if terminated {
+                            result.push(';');
+                        }
                     }
                 }
                 _ => {
-                    // Unknown entity — preserve raw
+                    // Unknown entity — preserve raw (only include ';' if
+                    // the original input actually contained a terminating ';')
                     result.push('&');
                     result.push_str(&entity);
-                    result.push(';');
+                    if terminated {
+                        result.push(';');
+                    }
                 }
             }
         } else {

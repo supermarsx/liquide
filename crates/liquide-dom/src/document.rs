@@ -468,26 +468,37 @@ impl Document {
     // -----------------------------------------------------------------------
 
     /// Set the element ID (for `#id` selectors).
+    ///
+    /// Passing an empty string clears the ID without inserting an empty key
+    /// into the index.
     pub fn set_id(&mut self, node_id: NodeId, id: &str) {
         let old_id = if let Some(node) = self.nodes.get_mut(&node_id) {
             let old = node.element_id.take();
-            node.element_id = Some(id.to_string());
+            if id.is_empty() {
+                // Clear only — do not store an empty element_id
+            } else {
+                node.element_id = Some(id.to_string());
+            }
             node.dirty.mark_style_dirty();
             old
         } else {
             return;
         };
 
-        // Update index
+        // Update index — remove the old entry
         if let Some(ref old) = old_id {
             self.id_index.remove(old);
         }
-        self.id_index.insert(id.to_string(), node_id);
+        // Only insert a non-empty id into the index
+        if !id.is_empty() {
+            self.id_index.insert(id.to_string(), node_id);
+        }
 
         self.dirty.mark_style(node_id);
 
+        let new_id = if id.is_empty() { None } else { Some(id) };
         for obs in &mut self.observers {
-            obs.on_id_changed(node_id, old_id.as_deref(), Some(id));
+            obs.on_id_changed(node_id, old_id.as_deref(), new_id);
         }
     }
 
@@ -546,6 +557,14 @@ impl Document {
     /// Get a mutable node by ID.
     pub fn get_mut(&mut self, node_id: NodeId) -> Option<&mut Node> {
         self.nodes.get_mut(&node_id)
+    }
+
+    /// Get the tag name of an element node.
+    ///
+    /// Returns the lowercase tag name (e.g., "div", "devtools-tab").
+    /// Returns `None` if the node doesn't exist.
+    pub fn tag_name(&self, node_id: NodeId) -> Option<String> {
+        self.nodes.get(&node_id).map(|n| n.tag_name())
     }
 
     /// Get an element by its `id` attribute.

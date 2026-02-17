@@ -69,7 +69,8 @@ impl DomEvent {
     pub fn prevent_default(&mut self) {
         if self.cancelable {
             self.default_prevented = true;
-            self.propagation = Propagation::PreventDefault;
+            // Note: prevent_default is independent of propagation —
+            // it does NOT stop propagation (W3C DOM Events spec).
         }
     }
 }

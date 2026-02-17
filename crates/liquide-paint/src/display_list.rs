@@ -5,6 +5,7 @@
 //! - R-tree spatial index for efficient partial invalidation
 //! - Push/Pop state commands for clip, transform, opacity, filters
 
+use liquide_compositor::geometry::Affine2D;
 use liquide_compositor::pixel::{BlendMode, Color};
 use liquide_compositor::property_tree::FilterOp;
 use liquide_layout::Rect;
@@ -211,14 +212,14 @@ pub enum DisplayItem {
     PopOpacity,
 
     // ── Transform ──
+    /// Push a CSS transform as a composed affine matrix.
+    ///
+    /// The matrix includes transform-origin handling and preserves the exact
+    /// composition order from the CSS `transform` property. This ensures
+    /// paint and hit-test transforms match exactly.
     PushTransform {
-        translate_x: f32,
-        translate_y: f32,
-        scale_x: f32,
-        scale_y: f32,
-        rotate: f32,
-        skew_x: f32,
-        skew_y: f32,
+        /// The composed 2D affine transformation matrix.
+        transform: Affine2D,
     },
     PopTransform,
 

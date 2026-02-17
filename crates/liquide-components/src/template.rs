@@ -441,16 +441,14 @@ impl TemplateRenderer {
         }
 
         // We need to set/clear individual flags.
-        // Iterate through all known flag bits.
+        // Only manage interactive states; structural ones (FIRST_CHILD, LAST_CHILD, ROOT)
+        // are auto-managed by Document.
         let all_flags = [
             PseudoStateFlags::HOVER,
             PseudoStateFlags::ACTIVE,
             PseudoStateFlags::FOCUS,
             PseudoStateFlags::DISABLED,
             PseudoStateFlags::CHECKED,
-            PseudoStateFlags::FIRST_CHILD,
-            PseudoStateFlags::LAST_CHILD,
-            PseudoStateFlags::ROOT,
         ];
         for flag in &all_flags {
             if changed.contains(*flag) {
@@ -531,7 +529,7 @@ impl TemplateRenderer {
         }
 
         // Remove surplus unkeyed children
-        for &child_id in unkeyed_old.iter().skip(unkeyed_idx) {
+        for &child_id in &unkeyed_old {
             if !used_old.contains(&child_id) {
                 doc.remove_child(parent, child_id);
                 doc.destroy_node(child_id);
@@ -586,21 +584,23 @@ impl TemplateRenderer {
             doc.set_attribute(id, "data-key", key);
         }
 
-        // Set pseudo-states
+        // Set pseudo-states (only interactive states; structural ones are Document-managed)
         let all_flags = [
             PseudoStateFlags::HOVER,
             PseudoStateFlags::ACTIVE,
             PseudoStateFlags::FOCUS,
             PseudoStateFlags::DISABLED,
             PseudoStateFlags::CHECKED,
-            PseudoStateFlags::FIRST_CHILD,
-            PseudoStateFlags::LAST_CHILD,
-            PseudoStateFlags::ROOT,
         ];
         for flag in &all_flags {
             if template.pseudo_states.contains(*flag) {
                 doc.set_pseudo_state(id, *flag, true);
             }
+        }
+
+        // Apply inline styles
+        for (prop, val) in &template.inline_styles {
+            doc.set_inline_style(id, prop, val);
         }
 
         // Create children recursively
