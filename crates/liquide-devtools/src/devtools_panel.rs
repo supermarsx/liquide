@@ -669,13 +669,11 @@ impl DevToolsPanel {
         false
     }
 
-    /// Handle a click inside the panel using the hit-test engine and
-    /// tag-based dispatch.
+    /// Handle a click inside the panel using the hit-test engine.
     ///
     /// This uses the internal hit-test mechanism to find which element was
-    /// clicked, then dispatches based on element type (tag name). This is
-    /// the proper internal mechanism - element identity determines action,
-    /// data attributes only carry payload (which tab, which node, etc.).
+    /// clicked, then walks up the ancestor chain looking for data attributes
+    /// that indicate actionable elements.
     ///
     /// Returns `true` if the click was consumed.
     pub fn on_panel_click(
@@ -710,100 +708,68 @@ impl DevToolsPanel {
             return false;
         }
 
-        // ── Hit-test and tag-based dispatch ──
+        // ── Hit-test and attribute-based dispatch ──
         let point = liquide_layout::geometry::Point::new(x, y);
         if let Some(result) = hit_test.hit_test(point) {
-            // Use find_ancestor to dispatch based on element tag name.
-            // This is the internal mechanism: element type → action.
-
-            // Check for main tab click (devtools-tab element)
-            if let Some(tab_node) = result.find_ancestor(|n| {
-                doc.tag_name(n).as_deref() == Some("devtools-tab")
-            }) {
-                // Get which tab from data-tab attribute (payload only)
-                if let Some(tab_id) = doc.get_attribute(tab_node, "data-tab") {
+            // Walk up from the hit node through all ancestors, checking for
+            // actionable data attributes. This works regardless of whether
+            // we hit a text node, icon, or the element itself.
+            for node_id in result.node_and_ancestors() {
+                // Check for main tab (data-tab attribute)
+                if let Some(tab_id) = doc.get_attribute(node_id, "data-tab") {
                     if let Some(t) = Self::parse_tab_id(&tab_id) {
                         self.set_tab(t);
                         return true;
                     }
                 }
-            }
 
-            // Check for toolbar button click (devtools-btn element)
-            if let Some(btn_node) = result.find_ancestor(|n| {
-                doc.tag_name(n).as_deref() == Some("devtools-btn")
-            }) {
-                if let Some(action) = doc.get_attribute(btn_node, "data-action") {
+                // Check for toolbar button (data-action attribute)
+                if let Some(action) = doc.get_attribute(node_id, "data-action") {
                     return self.handle_btn_action(&action);
                 }
-            }
 
-            // Check for side tab click (devtools-side-tab element)
-            if let Some(stab_node) = result.find_ancestor(|n| {
-                doc.tag_name(n).as_deref() == Some("devtools-side-tab")
-            }) {
-                if let Some(side_id) = doc.get_attribute(stab_node, "data-sidetab") {
+                // Check for side tab (data-sidetab attribute)
+                if let Some(side_id) = doc.get_attribute(node_id, "data-sidetab") {
                     if let Some(st) = Self::parse_sidetab_id(&side_id) {
                         self.side_tab = st;
                         return true;
                     }
                 }
-            }
 
-            // Check for tree arrow click (devtools-tree-arrow element)
-            if let Some(arrow_node) = result.find_ancestor(|n| {
-                doc.tag_name(n).as_deref() == Some("devtools-tree-arrow")
-            }) {
-                if let Some(node_id_str) = doc.get_attribute(arrow_node, "data-node") {
+                // Check for tree node (data-node attribute)
+                // Arrow elements also have data-tree-arrow to distinguish them
+                if let Some(node_id_str) = doc.get_attribute(node_id, "data-node") {
                     if let Ok(target_id) = node_id_str.parse::<NodeId>() {
-                        self.inspector.toggle_expand(target_id);
-                        return true;
-                    }
-                }
-            }
-
-            // Check for tree row click (devtools-tree-row element)
-            if let Some(row_node) = result.find_ancestor(|n| {
-                doc.tag_name(n).as_deref() == Some("devtools-tree-row")
-            }) {
-                if let Some(node_id_str) = doc.get_attribute(row_node, "data-node") {
-                    if let Ok(target_id) = node_id_str.parse::<NodeId>() {
+                        // Check if this is an arrow element
+                        if doc.get_attribute(node_id, "data-tree-arrow").is_some() {
+                            self.inspector.toggle_expand(target_id);
+                            return true;
+                        }
+                        // Otherwise it's a row/node click - select the node
                         self.select_node(target_id, styles);
                         return true;
                     }
                 }
-            }
 
-            // Check for scene row click (devtools-scene-row element)
-            if let Some(scene_node) = result.find_ancestor(|n| {
-                doc.tag_name(n).as_deref() == Some("devtools-scene-row")
-            }) {
-                if let Some(idx_str) = doc.get_attribute(scene_node, "data-scene-idx") {
+                // Check for scene row (data-scene-idx attribute)
+                if let Some(idx_str) = doc.get_attribute(node_id, "data-scene-idx") {
                     if let Ok(idx) = idx_str.parse::<usize>() {
                         self.scene_debugger.select(Some(idx));
                         return true;
                     }
                 }
-            }
 
-            // Check for style category click (devtools-style-category element)
-            if let Some(cat_node) = result.find_ancestor(|n| {
-                doc.tag_name(n).as_deref() == Some("devtools-style-category")
-            }) {
-                if let Some(cat_str) = doc.get_attribute(cat_node, "data-style-category") {
+                // Check for style category (data-style-category attribute)
+                if let Some(cat_str) = doc.get_attribute(node_id, "data-style-category") {
                     if let Some(cat) = crate::style_panel::StyleCategory::from_id(&cat_str) {
                         self.style_inspector.toggle_category(cat);
                         return true;
                     }
                 }
-            }
 
-            // Check for style property click (devtools-style-value element)
-            if let Some(prop_node) = result.find_ancestor(|n| {
-                doc.tag_name(n).as_deref() == Some("devtools-style-value")
-            }) {
-                if let Some(prop_name) = doc.get_attribute(prop_node, "data-style-prop") {
-                    if let Some(prop_value) = doc.get_attribute(prop_node, "data-style-value") {
+                // Check for style property editing (data-style-prop attribute)
+                if let Some(prop_name) = doc.get_attribute(node_id, "data-style-prop") {
+                    if let Some(prop_value) = doc.get_attribute(node_id, "data-style-value") {
                         if let Some(selected) = self.selected_node {
                             self.style_editor.set_target(Some(selected));
                         }
@@ -813,10 +779,8 @@ impl DevToolsPanel {
                 }
             }
 
-            // Check for console area (devtools-console element)
-            if result.find_ancestor(|n| {
-                doc.tag_name(n).as_deref() == Some("devtools-console")
-            }).is_some() {
+            // Fallback: check for console focus
+            if self.active_tab == DevToolsTab::Console {
                 self.console_focused = true;
                 return true;
             }
