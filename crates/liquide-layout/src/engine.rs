@@ -137,6 +137,21 @@ impl LayoutEngine {
 
         tree.root = root_box;
 
+        // Ensure root box has viewport dimensions for hit testing
+        // (root may have height 0 if all children are positioned out of flow)
+        if let Some(root_box_ref) = tree.get_mut(root_box) {
+            let vp_rect = Rect {
+                x: 0.0,
+                y: 0.0,
+                width: self.viewport.width,
+                height: self.viewport.height,
+            };
+            root_box_ref.content_rect = vp_rect;
+            root_box_ref.padding_rect = vp_rect;
+            root_box_ref.border_rect = vp_rect;
+            root_box_ref.margin_rect = vp_rect;
+        }
+
         // Second pass: layout positioned elements
         self.layout_positioned_elements(
             doc,

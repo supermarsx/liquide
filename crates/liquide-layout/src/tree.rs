@@ -190,6 +190,15 @@ impl LayoutTree {
         self.node_index.get(&node_id).copied()
     }
 
+    /// Update the node → box mapping.
+    ///
+    /// This is needed when a positioned element (position: absolute/fixed) has
+    /// `display: flex/grid`. The flex/grid layout creates a temporary box that
+    /// gets registered in node_index, but the positioned box should be canonical.
+    pub fn set_node_box(&mut self, node_id: NodeId, box_id: LayoutBoxId) {
+        self.node_index.insert(node_id, box_id);
+    }
+
     /// Total number of boxes.
     pub fn box_count(&self) -> usize {
         self.boxes.len()

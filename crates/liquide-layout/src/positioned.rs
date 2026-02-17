@@ -275,6 +275,8 @@ fn layout_children_in_positioned(
     if style.is_flex_container() {
         // Create a temporary flex container to lay out children.
         // We use layout_flex on this node but position it at content_x/content_y.
+        // NOTE: layout_flex creates a box and registers it in node_index, but we
+        // want the positioned parent_box to remain the canonical box for node_id.
         let flex_box = crate::flex::layout_flex(
             doc,
             node_id,
@@ -290,7 +292,7 @@ fn layout_children_in_positioned(
             viewport_h,
             base_font_size,
         );
-        // Steal children from the flex box
+        // Steal children from the flex box and add to the positioned parent
         let child_ids: Vec<LayoutBoxId> = tree
             .get(flex_box)
             .map(|b| b.children.clone())
@@ -298,7 +300,13 @@ fn layout_children_in_positioned(
         for child_id in child_ids {
             tree.add_child(parent_box, child_id);
         }
+        // Restore node_index to point to the positioned box (parent_box),
+        // not the temporary flex_box. This ensures hit-testing and lookups
+        // find the correctly positioned element.
+        tree.set_node_box(node_id, parent_box);
     } else if style.is_grid_container() {
+        // Same issue: layout_grid creates a temporary box. We must restore
+        // node_index to point to the positioned parent.
         let grid_box = crate::grid::layout_grid(
             doc,
             node_id,
@@ -321,6 +329,8 @@ fn layout_children_in_positioned(
         for child_id in child_ids {
             tree.add_child(parent_box, child_id);
         }
+        // Restore node_index to point to the positioned parent_box
+        tree.set_node_box(node_id, parent_box);
     } else {
         // Block-level children
         let mut child_y = 0.0f32;

@@ -2,12 +2,42 @@
 //! tab cycling, element picker, node selection, DOM tree inspection, scene output.
 
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::scene::SceneNodeKind;
 use liquide_devtools::{DevToolsPanel, DevToolsTab, ElementTreeInspector};
 use liquide_shell::Shell;
 
 fn new_shell() -> Shell {
     Shell::new(1920.0, 1080.0)
+}
+
+/// Create a shell with devtools template mounted (simulates sync_devtools_template).
+fn shell_with_devtools_template() -> (Shell, DevToolsPanel) {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let mut panel = DevToolsPanel::with_defaults();
+    panel.set_screen_size(1920.0, 1080.0);
+    panel.show();
+    
+    // Load devtools CSS - this is normally done by DesktopSession::set_dev_mode
+    static DEVTOOLS_CSS: &str =
+        include_str!("../../../assets/themes/components/devtools.css");
+    shell.add_stylesheet(DEVTOOLS_CSS);
+    
+    // First build_scene to populate the base layout tree and style map
+    let _ = shell.build_scene();
+    
+    // Now render_template can use the layout tree and styles
+    let doc = shell.document();
+    let template = {
+        match (shell.layout_tree(), shell.style_map()) {
+            (Some(layout), Some(styles)) => panel.render_template(doc, layout, styles),
+            _ => liquide_devtools::TemplateNode::el("devtools-panel").id("devtools-panel"),
+        }
+    };
+    shell.mount_template("devtools-panel", &template);
+    
+    // Second build_scene to lay out the devtools panel
+    let _ = shell.build_scene();
+    
+    (shell, panel)
 }
 
 // ── DevToolsPanel Construction ──────────────────────────────────────────────
@@ -485,4 +515,30 @@ fn mutation_log_starts_empty() {
 fn dom_serializer_accessible() {
     let panel = DevToolsPanel::with_defaults();
     let _ = &panel.dom_serializer;
+}
+
+// ── Click Dispatch ──────────────────────────────────────────────────────────
+
+#[test]
+fn on_panel_click_finds_devtools_elements() {
+    let (shell, panel) = shell_with_devtools_template();
+    
+    // Get the panel bounds - should be at bottom of screen
+    let bounds = panel.panel_bounds();
+    
+    let hit_test = shell.hit_test_engine().unwrap();
+    
+    // Click in the center of the panel, near top where tabs are
+    let click_x = bounds.x + bounds.width / 2.0;
+    let click_y = bounds.y + 15.0;
+    
+    // Test that hit_test finds something inside devtools panel
+    let point = liquide_layout::geometry::Point::new(click_x, click_y);
+    let hit_result = hit_test.hit_test(point);
+    
+    assert!(hit_result.is_some(), "Hit test should find an element inside devtools panel bounds");
+    
+    // Verify hit bounds are within devtools panel
+    let result = hit_result.unwrap();
+    assert!(result.bounds.y >= bounds.y, "Hit element should be within panel bounds");
 }

@@ -710,11 +710,22 @@ impl DevToolsPanel {
 
         // ── Hit-test and attribute-based dispatch ──
         let point = liquide_layout::geometry::Point::new(x, y);
+        #[cfg(debug_assertions)]
+        eprintln!("[devtools] on_panel_click({}, {}) inside bounds {:?}", x, y, bounds);
         if let Some(result) = hit_test.hit_test(point) {
+            #[cfg(debug_assertions)]
+            eprintln!("[devtools]   -> hit node {:?}, bounds {:?}, ancestors: {:?}", result.node, result.bounds, result.ancestors);
             // Walk up from the hit node through all ancestors, checking for
             // actionable data attributes. This works regardless of whether
             // we hit a text node, icon, or the element itself.
             for node_id in result.node_and_ancestors() {
+                #[cfg(debug_assertions)]
+                {
+                    let tag = doc.tag_name(node_id).unwrap_or_default();
+                    let has_tab = doc.get_attribute(node_id, "data-tab").is_some();
+                    let has_action = doc.get_attribute(node_id, "data-action").is_some();
+                    eprintln!("[devtools]     checking {:?} tag={:?} has_tab={} has_action={}", node_id, tag, has_tab, has_action);
+                }
                 // Check for main tab (data-tab attribute)
                 if let Some(tab_id) = doc.get_attribute(node_id, "data-tab") {
                     if let Some(t) = Self::parse_tab_id(&tab_id) {
@@ -784,6 +795,9 @@ impl DevToolsPanel {
                 self.console_focused = true;
                 return true;
             }
+        } else {
+            #[cfg(debug_assertions)]
+            eprintln!("[devtools]   -> hit_test returned None for point ({}, {})", x, y);
         }
 
         // Click inside panel always consumed.

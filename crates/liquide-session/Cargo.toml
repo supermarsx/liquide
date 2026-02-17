@@ -47,3 +47,4 @@ liquide-devtools = { path = "../liquide-devtools" }
 liquide-input = { path = "../liquide-input" }
 liquide-platform = { path = "../liquide-platform" }
 liquide-dom = { path = "../liquide-dom" }
+liquide-layout = { path = "../liquide-layout" }
