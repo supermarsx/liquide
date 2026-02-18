@@ -372,6 +372,31 @@ impl DxgiPresenter {
             // 2. Upload CPU pixels into the back buffer.
             //    UpdateSubresource copies from system memory to GPU memory
             //    in a single call — no staging texture needed.
+            
+            // SAFETY: Validate buffer bounds to prevent out-of-bounds reads.
+            // UpdateSubresource will read `height` rows of `stride` bytes each.
+            // The minimum required buffer size is:
+            //   (height - 1) * stride + width * 4 (last row only needs pixel data)
+            let bytes_per_pixel = 4_u32; // BGRA8
+            let min_stride = width.saturating_mul(bytes_per_pixel);
+            if stride < min_stride {
+                Self::release(back_buffer);
+                return Err(format!(
+                    "stride ({stride}) is smaller than minimum required ({min_stride}) for width {width}"
+                ));
+            }
+            let min_buffer_size = (height as usize)
+                .saturating_sub(1)
+                .saturating_mul(stride as usize)
+                .saturating_add(min_stride as usize);
+            if pixels.len() < min_buffer_size {
+                Self::release(back_buffer);
+                return Err(format!(
+                    "pixel buffer too small: {} bytes provided, {} required for {}x{} @ stride {}",
+                    pixels.len(), min_buffer_size, width, height, stride
+                ));
+            }
+
             // ID3D11DeviceContext::UpdateSubresource = vtable slot 48
             type UpdateSubresourceFn = unsafe extern "system" fn(
                 this: *mut c_void,
