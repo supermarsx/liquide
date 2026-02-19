@@ -82,7 +82,7 @@ impl ThemeParser {
                     // Convert declarations to properties
                     let properties = self.convert_declarations(&style_rule.declarations)?;
 
-                    stylesheet.add_rule(our_selector, properties);
+                    stylesheet.add_rule_with_conditions(our_selector, properties, None, None, None);
                 }
                 // CSS Nesting Level 1: process nested rules within this style rule.
                 // Nested rules inherit the parent selector context — `&` references
@@ -95,7 +95,14 @@ impl ThemeParser {
                         .filter_map(|s| self.selector_to_string(s).ok())
                         .collect();
                     for nested_rule in &style_rule.rules.0 {
-                        self.process_nested_rule(nested_rule, &parent_selectors, stylesheet)?;
+                        self.process_nested_rule(
+                            nested_rule,
+                            &parent_selectors,
+                            stylesheet,
+                            None,
+                            None,
+                            None,
+                        )?;
                     }
                 }
             }
@@ -104,19 +111,28 @@ impl ThemeParser {
                 let condition = self.to_css_string(&media.query);
                 // Process nested rules, tagging each with the media condition
                 for nested_rule in &media.rules.0 {
-                    self.process_rule_with_media(nested_rule, stylesheet, Some(&condition))?;
+                    self.process_rule_with_media(
+                        nested_rule,
+                        stylesheet,
+                        Some(&condition),
+                        None,
+                        None,
+                    )?;
                 }
             }
             CssRule::Supports(supports) => {
                 // Serialize the @supports condition
                 let condition_str = self.to_css_string(&supports.condition);
-                // Evaluate simple @supports conditions at parse time
-                if self.evaluate_supports_condition(&condition_str) {
-                    for nested_rule in &supports.rules.0 {
-                        self.process_rule(nested_rule, stylesheet)?;
-                    }
+                // Preserve supports condition for runtime evaluation.
+                for nested_rule in &supports.rules.0 {
+                    self.process_rule_with_supports(
+                        nested_rule,
+                        stylesheet,
+                        Some(&condition_str),
+                        None,
+                        None,
+                    )?;
                 }
-                // If the condition doesn't match, the rules are dropped.
             }
             CssRule::Keyframes(keyframes) => {
                 let name = match &keyframes.name {
@@ -259,7 +275,13 @@ impl ThemeParser {
                     stylesheet.add_layer(&layer_name);
                 }
                 for nested_rule in &layer_block.rules.0 {
-                    self.process_rule_in_layer(nested_rule, stylesheet, &layer_name)?;
+                    self.process_rule_in_layer(
+                        nested_rule,
+                        stylesheet,
+                        &layer_name,
+                        None,
+                        None,
+                    )?;
                 }
             }
             CssRule::Container(container) => {
@@ -441,12 +463,14 @@ impl ThemeParser {
         Ok(())
     }
 
-    /// Process a CSS rule that lives inside an @media block, tagging output rules with the condition.
+    /// Process a CSS rule that lives inside an @media block, tagging output rules with conditions.
     fn process_rule_with_media(
         &self,
         rule: &CssRule,
         stylesheet: &mut StyleSheet,
         media_condition: Option<&str>,
+        supports_condition: Option<&str>,
+        layer_name: Option<&str>,
     ) -> Result<()> {
         match rule {
             CssRule::Style(style_rule) => {
@@ -454,29 +478,242 @@ impl ThemeParser {
                     let selector_str = self.selector_to_string(selector)?;
                     let our_selector = Selector::parse(&selector_str)?;
                     let properties = self.convert_declarations(&style_rule.declarations)?;
-                    if let Some(condition) = media_condition {
-                        stylesheet.add_conditional_rule(
-                            our_selector,
-                            properties,
-                            condition.to_string(),
-                        );
-                    } else {
-                        stylesheet.add_rule(our_selector, properties);
+                    stylesheet.add_rule_with_conditions(
+                        our_selector,
+                        properties,
+                        media_condition.map(|s| s.to_string()),
+                        supports_condition.map(|s| s.to_string()),
+                        layer_name.map(|s| s.to_string()),
+                    );
+                }
+                if !style_rule.rules.0.is_empty() {
+                    let parent_selectors: Vec<String> = style_rule
+                        .selectors
+                        .0
+                        .iter()
+                        .filter_map(|s| self.selector_to_string(s).ok())
+                        .collect();
+                    for nested_rule in &style_rule.rules.0 {
+                        self.process_nested_rule(
+                            nested_rule,
+                            &parent_selectors,
+                            stylesheet,
+                            media_condition,
+                            supports_condition,
+                            layer_name,
+                        )?;
                     }
                 }
             }
             CssRule::Media(media) => {
-                // Nested @media: combine conditions with "and"
                 let inner_condition = self.to_css_string(&media.query);
                 let combined = match media_condition {
                     Some(outer) => format!("{} and {}", outer, inner_condition),
                     None => inner_condition,
                 };
                 for nested_rule in &media.rules.0 {
-                    self.process_rule_with_media(nested_rule, stylesheet, Some(&combined))?;
+                    self.process_rule_with_media(
+                        nested_rule,
+                        stylesheet,
+                        Some(&combined),
+                        supports_condition,
+                        layer_name,
+                    )?;
                 }
             }
-            // For any other rule type inside @media, delegate to normal processing
+            CssRule::Supports(supports) => {
+                let inner = self.to_css_string(&supports.condition);
+                let combined = match supports_condition {
+                    Some(outer) => format!("({}) and ({})", outer, inner),
+                    None => inner,
+                };
+                for nested_rule in &supports.rules.0 {
+                    self.process_rule_with_supports(
+                        nested_rule,
+                        stylesheet,
+                        Some(&combined),
+                        media_condition,
+                        layer_name,
+                    )?;
+                }
+            }
+            CssRule::LayerBlock(layer_block) => {
+                let inner_layer = layer_block
+                    .name
+                    .as_ref()
+                    .map(|n| self.to_css_string(n))
+                    .unwrap_or_default();
+                if !inner_layer.is_empty() {
+                    stylesheet.add_layer(&inner_layer);
+                }
+                let effective_layer = if inner_layer.is_empty() {
+                    layer_name
+                } else {
+                    Some(inner_layer.as_str())
+                };
+                for nested_rule in &layer_block.rules.0 {
+                    self.process_rule_in_layer(
+                        nested_rule,
+                        stylesheet,
+                        effective_layer.unwrap_or(""),
+                        media_condition,
+                        supports_condition,
+                    )?;
+                }
+            }
+            CssRule::Container(container) => {
+                let condition = self.to_css_string(&container.condition);
+                let name = container.name.as_ref().map(|n| self.to_css_string(n));
+                let mut container_rules = Vec::new();
+                for nested_rule in &container.rules.0 {
+                    if let CssRule::Style(style_rule) = nested_rule {
+                        for selector in &style_rule.selectors.0 {
+                            let selector_str = self.selector_to_string(selector)?;
+                            let our_selector = Selector::parse(&selector_str)?;
+                            let properties = self.convert_declarations(&style_rule.declarations)?;
+                            let mut rule = crate::stylesheet::StyleRule::new(our_selector, properties);
+                            rule.media_condition = media_condition.map(|s| s.to_string());
+                            rule.supports_condition = supports_condition.map(|s| s.to_string());
+                            rule.layer = layer_name.map(|s| s.to_string());
+                            container_rules.push(rule);
+                        }
+                    }
+                }
+                stylesheet.add_container_rule(crate::stylesheet::ContainerRule {
+                    name,
+                    condition,
+                    rules: container_rules,
+                });
+            }
+            _ => {
+                self.process_rule(rule, stylesheet)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Process a CSS rule that lives inside an @supports block, tagging output rules with conditions.
+    fn process_rule_with_supports(
+        &self,
+        rule: &CssRule,
+        stylesheet: &mut StyleSheet,
+        supports_condition: Option<&str>,
+        media_condition: Option<&str>,
+        layer_name: Option<&str>,
+    ) -> Result<()> {
+        match rule {
+            CssRule::Style(style_rule) => {
+                for selector in &style_rule.selectors.0 {
+                    let selector_str = self.selector_to_string(selector)?;
+                    let our_selector = Selector::parse(&selector_str)?;
+                    let properties = self.convert_declarations(&style_rule.declarations)?;
+                    stylesheet.add_rule_with_conditions(
+                        our_selector,
+                        properties,
+                        media_condition.map(|s| s.to_string()),
+                        supports_condition.map(|s| s.to_string()),
+                        layer_name.map(|s| s.to_string()),
+                    );
+                }
+                if !style_rule.rules.0.is_empty() {
+                    let parent_selectors: Vec<String> = style_rule
+                        .selectors
+                        .0
+                        .iter()
+                        .filter_map(|s| self.selector_to_string(s).ok())
+                        .collect();
+                    for nested_rule in &style_rule.rules.0 {
+                        self.process_nested_rule(
+                            nested_rule,
+                            &parent_selectors,
+                            stylesheet,
+                            media_condition,
+                            supports_condition,
+                            layer_name,
+                        )?;
+                    }
+                }
+            }
+            CssRule::Supports(supports) => {
+                let inner = self.to_css_string(&supports.condition);
+                let combined = match supports_condition {
+                    Some(outer) => format!("({}) and ({})", outer, inner),
+                    None => inner,
+                };
+                for nested_rule in &supports.rules.0 {
+                    self.process_rule_with_supports(
+                        nested_rule,
+                        stylesheet,
+                        Some(&combined),
+                        media_condition,
+                        layer_name,
+                    )?;
+                }
+            }
+            CssRule::Media(media) => {
+                let inner_condition = self.to_css_string(&media.query);
+                let combined = match media_condition {
+                    Some(outer) => format!("{} and {}", outer, inner_condition),
+                    None => inner_condition,
+                };
+                for nested_rule in &media.rules.0 {
+                    self.process_rule_with_media(
+                        nested_rule,
+                        stylesheet,
+                        Some(&combined),
+                        supports_condition,
+                        layer_name,
+                    )?;
+                }
+            }
+            CssRule::LayerBlock(layer_block) => {
+                let inner_layer = layer_block
+                    .name
+                    .as_ref()
+                    .map(|n| self.to_css_string(n))
+                    .unwrap_or_default();
+                if !inner_layer.is_empty() {
+                    stylesheet.add_layer(&inner_layer);
+                }
+                let effective_layer = if inner_layer.is_empty() {
+                    layer_name
+                } else {
+                    Some(inner_layer.as_str())
+                };
+                for nested_rule in &layer_block.rules.0 {
+                    self.process_rule_in_layer(
+                        nested_rule,
+                        stylesheet,
+                        effective_layer.unwrap_or(""),
+                        media_condition,
+                        supports_condition,
+                    )?;
+                }
+            }
+            CssRule::Container(container) => {
+                let condition = self.to_css_string(&container.condition);
+                let name = container.name.as_ref().map(|n| self.to_css_string(n));
+                let mut container_rules = Vec::new();
+                for nested_rule in &container.rules.0 {
+                    if let CssRule::Style(style_rule) = nested_rule {
+                        for selector in &style_rule.selectors.0 {
+                            let selector_str = self.selector_to_string(selector)?;
+                            let our_selector = Selector::parse(&selector_str)?;
+                            let properties = self.convert_declarations(&style_rule.declarations)?;
+                            let mut rule = crate::stylesheet::StyleRule::new(our_selector, properties);
+                            rule.media_condition = media_condition.map(|s| s.to_string());
+                            rule.supports_condition = supports_condition.map(|s| s.to_string());
+                            rule.layer = layer_name.map(|s| s.to_string());
+                            container_rules.push(rule);
+                        }
+                    }
+                }
+                stylesheet.add_container_rule(crate::stylesheet::ContainerRule {
+                    name,
+                    condition,
+                    rules: container_rules,
+                });
+            }
             _ => {
                 self.process_rule(rule, stylesheet)?;
             }
@@ -490,18 +727,108 @@ impl ThemeParser {
         rule: &CssRule,
         stylesheet: &mut StyleSheet,
         layer_name: &str,
+        media_condition: Option<&str>,
+        supports_condition: Option<&str>,
     ) -> Result<()> {
         match rule {
             CssRule::Style(style_rule) => {
+                let layer = if layer_name.is_empty() {
+                    None
+                } else {
+                    Some(layer_name.to_string())
+                };
                 for selector in &style_rule.selectors.0 {
                     let selector_str = self.selector_to_string(selector)?;
                     let our_selector = Selector::parse(&selector_str)?;
                     let properties = self.convert_declarations(&style_rule.declarations)?;
-                    stylesheet.add_layer_rule(layer_name, our_selector, properties);
+                    stylesheet.add_rule_with_conditions(
+                        our_selector,
+                        properties,
+                        media_condition.map(|s| s.to_string()),
+                        supports_condition.map(|s| s.to_string()),
+                        layer.clone(),
+                    );
+                }
+                if !style_rule.rules.0.is_empty() {
+                    let parent_selectors: Vec<String> = style_rule
+                        .selectors
+                        .0
+                        .iter()
+                        .filter_map(|s| self.selector_to_string(s).ok())
+                        .collect();
+                    for nested_rule in &style_rule.rules.0 {
+                        self.process_nested_rule(
+                            nested_rule,
+                            &parent_selectors,
+                            stylesheet,
+                            media_condition,
+                            supports_condition,
+                            layer.as_deref(),
+                        )?;
+                    }
                 }
             }
+            CssRule::Media(media) => {
+                let inner_condition = self.to_css_string(&media.query);
+                let combined = match media_condition {
+                    Some(outer) => format!("{} and {}", outer, inner_condition),
+                    None => inner_condition,
+                };
+                for nested_rule in &media.rules.0 {
+                    self.process_rule_with_media(
+                        nested_rule,
+                        stylesheet,
+                        Some(&combined),
+                        supports_condition,
+                        Some(layer_name),
+                    )?;
+                }
+            }
+            CssRule::Supports(supports) => {
+                let inner = self.to_css_string(&supports.condition);
+                let combined = match supports_condition {
+                    Some(outer) => format!("({}) and ({})", outer, inner),
+                    None => inner,
+                };
+                for nested_rule in &supports.rules.0 {
+                    self.process_rule_with_supports(
+                        nested_rule,
+                        stylesheet,
+                        Some(&combined),
+                        media_condition,
+                        Some(layer_name),
+                    )?;
+                }
+            }
+            CssRule::Container(container) => {
+                let condition = self.to_css_string(&container.condition);
+                let name = container.name.as_ref().map(|n| self.to_css_string(n));
+                let mut container_rules = Vec::new();
+                for nested_rule in &container.rules.0 {
+                    if let CssRule::Style(style_rule) = nested_rule {
+                        for selector in &style_rule.selectors.0 {
+                            let selector_str = self.selector_to_string(selector)?;
+                            let our_selector = Selector::parse(&selector_str)?;
+                            let properties = self.convert_declarations(&style_rule.declarations)?;
+                            let mut rule = crate::stylesheet::StyleRule::new(our_selector, properties);
+                            rule.media_condition = media_condition.map(|s| s.to_string());
+                            rule.supports_condition = supports_condition.map(|s| s.to_string());
+                            rule.layer = if layer_name.is_empty() {
+                                None
+                            } else {
+                                Some(layer_name.to_string())
+                            };
+                            container_rules.push(rule);
+                        }
+                    }
+                }
+                stylesheet.add_container_rule(crate::stylesheet::ContainerRule {
+                    name,
+                    condition,
+                    rules: container_rules,
+                });
+            }
             _ => {
-                // For other rule types inside @layer, delegate to normal processing
                 self.process_rule(rule, stylesheet)?;
             }
         }
@@ -518,22 +845,28 @@ impl ThemeParser {
         rule: &CssRule,
         parent_selectors: &[String],
         stylesheet: &mut StyleSheet,
+        media_condition: Option<&str>,
+        supports_condition: Option<&str>,
+        layer_name: Option<&str>,
     ) -> Result<()> {
         match rule {
             CssRule::Style(style_rule) => {
                 for nested_sel in &style_rule.selectors.0 {
                     let nested_str = self.selector_to_string(nested_sel)?;
-                    // For each parent selector, resolve the nested selector
                     for parent_str in parent_selectors {
                         let resolved = Self::resolve_nesting_selector(&nested_str, parent_str);
                         let our_selector = Selector::parse(&resolved)?;
                         let properties = self.convert_declarations(&style_rule.declarations)?;
-                        stylesheet.add_rule(our_selector, properties);
+                        stylesheet.add_rule_with_conditions(
+                            our_selector,
+                            properties,
+                            media_condition.map(|s| s.to_string()),
+                            supports_condition.map(|s| s.to_string()),
+                            layer_name.map(|s| s.to_string()),
+                        );
                     }
                 }
-                // Recurse into further nested rules
                 if !style_rule.rules.0.is_empty() {
-                    // Build resolved parent selectors for this level
                     let mut new_parents = Vec::new();
                     for nested_sel in &style_rule.selectors.0 {
                         let nested_str = self.selector_to_string(nested_sel)?;
@@ -543,23 +876,33 @@ impl ThemeParser {
                         }
                     }
                     for sub_rule in &style_rule.rules.0 {
-                        self.process_nested_rule(sub_rule, &new_parents, stylesheet)?;
+                        self.process_nested_rule(
+                            sub_rule,
+                            &new_parents,
+                            stylesheet,
+                            media_condition,
+                            supports_condition,
+                            layer_name,
+                        )?;
                     }
                 }
             }
             CssRule::Nesting(nesting) => {
-                // CssRule::Nesting wraps a StyleRule with explicit `&` usage.
-                // Process the inner style rule's selectors and declarations directly.
                 for nested_sel in &nesting.style.selectors.0 {
                     let nested_str = self.selector_to_string(nested_sel)?;
                     for parent_str in parent_selectors {
                         let resolved = Self::resolve_nesting_selector(&nested_str, parent_str);
                         let our_selector = Selector::parse(&resolved)?;
                         let properties = self.convert_declarations(&nesting.style.declarations)?;
-                        stylesheet.add_rule(our_selector, properties);
+                        stylesheet.add_rule_with_conditions(
+                            our_selector,
+                            properties,
+                            media_condition.map(|s| s.to_string()),
+                            supports_condition.map(|s| s.to_string()),
+                            layer_name.map(|s| s.to_string()),
+                        );
                     }
                 }
-                // Recurse into further nested rules
                 if !nesting.style.rules.0.is_empty() {
                     let mut new_parents = Vec::new();
                     for nested_sel in &nesting.style.selectors.0 {
@@ -570,13 +913,23 @@ impl ThemeParser {
                         }
                     }
                     for sub_rule in &nesting.style.rules.0 {
-                        self.process_nested_rule(sub_rule, &new_parents, stylesheet)?;
+                        self.process_nested_rule(
+                            sub_rule,
+                            &new_parents,
+                            stylesheet,
+                            media_condition,
+                            supports_condition,
+                            layer_name,
+                        )?;
                     }
                 }
             }
             CssRule::Media(media) => {
-                // Nested @media inside a style rule — combine with parent selector
                 let condition = self.to_css_string(&media.query);
+                let combined_media = match media_condition {
+                    Some(outer) => format!("{} and {}", outer, condition),
+                    None => condition,
+                };
                 for nested_rule in &media.rules.0 {
                     if let CssRule::Style(style_rule) = nested_rule {
                         for nested_sel in &style_rule.selectors.0 {
@@ -587,10 +940,12 @@ impl ThemeParser {
                                 let our_selector = Selector::parse(&resolved)?;
                                 let properties =
                                     self.convert_declarations(&style_rule.declarations)?;
-                                stylesheet.add_conditional_rule(
+                                stylesheet.add_rule_with_conditions(
                                     our_selector,
                                     properties,
-                                    condition.clone(),
+                                    Some(combined_media.clone()),
+                                    supports_condition.map(|s| s.to_string()),
+                                    layer_name.map(|s| s.to_string()),
                                 );
                             }
                         }
@@ -598,7 +953,6 @@ impl ThemeParser {
                 }
             }
             _ => {
-                // Other nested at-rules: process normally
                 self.process_rule(rule, stylesheet)?;
             }
         }
@@ -615,295 +969,6 @@ impl ThemeParser {
         } else {
             // Implicit `& <nested>` — descendant combinator
             format!("{} {}", parent, nested)
-        }
-    }
-
-    /// Evaluate a serialized @supports condition.
-    ///
-    /// Returns `true` if the condition is satisfied by our engine's property set.
-    /// Unknown conditions default to `true` so that the rules are included.
-    fn evaluate_supports_condition(&self, condition: &str) -> bool {
-        let condition = condition.trim();
-
-        // Handle "not <condition>"
-        if let Some(inner) = condition.strip_prefix("not ") {
-            return !self.evaluate_supports_condition(inner.trim());
-        }
-
-        // Handle parenthesized declaration: "(property: value)"
-        if condition.starts_with('(') && condition.ends_with(')') {
-            let inner = &condition[1..condition.len() - 1].trim();
-            // Check for and/or inside parens (compound condition)
-            if inner.contains(") and (") || inner.contains(") or (") {
-                // Compound — split on " and " / " or "
-                if let Some(_) = condition.find(") and (") {
-                    return condition
-                        .split(" and ")
-                        .all(|part| self.evaluate_supports_condition(part.trim()));
-                }
-                if let Some(_) = condition.find(") or (") {
-                    return condition
-                        .split(" or ")
-                        .any(|part| self.evaluate_supports_condition(part.trim()));
-                }
-            }
-            // Simple property: value declaration check
-            if let Some(colon_pos) = inner.find(':') {
-                let property = inner[..colon_pos].trim();
-                let value = inner[colon_pos + 1..].trim();
-                // Check property is supported AND the value is parseable
-                return Self::is_supported_css_property(property)
-                    && Self::is_supported_css_value(property, value);
-            }
-            // Might be a nested condition
-            return self.evaluate_supports_condition(inner);
-        }
-
-        // If we see " and " at the top level
-        if condition.contains(" and ") {
-            return condition
-                .split(" and ")
-                .all(|part| self.evaluate_supports_condition(part.trim()));
-        }
-        // If we see " or "
-        if condition.contains(" or ") {
-            return condition
-                .split(" or ")
-                .any(|part| self.evaluate_supports_condition(part.trim()));
-        }
-
-        // Default: assume supported
-        true
-    }
-
-    /// Check if a CSS property name is supported by our engine.
-    fn is_supported_css_property(property: &str) -> bool {
-        matches!(
-            property.trim(),
-            "display"
-                | "position"
-                | "width"
-                | "height"
-                | "min-width"
-                | "max-width"
-                | "min-height"
-                | "max-height"
-                | "margin"
-                | "margin-top"
-                | "margin-right"
-                | "margin-bottom"
-                | "margin-left"
-                | "padding"
-                | "padding-top"
-                | "padding-right"
-                | "padding-bottom"
-                | "padding-left"
-                | "color"
-                | "background"
-                | "background-color"
-                | "border"
-                | "border-color"
-                | "border-width"
-                | "border-style"
-                | "border-radius"
-                | "font-size"
-                | "font-weight"
-                | "font-family"
-                | "font-style"
-                | "line-height"
-                | "text-align"
-                | "text-transform"
-                | "text-overflow"
-                | "white-space"
-                | "opacity"
-                | "visibility"
-                | "overflow"
-                | "overflow-x"
-                | "overflow-y"
-                | "flex"
-                | "flex-direction"
-                | "flex-wrap"
-                | "flex-grow"
-                | "flex-shrink"
-                | "flex-basis"
-                | "justify-content"
-                | "align-items"
-                | "align-self"
-                | "align-content"
-                | "gap"
-                | "row-gap"
-                | "column-gap"
-                | "grid-template-columns"
-                | "grid-template-rows"
-                | "grid-auto-flow"
-                | "grid-column"
-                | "grid-row"
-                | "z-index"
-                | "cursor"
-                | "pointer-events"
-                | "box-shadow"
-                | "transform"
-                | "transition"
-                | "box-sizing"
-                | "top"
-                | "right"
-                | "bottom"
-                | "left"
-                | "order"
-                | "letter-spacing"
-                | "word-spacing"
-                | "text-indent"
-                | "word-break"
-        )
-    }
-
-    /// Check if a CSS value is valid for the given property.
-    /// This goes beyond mere property-existence to validate specific values.
-    fn is_supported_css_value(property: &str, value: &str) -> bool {
-        let value = value.trim();
-        match property {
-            "display" => matches!(
-                value,
-                "block"
-                    | "inline"
-                    | "inline-block"
-                    | "flex"
-                    | "inline-flex"
-                    | "grid"
-                    | "inline-grid"
-                    | "none"
-                    | "contents"
-                    | "table"
-                    | "table-row"
-                    | "table-cell"
-                    | "list-item"
-                    | "flow-root"
-            ),
-            "position" => matches!(value, "static" | "relative" | "absolute" | "fixed" | "sticky"),
-            "visibility" => matches!(value, "visible" | "hidden" | "collapse"),
-            "overflow" | "overflow-x" | "overflow-y" => {
-                matches!(value, "visible" | "hidden" | "scroll" | "auto" | "clip")
-            }
-            "box-sizing" => matches!(value, "border-box" | "content-box"),
-            "text-align" => matches!(
-                value,
-                "left" | "right" | "center" | "justify" | "start" | "end"
-            ),
-            "text-transform" => {
-                matches!(value, "none" | "uppercase" | "lowercase" | "capitalize")
-            }
-            "text-overflow" => matches!(value, "clip" | "ellipsis"),
-            "white-space" => matches!(
-                value,
-                "normal" | "nowrap" | "pre" | "pre-wrap" | "pre-line" | "break-spaces"
-            ),
-            "flex-direction" => {
-                matches!(value, "row" | "row-reverse" | "column" | "column-reverse")
-            }
-            "flex-wrap" => matches!(value, "nowrap" | "wrap" | "wrap-reverse"),
-            "justify-content" => matches!(
-                value,
-                "flex-start"
-                    | "flex-end"
-                    | "center"
-                    | "space-between"
-                    | "space-around"
-                    | "space-evenly"
-                    | "start"
-                    | "end"
-                    | "stretch"
-            ),
-            "align-items" | "align-self" => matches!(
-                value,
-                "flex-start"
-                    | "flex-end"
-                    | "center"
-                    | "stretch"
-                    | "baseline"
-                    | "start"
-                    | "end"
-                    | "auto"
-                    | "normal"
-            ),
-            "cursor" => matches!(
-                value,
-                "auto"
-                    | "default"
-                    | "pointer"
-                    | "crosshair"
-                    | "text"
-                    | "move"
-                    | "grab"
-                    | "grabbing"
-                    | "not-allowed"
-                    | "wait"
-                    | "progress"
-                    | "help"
-                    | "none"
-            ),
-            "word-break" => matches!(value, "normal" | "break-all" | "keep-all" | "break-word"),
-            "pointer-events" => matches!(value, "auto" | "none"),
-            "border-style" => matches!(
-                value,
-                "none"
-                    | "solid"
-                    | "dashed"
-                    | "dotted"
-                    | "double"
-                    | "groove"
-                    | "ridge"
-                    | "inset"
-                    | "outset"
-                    | "hidden"
-            ),
-            // For any length-valued property, check if value parses as a length, number, or auto/none
-            "width" | "height" | "min-width" | "max-width" | "min-height" | "max-height"
-            | "margin" | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
-            | "padding" | "padding-top" | "padding-right" | "padding-bottom" | "padding-left"
-            | "top" | "right" | "bottom" | "left" | "gap" | "row-gap" | "column-gap"
-            | "border-radius" | "border-width" | "font-size" | "line-height"
-            | "letter-spacing" | "word-spacing" | "text-indent" | "flex-basis" => {
-                matches!(
-                    value,
-                    "auto" | "none" | "0" | "inherit" | "initial" | "unset"
-                        | "min-content" | "max-content" | "fit-content"
-                ) || value.ends_with("px")
-                    || value.ends_with("em")
-                    || value.ends_with("rem")
-                    || value.ends_with('%')
-                    || value.ends_with("vw")
-                    || value.ends_with("vh")
-                    || value.ends_with("pt")
-                    || value.ends_with("ch")
-                    || value.starts_with("calc(")
-                    || value.parse::<f32>().is_ok()
-            }
-            // Color properties — accept common color formats
-            "color" | "background-color" | "background" => {
-                value.starts_with('#')
-                    || value.starts_with("rgb")
-                    || value.starts_with("hsl")
-                    || value.starts_with("oklch")
-                    || value.starts_with("oklab")
-                    || value.starts_with("color(")
-                    || value.starts_with("hwb")
-                    || matches!(
-                        value,
-                        "transparent" | "currentColor" | "inherit" | "initial" | "unset" | "none"
-                    )
-                    || Color::from_hex(value).is_ok()
-                    || csscolorparser::parse(value).is_ok()
-            }
-            // Number properties
-            "opacity" | "flex-grow" | "flex-shrink" | "z-index" | "order" | "font-weight" => {
-                matches!(
-                    value,
-                    "auto" | "normal" | "bold" | "bolder" | "lighter"
-                        | "inherit" | "initial" | "unset"
-                ) || value.parse::<f32>().is_ok()
-            }
-            // Default: if property is known, assume value is valid
-            _ => Self::is_supported_css_property(property),
         }
     }
 
@@ -2551,5 +2616,43 @@ mod tests {
 
         // Should parse successfully with lightningcss (full CSS3 support)
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_supports_rules_preserved() {
+        let css = r#"
+            @supports (display: grid) {
+                button { color: #00ff00; }
+            }
+        "#;
+
+        let parser = ThemeParser::new();
+        let sheet = parser.parse_str(css).unwrap();
+        assert_eq!(sheet.rule_count(), 1);
+        assert!(
+            sheet.rules()[0]
+                .supports_condition
+                .as_deref()
+                .unwrap_or("")
+                .contains("display")
+        );
+    }
+
+    #[test]
+    fn test_parse_media_supports_combined() {
+        let css = r#"
+            @media (max-width: 600px) {
+                @supports (display: grid) {
+                    button { color: #00ff00; }
+                }
+            }
+        "#;
+
+        let parser = ThemeParser::new();
+        let sheet = parser.parse_str(css).unwrap();
+        assert_eq!(sheet.rule_count(), 1);
+        let rule = &sheet.rules()[0];
+        assert!(rule.media_condition.is_some());
+        assert!(rule.supports_condition.as_deref().unwrap_or("").contains("display"));
     }
 }

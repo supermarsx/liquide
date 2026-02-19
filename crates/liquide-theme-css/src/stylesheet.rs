@@ -4,7 +4,7 @@ use crate::property::PropertySet;
 use crate::selector::Selector;
 use crate::value::{FontFaceRule, KeyframesRule, PropertyValue};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A parsed CSS stylesheet
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -129,6 +129,34 @@ pub struct ScopeRule {
     pub rules: Vec<StyleRule>,
 }
 
+/// Environment used when evaluating conditional CSS rules.
+#[derive(Debug, Clone)]
+pub struct QueryEnvironment {
+    /// Viewport width in CSS pixels.
+    pub viewport_width: f32,
+    /// Viewport height in CSS pixels.
+    pub viewport_height: f32,
+    /// Preferred color scheme (`"light"` / `"dark"`).
+    pub preferred_color_scheme: String,
+    /// Whether reduced motion is preferred.
+    pub prefers_reduced_motion: bool,
+    /// Explicitly supported property names for `@supports` checks.
+    /// If empty, the stylesheet's built-in support table is used.
+    pub supported_properties: HashSet<String>,
+}
+
+impl Default for QueryEnvironment {
+    fn default() -> Self {
+        Self {
+            viewport_width: 1920.0,
+            viewport_height: 1080.0,
+            preferred_color_scheme: "light".to_string(),
+            prefers_reduced_motion: false,
+            supported_properties: HashSet::new(),
+        }
+    }
+}
+
 /// A single style rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StyleRule {
@@ -145,6 +173,10 @@ pub struct StyleRule {
     /// When `Some`, the rule only applies if the condition matches the viewport.
     pub media_condition: Option<String>,
 
+    /// Optional `@supports` condition string.
+    /// When `Some`, the rule only applies if the support expression evaluates to true.
+    pub supports_condition: Option<String>,
+
     /// Optional cascade layer name.
     pub layer: Option<String>,
 }
@@ -158,6 +190,7 @@ impl StyleRule {
             properties,
             specificity,
             media_condition: None,
+            supports_condition: None,
             layer: None,
         }
     }
@@ -165,6 +198,12 @@ impl StyleRule {
     /// Create a style rule gated on a media condition.
     pub fn with_media_condition(mut self, condition: String) -> Self {
         self.media_condition = Some(condition);
+        self
+    }
+
+    /// Create a style rule gated on a `@supports` condition.
+    pub fn with_supports_condition(mut self, condition: String) -> Self {
+        self.supports_condition = Some(condition);
         self
     }
 
@@ -185,6 +224,22 @@ impl StyleSheet {
         self.rules.push(StyleRule::new(selector, properties));
     }
 
+    /// Add a rule with optional media/supports/layer conditions.
+    pub fn add_rule_with_conditions(
+        &mut self,
+        selector: Selector,
+        properties: PropertySet,
+        media_condition: Option<String>,
+        supports_condition: Option<String>,
+        layer: Option<String>,
+    ) {
+        let mut rule = StyleRule::new(selector, properties);
+        rule.media_condition = media_condition;
+        rule.supports_condition = supports_condition;
+        rule.layer = layer;
+        self.rules.push(rule);
+    }
+
     /// Add a rule that is gated on a media condition string.
     pub fn add_conditional_rule(
         &mut self,
@@ -192,8 +247,29 @@ impl StyleSheet {
         properties: PropertySet,
         media_condition: String,
     ) {
-        self.rules
-            .push(StyleRule::new(selector, properties).with_media_condition(media_condition));
+        self.add_rule_with_conditions(
+            selector,
+            properties,
+            Some(media_condition),
+            None,
+            None,
+        );
+    }
+
+    /// Add a rule that is gated on a `@supports` condition string.
+    pub fn add_supports_rule(
+        &mut self,
+        selector: Selector,
+        properties: PropertySet,
+        supports_condition: String,
+    ) {
+        self.add_rule_with_conditions(
+            selector,
+            properties,
+            None,
+            Some(supports_condition),
+            None,
+        );
     }
 
     /// Set a CSS variable
@@ -214,15 +290,43 @@ impl StyleSheet {
         id: Option<&str>,
         pseudo_classes: &[String],
     ) -> Vec<&StyleRule> {
+        self.find_matching_rules_with_environment(
+            element,
+            classes,
+            id,
+            pseudo_classes,
+            &QueryEnvironment::default(),
+        )
+    }
+
+    /// Find matching rules for an element in a specific query environment.
+    pub fn find_matching_rules_with_environment(
+        &self,
+        element: &str,
+        classes: &[String],
+        id: Option<&str>,
+        pseudo_classes: &[String],
+        env: &QueryEnvironment,
+    ) -> Vec<&StyleRule> {
         let mut matching = Vec::new();
 
         for rule in &self.rules {
+            if let Some(ref condition) = rule.media_condition {
+                if !self.evaluate_media_condition(condition, env) {
+                    continue;
+                }
+            }
+            if let Some(ref condition) = rule.supports_condition {
+                if !self.evaluate_supports_condition(condition, env) {
+                    continue;
+                }
+            }
             if rule.selector.matches(element, classes, id, pseudo_classes) {
                 matching.push(rule);
             }
         }
 
-        // Sort by specificity (higher specificity = higher priority)
+        // Keep deterministic fallback ordering when callers use this API directly.
         matching.sort_by(|a, b| b.specificity.cmp(&a.specificity));
 
         matching
@@ -236,12 +340,55 @@ impl StyleSheet {
         id: Option<&str>,
         pseudo_classes: &[String],
     ) -> PropertySet {
-        let matching = self.find_matching_rules(element, classes, id, pseudo_classes);
+        self.compute_styles_with_environment(
+            element,
+            classes,
+            id,
+            pseudo_classes,
+            &QueryEnvironment::default(),
+        )
+    }
 
+    /// Compute final styles for an element (cascade resolution) using a query environment.
+    pub fn compute_styles_with_environment(
+        &self,
+        element: &str,
+        classes: &[String],
+        id: Option<&str>,
+        pseudo_classes: &[String],
+        env: &QueryEnvironment,
+    ) -> PropertySet {
         let mut final_properties = PropertySet::new();
 
-        // Apply rules in reverse specificity order (lowest first)
-        for rule in matching.iter().rev() {
+        let mut matching: Vec<(usize, &StyleRule)> = Vec::new();
+        for (source_order, rule) in self.rules.iter().enumerate() {
+            if let Some(ref condition) = rule.media_condition {
+                if !self.evaluate_media_condition(condition, env) {
+                    continue;
+                }
+            }
+            if let Some(ref condition) = rule.supports_condition {
+                if !self.evaluate_supports_condition(condition, env) {
+                    continue;
+                }
+            }
+            if rule.selector.matches(element, classes, id, pseudo_classes) {
+                matching.push((source_order, rule));
+            }
+        }
+
+        // Cascade order: lower layer first, then lower specificity, then source order.
+        // Unlayered author rules are treated as highest-precedence layer.
+        matching.sort_by(|(a_idx, a_rule), (b_idx, b_rule)| {
+            let a_layer = self.layer_rank(a_rule);
+            let b_layer = self.layer_rank(b_rule);
+            a_layer
+                .cmp(&b_layer)
+                .then(a_rule.specificity().cmp(&b_rule.specificity()))
+                .then(a_idx.cmp(b_idx))
+        });
+
+        for (_, rule) in matching {
             final_properties.merge(&rule.properties);
         }
 
@@ -416,6 +563,368 @@ impl StyleSheet {
     pub fn starting_style_rules(&self) -> &[StyleRule] {
         &self.starting_style_rules
     }
+
+    fn layer_rank(&self, rule: &StyleRule) -> u32 {
+        match rule
+            .layer
+            .as_ref()
+            .and_then(|name| self.layer_order.iter().position(|n| n == name))
+        {
+            Some(idx) => idx as u32 + 1,
+            None => u32::MAX,
+        }
+    }
+
+    fn evaluate_media_condition(&self, condition: &str, env: &QueryEnvironment) -> bool {
+        let condition = condition.trim();
+        if condition.is_empty() {
+            return true;
+        }
+
+        if let Some(rest) = condition.strip_prefix("not ") {
+            return !self.evaluate_media_condition(rest.trim(), env);
+        }
+        if condition.contains(" and ") {
+            return condition
+                .split(" and ")
+                .all(|part| self.evaluate_media_condition(part.trim(), env));
+        }
+        if condition.contains(" or ") {
+            return condition
+                .split(" or ")
+                .any(|part| self.evaluate_media_condition(part.trim(), env));
+        }
+
+        let inner = condition
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(')'))
+            .unwrap_or(condition)
+            .trim();
+
+        if let Some(result) = self.evaluate_media_comparison(inner, env) {
+            return result;
+        }
+
+        if let Some((feature, value)) = inner.split_once(':') {
+            let feature = feature.trim();
+            let value = value.trim();
+            match feature {
+                "min-width" => Self::parse_px_value(value)
+                    .map(|v| env.viewport_width >= v)
+                    .unwrap_or(true),
+                "max-width" => Self::parse_px_value(value)
+                    .map(|v| env.viewport_width <= v)
+                    .unwrap_or(true),
+                "min-height" => Self::parse_px_value(value)
+                    .map(|v| env.viewport_height >= v)
+                    .unwrap_or(true),
+                "max-height" => Self::parse_px_value(value)
+                    .map(|v| env.viewport_height <= v)
+                    .unwrap_or(true),
+                "width" => Self::parse_px_value(value)
+                    .map(|v| (env.viewport_width - v).abs() < 1.0)
+                    .unwrap_or(true),
+                "height" => Self::parse_px_value(value)
+                    .map(|v| (env.viewport_height - v).abs() < 1.0)
+                    .unwrap_or(true),
+                "prefers-color-scheme" => env.preferred_color_scheme.eq_ignore_ascii_case(value),
+                "prefers-reduced-motion" => {
+                    let v = value.eq_ignore_ascii_case("reduce");
+                    env.prefers_reduced_motion == v
+                }
+                "orientation" => {
+                    let actual = if env.viewport_width >= env.viewport_height {
+                        "landscape"
+                    } else {
+                        "portrait"
+                    };
+                    actual.eq_ignore_ascii_case(value)
+                }
+                _ => true,
+            }
+        } else {
+            true
+        }
+    }
+
+    fn evaluate_media_comparison(
+        &self,
+        inner: &str,
+        env: &QueryEnvironment,
+    ) -> Option<bool> {
+        for op in ["<=", ">=", "<", ">"] {
+            if let Some((lhs_raw, rhs_raw)) = inner.split_once(op) {
+                let lhs = lhs_raw.trim();
+                let rhs = rhs_raw.trim();
+                let lhs_val = Self::media_dimension_value(lhs, env)?;
+                let rhs_val = Self::media_dimension_value(rhs, env)?;
+                let result = match op {
+                    "<=" => lhs_val <= rhs_val,
+                    ">=" => lhs_val >= rhs_val,
+                    "<" => lhs_val < rhs_val,
+                    ">" => lhs_val > rhs_val,
+                    _ => return None,
+                };
+                return Some(result);
+            }
+        }
+        None
+    }
+
+    fn media_dimension_value(token: &str, env: &QueryEnvironment) -> Option<f32> {
+        match token {
+            "width" => Some(env.viewport_width),
+            "height" => Some(env.viewport_height),
+            _ => Self::parse_px_value(token),
+        }
+    }
+
+    fn evaluate_supports_condition(&self, condition: &str, env: &QueryEnvironment) -> bool {
+        let condition = condition.trim();
+        if condition.is_empty() {
+            return true;
+        }
+
+        if let Some(rest) = condition.strip_prefix("not ") {
+            return !self.evaluate_supports_condition(rest.trim(), env);
+        }
+        if condition.contains(" and ") {
+            return condition
+                .split(" and ")
+                .all(|part| self.evaluate_supports_condition(part.trim(), env));
+        }
+        if condition.contains(" or ") {
+            return condition
+                .split(" or ")
+                .any(|part| self.evaluate_supports_condition(part.trim(), env));
+        }
+
+        let inner = condition
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(')'))
+            .unwrap_or(condition)
+            .trim();
+
+        if let Some((property, value)) = inner.split_once(':') {
+            let property = property.trim();
+            let value = value.trim();
+            let property_supported = if env.supported_properties.is_empty() {
+                Self::is_supported_css_property(property)
+            } else {
+                env.supported_properties.contains(property)
+            };
+            property_supported && Self::is_supported_css_value(property, value)
+        } else {
+            true
+        }
+    }
+
+    fn parse_px_value(value: &str) -> Option<f32> {
+        let value = value.trim();
+        if let Some(px) = value.strip_suffix("px") {
+            px.trim().parse::<f32>().ok()
+        } else if let Some(rem) = value.strip_suffix("rem") {
+            rem.trim().parse::<f32>().ok().map(|v| v * 16.0)
+        } else if let Some(em) = value.strip_suffix("em") {
+            em.trim().parse::<f32>().ok().map(|v| v * 16.0)
+        } else {
+            value.parse::<f32>().ok()
+        }
+    }
+
+    fn is_supported_css_property(property: &str) -> bool {
+        matches!(
+            property,
+            "display"
+                | "position"
+                | "width"
+                | "height"
+                | "min-width"
+                | "max-width"
+                | "min-height"
+                | "max-height"
+                | "margin"
+                | "margin-top"
+                | "margin-right"
+                | "margin-bottom"
+                | "margin-left"
+                | "padding"
+                | "padding-top"
+                | "padding-right"
+                | "padding-bottom"
+                | "padding-left"
+                | "color"
+                | "background"
+                | "background-color"
+                | "border"
+                | "border-color"
+                | "border-width"
+                | "border-style"
+                | "border-radius"
+                | "font-size"
+                | "font-weight"
+                | "font-family"
+                | "font-style"
+                | "line-height"
+                | "text-align"
+                | "text-transform"
+                | "text-overflow"
+                | "white-space"
+                | "opacity"
+                | "visibility"
+                | "overflow"
+                | "overflow-x"
+                | "overflow-y"
+                | "flex"
+                | "flex-direction"
+                | "flex-wrap"
+                | "flex-grow"
+                | "flex-shrink"
+                | "flex-basis"
+                | "justify-content"
+                | "align-items"
+                | "align-self"
+                | "align-content"
+                | "gap"
+                | "row-gap"
+                | "column-gap"
+                | "grid-template-columns"
+                | "grid-template-rows"
+                | "grid-auto-flow"
+                | "grid-column"
+                | "grid-row"
+                | "z-index"
+                | "cursor"
+                | "pointer-events"
+                | "box-shadow"
+                | "transform"
+                | "transition"
+                | "box-sizing"
+                | "top"
+                | "right"
+                | "bottom"
+                | "left"
+                | "order"
+                | "letter-spacing"
+                | "word-spacing"
+                | "text-indent"
+                | "word-break"
+        )
+    }
+
+    fn is_supported_css_value(property: &str, value: &str) -> bool {
+        let value = value.trim();
+        match property {
+            "display" => matches!(
+                value,
+                "block"
+                    | "inline"
+                    | "inline-block"
+                    | "flex"
+                    | "inline-flex"
+                    | "grid"
+                    | "inline-grid"
+                    | "none"
+                    | "contents"
+                    | "table"
+                    | "table-row"
+                    | "table-cell"
+                    | "list-item"
+                    | "flow-root"
+            ),
+            "position" => matches!(value, "static" | "relative" | "absolute" | "fixed" | "sticky"),
+            "visibility" => matches!(value, "visible" | "hidden" | "collapse"),
+            "overflow" | "overflow-x" | "overflow-y" => {
+                matches!(value, "visible" | "hidden" | "scroll" | "auto" | "clip")
+            }
+            "box-sizing" => matches!(value, "border-box" | "content-box"),
+            "text-align" => matches!(
+                value,
+                "left" | "right" | "center" | "justify" | "start" | "end"
+            ),
+            "text-transform" => {
+                matches!(value, "none" | "uppercase" | "lowercase" | "capitalize")
+            }
+            "white-space" => matches!(
+                value,
+                "normal" | "nowrap" | "pre" | "pre-wrap" | "pre-line" | "break-spaces"
+            ),
+            "cursor" => matches!(
+                value,
+                "auto"
+                    | "default"
+                    | "pointer"
+                    | "crosshair"
+                    | "text"
+                    | "move"
+                    | "grab"
+                    | "grabbing"
+                    | "not-allowed"
+                    | "wait"
+                    | "progress"
+                    | "help"
+                    | "none"
+            ),
+            "pointer-events" => matches!(value, "auto" | "none"),
+            "border-style" => matches!(
+                value,
+                "none"
+                    | "solid"
+                    | "dashed"
+                    | "dotted"
+                    | "double"
+                    | "groove"
+                    | "ridge"
+                    | "inset"
+                    | "outset"
+                    | "hidden"
+            ),
+            "width" | "height" | "min-width" | "max-width" | "min-height" | "max-height"
+            | "margin" | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
+            | "padding" | "padding-top" | "padding-right" | "padding-bottom" | "padding-left"
+            | "top" | "right" | "bottom" | "left" | "gap" | "row-gap" | "column-gap"
+            | "border-radius" | "border-width" | "font-size" | "line-height"
+            | "letter-spacing" | "word-spacing" | "text-indent" | "flex-basis" => {
+                matches!(
+                    value,
+                    "auto" | "none" | "0" | "inherit" | "initial" | "unset"
+                        | "min-content" | "max-content" | "fit-content"
+                ) || value.ends_with("px")
+                    || value.ends_with("em")
+                    || value.ends_with("rem")
+                    || value.ends_with('%')
+                    || value.ends_with("vw")
+                    || value.ends_with("vh")
+                    || value.ends_with("pt")
+                    || value.ends_with("ch")
+                    || value.starts_with("calc(")
+                    || value.parse::<f32>().is_ok()
+            }
+            "color" | "background-color" | "background" => {
+                value.starts_with('#')
+                    || value.starts_with("rgb")
+                    || value.starts_with("hsl")
+                    || value.starts_with("oklch")
+                    || value.starts_with("oklab")
+                    || value.starts_with("color(")
+                    || value.starts_with("hwb")
+                    || matches!(
+                        value,
+                        "transparent" | "currentColor" | "inherit" | "initial" | "unset" | "none"
+                    )
+                    || crate::value::Color::from_hex(value).is_ok()
+                    || csscolorparser::parse(value).is_ok()
+            }
+            "opacity" | "flex-grow" | "flex-shrink" | "z-index" | "order" | "font-weight" => {
+                matches!(
+                    value,
+                    "auto" | "normal" | "bold" | "bolder" | "lighter"
+                        | "inherit" | "initial" | "unset"
+                ) || value.parse::<f32>().is_ok()
+            }
+            _ => Self::is_supported_css_property(property),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -467,5 +976,54 @@ mod tests {
         // Should get green background (more specific)
         let color = styles.get("background").unwrap().as_color().unwrap();
         assert_eq!(color.g, 255);
+    }
+
+    #[test]
+    fn test_layer_and_conditions_cascade() {
+        let mut sheet = StyleSheet::new();
+        sheet.add_layer("base");
+        sheet.add_layer("components");
+
+        let mut base_props = PropertySet::new();
+        base_props.insert(
+            "color".to_string(),
+            PropertyValue::Color(Color::rgb(255, 0, 0)),
+        );
+        sheet.add_rule_with_conditions(
+            Selector::element("button"),
+            base_props,
+            None,
+            None,
+            Some("base".to_string()),
+        );
+
+        let mut component_props = PropertySet::new();
+        component_props.insert(
+            "color".to_string(),
+            PropertyValue::Color(Color::rgb(0, 255, 0)),
+        );
+        sheet.add_rule_with_conditions(
+            Selector::element("button"),
+            component_props,
+            Some("(max-width: 600px)".to_string()),
+            Some("(display: grid)".to_string()),
+            Some("components".to_string()),
+        );
+
+        let env = QueryEnvironment {
+            viewport_width: 500.0,
+            ..QueryEnvironment::default()
+        };
+        let styles = sheet.compute_styles_with_environment("button", &[], None, &[], &env);
+        let color = styles.get("color").unwrap().as_color().unwrap();
+        assert_eq!(color.g, 255);
+
+        let env_desktop = QueryEnvironment {
+            viewport_width: 1200.0,
+            ..QueryEnvironment::default()
+        };
+        let desktop = sheet.compute_styles_with_environment("button", &[], None, &[], &env_desktop);
+        let desktop_color = desktop.get("color").unwrap().as_color().unwrap();
+        assert_eq!(desktop_color.r, 255);
     }
 }

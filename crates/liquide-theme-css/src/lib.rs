@@ -87,13 +87,13 @@ pub use cache::{CacheStats, QueryCache};
 pub use engine::ThemeEngine;
 pub use error::{Result, ThemeError};
 pub use parser::ThemeParser;
-pub use stylesheet::StyleSheet;
+pub use stylesheet::{QueryEnvironment, StyleSheet};
 
 pub mod prelude {
     pub use crate::cache::{CacheStats, QueryCache};
     pub use crate::engine::ThemeEngine;
     pub use crate::error::{Result, ThemeError};
     pub use crate::parser::ThemeParser;
-    pub use crate::stylesheet::StyleSheet;
+    pub use crate::stylesheet::{QueryEnvironment, StyleSheet};
     pub use crate::value::{Color, PropertyValue};
 }

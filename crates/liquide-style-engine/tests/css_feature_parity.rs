@@ -971,7 +971,6 @@ fn selector_id() {
 }
 
 #[test]
-#[ignore = "Selector::parse in liquide-theme-css doesn't support descendant combinators yet"]
 fn selector_descendant() {
     let css = "parent child { color: red; }";
     let s = style_for_child(css, "parent", "child");
@@ -979,7 +978,6 @@ fn selector_descendant() {
 }
 
 #[test]
-#[ignore = "Selector::parse in liquide-theme-css doesn't support child combinators yet"]
 fn selector_child_combinator() {
     let css = "parent > child { color: blue; }";
     let s = style_for_child(css, "parent", "child");

@@ -4,7 +4,7 @@ use crate::cache::QueryCache;
 use crate::error::Result;
 use crate::parser::ThemeParser;
 use crate::property::PropertySet;
-use crate::stylesheet::StyleSheet;
+use crate::stylesheet::{QueryEnvironment, StyleSheet};
 use crate::value::PropertyValue;
 
 /// Theme engine for querying and applying styles
@@ -51,6 +51,20 @@ impl ThemeEngine {
     ) -> Result<PropertySet> {
         self.query_with_id(element, None, classes, pseudo_classes)
     }
+
+    /// Query styles for an element in a specific query environment.
+    ///
+    /// This bypasses the default query cache because results depend on environment fields
+    /// such as viewport and preferred color scheme.
+    pub fn query_with_environment(
+        &self,
+        element: &str,
+        classes: &[String],
+        pseudo_classes: &[String],
+        env: &QueryEnvironment,
+    ) -> Result<PropertySet> {
+        self.query_with_id_and_environment(element, None, classes, pseudo_classes, env)
+    }
     
     /// Query styles with ID
     ///
@@ -74,6 +88,26 @@ impl ThemeEngine {
         self.cache.insert(element, classes, id, pseudo_classes, properties.clone());
         
         Ok(properties)
+    }
+
+    /// Query styles with ID in a specific query environment.
+    ///
+    /// This bypasses cache because conditional rules can vary by environment.
+    pub fn query_with_id_and_environment(
+        &self,
+        element: &str,
+        id: Option<&str>,
+        classes: &[String],
+        pseudo_classes: &[String],
+        env: &QueryEnvironment,
+    ) -> Result<PropertySet> {
+        Ok(self.stylesheet.compute_styles_with_environment(
+            element,
+            classes,
+            id,
+            pseudo_classes,
+            env,
+        ))
     }
     
     /// Get a specific property value
@@ -153,7 +187,6 @@ impl ThemeEngine {
 mod tests {
     use super::*;
     use crate::parser::ThemeParser;
-    use crate::value::Color;
     
     #[test]
     fn test_query() {
@@ -224,5 +257,42 @@ mod tests {
             assert_eq!(color.r, 0);
             assert_eq!(color.g, 255);
         }
+    }
+
+    #[test]
+    fn test_query_with_environment_media_supports() {
+        let css = r#"
+            button { color: #ff0000; }
+            @media (max-width: 600px) {
+                button { color: #00ff00; }
+            }
+            @supports (display: grid) {
+                button { background: #111111; }
+            }
+            @supports (nonexistent-property: 1) {
+                button { background: #ffffff; }
+            }
+        "#;
+
+        let parser = ThemeParser::new();
+        let sheet = parser.parse_str(css).unwrap();
+        let engine = ThemeEngine::new(sheet);
+
+        let mut env = QueryEnvironment::default();
+        env.viewport_width = 500.0;
+        let styles = engine
+            .query_with_environment("button", &[], &[], &env)
+            .unwrap();
+        let color = styles.get("color").unwrap().as_color().unwrap();
+        assert_eq!(color.g, 255);
+        let bg = styles.get("background").unwrap().as_color().unwrap();
+        assert_eq!(bg.r, 17);
+
+        env.viewport_width = 1200.0;
+        let desktop = engine
+            .query_with_environment("button", &[], &[], &env)
+            .unwrap();
+        let desktop_color = desktop.get("color").unwrap().as_color().unwrap();
+        assert_eq!(desktop_color.r, 255);
     }
 }

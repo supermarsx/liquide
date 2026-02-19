@@ -443,7 +443,7 @@ impl StyleEngine {
                     media_condition: rule.media_condition.clone(),
                     layer_order: layer_ord,
                     container_condition: None,
-                    supports_condition: None,
+                    supports_condition: rule.supports_condition.clone(),
                     pseudo_element: rule.selector.pseudo_element.clone(),
                 });
                 order += 1;
@@ -473,7 +473,43 @@ impl StyleEngine {
                             name: cr.name.clone(),
                             condition: cr.condition.clone(),
                         }),
-                        supports_condition: None,
+                        supports_condition: rule.supports_condition.clone(),
+                        pseudo_element: rule.selector.pseudo_element.clone(),
+                    });
+                    order += 1;
+                }
+            }
+        }
+
+        // ── Compile @scope rules ────────────────────────────────────────
+        // Current behavior: scope-start is applied as an ancestor prefix to
+        // each nested selector. scope-end is retained in data model but is not
+        // yet enforced here.
+        for scope_rule in stylesheet.scope_rules() {
+            let scope_prefix = scope_rule.scope_start.as_deref().unwrap_or("").trim();
+            for rule in &scope_rule.rules {
+                let selector_str = if scope_prefix.is_empty() {
+                    rule.selector.raw.clone()
+                } else {
+                    format!("{} {}", scope_prefix, rule.selector.raw)
+                };
+                if let Some(complex) = ComplexSelector::parse(&selector_str) {
+                    let specificity = complex.specificity();
+                    let layer_ord = rule
+                        .layer
+                        .as_ref()
+                        .and_then(|name| self.layer_order.get(name))
+                        .copied()
+                        .unwrap_or(0);
+                    prepared_rules.push(PreparedRule {
+                        selector: complex,
+                        specificity,
+                        source_order: order,
+                        properties: rule.properties.clone(),
+                        media_condition: rule.media_condition.clone(),
+                        layer_order: layer_ord,
+                        container_condition: None,
+                        supports_condition: rule.supports_condition.clone(),
                         pseudo_element: rule.selector.pseudo_element.clone(),
                     });
                     order += 1;
@@ -6415,5 +6451,62 @@ mod tests {
         engine.set_preferred_color_scheme("dark");
         assert!(engine.evaluate_media_condition("(prefers-color-scheme: dark)"));
         assert!(!engine.evaluate_media_condition("(prefers-color-scheme: light)"));
+    }
+
+    #[test]
+    fn supports_rules_are_respected() {
+        let mut engine = StyleEngine::default();
+        engine.add_stylesheet(
+            r#"
+            button { color: #ff0000; }
+            @supports (display: grid) {
+                button { color: #00ff00; }
+            }
+            @supports (nonexistent-prop: foo) {
+                button { color: #0000ff; }
+            }
+            "#,
+        );
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let button = doc.create_element("button");
+        doc.append_child(root, button);
+
+        let style = engine.compute_style(&doc, button);
+        assert_eq!(style.color.g, 255);
+        assert_eq!(style.color.r, 0);
+    }
+
+    #[test]
+    fn scope_rules_match_dom_descendants() {
+        let mut engine = StyleEngine::default();
+        engine.add_stylesheet(
+            r#"
+            @scope (.panel) {
+                button { color: #00ff00; }
+            }
+            button { color: #ff0000; }
+            "#,
+        );
+
+        let mut doc = Document::new();
+        let root = doc.root();
+
+        let panel = doc.create_element("div");
+        doc.add_class(panel, "panel");
+        doc.append_child(root, panel);
+
+        let scoped_button = doc.create_element("button");
+        doc.append_child(panel, scoped_button);
+
+        let unscoped_button = doc.create_element("button");
+        doc.append_child(root, unscoped_button);
+
+        let scoped_style = engine.compute_style(&doc, scoped_button);
+        assert_eq!(scoped_style.color.g, 255);
+
+        let plain_style = engine.compute_style(&doc, unscoped_button);
+        assert_eq!(plain_style.color.r, 255);
     }
 }
