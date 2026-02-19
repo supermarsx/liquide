@@ -138,21 +138,8 @@ let color = active_item.foreground_color.unwrap_or(Color::WHITE);
 
 ## Known Limitations
 
-### CSS Engine Property Extraction Bug
-**Issue**: ThemeEngine.query() returns empty PropertySet despite successful parsing
-- Stylesheet parses correctly (1 rule found)
-- Properties not extracted by compute_styles() method
-- This is an **existing bug** in liquide-theme-css, not in the middleware
-
-**Impact**: 
-- Middleware architecture is correct
-- Tests fail due to upstream CSS engine issue
-- Need to fix liquide-theme-css::engine::compute_styles() first
-
-**Workaround**:
-- Use ShellTheme with hardcoded fallbacks (current approach)
-- Query CSS first, fall back to theme values
-- Tests verify middleware API, not CSS extraction
+- The middleware supports current shell style extraction paths, but advanced CSS semantics still depend on upstream `liquide-theme-css` behavior (for example complex selector context and conditional-rule evaluation).
+- Fallbacks remain recommended for optional properties so components degrade gracefully when a theme omits values.
 
 ## Files Modified
 
@@ -183,40 +170,39 @@ let color = active_item.foreground_color.unwrap_or(Color::WHITE);
 
 ## Test Status
 
-✅ **2 tests passing**:
-- css_integration::test_border_extraction
-- css_integration::test_glass_style_conversion
-
-❌ **2 tests failing** (due to upstream CSS bug):
-- css_integration::test_css_integration
-- css_dock_example::test_build_dock_with_css
+✅ **8 tests passing (updated 2026-02-19):**
+- `liquide-renderer-css`: 3/3 passing
+  - `resolver::tests::test_resolve_glass_effect`
+  - `resolver::tests::test_resolve_basic_style`
+  - `resolver::tests::test_resolve_with_classes`
+- `liquide-shell --lib css`: 5/5 passing
+  - `css_integration::tests::test_border_extraction`
+  - `css_integration::tests::test_glass_style_conversion`
+  - `css_integration::tests::test_css_integration`
+  - `css_debug_test::tests::debug_css_query`
+  - `css_dock_example::tests::test_build_dock_with_css`
 
 ## Next Steps
 
 ### To Complete Full Integration:
 
-1. **Fix CSS Engine Bug** (liquide-theme-css)
-   - Debug compute_styles() in engine.rs
-   - Ensure properties are extracted from parsed rules
-   - Verify selector matching logic
-
-2. **Refactor Shell Components**
+1. **Refactor Shell Components**
    - Replace ShellTheme usage with StyleResolver queries
    - Update dock.rs build_scene() to use CSS-driven colors
    - Update status_bar.rs to query CSS
    - Update window decorations to use CSS
 
-3. **Renderer Integration**
+2. **Renderer Integration**
    - Pass RenderStyle to renderer through scene nodes
    - Update SoftwareRenderer to consume RenderStyle
    - Apply glass, shadow, transform effects dynamically
 
-4. **CSS Theme Enhancements**
+3. **CSS Theme Enhancements**
    - Add custom properties: glass-tint, glass-blur, shadow-*
    - Support hover/active pseudo-classes
    - Add animation properties
 
-5. **Performance Optimization**
+4. **Performance Optimization**
    - Cache resolved styles per frame
    - Invalidate cache on theme change
    - Profile CSS query overhead
@@ -250,7 +236,7 @@ window.focused {
     titlebar-background: rgba(60, 60, 70, 240);
 }
 
-/* Custom Properties (when CSS engine supports extraction) */
+/* Custom Properties */
 window {
     glass-blur: 20px;
     glass-tint: rgba(62, 62, 72, 200);
@@ -267,8 +253,7 @@ The CSS middleware architecture is **complete and functional**. The middleware s
 - ✅ Supports all major CSS properties (colors, dimensions, borders, effects)
 - ✅ Includes comprehensive data structures (RenderStyle, GlassStyle, ShadowStyle, TransformStyle)
 - ✅ Demonstrates proper usage patterns via examples
-
-The **only blocker** is an existing bug in `liquide-theme-css::ThemeEngine::compute_styles()` that prevents property extraction from parsed stylesheets. Once that's fixed in the CSS engine, the middleware will work end-to-end with no changes required.
+- ✅ Passes middleware integration tests in `liquide-renderer-css` and `liquide-shell --lib css`
 
 The refactoring demonstrates best practices:
 1. Clear separation of concerns (CSS ↔ Rendering)

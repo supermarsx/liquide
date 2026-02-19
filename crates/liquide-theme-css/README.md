@@ -599,6 +599,6 @@ MIT OR Apache-2.0
 
 ## See Also
 
-- [ADVANCED_FEATURES.md](../../ADVANCED_FEATURES.md) - Complete integration guide
+- [ADVANCED_FEATURES.md](../../docs/ADVANCED_FEATURES.md) - Complete integration guide
 - [liquide-cursor](../liquide-cursor) - Cursor management
 - [liquide-cursor-vector](../liquide-cursor-vector) - Vector cursor rendering

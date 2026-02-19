@@ -347,11 +347,11 @@ CSS transforms:
 - Cache RenderStyle objects for static elements
 - Use fallback values to avoid repeated queries
 
-## Known Issues
+## Known Notes
 
-1. **CSS Engine Property Extraction**: ThemeEngine.query() currently returns empty PropertySet. This is an upstream bug in liquide-theme-css. Once fixed, all CSS queries will work properly.
+1. **Current status (2026-02-19)**: CSS middleware queries are working in current tests (`liquide-renderer-css` and `liquide-shell --lib css`).
 
-2. **Workaround**: Use ShellTheme as fallback until CSS engine is fixed:
+2. **Recommended fallback pattern**: Keep component-level fallback values so rendering remains stable when a CSS rule is missing or intentionally omitted:
    ```rust
    let style = resolver.resolve("dock", &[], &[], None)
        .unwrap_or_else(|_| RenderStyle::new());
