@@ -22,7 +22,9 @@ fn make_manifest(index: u64, points: Vec<ExtensionPoint>) -> PluginManifest {
 fn bench_load_unload_100_plugins(c: &mut Criterion) {
     c.bench_function("load_unload_100_plugins", |b| {
         b.iter(|| {
-            let mut host = PluginHost::with_defaults();
+            let mut config = PluginHostConfig::default();
+            config.max_plugins = 128;
+            let mut host = PluginHost::new(config);
             let mut ids = Vec::with_capacity(100);
             for i in 0..100u64 {
                 let id = host
@@ -39,7 +41,9 @@ fn bench_load_unload_100_plugins(c: &mut Criterion) {
 
 fn bench_dispatch_100_plugins(c: &mut Criterion) {
     c.bench_function("dispatch_100_plugins", |b| {
-        let mut host = PluginHost::with_defaults();
+        let mut config = PluginHostConfig::default();
+        config.max_plugins = 128;
+        let mut host = PluginHost::new(config);
         for i in 0..100u64 {
             host.load_plugin(make_manifest(i, vec![ExtensionPoint::InputFilter]))
                 .unwrap();

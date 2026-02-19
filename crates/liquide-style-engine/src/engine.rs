@@ -582,6 +582,13 @@ impl StyleEngine {
         self.restyle_node(doc, node_id, parent_style.as_deref(), map, &scope);
     }
 
+    /// Incrementally invalidate and recompute styles for changed nodes.
+    pub fn invalidate(&self, doc: &Document, changed_nodes: &[NodeId], map: &mut StyleMap) {
+        for &node_id in changed_nodes {
+            self.restyle_subtree(doc, node_id, map);
+        }
+    }
+
     fn restyle_node(
         &self,
         doc: &Document,
@@ -931,6 +938,16 @@ impl StyleEngine {
     /// Update viewport size (triggers re-resolution of viewport units).
     pub fn set_viewport(&mut self, size: ViewportSize) {
         self.viewport = size;
+    }
+
+    /// Set the preferred color scheme used by media queries such as
+    /// `(prefers-color-scheme: dark)`.
+    pub fn set_preferred_color_scheme(&mut self, scheme: &str) {
+        self.preferred_color_scheme = if scheme.trim().eq_ignore_ascii_case("dark") {
+            "dark".to_string()
+        } else {
+            "light".to_string()
+        };
     }
 
     /// Resolve a CSS variable value.
@@ -5878,7 +5895,7 @@ impl StyleEngine {
                     }
                 }
                 "prefers-color-scheme" => {
-                    return value_str == self.preferred_color_scheme;
+                    return value_str.trim().eq_ignore_ascii_case(&self.preferred_color_scheme);
                 }
                 "prefers-reduced-motion" => {
                     return (value_str == "reduce") == self.prefers_reduced_motion;
@@ -6387,5 +6404,16 @@ mod tests {
 
         let dock_style = map.get(dock).unwrap();
         assert_eq!(dock_style.display, Display::Flex);
+    }
+
+    #[test]
+    fn prefers_color_scheme_media_query_follows_setting() {
+        let mut engine = StyleEngine::default();
+        assert!(engine.evaluate_media_condition("(prefers-color-scheme: light)"));
+        assert!(!engine.evaluate_media_condition("(prefers-color-scheme: dark)"));
+
+        engine.set_preferred_color_scheme("dark");
+        assert!(engine.evaluate_media_condition("(prefers-color-scheme: dark)"));
+        assert!(!engine.evaluate_media_condition("(prefers-color-scheme: light)"));
     }
 }

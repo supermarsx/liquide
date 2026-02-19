@@ -3,7 +3,7 @@
 //! Uses real glyph metrics from `liquide-font-rasterizer` instead of the
 //! `DefaultTextMeasurer` fallback that estimates `char_width = font_size * 0.6`.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use liquide_font_rasterizer::database::FontDatabase;
 use liquide_font_rasterizer::metrics::FontMetricsProvider;
@@ -22,6 +22,10 @@ impl FontTextMeasurer {
     pub fn new(font_db: Arc<Mutex<FontDatabase>>) -> Self {
         Self { font_db }
     }
+
+    fn lock_font_db(&self) -> MutexGuard<'_, FontDatabase> {
+        self.font_db.lock().unwrap_or_else(|poison| poison.into_inner())
+    }
 }
 
 impl TextMeasurer for FontTextMeasurer {
@@ -34,7 +38,7 @@ impl TextMeasurer for FontTextMeasurer {
         max_width: Option<f32>,
         props: &TextProperties,
     ) -> TextMetrics {
-        let db = self.font_db.lock().unwrap();
+        let db = self.lock_font_db();
         let provider = FontMetricsProvider::new(&db);
 
         // Try to resolve a font face from the requested family list.
@@ -178,7 +182,7 @@ impl TextMeasurer for FontTextMeasurer {
     }
 
     fn line_height(&self, font_size: f32, font_family: &[String]) -> f32 {
-        let db = self.font_db.lock().unwrap();
+        let db = self.lock_font_db();
         let provider = FontMetricsProvider::new(&db);
 
         let face_id = font_family
@@ -194,7 +198,7 @@ impl TextMeasurer for FontTextMeasurer {
     }
 
     fn baseline(&self, font_size: f32, font_family: &[String]) -> f32 {
-        let db = self.font_db.lock().unwrap();
+        let db = self.lock_font_db();
         let provider = FontMetricsProvider::new(&db);
 
         let face_id = font_family

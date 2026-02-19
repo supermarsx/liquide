@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 
 use liquide_dom::Document;
 use liquide_font_rasterizer::database::FontDatabase;
-use liquide_layout::{DefaultTextMeasurer, LayoutEngine, LayoutTree, Size};
+use liquide_layout::{DefaultTextMeasurer, LayoutEngine, LayoutInput, LayoutTree, Size};
 use liquide_paint::{DisplayItem, DisplayList, Painter};
 use liquide_style_engine::computed::BorderLineStyle;
 use liquide_style_engine::engine::ViewportSize;
@@ -47,6 +47,8 @@ pub struct DesktopPipeline {
     pub last_styles: Option<StyleMap>,
     /// Last computed layout tree (cached for hit-testing).
     pub last_layout: Option<LayoutTree>,
+    /// Last computed display list for paint reuse.
+    pub last_display_list: Option<DisplayList>,
     /// Image URLs referenced during the last scene build, mapped to their hashed image_id.
     /// The host should load these and register them with the renderer.
     pending_images: Vec<(u64, String)>,
@@ -103,6 +105,7 @@ impl DesktopPipeline {
             next_scene_id: 1_000_000,
             last_styles: None,
             last_layout: None,
+            last_display_list: None,
             pending_images: Vec::new(),
             font_db: None,
         }
@@ -141,6 +144,11 @@ impl DesktopPipeline {
         self.layout_engine.viewport = Size { width, height };
     }
 
+    /// Set preferred color scheme used by style media queries.
+    pub fn set_preferred_color_scheme(&mut self, scheme: &str) {
+        self.style_engine.set_preferred_color_scheme(scheme);
+    }
+
     /// Set the font database for real text measurement.
     ///
     /// When set, the pipeline will use real glyph metrics from loaded
@@ -163,13 +171,59 @@ impl DesktopPipeline {
         };
         let image_measurer = liquide_layout::DefaultImageMeasurer;
 
+        let has_style_work = !doc.dirty.style.is_empty();
+        let has_layout_work = !doc.dirty.layout.is_empty();
+        let has_paint_work = !doc.dirty.paint.is_empty();
+
         // 1. Style
-        let mut styles = self.style_engine.restyle_all(doc);
+        let mut styles = if has_style_work {
+            if let Some(mut cached) = self.last_styles.clone() {
+                let changed: Vec<liquide_dom::NodeId> = doc.dirty.style.iter().copied().collect();
+                self.style_engine.invalidate(doc, &changed, &mut cached);
+                cached
+            } else {
+                self.style_engine.restyle_all(doc)
+            }
+        } else if let Some(cached) = self.last_styles.clone() {
+            cached
+        } else {
+            self.style_engine.restyle_all(doc)
+        };
 
         // 2. Layout
-        let layout = self
-            .layout_engine
-            .layout(doc, &styles, text_measurer, &image_measurer);
+        let recompute_layout = has_style_work || has_layout_work || self.last_layout.is_none();
+        let layout = if has_style_work || self.last_layout.is_none() {
+            self.layout_engine
+                .layout(doc, &styles, text_measurer, &image_measurer)
+        } else if has_layout_work {
+            let mut layout = self.last_layout.clone().unwrap_or_default();
+            let input = LayoutInput::new(doc, &styles, text_measurer, &image_measurer);
+
+            let mut dirty_layout_nodes: Vec<liquide_dom::NodeId> =
+                doc.dirty.layout.iter().copied().collect();
+            dirty_layout_nodes.sort_by_key(|node_id| doc.ancestors(*node_id).len());
+
+            // If both an ancestor and descendant are dirty, relayout the ancestor only.
+            let mut relayout_roots: Vec<liquide_dom::NodeId> = Vec::new();
+            for node_id in dirty_layout_nodes {
+                let ancestors = doc.ancestors(node_id);
+                if relayout_roots
+                    .iter()
+                    .any(|selected| ancestors.iter().any(|a| a == selected))
+                {
+                    continue;
+                }
+                relayout_roots.push(node_id);
+            }
+
+            for node_id in relayout_roots {
+                layout = self.layout_engine.relayout_subtree(&input, node_id, &layout);
+            }
+
+            layout
+        } else {
+            self.last_layout.clone().unwrap_or_default()
+        };
 
         // 2b. Populate container sizes for the next @container evaluation.
         // Elements with container-type != normal get their resolved dimensions
@@ -188,7 +242,16 @@ impl DesktopPipeline {
         }
 
         // 3. Paint
-        let display_list = self.painter.paint(doc, &layout, &styles);
+        let recompute_paint = recompute_layout || has_paint_work || self.last_display_list.is_none();
+        let display_list = if recompute_paint {
+            self.painter.paint(doc, &layout, &styles)
+        } else {
+            self.last_display_list.clone().unwrap_or_default()
+        };
+
+        self.last_styles = Some(styles.clone());
+        self.last_layout = Some(layout.clone());
+        self.last_display_list = Some(display_list.clone());
 
         PipelineOutput {
             styles,

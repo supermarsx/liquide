@@ -297,9 +297,13 @@ fn fire_listeners(
 mod tests {
     use super::*;
     use crate::Document;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Mutex,
+    };
 
     static CALL_COUNT: AtomicU32 = AtomicU32::new(0);
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     fn reset_counter() {
         CALL_COUNT.store(0, Ordering::SeqCst);
@@ -320,6 +324,7 @@ mod tests {
 
     #[test]
     fn test_bubbling_order() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         reset_counter();
         let mut doc = Document::new();
         let parent = doc.create_element("div");
@@ -340,6 +345,7 @@ mod tests {
 
     #[test]
     fn test_capturing() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         reset_counter();
         let mut doc = Document::new();
         let parent = doc.create_element("div");
@@ -365,6 +371,7 @@ mod tests {
 
     #[test]
     fn test_stop_propagation() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         reset_counter();
         let mut doc = Document::new();
         let grandparent = doc.create_element("section");
@@ -402,6 +409,7 @@ mod tests {
 
     #[test]
     fn test_no_bubbling() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         reset_counter();
         let mut doc = Document::new();
         let parent = doc.create_element("div");
@@ -423,6 +431,7 @@ mod tests {
 
     #[test]
     fn test_once_listener() {
+        let _guard = TEST_MUTEX.lock().unwrap();
         reset_counter();
         let mut doc = Document::new();
         let node = doc.create_element("button");

@@ -205,7 +205,7 @@ impl FontWorker {
 
                     // Process all unique glyph requests — try real fonts first,
                     // fall back to bitmap font.
-                    let db = font_db.lock().unwrap();
+                    let db = font_db.lock().unwrap_or_else(|poison| poison.into_inner());
                     let rasterizer = GlyphRasterizer::new(&db);
 
                     for (_, request) in batch {

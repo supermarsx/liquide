@@ -15,6 +15,7 @@ pub enum PseudoKind {
 }
 
 /// Computed styles for every node in the document.
+#[derive(Clone)]
 pub struct StyleMap {
     styles: HashMap<NodeId, Arc<ComputedStyle>>,
     /// Pseudo-element styles: (host_node, kind) → computed style.

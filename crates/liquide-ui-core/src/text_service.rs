@@ -12,7 +12,7 @@
 //! let (w, h) = svc.measure("Hello", "Manrope", 14.0, 400, 0.0);
 //! ```
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use liquide_font_rasterizer::database::FontDatabase;
 use liquide_font_rasterizer::metrics::{FontMetricsProvider, RealFontMetrics};
@@ -41,6 +41,10 @@ impl TextService {
         }
     }
 
+    fn lock_font_db(&self) -> MutexGuard<'_, FontDatabase> {
+        self.font_db.lock().unwrap_or_else(|poison| poison.into_inner())
+    }
+
     /// Measure single-line text dimensions.
     ///
     /// Returns `(width, height)` in pixels. If the font is not loaded,
@@ -57,7 +61,7 @@ impl TextService {
             return (0.0, RealFontMetrics::approximate(font_size).line_height);
         }
 
-        let db = self.font_db.lock().unwrap();
+        let db = self.lock_font_db();
         if let Some(face_id) = db.resolve(font_family, font_weight, false) {
             let shaper = TextShaper::new(&db);
             let (_glyphs, width) = shaper.shape(face_id, text, font_size, letter_spacing);
@@ -93,7 +97,7 @@ impl TextService {
         font_size: f32,
         font_weight: u16,
     ) -> RealFontMetrics {
-        let db = self.font_db.lock().unwrap();
+        let db = self.lock_font_db();
         if let Some(face_id) = db.resolve(font_family, font_weight, false) {
             let provider = FontMetricsProvider::new(&db);
             provider.metrics(face_id, font_size)
@@ -126,7 +130,7 @@ impl TextService {
         letter_spacing: f32,
         max_width: f32,
     ) -> Vec<WrappedLine> {
-        let db = self.font_db.lock().unwrap();
+        let db = self.lock_font_db();
         let face_id = db
             .resolve(font_family, font_weight, false)
             .unwrap_or(liquide_font_rasterizer::database::FontFaceId::FALLBACK);

@@ -8,6 +8,7 @@ use crate::desktop_dom::DesktopDocument;
 use liquide_compositor::scene::SceneNode;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
 /// Messages sent to a shell element thread.
@@ -272,23 +273,25 @@ impl ShellThreadCoordinator {
         let statusbar_rx = self.statusbar_thread.render();
         let launcher_rx = self.launcher_thread.render();
         let notification_rx = self.notification_thread.render();
-        
+
         let mut nodes = Vec::new();
-        
-        // Collect all rendered nodes (with timeout protection).
-        if let Ok(dock_nodes) = dock_rx.recv_timeout(std::time::Duration::from_millis(16)) {
-            nodes.extend(dock_nodes);
+
+        // Use a single frame budget so waiting across all workers cannot
+        // exceed one frame's target latency.
+        let deadline = Instant::now() + Duration::from_millis(16);
+        for rx in [dock_rx, statusbar_rx, launcher_rx, notification_rx] {
+            let now = Instant::now();
+            let Some(remaining) = deadline.checked_duration_since(now) else {
+                break;
+            };
+            if remaining.is_zero() {
+                break;
+            }
+            if let Ok(mut rendered) = rx.recv_timeout(remaining) {
+                nodes.append(&mut rendered);
+            }
         }
-        if let Ok(statusbar_nodes) = statusbar_rx.recv_timeout(std::time::Duration::from_millis(16)) {
-            nodes.extend(statusbar_nodes);
-        }
-        if let Ok(launcher_nodes) = launcher_rx.recv_timeout(std::time::Duration::from_millis(16)) {
-            nodes.extend(launcher_nodes);
-        }
-        if let Ok(notif_nodes) = notification_rx.recv_timeout(std::time::Duration::from_millis(16)) {
-            nodes.extend(notif_nodes);
-        }
-        
+
         nodes
     }
     

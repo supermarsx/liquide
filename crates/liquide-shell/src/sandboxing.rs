@@ -164,6 +164,7 @@ impl SandboxManager {
             "com.liquide.statusbar".to_string(),
             "com.liquide.launcher".to_string(),
             "com.liquide.notifications".to_string(),
+            "com.liquide.shell".to_string(),
         ]
     }
     

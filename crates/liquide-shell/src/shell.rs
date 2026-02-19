@@ -200,10 +200,8 @@ pub struct Shell {
     hit_test_engine: Option<HitTestEngine>,
     // ── Threading and sandboxing ────────────────────────────
     /// Thread coordinator for shell elements (dock, statusbar, etc.).
-    #[allow(dead_code)]
     thread_coordinator: Option<crate::threading::ShellThreadCoordinator>,
     /// Sandbox manager for application isolation.
-    #[allow(dead_code)]
     sandbox_manager: crate::sandboxing::SandboxManager,
 }
 
@@ -258,7 +256,9 @@ impl Shell {
             height: screen_height,
             base_font_size: 14.0,
         };
-        let css_pipeline = DesktopPipeline::new(&pipeline_cfg);
+        let mut css_pipeline = DesktopPipeline::new(&pipeline_cfg);
+        css_pipeline
+            .set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
 
         // Initialize threading for shell elements
         let thread_css = theme_loader::default_theme_css().to_string();
@@ -270,6 +270,7 @@ impl Shell {
 
         // Initialize sandboxing manager
         let sandbox_manager = crate::sandboxing::SandboxManager::new();
+        sandbox_manager.register_app("com.liquide.shell".to_string());
 
         Self {
             windows: HashMap::new(),
@@ -359,7 +360,9 @@ impl Shell {
             height: screen_height,
             base_font_size: 14.0,
         };
-        let css_pipeline = DesktopPipeline::new(&pipeline_cfg);
+        let mut css_pipeline = DesktopPipeline::new(&pipeline_cfg);
+        css_pipeline
+            .set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
 
         // Initialize threading for shell elements
         let thread_css = theme_loader::default_theme_css().to_string();
@@ -371,6 +374,7 @@ impl Shell {
 
         // Initialize sandboxing manager
         let sandbox_manager = crate::sandboxing::SandboxManager::new();
+        sandbox_manager.register_app("com.liquide.shell".to_string());
 
         Self {
             windows: HashMap::new(),
@@ -452,6 +456,9 @@ impl Shell {
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
         let app_id_str: String = app_id.into();
+        if !app_id_str.is_empty() {
+            self.sandbox_manager.register_app(app_id_str.clone());
+        }
         let mut window = Window::new(id, title, bounds);
         window.app_id = app_id_str.clone();
         self.windows.insert(id, window);
@@ -484,6 +491,13 @@ impl Shell {
                 .record_close(&window.app_id, id, window.bounds, ts);
             self.screen_time.feed_close(&window.app_id, id, ts);
             self.dock.remove_running(&window.app_id);
+            let has_other_windows = self
+                .windows
+                .values()
+                .any(|w| w.app_id == window.app_id);
+            if !has_other_windows {
+                self.sandbox_manager.unregister_app(&window.app_id);
+            }
         }
         Ok(window)
     }
@@ -1043,6 +1057,7 @@ impl Shell {
     pub fn set_theme(&mut self, theme: ShellTheme) {
         self.theme = theme;
         self.style_resolver = None;
+        self.sync_pipeline_color_scheme();
     }
 
     /// Build the default Night CSS theme and its style resolver.
@@ -1079,6 +1094,7 @@ impl Shell {
             Ok((theme, engine)) => {
                 self.theme = theme;
                 self.style_resolver = Some(StyleResolver::from_arc(engine));
+                self.sync_pipeline_color_scheme();
             }
             Err(e) => tracing::warn!("Failed to load CSS theme: {}", e),
         }
@@ -1089,6 +1105,23 @@ impl Shell {
         let (theme, resolver) = Self::build_default_theme();
         self.theme = theme;
         self.style_resolver = Some(resolver);
+        self.sync_pipeline_color_scheme();
+    }
+
+    fn preferred_color_scheme_for_theme(theme: &ShellTheme) -> &'static str {
+        let bg = theme.desktop_background;
+        let luminance = 0.2126 * bg.r as f32 + 0.7152 * bg.g as f32 + 0.0722 * bg.b as f32;
+        if luminance < 128.0 {
+            "dark"
+        } else {
+            "light"
+        }
+    }
+
+    fn sync_pipeline_color_scheme(&mut self) {
+        self.css_pipeline.set_preferred_color_scheme(
+            Self::preferred_color_scheme_for_theme(&self.theme),
+        );
     }
 
     /// Handle a key event, returning the matching shell action if any.
@@ -1162,6 +1195,15 @@ impl Shell {
     ///
     /// Returns the window ID of the focused or newly created window.
     pub fn open_app_window(&mut self, app_id: &str) -> WindowId {
+        self.sandbox_manager.register_app(app_id.to_string());
+        let can_create_windows = self
+            .sandbox_manager
+            .with_sandbox(app_id, |sandbox| sandbox.can_create_windows())
+            .unwrap_or(false);
+        if !can_create_windows {
+            tracing::warn!("Sandbox denied window creation for app: {}", app_id);
+        }
+
         // Check if a window with this app_id is already open.
         if let Some(existing) = self
             .windows
@@ -1257,7 +1299,8 @@ impl Shell {
             AppMenuComponent, ContextMenuComponent, SessionMenuComponent,
         };
         use crate::components_notifications::{
-            NotificationInfo, NotificationUrgency, NotificationsComponent,
+            NotificationAction as NotificationActionInfo, NotificationInfo, NotificationUrgency,
+            NotificationsComponent,
         };
         use crate::components_statusbar::StatusBarComponent;
         use crate::{Component, TemplateRenderer};
@@ -1356,9 +1399,23 @@ impl Shell {
                 id: sn.id,
                 summary: sn.notification.summary.clone(),
                 body: sn.notification.body.clone(),
-                urgency: NotificationUrgency::Normal, // TODO: map from protocol urgency
-                icon: String::new(),                  // TODO: map from notification icon
-                actions: Vec::new(),                  // TODO: map from notification actions
+                urgency: match sn.notification.urgency {
+                    liquide_interop::notification::Urgency::Low => NotificationUrgency::Low,
+                    liquide_interop::notification::Urgency::Normal => NotificationUrgency::Normal,
+                    liquide_interop::notification::Urgency::Critical => {
+                        NotificationUrgency::Critical
+                    }
+                },
+                icon: sn.notification.icon.clone().unwrap_or_default(),
+                actions: sn
+                    .notification
+                    .actions
+                    .iter()
+                    .map(|action| NotificationActionInfo {
+                        id: action.key.clone(),
+                        label: action.label.clone(),
+                    })
+                    .collect(),
             })
             .collect();
         let notif_comp = NotificationsComponent {
@@ -1523,6 +1580,109 @@ impl Shell {
         self.css_pipeline
             .set_viewport(self.screen_rect.width, self.screen_rect.height);
 
+        if let Some(coordinator) = &self.thread_coordinator {
+            let thread_dock_items: Vec<DockItemInfo> = self
+                .dock
+                .items()
+                .iter()
+                .map(|item| DockItemInfo {
+                    app_id: item.app_id.clone(),
+                    label: item.label.clone(),
+                    icon: item.icon.clone(),
+                    is_running: item.running_window_count > 0,
+                    is_pinned: item.pinned_position.is_some(),
+                })
+                .collect();
+            coordinator.update_dock(thread_dock_items, self.dock.hover_index());
+
+            let statusbar_items: Vec<crate::threading::StatusBarItemUpdate> = self
+                .status_bar
+                .items()
+                .iter()
+                .map(|item| {
+                    use crate::status_bar::StatusBarItemKind;
+                    let content = match &item.kind {
+                        StatusBarItemKind::Clock { .. } => {
+                            let now = std::time::SystemTime::now();
+                            let secs = now
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
+                        }
+                        StatusBarItemKind::NotificationIndicator { unread_count, .. } => {
+                            unread_count.to_string()
+                        }
+                        StatusBarItemKind::ConnectionQuality { quality_percent, .. } => {
+                            format!("{}%", quality_percent)
+                        }
+                        StatusBarItemKind::TrayArea => "tray".to_string(),
+                        StatusBarItemKind::SessionButton => "session".to_string(),
+                        StatusBarItemKind::Custom { content, .. } => content.clone(),
+                    };
+                    let slot = match item.slot {
+                        crate::status_bar::StatusBarSlot::Left => {
+                            crate::desktop_dom::StatusBarSlotKind::Left
+                        }
+                        crate::status_bar::StatusBarSlot::Center => {
+                            crate::desktop_dom::StatusBarSlotKind::Center
+                        }
+                        crate::status_bar::StatusBarSlot::Right => {
+                            crate::desktop_dom::StatusBarSlotKind::Right
+                        }
+                    };
+
+                    crate::threading::StatusBarItemUpdate {
+                        slot,
+                        item_id: item.id.clone(),
+                        content,
+                        visible: item.visible,
+                    }
+                })
+                .collect();
+            coordinator.update_statusbar(statusbar_items);
+
+            let launcher_items: Vec<crate::desktop_dom::LauncherItemInfo> = self
+                .launcher
+                .results()
+                .iter()
+                .map(|r| {
+                    let app_id = match &r.kind {
+                        SearchResultKind::Application { app_id } => app_id.clone(),
+                        _ => String::new(),
+                    };
+                    crate::desktop_dom::LauncherItemInfo {
+                        app_id,
+                        label: r.title.clone(),
+                        icon: r.icon.clone().unwrap_or_default(),
+                    }
+                })
+                .collect();
+            coordinator.update_launcher(
+                self.launcher.is_visible(),
+                self.launcher.query().to_string(),
+                launcher_items,
+                if self.launcher.result_count() > 0 {
+                    Some(self.launcher.selected_index())
+                } else {
+                    None
+                },
+            );
+
+            let notifications: Vec<crate::threading::NotificationData> = self
+                .notifications
+                .active_notifications()
+                .iter()
+                .map(|sn| crate::threading::NotificationData {
+                    id: sn.id.to_string(),
+                    title: sn.notification.summary.clone(),
+                    body: sn.notification.body.clone(),
+                    urgency: format!("{:?}", sn.notification.urgency).to_lowercase(),
+                })
+                .collect();
+            coordinator.update_notifications(notifications);
+        }
+
         self.dom_dirty = false;
     }
 
@@ -1548,11 +1708,21 @@ impl Shell {
             0, // base z-order
         );
 
+        // Collect threaded fallback nodes. These are composited only when the
+        // main pipeline returns no chrome nodes, to avoid duplicate rendering.
+        let mut threaded_nodes = self
+            .thread_coordinator
+            .as_ref()
+            .map(|coordinator| coordinator.render_all())
+            .unwrap_or_default();
+        let pipeline_empty = pipeline_nodes.is_empty();
+
         // ── Update hit-test engine with latest layout + styles ──
         self.hit_test_engine = Some(HitTestEngine::new(
             pipeline_output.layout,
             pipeline_output.styles,
         ));
+        self.desktop_dom.doc.dirty.clear_all();
 
         let theme = &self.theme;
 
@@ -1574,6 +1744,12 @@ impl Shell {
         //    notifications, launcher, menus — everything except windows) ──
         for node in pipeline_nodes {
             root.add_child(node);
+        }
+        if pipeline_empty && !threaded_nodes.is_empty() {
+            Self::normalize_threaded_scene_nodes(&mut threaded_nodes);
+            for node in threaded_nodes {
+                root.add_child(node);
+            }
         }
 
         // ── Windows (manual — complex interactive decorations) ────
@@ -1706,6 +1882,32 @@ impl Shell {
         root.add_child(ws_node);
 
         root
+    }
+
+    fn normalize_threaded_scene_nodes(nodes: &mut Vec<SceneNode>) {
+        let mut flattened = Vec::new();
+        for mut node in nodes.drain(..) {
+            if matches!(node.kind, SceneNodeKind::Root) {
+                flattened.extend(node.children.drain(..));
+            } else {
+                flattened.push(node);
+            }
+        }
+
+        let mut sequence = 0u64;
+        for node in &mut flattened {
+            Self::remap_thread_scene_ids(node, &mut sequence);
+        }
+        *nodes = flattened;
+    }
+
+    fn remap_thread_scene_ids(node: &mut SceneNode, sequence: &mut u64) {
+        const THREAD_NODE_ID_BASE: u64 = 9_000_000_000_000;
+        *sequence = sequence.saturating_add(1);
+        node.id = THREAD_NODE_ID_BASE.saturating_add(*sequence);
+        for child in &mut node.children {
+            Self::remap_thread_scene_ids(child, sequence);
+        }
     }
 
     /// Render app-specific content inside a window's content area.
@@ -3029,15 +3231,44 @@ impl Shell {
         element_id: &str,
         template: &liquide_components::TemplateNode,
     ) {
+        if let Err(err) = self.mount_template_for_app("com.liquide.shell", element_id, template) {
+            tracing::warn!("mount_template denied for shell: {}", err);
+        }
+    }
+
+    /// Mount an external template on behalf of an application.
+    ///
+    /// Enforces sandbox DOM write permissions for `app_id`.
+    pub fn mount_template_for_app(
+        &mut self,
+        app_id: &str,
+        element_id: &str,
+        template: &liquide_components::TemplateNode,
+    ) -> Result<()> {
+        self.sandbox_manager
+            .validate_dom_access(app_id, true)
+            .map_err(ShellError::InvalidOperation)?;
         use crate::TemplateRenderer;
         let root = self.desktop_dom.doc.root();
         TemplateRenderer::apply_or_create(&mut self.desktop_dom.doc, root, element_id, template);
+        Ok(())
     }
 
     /// Remove a previously mounted external template from the DOM.
     pub fn unmount_template(&mut self, element_id: &str) {
+        if let Err(err) = self.unmount_template_for_app("com.liquide.shell", element_id) {
+            tracing::warn!("unmount_template denied for shell: {}", err);
+        }
+    }
+
+    /// Remove a previously mounted external template on behalf of an app.
+    pub fn unmount_template_for_app(&mut self, app_id: &str, element_id: &str) -> Result<()> {
+        self.sandbox_manager
+            .validate_dom_access(app_id, true)
+            .map_err(ShellError::InvalidOperation)?;
         use crate::TemplateRenderer;
         TemplateRenderer::unmount(&mut self.desktop_dom.doc, element_id);
+        Ok(())
     }
 
     /// Dynamically load an additional stylesheet into the CSS pipeline.
@@ -3051,5 +3282,13 @@ impl Shell {
     /// Used by the desktop compositor to load fonts into the FontDatabase.
     pub fn font_faces(&self) -> &[liquide_style_engine::engine::PreparedFontFace] {
         self.css_pipeline.font_faces()
+    }
+}
+
+impl Drop for Shell {
+    fn drop(&mut self) {
+        if let Some(coordinator) = self.thread_coordinator.take() {
+            coordinator.shutdown();
+        }
     }
 }

@@ -20,7 +20,7 @@ pub mod table;
 pub mod tree;
 pub mod writing_mode;
 
-pub use engine::LayoutEngine;
+pub use engine::{LayoutEngine, LayoutInput};
 pub use geometry::{Point, Rect, Size};
 pub use tree::{BoxType, LayoutBox, LayoutBoxId, LayoutTree, LineBox};
 

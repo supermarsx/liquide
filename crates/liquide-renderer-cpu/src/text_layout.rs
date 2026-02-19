@@ -22,7 +22,7 @@
 //! GlyphRasterizer (font-rasterizer)  →  GlyphAtlas (renderer)
 //! ```
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use liquide_font_rasterizer::database::{FontDatabase, FontFaceId};
 use liquide_font_rasterizer::metrics::FontMetricsProvider;
@@ -42,6 +42,10 @@ impl TextLayoutEngine {
         Self { font_db }
     }
 
+    fn lock_font_db(&self) -> MutexGuard<'_, FontDatabase> {
+        self.font_db.lock().unwrap_or_else(|poison| poison.into_inner())
+    }
+
     /// Measure the width and height of a single-line text run.
     ///
     /// Returns `(width, height)` in pixels.
@@ -52,7 +56,7 @@ impl TextLayoutEngine {
         font_size: f32,
         font_weight: u16,
     ) -> (f32, f32) {
-        let db = self.font_db.lock().unwrap();
+        let db = self.lock_font_db();
         if let Some(face_id) = db.resolve(font_family, font_weight, false) {
             let provider = FontMetricsProvider::new(&db);
             let (width, height) = provider.measure_text(face_id, font_size, text);
@@ -91,7 +95,7 @@ impl TextLayoutEngine {
             };
         }
 
-        let db = self.font_db.lock().unwrap();
+        let db = self.lock_font_db();
 
         let face_id = db.resolve(font_family, font_weight, false);
         let provider = FontMetricsProvider::new(&db);

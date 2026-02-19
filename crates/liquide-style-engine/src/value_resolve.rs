@@ -20,15 +20,13 @@ pub fn parse_inline_value(value: &str) -> PropertyValue {
     }
 
     // Try color
-    if value.starts_with('#') || value.starts_with("rgb") || value.starts_with("rgba") {
-        if let Some(c) = try_parse_color(value) {
-            return PropertyValue::Color(liquide_theme_css::value::Color {
-                r: c.r,
-                g: c.g,
-                b: c.b,
-                a: c.a,
-            });
-        }
+    if let Some(c) = try_parse_color(value) {
+        return PropertyValue::Color(liquide_theme_css::value::Color {
+            r: c.r,
+            g: c.g,
+            b: c.b,
+            a: c.a,
+        });
     }
 
     // Keyword fallback
@@ -43,34 +41,21 @@ fn try_parse_px(value: &str) -> Option<f32> {
 
 /// Try to parse a color value.
 fn try_parse_color(value: &str) -> Option<Color> {
-    // #rrggbb or #rgb
-    if value.starts_with('#') {
-        let hex = &value[1..];
-        let (r, g, b, a) = match hex.len() {
-            3 => {
-                let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
-                let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
-                let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
-                (r, g, b, 255)
-            }
-            6 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                (r, g, b, 255)
-            }
-            8 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-                (r, g, b, a)
-            }
-            _ => return None,
-        };
-        return Some(Color { r, g, b, a });
+    let trimmed = value.trim();
+    // `currentColor` depends on the resolved `color` value of the same element
+    // and needs per-property context, so we do not resolve it here.
+    if trimmed.eq_ignore_ascii_case("currentcolor") {
+        return None;
     }
-    None
+
+    liquide_theme_css::value::Color::parse_css(trimmed)
+        .ok()
+        .map(|c| Color {
+            r: c.r,
+            g: c.g,
+            b: c.b,
+            a: c.a,
+        })
 }
 
 /// Resolve a PropertyValue to a Dimension.
@@ -212,6 +197,8 @@ pub fn resolve_color(val: &PropertyValue) -> Option<Color> {
             b: c.b,
             a: c.a,
         }),
+        PropertyValue::Keyword(kw) => try_parse_color(kw),
+        PropertyValue::String(s) => try_parse_color(s),
         _ => None,
     }
 }
@@ -876,4 +863,32 @@ fn parse_minmax(s: &str) -> Option<TrackSize> {
 fn parse_track_list_simple(css: &str) -> Vec<TrackSize> {
     css.split_whitespace()
         .filter_map(|token| parse_single_track(token))        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_inline_named_color() {
+        let value = parse_inline_value("red");
+        assert!(matches!(value, PropertyValue::Color(_)));
+    }
+
+    #[test]
+    fn resolve_color_from_keyword() {
+        let value = PropertyValue::Keyword("rgba(0, 128, 255, 0.5)".to_string());
+        let color = resolve_color(&value).expect("expected rgba keyword to parse");
+        assert_eq!(color.r, 0);
+        assert_eq!(color.g, 128);
+        assert_eq!(color.b, 255);
+        assert_eq!(color.a, 127);
+    }
+
+    #[test]
+    fn resolve_color_transparent_keyword() {
+        let value = PropertyValue::Keyword("transparent".to_string());
+        let color = resolve_color(&value).expect("expected transparent keyword to parse");
+        assert_eq!(color.a, 0);
+    }
 }

@@ -127,6 +127,7 @@ impl LayoutBox {
 }
 
 /// The laid-out tree — result of running the layout engine.
+#[derive(Clone)]
 pub struct LayoutTree {
     /// All boxes, indexed by LayoutBoxId.
     pub boxes: Vec<LayoutBox>,
@@ -197,6 +198,16 @@ impl LayoutTree {
     /// gets registered in node_index, but the positioned box should be canonical.
     pub fn set_node_box(&mut self, node_id: NodeId, box_id: LayoutBoxId) {
         self.node_index.insert(node_id, box_id);
+    }
+
+    /// Remove the node → box mapping only when it still points to `box_id`.
+    ///
+    /// This is useful for incremental relayout where stale subtree boxes are
+    /// detached while unrelated mappings must remain intact.
+    pub fn clear_node_box_if(&mut self, node_id: NodeId, box_id: LayoutBoxId) {
+        if self.node_index.get(&node_id).copied() == Some(box_id) {
+            self.node_index.remove(&node_id);
+        }
     }
 
     /// Total number of boxes.
