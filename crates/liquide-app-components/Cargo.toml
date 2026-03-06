@@ -1,0 +1,15 @@
+[package]
+name = "liquide-app-components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Shared higher-level UI component models for LiquiDE built-in apps"
+
+[lib]
+name = "liquide_app_components"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
