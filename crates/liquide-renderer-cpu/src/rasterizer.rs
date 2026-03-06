@@ -71,32 +71,17 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
             fb.pixels.copy_within(first_start..first_start + row_bytes, row_start);
         }
     } else if mode == BlendMode::SrcOver {
-        // Semi-transparent fill: blend inline using direct slice access
-        // instead of per-pixel get_pixel/set_pixel calls.
+        // Semi-transparent fill: use SIMD-accelerated constant-color SrcOver.
         if pm.is_transparent() {
             return;
         }
-        let src_r = pm.r as u16;
-        let src_g = pm.g as u16;
-        let src_b = pm.b as u16;
-        let src_a = pm.a as u16;
-        let inv_a = 255 - src_a;
+        let bgra = pm.to_bgra_bytes();
         let stride = fb.stride as usize;
 
         for y in y0..y1 {
             let row_start = y as usize * stride + x0 as usize * 4;
             let row = &mut fb.pixels[row_start..row_start + w * 4];
-            for pixel in row.chunks_exact_mut(4) {
-                // BGRA layout in the framebuffer
-                let db = pixel[0] as u16;
-                let dg = pixel[1] as u16;
-                let dr = pixel[2] as u16;
-                let da = pixel[3] as u16;
-                pixel[0] = (src_b + (db * inv_a + 127) / 255) as u8;
-                pixel[1] = (src_g + (dg * inv_a + 127) / 255) as u8;
-                pixel[2] = (src_r + (dr * inv_a + 127) / 255) as u8;
-                pixel[3] = (src_a + (da * inv_a + 127) / 255) as u8;
-            }
+            liquide_simd::convert::blend_constant_src_over(row, bgra);
         }
     } else {
         // Other blend modes — fall back to per-pixel dispatch.

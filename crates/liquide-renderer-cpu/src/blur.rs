@@ -60,6 +60,8 @@ impl GaussianKernel {
 ///
 /// `src` and `dst` are BGRA pixel buffers of `width * height * 4` bytes.
 /// `dst` receives the blurred result; `src` is not modified.
+///
+/// Delegates to the SIMD-accelerated implementation in `liquide_simd`.
 pub fn blur_horizontal(
     src: &[u8],
     dst: &mut [u8],
@@ -67,66 +69,16 @@ pub fn blur_horizontal(
     height: u32,
     kernel: &GaussianKernel,
 ) {
-    let w = width as usize;
-    let half = kernel.half_width as i32;
-
-    for y in 0..height as usize {
-        let row_off = y * w * 4;
-        for x in 0..w {
-            let mut r = 0.0f32;
-            let mut g = 0.0f32;
-            let mut b = 0.0f32;
-            let mut a = 0.0f32;
-
-            for (ki, &weight) in kernel.weights.iter().enumerate() {
-                let sx = (x as i32 + ki as i32 - half).clamp(0, w as i32 - 1) as usize;
-                let off = row_off + sx * 4;
-                b += src[off] as f32 * weight;
-                g += src[off + 1] as f32 * weight;
-                r += src[off + 2] as f32 * weight;
-                a += src[off + 3] as f32 * weight;
-            }
-
-            let out_off = row_off + x * 4;
-            dst[out_off] = b.round().clamp(0.0, 255.0) as u8;
-            dst[out_off + 1] = g.round().clamp(0.0, 255.0) as u8;
-            dst[out_off + 2] = r.round().clamp(0.0, 255.0) as u8;
-            dst[out_off + 3] = a.round().clamp(0.0, 255.0) as u8;
-        }
-    }
+    liquide_simd::blur::blur_horizontal(src, dst, width, height, kernel.half_width, &kernel.weights);
 }
 
 /// Apply a vertical Gaussian blur pass.
 ///
 /// `src` and `dst` are BGRA pixel buffers of `width * height * 4` bytes.
+///
+/// Delegates to the SIMD-accelerated implementation in `liquide_simd`.
 pub fn blur_vertical(src: &[u8], dst: &mut [u8], width: u32, height: u32, kernel: &GaussianKernel) {
-    let w = width as usize;
-    let h = height as usize;
-    let half = kernel.half_width as i32;
-
-    for y in 0..h {
-        for x in 0..w {
-            let mut r = 0.0f32;
-            let mut g = 0.0f32;
-            let mut b = 0.0f32;
-            let mut a = 0.0f32;
-
-            for (ki, &weight) in kernel.weights.iter().enumerate() {
-                let sy = (y as i32 + ki as i32 - half).clamp(0, h as i32 - 1) as usize;
-                let off = sy * w * 4 + x * 4;
-                b += src[off] as f32 * weight;
-                g += src[off + 1] as f32 * weight;
-                r += src[off + 2] as f32 * weight;
-                a += src[off + 3] as f32 * weight;
-            }
-
-            let out_off = y * w * 4 + x * 4;
-            dst[out_off] = b.round().clamp(0.0, 255.0) as u8;
-            dst[out_off + 1] = g.round().clamp(0.0, 255.0) as u8;
-            dst[out_off + 2] = r.round().clamp(0.0, 255.0) as u8;
-            dst[out_off + 3] = a.round().clamp(0.0, 255.0) as u8;
-        }
-    }
+    liquide_simd::blur::blur_vertical(src, dst, width, height, kernel.half_width, &kernel.weights);
 }
 
 /// In-place dual-pass separable Gaussian blur on a framebuffer region.
@@ -180,47 +132,11 @@ pub fn blur_region(fb: &mut FrameBuffer, region: Rect, radius: u32) {
 /// 2x box-filter downsample: each 2x2 block becomes one pixel (average).
 ///
 /// Returns a buffer of `(width/2) * (height/2) * 4` bytes.
+///
+/// Delegates to the SIMD-accelerated implementation in `liquide_simd`.
 #[must_use]
 pub fn blur_downsample_2x(src: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, u32) {
-    let dw = width / 2;
-    let dh = height / 2;
-    if dw == 0 || dh == 0 {
-        return (Vec::new(), 0, 0);
-    }
-
-    let mut dst = vec![0u8; (dw * dh * 4) as usize];
-    let sw = width as usize;
-
-    for y in 0..dh as usize {
-        for x in 0..dw as usize {
-            let sx = x * 2;
-            let sy = y * 2;
-
-            // Average 4 pixels
-            let mut r = 0u32;
-            let mut g = 0u32;
-            let mut b = 0u32;
-            let mut a = 0u32;
-
-            for dy in 0..2usize {
-                for dx in 0..2usize {
-                    let off = ((sy + dy) * sw + (sx + dx)) * 4;
-                    b += src[off] as u32;
-                    g += src[off + 1] as u32;
-                    r += src[off + 2] as u32;
-                    a += src[off + 3] as u32;
-                }
-            }
-
-            let out = (y * dw as usize + x) * 4;
-            dst[out] = (b / 4) as u8;
-            dst[out + 1] = (g / 4) as u8;
-            dst[out + 2] = (r / 4) as u8;
-            dst[out + 3] = (a / 4) as u8;
-        }
-    }
-
-    (dst, dw, dh)
+    liquide_simd::blur::downsample_2x(src, width, height)
 }
 
 /// Bilinear upsample from a smaller buffer to `dst_w × dst_h`.

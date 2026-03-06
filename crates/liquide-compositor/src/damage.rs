@@ -112,67 +112,30 @@ impl DamageSet {
 
 // ── CRC-32C (Castagnoli) ────────────────────────────────────────────────
 
-/// CRC-32C lookup table (Castagnoli polynomial 0x1EDC6F41).
-const CRC32C_TABLE: [u32; 256] = {
-    let mut table = [0u32; 256];
-    let mut i = 0u32;
-    while i < 256 {
-        let mut crc = i;
-        let mut j = 0;
-        while j < 8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ 0x82F6_3B78; // reversed polynomial
-            } else {
-                crc >>= 1;
-            }
-            j += 1;
-        }
-        table[i as usize] = crc;
-        i += 1;
-    }
-    table
-};
-
 /// Compute CRC-32C checksum over a byte slice.
-// TODO: SIMD CRC-32C using SSE4.2 _mm_crc32_u64 intrinsic
+///
+/// Delegates to the SIMD-accelerated implementation in `liquide_simd`.
 #[must_use]
 pub fn crc32c(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &byte in data {
-        crc = CRC32C_TABLE[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
-    }
-    !crc
+    liquide_simd::crc::crc32c(data)
 }
 
 /// Compute CRC-32C for a tile region within a frame buffer.
 /// Returns 0 if the tile is out of bounds.
+///
+/// Delegates to the SIMD-accelerated implementation in `liquide_simd`.
 #[must_use]
 pub fn crc32c_tile(fb: &FrameBuffer, tile_x: u32, tile_y: u32, tile_size: u32) -> u32 {
-    let bpp = fb.format.bytes_per_pixel();
-    let px = tile_x * tile_size;
-    let py = tile_y * tile_size;
-    
-    // Check if tile is completely outside the framebuffer
-    if px >= fb.width || py >= fb.height {
-        return 0;
-    }
-    
-    let tw = tile_size.min(fb.width.saturating_sub(px));
-    let th = tile_size.min(fb.height.saturating_sub(py));
-
-    let mut crc = !0u32;
-    for row in 0..th {
-        let offset = ((py + row) * fb.stride + px * bpp) as usize;
-        let end = offset + (tw * bpp) as usize;
-        // Bounds check before slicing
-        if end > fb.pixels.len() {
-            continue;
-        }
-        for &byte in &fb.pixels[offset..end] {
-            crc = CRC32C_TABLE[((crc ^ byte as u32) & 0xFF) as usize] ^ (crc >> 8);
-        }
-    }
-    !crc
+    liquide_simd::crc::crc32c_tile(
+        &fb.pixels,
+        fb.stride,
+        tile_x,
+        tile_y,
+        tile_size,
+        fb.width,
+        fb.height,
+        fb.format.bytes_per_pixel(),
+    )
 }
 
 /// Tracks tile-level damage between frames using CRC-32C hash comparison.

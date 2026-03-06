@@ -1,42 +1,11 @@
 //! CRC-32C (Castagnoli) hashing for tile content.
 //!
-//! Uses a table-based implementation. SIMD acceleration via SSE4.2
-//! `crc32` instruction is deferred (see `// TODO: SSE4.2`).
-
-/// Castagnoli polynomial used by CRC-32C.
-const POLYNOMIAL: u32 = 0x82F6_3B78;
-
-/// Precomputed CRC-32C lookup table (256 entries).
-const CRC32C_TABLE: [u32; 256] = {
-    let mut table = [0u32; 256];
-    let mut i = 0u32;
-    while i < 256 {
-        let mut crc = i;
-        let mut j = 0;
-        while j < 8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ POLYNOMIAL;
-            } else {
-                crc >>= 1;
-            }
-            j += 1;
-        }
-        table[i as usize] = crc;
-        i += 1;
-    }
-    table
-};
+//! Delegates to SIMD-accelerated implementations in `liquide-simd`.
 
 /// Compute CRC-32C of a byte slice.
-// TODO: SSE4.2 `_mm_crc32_u64` fast path
 #[must_use]
 pub fn crc32c(data: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFFu32;
-    for &byte in data {
-        let index = ((crc ^ byte as u32) & 0xFF) as usize;
-        crc = (crc >> 8) ^ CRC32C_TABLE[index];
-    }
-    crc ^ 0xFFFF_FFFF
+    liquide_simd::crc::crc32c(data)
 }
 
 /// Parameters describing a tile region within a pixel buffer.
@@ -55,20 +24,14 @@ pub struct TileRegion {
 /// tile coordinates `(tx, ty)` and hashes them.
 #[must_use]
 pub fn crc32c_tile(pixels: &[u8], stride: u32, region: &TileRegion) -> u32 {
-    let mut crc = 0xFFFF_FFFFu32;
-    let px_x = region.tile_x * region.tile_size;
-    let px_y = region.tile_y * region.tile_size;
-
-    let row_end = (px_y + region.tile_size).min(region.fb_height);
-    let col_bytes =
-        ((px_x + region.tile_size).min(region.fb_width) - px_x) as usize * region.bpp as usize;
-
-    for row in px_y..row_end {
-        let row_off = (row * stride) as usize + px_x as usize * region.bpp as usize;
-        for &byte in &pixels[row_off..row_off + col_bytes] {
-            let index = ((crc ^ byte as u32) & 0xFF) as usize;
-            crc = (crc >> 8) ^ CRC32C_TABLE[index];
-        }
-    }
-    crc ^ 0xFFFF_FFFF
+    liquide_simd::crc::crc32c_tile(
+        pixels,
+        stride,
+        region.tile_x,
+        region.tile_y,
+        region.tile_size,
+        region.fb_width,
+        region.fb_height,
+        region.bpp,
+    )
 }

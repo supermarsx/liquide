@@ -388,19 +388,32 @@ pub fn blend(dst: Color, src: Color, mode: BlendMode) -> Color {
 /// Blend an entire scanline of BGRA pixels.
 ///
 /// `dst` and `src` are slices of `len * 4` bytes in BGRA order.
-// TODO: AVX2 8-pixel vectorised blend path
+///
+/// For common blend modes, this dispatches to SIMD-accelerated implementations.
+/// Remaining modes fall back to the per-pixel scalar loop.
 pub fn blend_scanline(dst: &mut [u8], src: &[u8], mode: BlendMode) {
     debug_assert_eq!(dst.len(), src.len());
     debug_assert_eq!(dst.len() % 4, 0);
 
-    let pixel_count = dst.len() / 4;
-    for i in 0..pixel_count {
-        let off = i * 4;
-        let d = Color::from_bgra_bytes([dst[off], dst[off + 1], dst[off + 2], dst[off + 3]]);
-        let s = Color::from_bgra_bytes([src[off], src[off + 1], src[off + 2], src[off + 3]]);
-        let result = blend(d, s, mode);
-        let bgra = result.to_bgra_bytes();
-        dst[off..off + 4].copy_from_slice(&bgra);
+    match mode {
+        BlendMode::SrcOver => liquide_simd::blend::blend_scanline_src_over(dst, src),
+        BlendMode::Multiply => liquide_simd::blend::blend_scanline_multiply(dst, src),
+        BlendMode::Screen => liquide_simd::blend::blend_scanline_screen(dst, src),
+        BlendMode::Darken => liquide_simd::blend::blend_scanline_darken(dst, src),
+        BlendMode::Lighten => liquide_simd::blend::blend_scanline_lighten(dst, src),
+        BlendMode::Difference => liquide_simd::blend::blend_scanline_difference(dst, src),
+        _ => {
+            // Fallback: per-pixel scalar blend for modes without SIMD paths
+            let pixel_count = dst.len() / 4;
+            for i in 0..pixel_count {
+                let off = i * 4;
+                let d = Color::from_bgra_bytes([dst[off], dst[off + 1], dst[off + 2], dst[off + 3]]);
+                let s = Color::from_bgra_bytes([src[off], src[off + 1], src[off + 2], src[off + 3]]);
+                let result = blend(d, s, mode);
+                let bgra = result.to_bgra_bytes();
+                dst[off..off + 4].copy_from_slice(&bgra);
+            }
+        }
     }
 }
 

@@ -43,57 +43,33 @@ impl PixelFilter {
         match self {
             Self::ColorMatrix(m) => {
                 for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = fb.get_pixel(x, y);
-                        let result = apply_color_matrix(c, m);
-                        fb.set_pixel(x, y, result);
-                    }
+                    let off = fb.pixel_offset(x0, y);
+                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    liquide_simd::filter::color_matrix(row, m);
                 }
             }
             Self::Brightness(b) => {
                 let factor = *b;
                 for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = fb.get_pixel(x, y);
-                        let result = Color::new(
-                            clamp_u8(c.r as f32 * factor),
-                            clamp_u8(c.g as f32 * factor),
-                            clamp_u8(c.b as f32 * factor),
-                            c.a,
-                        );
-                        fb.set_pixel(x, y, result);
-                    }
+                    let off = fb.pixel_offset(x0, y);
+                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    liquide_simd::filter::brightness(row, factor);
                 }
             }
             Self::Contrast(c_factor) => {
                 let f = *c_factor;
                 for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = fb.get_pixel(x, y);
-                        let result = Color::new(
-                            clamp_u8((c.r as f32 - 128.0) * f + 128.0),
-                            clamp_u8((c.g as f32 - 128.0) * f + 128.0),
-                            clamp_u8((c.b as f32 - 128.0) * f + 128.0),
-                            c.a,
-                        );
-                        fb.set_pixel(x, y, result);
-                    }
+                    let off = fb.pixel_offset(x0, y);
+                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    liquide_simd::filter::contrast(row, f);
                 }
             }
             Self::Saturate(s) => {
                 let sat = *s;
                 for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = fb.get_pixel(x, y);
-                        let lum = 0.2126 * c.r as f32 + 0.7152 * c.g as f32 + 0.0722 * c.b as f32;
-                        let result = Color::new(
-                            clamp_u8(lum + (c.r as f32 - lum) * sat),
-                            clamp_u8(lum + (c.g as f32 - lum) * sat),
-                            clamp_u8(lum + (c.b as f32 - lum) * sat),
-                            c.a,
-                        );
-                        fb.set_pixel(x, y, result);
-                    }
+                    let off = fb.pixel_offset(x0, y);
+                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    liquide_simd::filter::saturate(row, sat);
                 }
             }
             Self::HueRotate(degrees) => {
@@ -118,45 +94,30 @@ impl PixelFilter {
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ];
                 for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = fb.get_pixel(x, y);
-                        let result = apply_color_matrix(c, &m);
-                        fb.set_pixel(x, y, result);
-                    }
+                    let off = fb.pixel_offset(x0, y);
+                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    liquide_simd::filter::color_matrix(row, &m);
                 }
             }
             Self::Grayscale => {
                 for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = fb.get_pixel(x, y);
-                        let lum = (0.2126 * c.r as f32 + 0.7152 * c.g as f32 + 0.0722 * c.b as f32 + 0.5) as u8;
-                        fb.set_pixel(x, y, Color::new(lum, lum, lum, c.a));
-                    }
+                    let off = fb.pixel_offset(x0, y);
+                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    liquide_simd::filter::grayscale(row);
                 }
             }
             Self::Sepia => {
                 for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = fb.get_pixel(x, y);
-                        let r = c.r as f32;
-                        let g = c.g as f32;
-                        let b = c.b as f32;
-                        let result = Color::new(
-                            clamp_u8(r * 0.393 + g * 0.769 + b * 0.189),
-                            clamp_u8(r * 0.349 + g * 0.686 + b * 0.168),
-                            clamp_u8(r * 0.272 + g * 0.534 + b * 0.131),
-                            c.a,
-                        );
-                        fb.set_pixel(x, y, result);
-                    }
+                    let off = fb.pixel_offset(x0, y);
+                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    liquide_simd::filter::sepia(row);
                 }
             }
             Self::Invert => {
                 for y in y0..y1 {
-                    for x in x0..x1 {
-                        let c = fb.get_pixel(x, y);
-                        fb.set_pixel(x, y, Color::new(255 - c.r, 255 - c.g, 255 - c.b, c.a));
-                    }
+                    let off = fb.pixel_offset(x0, y);
+                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    liquide_simd::blend::invert_scanline(row);
                 }
             }
             Self::Opacity(o) => {
@@ -186,6 +147,7 @@ impl PixelFilter {
 /// Apply a 5×4 color matrix to a single pixel.
 ///
 /// Layout: `[R_r, R_g, R_b, R_a, R_offset, G_r, G_g, G_b, G_a, G_offset, ...]`
+#[allow(dead_code)]
 fn apply_color_matrix(c: Color, m: &[f32; 20]) -> Color {
     let r = c.r as f32;
     let g = c.g as f32;
@@ -200,6 +162,7 @@ fn apply_color_matrix(c: Color, m: &[f32; 20]) -> Color {
     )
 }
 
+#[allow(dead_code)]
 fn clamp_u8(v: f32) -> u8 {
     v.round().clamp(0.0, 255.0) as u8
 }

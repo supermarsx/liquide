@@ -48,8 +48,9 @@ pub fn blit_region(
 }
 
 /// Clear a rectangular region to a solid color.
+///
+/// Uses SIMD-accelerated pattern fill for each scanline.
 pub fn clear_region(fb: &mut FrameBuffer, rect: Rect, color: Color) {
-    let bpp = fb.format.bytes_per_pixel() as usize;
     let bgra = color.to_bgra_bytes();
 
     let x0 = (rect.x.max(0.0) as u32).min(fb.width);
@@ -57,11 +58,14 @@ pub fn clear_region(fb: &mut FrameBuffer, rect: Rect, color: Color) {
     let x1 = (rect.right().ceil() as u32).min(fb.width);
     let y1 = (rect.bottom().ceil() as u32).min(fb.height);
 
+    let w = (x1.saturating_sub(x0)) as usize;
+    if w == 0 {
+        return;
+    }
+
     for y in y0..y1 {
-        let row_start = (y * fb.stride) as usize;
-        for x in x0..x1 {
-            let off = row_start + x as usize * bpp;
-            fb.pixels[off..off + 4].copy_from_slice(&bgra);
-        }
+        let row_start = (y * fb.stride) as usize + x0 as usize * 4;
+        let row = &mut fb.pixels[row_start..row_start + w * 4];
+        liquide_simd::fill::fill_pattern(row, bgra);
     }
 }

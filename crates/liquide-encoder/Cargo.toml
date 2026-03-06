@@ -10,6 +10,7 @@ rust-version.workspace = true
 liquide-common.workspace = true
 liquide-compositor.workspace = true
 liquide-protocol.workspace = true
+liquide-simd.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 zstd.workspace = true
