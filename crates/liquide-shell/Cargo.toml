@@ -23,6 +23,7 @@ liquide-layout.workspace = true
 liquide-paint.workspace = true
 liquide-hit-test.workspace = true
 liquide-components.workspace = true
+liquide-statusbar = { path = "../liquide-statusbar" }
 liquide-font-rasterizer.workspace = true
 serde.workspace = true
 thiserror.workspace = true

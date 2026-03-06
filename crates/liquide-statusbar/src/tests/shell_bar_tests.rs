@@ -1,11 +1,13 @@
-use crate::status_bar::*;
+use crate::items::*;
+use crate::shell_bar::*;
+use crate::slot::*;
 use liquide_compositor::geometry::Rect;
 
 // ========== ShellStatusBar::new ==========
 
 #[test]
 fn status_bar_new_default_config_creates_four_items() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     assert_eq!(bar.item_count(), 5); // clock, notifications, connection, tray, session
     assert!(bar.find_item("clock").is_some());
     assert!(bar.find_item("notifications").is_some());
@@ -16,12 +18,12 @@ fn status_bar_new_default_config_creates_four_items() {
 
 #[test]
 fn status_bar_new_all_disabled_creates_zero_items() {
-    let config = StatusBarConfig {
+    let config = ShellBarConfig {
         show_clock: false,
-        show_notification_indicator: false,
+        show_notifications: false,
         show_connection_quality: false,
         show_tray: false,
-        ..StatusBarConfig::default()
+        ..ShellBarConfig::default()
     };
     let bar = ShellStatusBar::new(config);
     assert_eq!(bar.item_count(), 1); // session button always present
@@ -31,12 +33,12 @@ fn status_bar_new_all_disabled_creates_zero_items() {
 
 #[test]
 fn status_bar_add_item() {
-    let mut bar = ShellStatusBar::new(StatusBarConfig {
+    let mut bar = ShellStatusBar::new(ShellBarConfig {
         show_clock: false,
-        show_notification_indicator: false,
+        show_notifications: false,
         show_connection_quality: false,
         show_tray: false,
-        ..StatusBarConfig::default()
+        ..ShellBarConfig::default()
     });
     assert_eq!(bar.item_count(), 1); // session button
     bar.add_item(StatusBarItem {
@@ -57,7 +59,7 @@ fn status_bar_add_item() {
 
 #[test]
 fn status_bar_remove_item() {
-    let mut bar = ShellStatusBar::new(StatusBarConfig::default());
+    let mut bar = ShellStatusBar::new(ShellBarConfig::default());
     assert_eq!(bar.item_count(), 5);
     let removed = bar.remove_item("clock");
     assert!(removed);
@@ -67,7 +69,7 @@ fn status_bar_remove_item() {
 
 #[test]
 fn status_bar_remove_item_nonexistent() {
-    let mut bar = ShellStatusBar::new(StatusBarConfig::default());
+    let mut bar = ShellStatusBar::new(ShellBarConfig::default());
     let removed = bar.remove_item("nonexistent");
     assert!(!removed);
     assert_eq!(bar.item_count(), 5);
@@ -77,7 +79,7 @@ fn status_bar_remove_item_nonexistent() {
 
 #[test]
 fn status_bar_update_clock_sets_dirty() {
-    let mut bar = ShellStatusBar::new(StatusBarConfig::default());
+    let mut bar = ShellStatusBar::new(ShellBarConfig::default());
     bar.mark_clean();
     assert!(!bar.is_dirty());
     bar.update_clock(12345);
@@ -91,7 +93,7 @@ fn status_bar_update_clock_sets_dirty() {
 
 #[test]
 fn status_bar_update_notification_count() {
-    let mut bar = ShellStatusBar::new(StatusBarConfig::default());
+    let mut bar = ShellStatusBar::new(ShellBarConfig::default());
     bar.mark_clean();
     bar.update_notification_count(42);
     assert!(bar.is_dirty());
@@ -107,7 +109,7 @@ fn status_bar_update_notification_count() {
 
 #[test]
 fn status_bar_update_connection_quality() {
-    let mut bar = ShellStatusBar::new(StatusBarConfig::default());
+    let mut bar = ShellStatusBar::new(ShellBarConfig::default());
     bar.mark_clean();
     bar.update_connection_quality(85, 15);
     assert!(bar.is_dirty());
@@ -128,7 +130,7 @@ fn status_bar_update_connection_quality() {
 
 #[test]
 fn status_bar_set_dnd() {
-    let mut bar = ShellStatusBar::new(StatusBarConfig::default());
+    let mut bar = ShellStatusBar::new(ShellBarConfig::default());
     bar.mark_clean();
     bar.set_dnd(true);
     assert!(bar.is_dirty());
@@ -144,7 +146,7 @@ fn status_bar_set_dnd() {
 
 #[test]
 fn status_bar_dirty_lifecycle() {
-    let mut bar = ShellStatusBar::new(StatusBarConfig::default());
+    let mut bar = ShellStatusBar::new(ShellBarConfig::default());
     // Starts dirty
     assert!(bar.is_dirty());
     bar.mark_clean();
@@ -160,7 +162,7 @@ fn status_bar_dirty_lifecycle() {
 
 #[test]
 fn status_bar_dirty_starts_true_mark_clean_then_update() {
-    let mut bar = ShellStatusBar::new(StatusBarConfig::default());
+    let mut bar = ShellStatusBar::new(ShellBarConfig::default());
     assert!(bar.is_dirty());
     bar.mark_clean();
     assert!(!bar.is_dirty());
@@ -172,14 +174,14 @@ fn status_bar_dirty_starts_true_mark_clean_then_update() {
 
 #[test]
 fn status_bar_items_returns_all() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     let items = bar.items();
     assert_eq!(items.len(), 5);
 }
 
 #[test]
 fn status_bar_item_count() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     assert_eq!(bar.item_count(), 5);
 }
 
@@ -187,14 +189,14 @@ fn status_bar_item_count() {
 
 #[test]
 fn status_bar_items_in_slot_left() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     let left_items = bar.items_in_slot(StatusBarSlot::Left);
     assert!(left_items.is_empty());
 }
 
 #[test]
 fn status_bar_items_in_slot_center() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     let center_items = bar.items_in_slot(StatusBarSlot::Center);
     assert_eq!(center_items.len(), 1);
     assert_eq!(center_items[0].id, "clock");
@@ -202,7 +204,7 @@ fn status_bar_items_in_slot_center() {
 
 #[test]
 fn status_bar_items_in_slot_right() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     let right_items = bar.items_in_slot(StatusBarSlot::Right);
     assert_eq!(right_items.len(), 4); // notifications, connection, tray, session
 }
@@ -211,7 +213,7 @@ fn status_bar_items_in_slot_right() {
 
 #[test]
 fn status_bar_find_item() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     let clock = bar.find_item("clock");
     assert!(clock.is_some());
     assert_eq!(clock.unwrap().id, "clock");
@@ -219,7 +221,7 @@ fn status_bar_find_item() {
 
 #[test]
 fn status_bar_find_item_nonexistent() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     assert!(bar.find_item("nonexistent").is_none());
 }
 
@@ -227,9 +229,9 @@ fn status_bar_find_item_nonexistent() {
 
 #[test]
 fn status_bar_compute_bounds_top_position() {
-    let bar = ShellStatusBar::new(StatusBarConfig {
-        height: 28,
-        ..StatusBarConfig::default()
+    let bar = ShellStatusBar::new(ShellBarConfig {
+        height: 28.0,
+        ..ShellBarConfig::default()
     });
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
     let bounds = bar.compute_bounds(screen);
@@ -243,12 +245,12 @@ fn status_bar_compute_bounds_top_position() {
 
 #[test]
 fn status_bar_is_enabled() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     assert!(bar.is_enabled());
 
-    let bar_disabled = ShellStatusBar::new(StatusBarConfig {
+    let bar_disabled = ShellStatusBar::new(ShellBarConfig {
         enabled: false,
-        ..StatusBarConfig::default()
+        ..ShellBarConfig::default()
     });
     assert!(!bar_disabled.is_enabled());
 }
@@ -257,11 +259,11 @@ fn status_bar_is_enabled() {
 
 #[test]
 fn status_bar_config_accessor() {
-    let bar = ShellStatusBar::new(StatusBarConfig {
-        height: 32,
-        ..StatusBarConfig::default()
+    let bar = ShellStatusBar::new(ShellBarConfig {
+        height: 32.0,
+        ..ShellBarConfig::default()
     });
-    assert_eq!(bar.config().height, 32);
+    assert_eq!(bar.config().height, 32.0);
     assert!(bar.config().show_clock);
 }
 
@@ -276,12 +278,12 @@ fn status_bar_slot_display() {
 
 #[test]
 fn status_bar_display() {
-    let bar = ShellStatusBar::new(StatusBarConfig::default());
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
     let s = format!("{bar}");
     assert!(s.contains("5 items"));
     assert!(s.contains("dirty"));
 
-    let mut bar2 = ShellStatusBar::new(StatusBarConfig::default());
+    let mut bar2 = ShellStatusBar::new(ShellBarConfig::default());
     bar2.mark_clean();
     let s2 = format!("{bar2}");
     assert!(s2.contains("clean"));

@@ -8,8 +8,7 @@ use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNod
 pub const NODE_ROOT: u64 = 0;
 pub const NODE_BACKGROUND: u64 = 1;
 pub const NODE_WORKSPACE_BASE: u64 = 100;
-pub const NODE_STATUS_BAR: u64 = 1_000;
-pub const NODE_STATUS_BAR_ITEM_BASE: u64 = 1_100;
+pub use liquide_statusbar::{NODE_STATUS_BAR, NODE_STATUS_BAR_ITEM_BASE};
 pub const NODE_DOCK: u64 = 2_000;
 pub const NODE_DOCK_ITEM_BASE: u64 = 2_100;
 pub const NODE_WINDOW_BASE: u64 = 10_000;

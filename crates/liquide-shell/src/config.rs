@@ -6,7 +6,7 @@ use liquide_dock::DockConfig;
 use crate::launcher::LauncherConfig;
 use crate::notification::NotificationConfig;
 use crate::seamless::SeamlessConfig;
-use crate::status_bar::StatusBarConfig;
+use liquide_statusbar::ShellBarConfig;
 use crate::tiling::TilingConfig;
 
 /// Aggregate shell configuration.
@@ -15,7 +15,7 @@ pub struct ShellConfig {
     /// Dock settings.
     pub dock: DockConfig,
     /// Status bar settings.
-    pub status_bar: StatusBarConfig,
+    pub status_bar: ShellBarConfig,
     /// App launcher settings.
     pub launcher: LauncherConfig,
     /// Tiling engine settings.

@@ -273,25 +273,8 @@ pub fn resolve_dock_layout(resolver: &StyleResolver) -> DockLayout {
     }
 }
 
-/// Layout dimensions for the status bar, resolved from CSS.
-#[derive(Debug, Clone)]
-pub struct StatusBarLayout {
-    pub height: f32,
-    pub padding: f32,
-    pub border_height: f32,
-    pub blur_radius: u32,
-}
-
-impl Default for StatusBarLayout {
-    fn default() -> Self {
-        Self {
-            height: 28.0,
-            padding: 8.0,
-            border_height: 2.0,
-            blur_radius: 15,
-        }
-    }
-}
+/// Re-export `StatusBarLayout` from the statusbar crate.
+pub use liquide_statusbar::StatusBarLayout;
 
 /// Resolve status bar layout from CSS.
 pub fn resolve_status_bar_layout(resolver: &StyleResolver) -> StatusBarLayout {

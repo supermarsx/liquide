@@ -13,7 +13,6 @@ mod calculator_tests;
 mod config_tests;
 mod shortcuts_tests;
 mod dock_tests;
-mod status_bar_tests;
 mod notification_tests;
 mod tiling_tests;
 mod launcher_tests;

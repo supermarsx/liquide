@@ -24,7 +24,6 @@ pub mod seamless;
 pub mod shell;
 pub mod shortcuts;
 pub mod stats;
-pub mod status_bar;
 pub mod theme;
 pub mod theme_loader;
 pub mod themes;
@@ -142,8 +141,9 @@ pub use seamless::{
     SeamlessWindowType,
 };
 pub use shortcuts::{Direction, KeyBinding, ShellAction, ShortcutManager};
-pub use status_bar::{
-    ShellStatusBar, StatusBarConfig, StatusBarItem, StatusBarItemKind, StatusBarSlot,
+pub use liquide_statusbar::{
+    ShellBarConfig, ShellStatusBar, StatusBarColors, StatusBarItem, StatusBarItemKind,
+    StatusBarLayout, StatusBarSlot, NODE_STATUS_BAR, NODE_STATUS_BAR_ITEM_BASE,
 };
 pub use theme::ShellTheme;
 pub use tiling::{SnapZone, TilingConfig, TilingEngine, TilingLayoutKind, TilingMode};
