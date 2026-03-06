@@ -92,7 +92,7 @@ fn config_default_notifications_default_timeout() {
 #[test]
 fn config_default_status_bar_height() {
     let config = ShellConfig::default();
-    assert_eq!(config.status_bar.height, 28);
+    assert_eq!(config.status_bar.height, 28.0);
 }
 
 // ---------------------------------------------------------------------------
