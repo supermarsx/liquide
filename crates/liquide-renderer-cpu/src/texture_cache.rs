@@ -69,11 +69,19 @@ impl TextureCache {
     }
 
     /// Get a cached texture if it exists.
+    ///
+    /// Returns a cheap clone — pixel data is `Arc`-shared, only the
+    /// metadata wrapper (width/height/access_time) is copied.
     pub fn get(&mut self, texture_id: &str) -> Option<CachedTexture> {
         if let Some(texture) = self.textures.get_mut(texture_id) {
             self.current_time += 1;
             texture.access_time = self.current_time;
-            Some(texture.clone())
+            Some(CachedTexture {
+                data: Arc::clone(&texture.data),
+                width: texture.width,
+                height: texture.height,
+                access_time: texture.access_time,
+            })
         } else {
             None
         }

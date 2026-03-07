@@ -71,11 +71,12 @@ impl FrameBuffer {
         let tw = tile_size.min(self.width.saturating_sub(px));
         let th = tile_size.min(self.height.saturating_sub(py));
         let row_bytes = (tw * bpp) as usize;
-        let mut out = vec![0u8; (tile_size * tile_size * bpp) as usize];
+        let out_stride = (tw * bpp) as usize;
+        let mut out = vec![0u8; out_stride * th as usize];
 
         for row in 0..th {
             let src_offset = ((py + row) * self.stride + px * bpp) as usize;
-            let dst_offset = (row * tile_size * bpp) as usize;
+            let dst_offset = (row as usize) * out_stride;
             out[dst_offset..dst_offset + row_bytes]
                 .copy_from_slice(&self.pixels[src_offset..src_offset + row_bytes]);
         }
@@ -84,33 +85,31 @@ impl FrameBuffer {
 
     /// Clear the entire buffer to a solid color.
     pub fn clear(&mut self, color: Color) {
-        let bgra = color.to_bgra_bytes();
         let bpp = self.format.bytes_per_pixel() as usize;
-        for y in 0..self.height {
-            let start = (y * self.stride) as usize;
-            for x in 0..self.width {
-                let offset = start + x as usize * bpp;
-                match self.format {
-                    PixelFormat::Bgra8 => {
-                        self.pixels[offset..offset + 4].copy_from_slice(&bgra);
-                    }
-                    PixelFormat::Rgba8 => {
-                        self.pixels[offset] = color.r;
-                        self.pixels[offset + 1] = color.g;
-                        self.pixels[offset + 2] = color.b;
-                        self.pixels[offset + 3] = color.a;
-                    }
-                    PixelFormat::Rgb8 => {
-                        self.pixels[offset] = color.r;
-                        self.pixels[offset + 1] = color.g;
-                        self.pixels[offset + 2] = color.b;
-                    }
-                    _ => {
-                        // For other formats fall back to zero-fill
-                        self.pixels[offset..offset + bpp].fill(0);
-                    }
-                }
+        let row_bytes = (self.width as usize) * bpp;
+
+        // Build the pixel pattern for the first row.
+        let pixel_bytes: [u8; 4] = match self.format {
+            PixelFormat::Bgra8 => color.to_bgra_bytes(),
+            PixelFormat::Rgba8 => [color.r, color.g, color.b, color.a],
+            PixelFormat::Rgb8 => [color.r, color.g, color.b, 0],
+            _ => [0; 4],
+        };
+
+        // Fill the first scanline pixel-by-pixel.
+        {
+            let first_row = &mut self.pixels[..row_bytes];
+            for x in 0..self.width as usize {
+                let offset = x * bpp;
+                first_row[offset..offset + bpp].copy_from_slice(&pixel_bytes[..bpp]);
             }
+        }
+
+        // Copy the first scanline to all subsequent rows.
+        let stride = self.stride as usize;
+        for y in 1..self.height as usize {
+            let (src, dst) = self.pixels.split_at_mut(y * stride);
+            dst[..row_bytes].copy_from_slice(&src[..row_bytes]);
         }
     }
 

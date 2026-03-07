@@ -519,7 +519,7 @@ impl Renderer for SoftwareRenderer {
             self.render_node_with_lod(node, fb, lod_level);
         }
 
-        Ok(damage.tiles.to_vec())
+        Ok(damage.tiles.clone())
     }
 }
 
@@ -604,7 +604,7 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::BlurBackdrop => {
-                if self.blur_enabled {
+                if self.blur_enabled && self.intersects_dirty(&bounds) {
                     let radius = self.effect_params.blur_radius;
                     if radius > 0 {
                         self.render_backdrop_blur(node.id, bounds, radius, fb);
@@ -613,7 +613,7 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::BlurCache => {
-                if self.blur_enabled {
+                if self.blur_enabled && self.intersects_dirty(&bounds) {
                     let radius = self.effect_params.blur_radius;
                     if radius > 0 {
                         self.render_backdrop_blur(node.id, bounds, radius, fb);
@@ -623,7 +623,9 @@ impl SoftwareRenderer {
 
             SceneNodeKind::Content | SceneNodeKind::Overlay | SceneNodeKind::ShellLayer => {
                 if opacity < 1.0 {
-                    let tint = Color::new(0, 0, 0, 0);
+                    // Apply opacity as a semi-transparent black overlay.
+                    let alpha = ((1.0 - opacity) * 255.0 + 0.5) as u8;
+                    let tint = Color::new(0, 0, 0, alpha);
                     rasterizer::fill_rect(fb, bounds, tint, BlendMode::SrcOver);
                 }
             }
@@ -741,15 +743,14 @@ impl SoftwareRenderer {
                                 }
                                 let mut px = fb.get_pixel(x, y);
                                 if coverage <= 0.0 {
-                                    px.a = 0;
-                                    px.r = 0;
-                                    px.g = 0;
-                                    px.b = 0;
+                                    px = Color { r: 0, g: 0, b: 0, a: 0 };
                                 } else {
-                                    px.a = (px.a as f32 * coverage + 0.5) as u8;
+                                    // Premultiplied alpha: scale all channels by coverage
+                                    // to avoid dark halos at anti-aliased edges.
                                     px.r = (px.r as f32 * coverage + 0.5) as u8;
                                     px.g = (px.g as f32 * coverage + 0.5) as u8;
                                     px.b = (px.b as f32 * coverage + 0.5) as u8;
+                                    px.a = (px.a as f32 * coverage + 0.5) as u8;
                                 }
                                 fb.set_pixel(x, y, px);
                             }
@@ -775,10 +776,14 @@ impl SoftwareRenderer {
                                 let coverage = (-d + 0.5).clamp(0.0, 1.0);
                                 if coverage >= 1.0 { continue; }
                                 let mut px = fb.get_pixel(x, y);
-                                px.a = (px.a as f32 * coverage + 0.5) as u8;
-                                px.r = (px.r as f32 * coverage + 0.5) as u8;
-                                px.g = (px.g as f32 * coverage + 0.5) as u8;
-                                px.b = (px.b as f32 * coverage + 0.5) as u8;
+                                if coverage <= 0.0 {
+                                    px = Color { r: 0, g: 0, b: 0, a: 0 };
+                                } else {
+                                    px.r = (px.r as f32 * coverage + 0.5) as u8;
+                                    px.g = (px.g as f32 * coverage + 0.5) as u8;
+                                    px.b = (px.b as f32 * coverage + 0.5) as u8;
+                                    px.a = (px.a as f32 * coverage + 0.5) as u8;
+                                }
                                 fb.set_pixel(x, y, px);
                             }
                         }
@@ -807,10 +812,14 @@ impl SoftwareRenderer {
                                 let coverage = (-d * erx.min(ery) + 0.5).clamp(0.0, 1.0);
                                 if coverage >= 1.0 { continue; }
                                 let mut px = fb.get_pixel(x, y);
-                                px.a = (px.a as f32 * coverage + 0.5) as u8;
-                                px.r = (px.r as f32 * coverage + 0.5) as u8;
-                                px.g = (px.g as f32 * coverage + 0.5) as u8;
-                                px.b = (px.b as f32 * coverage + 0.5) as u8;
+                                if coverage <= 0.0 {
+                                    px = Color { r: 0, g: 0, b: 0, a: 0 };
+                                } else {
+                                    px.r = (px.r as f32 * coverage + 0.5) as u8;
+                                    px.g = (px.g as f32 * coverage + 0.5) as u8;
+                                    px.b = (px.b as f32 * coverage + 0.5) as u8;
+                                    px.a = (px.a as f32 * coverage + 0.5) as u8;
+                                }
                                 fb.set_pixel(x, y, px);
                             }
                         }
@@ -830,7 +839,10 @@ impl SoftwareRenderer {
                                 let fy = y as f32 + 0.5;
                                 for x in bx0..bx1 {
                                     let fx = x as f32 + 0.5;
+                                    // Winding number test
                                     let mut winding = 0i32;
+                                    // Minimum signed distance to nearest edge (for AA)
+                                    let mut min_dist_sq = f32::MAX;
                                     for i in 0..pts.len() {
                                         let j = (i + 1) % pts.len();
                                         let (x0, y0) = pts[i];
@@ -842,10 +854,34 @@ impl SoftwareRenderer {
                                         } else if y1 <= fy && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) < 0.0 {
                                             winding -= 1;
                                         }
+                                        // Point-to-segment distance squared
+                                        let ex = x1 - x0;
+                                        let ey = y1 - y0;
+                                        let len_sq = ex * ex + ey * ey;
+                                        let t = if len_sq > 0.0 {
+                                            ((fx - x0) * ex + (fy - y0) * ey) / len_sq
+                                        } else {
+                                            0.0
+                                        }.clamp(0.0, 1.0);
+                                        let px = x0 + t * ex - fx;
+                                        let py = y0 + t * ey - fy;
+                                        min_dist_sq = min_dist_sq.min(px * px + py * py);
                                     }
-                                    if winding == 0 {
-                                        fb.set_pixel(x, y, Color { r: 0, g: 0, b: 0, a: 0 });
+                                    let dist = min_dist_sq.sqrt();
+                                    let inside = winding != 0;
+                                    let signed_dist = if inside { dist } else { -dist };
+                                    let coverage = (signed_dist + 0.5).clamp(0.0, 1.0);
+                                    if coverage >= 1.0 { continue; }
+                                    let mut px = fb.get_pixel(x, y);
+                                    if coverage <= 0.0 {
+                                        px = Color { r: 0, g: 0, b: 0, a: 0 };
+                                    } else {
+                                        px.r = (px.r as f32 * coverage + 0.5) as u8;
+                                        px.g = (px.g as f32 * coverage + 0.5) as u8;
+                                        px.b = (px.b as f32 * coverage + 0.5) as u8;
+                                        px.a = (px.a as f32 * coverage + 0.5) as u8;
                                     }
+                                    fb.set_pixel(x, y, px);
                                 }
                             }
                         }
