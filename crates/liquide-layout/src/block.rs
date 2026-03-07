@@ -67,13 +67,29 @@ pub fn layout_block(
     };
 
     // Early check for explicit height (needed for margin collapsing detection)
-    let has_explicit_height = style.height.resolve_px(
+    let resolved_explicit_height = style.height.resolve_px(
         container_height,
         base_font_size,
         font_size,
         viewport_w,
         viewport_h,
-    ).is_some();
+    );
+    let has_explicit_height = resolved_explicit_height.is_some();
+
+    // Aspect-ratio: if width is auto but height is explicit, derive width from height * ratio
+    let explicit_width = if explicit_width.is_none() {
+        if let (Some(h), &AspectRatio::Ratio(rw, rh)) = (resolved_explicit_height, &style.aspect_ratio) {
+            if rh > 0.0 {
+                Some(h * (rw / rh))
+            } else {
+                explicit_width
+            }
+        } else {
+            explicit_width
+        }
+    } else {
+        explicit_width
+    };
 
     let width = explicit_width.unwrap_or(container_width);
 
