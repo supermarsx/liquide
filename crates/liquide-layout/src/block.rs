@@ -33,14 +33,25 @@ pub fn layout_block(
 
     let box_id = tree.alloc(node_id, BoxType::Block);
 
-    // Consume generated-content properties — counter-increment/reset/set
-    // maintain CSS counter state, quotes defines the quote pair for open-quote.
-    // Full counter resolution requires a document-order counter registry (TODO);
-    // for now we read them to mark as genuinely consumed.
-    let _counter_increment = &style.counter_increment;
-    let _counter_reset = &style.counter_reset;
-    let _counter_set = &style.counter_set;
+    // ── Counter processing ──
+    // Apply counter-reset/increment/set to the thread-local counter registry.
     let _quotes = &style.quotes;
+    if let Some(ref decl) = style.counter_reset {
+        crate::counter::COUNTER_REGISTRY.with(|reg| reg.borrow_mut().apply_reset(decl));
+    } else {
+        // Push an empty scope so pop_scope is always balanced
+        crate::counter::COUNTER_REGISTRY.with(|reg| reg.borrow_mut().push_empty_scope());
+    }
+    if let Some(ref decl) = style.counter_increment {
+        crate::counter::COUNTER_REGISTRY.with(|reg| reg.borrow_mut().apply_increment(decl));
+    }
+    if let Some(ref decl) = style.counter_set {
+        crate::counter::COUNTER_REGISTRY.with(|reg| reg.borrow_mut().apply_set(decl));
+    }
+    // For list-item display, implicitly increment the "list-item" counter
+    if style.is_list_item() && style.counter_increment.is_none() {
+        crate::counter::COUNTER_REGISTRY.with(|reg| reg.borrow_mut().apply_increment("list-item 1"));
+    }
 
     // Resolve own dimensions
     let font_size = style.font_size;
@@ -269,7 +280,7 @@ pub fn layout_block(
         }
     }
 
-    for (idx, &child_id) in children.iter().enumerate() {
+    for (_idx, &child_id) in children.iter().enumerate() {
         let child_style = styles.get(child_id).cloned().unwrap_or_default();
 
         // Skip display: none
@@ -524,7 +535,11 @@ pub fn layout_block(
             tree.alloc(child_id, BoxType::Block)
         } else if child_style.is_list_item() {
             // display: list-item — generate a marker box, then lay out as block.
-            let marker_text = list_marker_text(&child_style.list_style_type, idx + 1);
+            // Use the "list-item" counter value (updated by the child's own block layout)
+            // instead of computing from the sibling index.
+            let counter_val = crate::counter::COUNTER_REGISTRY
+                .with(|reg| reg.borrow().counter_value("list-item"));
+            let marker_text = list_marker_text(&child_style.list_style_type, counter_val.max(1) as usize);
             let marker_width = marker_text.len() as f32 * child_style.font_size * 0.6 + 4.0;
 
             // Create the block for the list item content
@@ -623,6 +638,9 @@ pub fn layout_block(
             }
         }
     }
+
+    // Pop the counter scope we pushed at the start of this block
+    crate::counter::COUNTER_REGISTRY.with(|reg| reg.borrow_mut().pop_scope());
 
     // Content height: explicit or sum of children
     let explicit_height = style.height.resolve_px(

@@ -58,6 +58,12 @@ impl LayoutEngine {
         image_measurer: &dyn ImageMeasurer,
     ) -> LayoutTree {
         let mut tree = LayoutTree::new();
+
+        // Reset the thread-local counter registry for this layout pass.
+        crate::counter::COUNTER_REGISTRY.with(|reg| {
+            *reg.borrow_mut() = crate::counter::CounterRegistry::new();
+        });
+
         let root = doc.root();
 
         let root_style = styles.get(root).cloned().unwrap_or_default();

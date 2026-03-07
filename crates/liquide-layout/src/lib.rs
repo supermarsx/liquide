@@ -6,6 +6,7 @@
 
 pub mod block;
 pub mod container_query;
+pub mod counter;
 pub mod engine;
 pub mod flex;
 pub mod float;

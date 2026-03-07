@@ -176,10 +176,10 @@ pub fn layout_multicol(
     let _rule_color = style.column_rule.color;
 
     // ── Fragmentation control ──
-    // orphans: minimum lines at the bottom of a column before a break (default 2).
-    let _orphans = style.orphans;
-    // widows: minimum lines at the top of a column after a break (default 2).
-    let _widows = style.widows;
+    // orphans: minimum lines/children at the bottom of a column before a break (default 2).
+    let orphans = style.orphans.max(1);
+    // widows: minimum lines/children at the top of a column after a break (default 2).
+    let widows = style.widows.max(1);
     // box-decoration-break: slice (default) or clone — controls whether
     // borders/padding are "sliced" at column breaks or re-drawn in each fragment.
     let _box_decoration_break = style.box_decoration_break;
@@ -344,8 +344,13 @@ pub fn layout_multicol(
                 let mut current_col = 0u32;
                 let mut col_y = 0.0f32;
                 let mut seg_max_h = 0.0f32;
+                // Track how many children have been placed in the current column
+                // (used for orphans/widows enforcement).
+                let mut children_in_col = 0u32;
 
-                for &(child_box_id, child_h, brk_before, brk_after, brk_inside_avoid) in items {
+                for (item_idx, &(child_box_id, child_h, brk_before, brk_after, brk_inside_avoid)) in items.iter().enumerate() {
+                    let remaining_items = (items.len() - item_idx) as u32;
+
                     // break-before: column — force a column break before this child
                     if brk_before && col_y > 0.0 && current_col + 1 < column_count {
                         if col_y > seg_max_h {
@@ -353,26 +358,47 @@ pub fn layout_multicol(
                         }
                         current_col += 1;
                         col_y = 0.0;
+                        children_in_col = 0;
                     }
 
                     // Natural column break when content exceeds column height
-                    // Respect break-inside: avoid — don't split this child across columns
+                    // Also enforce orphans/widows constraints.
                     if col_y > 0.0 && col_y + child_h > col_height && current_col + 1 < column_count
                     {
-                        // If break-inside: avoid and the child fits in a fresh column,
-                        // push it to the next column entirely instead of splitting.
-                        if brk_inside_avoid && child_h <= col_height {
-                            if col_y > seg_max_h {
-                                seg_max_h = col_y;
-                            }
-                            current_col += 1;
-                            col_y = 0.0;
+                        // Orphans check: at least `orphans` children must be in
+                        // the current column before we break.
+                        // Widows check: at least `widows` children must remain
+                        // for the next column.
+                        let orphans_ok = children_in_col >= orphans;
+                        let widows_ok = remaining_items >= widows;
+
+                        if !orphans_ok {
+                            // Not enough children in current column yet —
+                            // keep this child in the current column (don't break).
+                        } else if !widows_ok && children_in_col > 0 {
+                            // Breaking here would leave too few children for
+                            // the next column. Move children back from this
+                            // column to ensure widows are met. In practice,
+                            // we defer the break: keep placing children in the
+                            // current column until enough remain for widows.
                         } else {
-                            if col_y > seg_max_h {
-                                seg_max_h = col_y;
+                            // Break is acceptable — move to next column
+                            // Handle break-inside: avoid
+                            if brk_inside_avoid && child_h <= col_height {
+                                if col_y > seg_max_h {
+                                    seg_max_h = col_y;
+                                }
+                                current_col += 1;
+                                col_y = 0.0;
+                                children_in_col = 0;
+                            } else {
+                                if col_y > seg_max_h {
+                                    seg_max_h = col_y;
+                                }
+                                current_col += 1;
+                                col_y = 0.0;
+                                children_in_col = 0;
                             }
-                            current_col += 1;
-                            col_y = 0.0;
                         }
                     }
 
@@ -394,6 +420,7 @@ pub fn layout_multicol(
                     }
 
                     col_y += child_h;
+                    children_in_col += 1;
 
                     // break-after: column — force a column break after this child
                     if brk_after && current_col + 1 < column_count {
@@ -402,6 +429,7 @@ pub fn layout_multicol(
                         }
                         current_col += 1;
                         col_y = 0.0;
+                        children_in_col = 0;
                     }
                 }
 
