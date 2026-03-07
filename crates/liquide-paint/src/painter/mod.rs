@@ -715,73 +715,93 @@ impl Painter {
         //  4. In-flow inline-level, non-positioned children
         //  5. Positioned with z-index auto or 0
         //  6. Positive z-index (positioned with z-index > 0)
-        let mut negative_z: Vec<(LayoutBoxId, i32)> = Vec::new();
-        let mut in_flow_block: Vec<LayoutBoxId> = Vec::new();
-        let mut floats: Vec<LayoutBoxId> = Vec::new();
-        let mut in_flow_inline: Vec<LayoutBoxId> = Vec::new();
-        let mut z_auto_or_zero: Vec<LayoutBoxId> = Vec::new();
-        let mut positive_z: Vec<(LayoutBoxId, i32)> = Vec::new();
-
-        for &child_id in &children {
-            let child_style = layout
+        // Fast path: check if any child needs stacking-order sorting.
+        // Most nodes only have simple in-flow block children, so we can
+        // skip 6 Vec allocations and just paint in DOM order.
+        let needs_stacking_sort = !skip_children && children.iter().any(|&child_id| {
+            layout
                 .get(child_id)
                 .and_then(|cb| styles.get(cb.node))
-                .cloned();
-            let child_display = child_style.as_ref().map(|s| s.display).unwrap_or(Display::Block);
-            let child_position = child_style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
-            let child_z = child_style.as_ref().and_then(|s| s.z_index);
-            let is_positioned = matches!(
-                child_position,
-                Position::Relative | Position::Absolute | Position::Fixed | Position::Sticky
-            );
-            let is_float = child_style.as_ref().map(|s| s.float != Float::None).unwrap_or(false);
+                .map(|s| {
+                    s.z_index.is_some()
+                        || s.float != Float::None
+                        || matches!(
+                            s.position,
+                            Position::Relative | Position::Absolute | Position::Fixed | Position::Sticky
+                        )
+                        || matches!(
+                            s.display,
+                            Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
+                        )
+                })
+                .unwrap_or(false)
+        });
 
-            if is_positioned {
-                match child_z {
-                    Some(z) if z < 0 => negative_z.push((child_id, z)),
-                    Some(z) if z > 0 => positive_z.push((child_id, z)),
-                    _ => z_auto_or_zero.push(child_id), // z-index auto or 0
+        if !skip_children && !needs_stacking_sort {
+            // Simple path: all children are in-flow block, paint in DOM order.
+            for &child_id in &children {
+                self.paint_box(doc, layout, styles, child_id, child_offset, list);
+            }
+        } else if !skip_children {
+            // Full CSS 2.1 stacking order classification.
+            let mut negative_z: Vec<(LayoutBoxId, i32)> = Vec::new();
+            let mut in_flow_block: Vec<LayoutBoxId> = Vec::new();
+            let mut floats: Vec<LayoutBoxId> = Vec::new();
+            let mut in_flow_inline: Vec<LayoutBoxId> = Vec::new();
+            let mut z_auto_or_zero: Vec<LayoutBoxId> = Vec::new();
+            let mut positive_z: Vec<(LayoutBoxId, i32)> = Vec::new();
+
+            for &child_id in &children {
+                let child_style = layout
+                    .get(child_id)
+                    .and_then(|cb| styles.get(cb.node))
+                    .cloned();
+                let child_display = child_style.as_ref().map(|s| s.display).unwrap_or(Display::Block);
+                let child_position = child_style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+                let child_z = child_style.as_ref().and_then(|s| s.z_index);
+                let is_positioned = matches!(
+                    child_position,
+                    Position::Relative | Position::Absolute | Position::Fixed | Position::Sticky
+                );
+                let is_float = child_style.as_ref().map(|s| s.float != Float::None).unwrap_or(false);
+
+                if is_positioned {
+                    match child_z {
+                        Some(z) if z < 0 => negative_z.push((child_id, z)),
+                        Some(z) if z > 0 => positive_z.push((child_id, z)),
+                        _ => z_auto_or_zero.push(child_id),
+                    }
+                } else if is_float {
+                    floats.push(child_id);
+                } else if matches!(child_display, Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
+                    in_flow_inline.push(child_id);
+                } else {
+                    in_flow_block.push(child_id);
                 }
-            } else if is_float {
-                floats.push(child_id);
-            } else if matches!(child_display, Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
-                in_flow_inline.push(child_id);
-            } else {
-                in_flow_block.push(child_id);
+            }
+
+            negative_z.sort_by_key(|&(_, z)| z);
+            positive_z.sort_by_key(|&(_, z)| z);
+
+            for (child_id, _) in &negative_z {
+                self.paint_box(doc, layout, styles, *child_id, child_offset, list);
+            }
+            for &child_id in &in_flow_block {
+                self.paint_box(doc, layout, styles, child_id, child_offset, list);
+            }
+            for &child_id in &floats {
+                self.paint_box(doc, layout, styles, child_id, child_offset, list);
+            }
+            for &child_id in &in_flow_inline {
+                self.paint_box(doc, layout, styles, child_id, child_offset, list);
+            }
+            for &child_id in &z_auto_or_zero {
+                self.paint_box(doc, layout, styles, child_id, child_offset, list);
+            }
+            for (child_id, _) in &positive_z {
+                self.paint_box(doc, layout, styles, *child_id, child_offset, list);
             }
         }
-
-        // Sort negative and positive z-index groups by z-index value
-        negative_z.sort_by_key(|&(_, z)| z);
-        positive_z.sort_by_key(|&(_, z)| z);
-
-        // Paint in CSS 2.1 §E order:
-        if !skip_children {
-        // 1. Negative z-index
-        for (child_id, _) in &negative_z {
-            self.paint_box(doc, layout, styles, *child_id, child_offset, list);
-        }
-        // 2. In-flow block-level non-positioned
-        for &child_id in &in_flow_block {
-            self.paint_box(doc, layout, styles, child_id, child_offset, list);
-        }
-        // 3. Non-positioned floats
-        for &child_id in &floats {
-            self.paint_box(doc, layout, styles, child_id, child_offset, list);
-        }
-        // 4. In-flow inline-level non-positioned
-        for &child_id in &in_flow_inline {
-            self.paint_box(doc, layout, styles, child_id, child_offset, list);
-        }
-        // 5. Positioned with z-index auto or 0
-        for &child_id in &z_auto_or_zero {
-            self.paint_box(doc, layout, styles, child_id, child_offset, list);
-        }
-        // 6. Positive z-index
-        for (child_id, _) in &positive_z {
-            self.paint_box(doc, layout, styles, *child_id, child_offset, list);
-        }
-        } // end if !skip_children
 
         // ── Scrollbar overlay rendering ─────────────────────────────────
         // Draw thin overlay scrollbars for scroll containers

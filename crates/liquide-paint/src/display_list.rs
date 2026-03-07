@@ -478,10 +478,16 @@ impl DisplayList {
         self.items.len() - self.draw_op_count()
     }
 
-    /// Append all items from another display list.
+    /// Append all items from another display list (by reference, cloning items).
     pub fn extend(&mut self, other: &DisplayList) {
         self.spatial_dirty = true;
         self.items.extend(other.items.iter().cloned());
+    }
+
+    /// Append all items from another display list by consuming it (no clones).
+    pub fn extend_owned(&mut self, other: DisplayList) {
+        self.spatial_dirty = true;
+        self.items.extend(other.items);
     }
 }
 

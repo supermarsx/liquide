@@ -103,13 +103,14 @@ impl PaintFilter {
             PaintFilter::Pipeline(filters) => {
                 let mut buf = input.clone();
                 for f in filters {
-                    buf = f.apply(&buf);
+                    f.apply_in_place(&mut buf);
                 }
                 buf
             }
             PaintFilter::Compose { outer, inner } => {
-                let intermediate = inner.apply(input);
-                outer.apply(&intermediate)
+                let mut intermediate = inner.apply(input);
+                outer.apply_in_place(&mut intermediate);
+                intermediate
             }
             PaintFilter::Blur { sigma_x, sigma_y } => {
                 Self::apply_gaussian_blur(input, *sigma_x, *sigma_y)
@@ -121,15 +122,27 @@ impl PaintFilter {
                 sigma,
                 color,
             } => Self::apply_drop_shadow(input, *dx, *dy, *sigma, *color),
-            PaintFilter::ColorMatrix { matrix } => Self::apply_color_matrix(input, matrix),
+            PaintFilter::ColorMatrix { matrix } => {
+                let mut out = input.clone();
+                Self::apply_color_matrix_in_place(&mut out, matrix);
+                out
+            }
             PaintFilter::Brightness(v) => Self::apply_brightness(input, *v),
             PaintFilter::Contrast(v) => Self::apply_contrast(input, *v),
             PaintFilter::Saturate(v) => Self::apply_saturate(input, *v),
             PaintFilter::HueRotate(deg) => Self::apply_hue_rotate(input, *deg),
-            PaintFilter::Invert(v) => Self::apply_invert(input, *v),
+            PaintFilter::Invert(v) => {
+                let mut out = input.clone();
+                Self::apply_invert_in_place(&mut out, *v);
+                out
+            }
             PaintFilter::Sepia(v) => Self::apply_sepia(input, *v),
             PaintFilter::Grayscale(v) => Self::apply_grayscale(input, *v),
-            PaintFilter::Opacity(v) => Self::apply_opacity(input, *v),
+            PaintFilter::Opacity(v) => {
+                let mut out = input.clone();
+                Self::apply_opacity_in_place(&mut out, *v);
+                out
+            }
             PaintFilter::Erode {
                 radius_x,
                 radius_y,
@@ -140,6 +153,34 @@ impl PaintFilter {
             } => Self::apply_morphology(input, *radius_x, *radius_y, false),
             PaintFilter::Sharpen { amount, radius } => {
                 Self::apply_sharpen(input, *amount, *radius)
+            }
+        }
+    }
+
+    /// Apply this filter in-place, modifying the buffer directly.
+    /// Avoids allocation for simple filters; falls back to `apply` for complex ones.
+    pub fn apply_in_place(&self, buf: &mut PixelBuffer) {
+        match self {
+            PaintFilter::Brightness(v) => {
+                Self::apply_color_matrix_in_place(buf, &[
+                    *v, 0.0, 0.0, 0.0, 0.0, 0.0, *v, 0.0, 0.0, 0.0, 0.0, 0.0, *v, 0.0, 0.0,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                ]);
+            }
+            PaintFilter::Contrast(v) => {
+                let t = (1.0 - v) * 0.5;
+                Self::apply_color_matrix_in_place(buf, &[
+                    *v, 0.0, 0.0, 0.0, t, 0.0, *v, 0.0, 0.0, t, 0.0, 0.0, *v, 0.0, t, 0.0,
+                    0.0, 0.0, 1.0, 0.0,
+                ]);
+            }
+            PaintFilter::Invert(v) => Self::apply_invert_in_place(buf, *v),
+            PaintFilter::Opacity(v) => Self::apply_opacity_in_place(buf, *v),
+            PaintFilter::ColorMatrix { matrix } => Self::apply_color_matrix_in_place(buf, matrix),
+            _ => {
+                // For complex filters (blur, shadow, morphology, etc.) that need
+                // separate input/output buffers, fall back to allocating apply.
+                *buf = self.apply(buf);
             }
         }
     }
@@ -352,29 +393,26 @@ impl PaintFilter {
 
     // ── Color Matrix ─────────────────────────────────────────────
 
+    fn apply_color_matrix_in_place(buf: &mut PixelBuffer, m: &[f32; 20]) {
+        let len = (buf.width * buf.height * 4) as usize;
+        let data = &mut buf.data;
+        let mut i = 0;
+        while i < len {
+            let r = data[i] as f32 / 255.0;
+            let g = data[i + 1] as f32 / 255.0;
+            let b = data[i + 2] as f32 / 255.0;
+            let a = data[i + 3] as f32 / 255.0;
+            data[i] = ((m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).clamp(0.0, 1.0) * 255.0) as u8;
+            data[i + 1] = ((m[5] * r + m[6] * g + m[7] * b + m[8] * a + m[9]).clamp(0.0, 1.0) * 255.0) as u8;
+            data[i + 2] = ((m[10] * r + m[11] * g + m[12] * b + m[13] * a + m[14]).clamp(0.0, 1.0) * 255.0) as u8;
+            data[i + 3] = ((m[15] * r + m[16] * g + m[17] * b + m[18] * a + m[19]).clamp(0.0, 1.0) * 255.0) as u8;
+            i += 4;
+        }
+    }
+
     fn apply_color_matrix(input: &PixelBuffer, m: &[f32; 20]) -> PixelBuffer {
         let mut output = input.clone();
-        for y in 0..input.height {
-            for x in 0..input.width {
-                let p = input.pixel(x, y);
-                let r = p[0] as f32 / 255.0;
-                let g = p[1] as f32 / 255.0;
-                let b = p[2] as f32 / 255.0;
-                let a = p[3] as f32 / 255.0;
-                let nr = (m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).clamp(0.0, 1.0);
-                let ng = (m[5] * r + m[6] * g + m[7] * b + m[8] * a + m[9]).clamp(0.0, 1.0);
-                let nb =
-                    (m[10] * r + m[11] * g + m[12] * b + m[13] * a + m[14]).clamp(0.0, 1.0);
-                let na =
-                    (m[15] * r + m[16] * g + m[17] * b + m[18] * a + m[19]).clamp(0.0, 1.0);
-                output.set_pixel(x, y, [
-                    (nr * 255.0) as u8,
-                    (ng * 255.0) as u8,
-                    (nb * 255.0) as u8,
-                    (na * 255.0) as u8,
-                ]);
-            }
-        }
+        Self::apply_color_matrix_in_place(&mut output, m);
         output
     }
 
@@ -427,19 +465,25 @@ impl PaintFilter {
         Self::apply_color_matrix(input, &matrix)
     }
 
+    fn apply_invert_in_place(buf: &mut PixelBuffer, amount: f32) {
+        let len = (buf.width * buf.height * 4) as usize;
+        let data = &mut buf.data;
+        let mut i = 0;
+        while i < len {
+            for ch in 0..3 {
+                let f = data[i + ch] as f32 / 255.0;
+                let inv = amount * (1.0 - f) + (1.0 - amount) * f;
+                data[i + ch] = (inv * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+            }
+            // alpha unchanged
+            i += 4;
+        }
+    }
+
+    #[cfg(test)]
     fn apply_invert(input: &PixelBuffer, amount: f32) -> PixelBuffer {
         let mut output = input.clone();
-        for y in 0..input.height {
-            for x in 0..input.width {
-                let p = input.pixel(x, y);
-                let inv = |v: u8| -> u8 {
-                    let f = v as f32 / 255.0;
-                    let i = amount * (1.0 - f) + (1.0 - amount) * f;
-                    (i * 255.0).round().clamp(0.0, 255.0) as u8
-                };
-                output.set_pixel(x, y, [inv(p[0]), inv(p[1]), inv(p[2]), p[3]]);
-            }
-        }
+        Self::apply_invert_in_place(&mut output, amount);
         output
     }
 
@@ -459,15 +503,20 @@ impl PaintFilter {
         Self::apply_saturate(input, 1.0 - amount)
     }
 
+    fn apply_opacity_in_place(buf: &mut PixelBuffer, amount: f32) {
+        let len = (buf.width * buf.height * 4) as usize;
+        let data = &mut buf.data;
+        let mut i = 3; // start at alpha channel
+        while i < len {
+            data[i] = (data[i] as f32 * amount).clamp(0.0, 255.0) as u8;
+            i += 4;
+        }
+    }
+
+    #[cfg(test)]
     fn apply_opacity(input: &PixelBuffer, amount: f32) -> PixelBuffer {
         let mut output = input.clone();
-        for y in 0..input.height {
-            for x in 0..input.width {
-                let mut p = input.pixel(x, y);
-                p[3] = (p[3] as f32 * amount).clamp(0.0, 255.0) as u8;
-                output.set_pixel(x, y, p);
-            }
-        }
+        Self::apply_opacity_in_place(&mut output, amount);
         output
     }
 
