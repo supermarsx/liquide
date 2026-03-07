@@ -102,6 +102,10 @@ pub struct LayoutBox {
     pub grid_col_tracks: Vec<f32>,
     /// Resolved grid row track sizes (for subgrid inheritance by children).
     pub grid_row_tracks: Vec<f32>,
+    /// When true, the text content was truncated and an ellipsis ("…") should
+    /// be rendered at the end of the last visible line.  Set by inline layout
+    /// when `overflow: hidden` + `text-overflow: ellipsis` applies.
+    pub text_overflow_ellipsis: bool,
 }
 
 impl LayoutBox {
@@ -122,6 +126,7 @@ impl LayoutBox {
             scroll_offset: (0.0, 0.0),
             grid_col_tracks: Vec::new(),
             grid_row_tracks: Vec::new(),
+            text_overflow_ellipsis: false,
         }
     }
 }
