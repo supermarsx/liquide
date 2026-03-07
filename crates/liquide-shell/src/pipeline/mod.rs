@@ -21,7 +21,7 @@ mod stages;
 #[cfg(test)]
 mod tests;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use liquide_font_rasterizer::database::FontDatabase;
 use liquide_layout::{LayoutEngine, LayoutTree};
@@ -48,7 +48,7 @@ pub struct DesktopPipeline {
     /// The host should load these and register them with the renderer.
     pending_images: Vec<(u64, String)>,
     /// Optional font database for real text measurement.
-    font_db: Option<Arc<Mutex<FontDatabase>>>,
+    font_db: Option<Arc<RwLock<FontDatabase>>>,
 }
 
 /// Configuration for the pipeline.

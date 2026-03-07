@@ -3,7 +3,7 @@
 //! Uses real glyph metrics from `liquide-font-rasterizer` instead of the
 //! `DefaultTextMeasurer` fallback that estimates `char_width = font_size * 0.6`.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use liquide_font_rasterizer::database::FontDatabase;
 use liquide_font_rasterizer::metrics::FontMetricsProvider;
@@ -14,17 +14,17 @@ use liquide_style_engine::computed::WhiteSpace;
 ///
 /// Falls back to approximate metrics when a requested font family is not loaded.
 pub struct FontTextMeasurer {
-    font_db: Arc<Mutex<FontDatabase>>,
+    font_db: Arc<RwLock<FontDatabase>>,
 }
 
 impl FontTextMeasurer {
     /// Create a new measurer backed by the given font database.
-    pub fn new(font_db: Arc<Mutex<FontDatabase>>) -> Self {
+    pub fn new(font_db: Arc<RwLock<FontDatabase>>) -> Self {
         Self { font_db }
     }
 
-    fn lock_font_db(&self) -> MutexGuard<'_, FontDatabase> {
-        self.font_db.lock().unwrap_or_else(|poison| poison.into_inner())
+    fn lock_font_db(&self) -> RwLockReadGuard<'_, FontDatabase> {
+        self.font_db.read().unwrap_or_else(|poison| poison.into_inner())
     }
 }
 

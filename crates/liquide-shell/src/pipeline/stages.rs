@@ -1,6 +1,6 @@
 //! Pipeline execution — construction, configuration, and the Style → Layout → Paint stages.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use liquide_compositor::scene::SceneNode;
 use liquide_dom::Document;
@@ -93,7 +93,7 @@ impl DesktopPipeline {
     /// When set, the pipeline will use real glyph metrics from loaded
     /// fonts instead of the approximate `char_width = font_size * 0.6`
     /// fallback.
-    pub fn set_font_db(&mut self, db: Arc<Mutex<FontDatabase>>) {
+    pub fn set_font_db(&mut self, db: Arc<RwLock<FontDatabase>>) {
         self.font_db = Some(db);
     }
 
@@ -114,28 +114,47 @@ impl DesktopPipeline {
         let has_layout_work = !doc.dirty.layout.is_empty();
         let has_paint_work = !doc.dirty.paint.is_empty();
 
-        // 1. Style
+        // Fast path: when nothing is dirty and all caches are populated,
+        // clone the cached output directly without running any pipeline stage.
+        // This avoids take + work + clone-back when there are no changes.
+        if !has_style_work
+            && !has_layout_work
+            && !has_paint_work
+            && self.last_styles.is_some()
+            && self.last_layout.is_some()
+            && self.last_display_list.is_some()
+        {
+            return PipelineOutput {
+                styles: self.last_styles.as_ref().unwrap().clone(),
+                layout: self.last_layout.as_ref().unwrap().clone(),
+                display_list: self.last_display_list.as_ref().unwrap().clone(),
+            };
+        }
+
+        // 1. Style — use take() to avoid deep-cloning the cached StyleMap
         let mut styles = if has_style_work {
-            if let Some(mut cached) = self.last_styles.clone() {
+            if let Some(mut cached) = self.last_styles.take() {
                 let changed: Vec<liquide_dom::NodeId> = doc.dirty.style.iter().copied().collect();
                 self.style_engine.invalidate(doc, &changed, &mut cached);
                 cached
             } else {
                 self.style_engine.restyle_all(doc)
             }
-        } else if let Some(cached) = self.last_styles.clone() {
+        } else if let Some(cached) = self.last_styles.take() {
             cached
         } else {
             self.style_engine.restyle_all(doc)
         };
 
-        // 2. Layout
+        // 2. Layout — use take() to avoid deep-cloning the cached LayoutTree
         let recompute_layout = has_style_work || has_layout_work || self.last_layout.is_none();
         let layout = if has_style_work || self.last_layout.is_none() {
+            // Full style recompute invalidates layout cache
+            let _ = self.last_layout.take();
             self.layout_engine
                 .layout(doc, &styles, text_measurer, &image_measurer)
         } else if has_layout_work {
-            let mut layout = self.last_layout.clone().unwrap_or_default();
+            let mut layout = self.last_layout.take().unwrap_or_default();
             let input = LayoutInput::new(doc, &styles, text_measurer, &image_measurer);
 
             let mut dirty_layout_nodes: Vec<liquide_dom::NodeId> =
@@ -161,7 +180,7 @@ impl DesktopPipeline {
 
             layout
         } else {
-            self.last_layout.clone().unwrap_or_default()
+            self.last_layout.take().unwrap_or_default()
         };
 
         // 2b. Populate container sizes for the next @container evaluation.
@@ -180,14 +199,16 @@ impl DesktopPipeline {
             }
         }
 
-        // 3. Paint
+        // 3. Paint — use take() to avoid deep-cloning the cached DisplayList
         let recompute_paint = recompute_layout || has_paint_work || self.last_display_list.is_none();
         let display_list = if recompute_paint {
+            let _ = self.last_display_list.take();
             self.painter.paint(doc, &layout, &styles)
         } else {
-            self.last_display_list.clone().unwrap_or_default()
+            self.last_display_list.take().unwrap_or_default()
         };
 
+        // Cache for next frame (clone once to split between cache and output)
         self.last_styles = Some(styles.clone());
         self.last_layout = Some(layout.clone());
         self.last_display_list = Some(display_list.clone());
