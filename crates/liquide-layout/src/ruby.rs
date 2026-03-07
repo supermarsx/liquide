@@ -19,7 +19,11 @@
 //! compute offsets.  The inline layout engine calls [`layout_ruby_container`]
 //! when it encounters a `display: ruby` box.
 
-use crate::{Rect, Size};
+use liquide_dom::{Document, NodeId};
+use liquide_style_engine::StyleMap;
+use liquide_style_engine::computed::Display;
+
+use crate::{Rect, Size, TextMeasurer, TextProperties};
 
 /// Position of ruby annotation relative to the base.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,6 +226,190 @@ pub fn ruby_container_size(config: &RubyConfig, pairs: &[RubyInput]) -> Size {
     let block = ruby_block_size(max_base_h, max_ann_h, config.gap);
 
     Size::new(total_inline, block)
+}
+
+/// Result of laying out a ruby container for integration with inline layout.
+#[derive(Debug, Clone)]
+pub struct RubyContainerResult {
+    /// Total inline advance (width) of the ruby container.
+    pub inline_advance: f32,
+    /// Height of the base text area.
+    pub base_height: f32,
+    /// Height of the annotation text area.
+    pub annotation_height: f32,
+    /// Gap between base and annotation.
+    pub gap: f32,
+    /// Whether the annotation is above (Over) or below (Under) the base.
+    pub position: RubyPosition,
+    /// The laid-out pairs.
+    pub pairs: Vec<RubyPair>,
+}
+
+impl RubyContainerResult {
+    /// Total block size (base + annotation + gap).
+    pub fn total_block_size(&self) -> f32 {
+        ruby_block_size(self.base_height, self.annotation_height, self.gap)
+    }
+
+    /// How much extra space the annotation needs above the base line.
+    /// Returns 0 if the annotation is below.
+    pub fn annotation_overhead(&self) -> f32 {
+        match self.position {
+            RubyPosition::Over | RubyPosition::InterCharacter => {
+                self.annotation_height + self.gap
+            }
+            RubyPosition::Under => 0.0,
+        }
+    }
+
+    /// How much extra space the annotation needs below the base line.
+    /// Returns 0 if the annotation is above.
+    pub fn annotation_underhang(&self) -> f32 {
+        match self.position {
+            RubyPosition::Under => self.annotation_height + self.gap,
+            RubyPosition::Over | RubyPosition::InterCharacter => 0.0,
+        }
+    }
+}
+
+/// Convert the style-engine `RubyPosition` to the layout-internal one.
+fn convert_ruby_position(pos: liquide_style_engine::computed::RubyPosition) -> RubyPosition {
+    match pos {
+        liquide_style_engine::computed::RubyPosition::Over
+        | liquide_style_engine::computed::RubyPosition::AlternateOver => RubyPosition::Over,
+        liquide_style_engine::computed::RubyPosition::Under
+        | liquide_style_engine::computed::RubyPosition::AlternateUnder => RubyPosition::Under,
+    }
+}
+
+/// Convert the style-engine `RubyAlign` to the layout-internal one.
+fn convert_ruby_align(align: liquide_style_engine::computed::RubyAlign) -> RubyAlign {
+    match align {
+        liquide_style_engine::computed::RubyAlign::SpaceAround => RubyAlign::SpaceAround,
+        liquide_style_engine::computed::RubyAlign::Center => RubyAlign::Center,
+        liquide_style_engine::computed::RubyAlign::Start => RubyAlign::Start,
+        liquide_style_engine::computed::RubyAlign::SpaceBetween => RubyAlign::SpaceBetween,
+    }
+}
+
+/// Lay out a `display: ruby` container by inspecting the DOM for ruby-base
+/// and ruby-text children, measuring their text, and pairing them.
+///
+/// Children that are not `display: ruby-text` are treated as ruby bases.
+/// Each base is paired with the next ruby-text sibling.  Unpaired bases
+/// get an empty annotation; unpaired ruby-text nodes are ignored.
+pub fn layout_ruby_from_dom(
+    doc: &Document,
+    node_id: NodeId,
+    styles: &StyleMap,
+    text_measurer: &dyn TextMeasurer,
+    start_x: f32,
+    baseline_y: f32,
+) -> RubyContainerResult {
+    let style = styles.get(node_id).cloned().unwrap_or_default();
+    let position = convert_ruby_position(style.ruby_position);
+    let align = convert_ruby_align(style.ruby_align);
+
+    let children = doc.children(node_id).to_vec();
+
+    // Collect base/text children.  Non-ruby-text children are bases.
+    let mut bases: Vec<NodeId> = Vec::new();
+    let mut texts: Vec<NodeId> = Vec::new();
+
+    for &child_id in &children {
+        let child_style = styles.get(child_id).cloned().unwrap_or_default();
+        if child_style.display == Display::RubyText {
+            texts.push(child_id);
+        } else if child_style.display != Display::None {
+            bases.push(child_id);
+        }
+    }
+
+    // Build RubyInput pairs by zipping bases with texts.
+    let mut pairs_input: Vec<RubyInput> = Vec::new();
+    let pair_count = bases.len();
+
+    for i in 0..pair_count {
+        let base_id = bases[i];
+        let base_style = styles.get(base_id).cloned().unwrap_or_default();
+        let base_text = collect_text_content(doc, base_id);
+        let base_props = TextProperties::from_style(&base_style);
+        let base_metrics = text_measurer.measure(
+            &base_text,
+            base_style.font_size,
+            &base_style.font_family,
+            base_style.font_weight,
+            None,
+            &base_props,
+        );
+
+        let (ann_w, ann_h) = if i < texts.len() {
+            let text_id = texts[i];
+            let text_style = styles.get(text_id).cloned().unwrap_or_default();
+            let ann_text = collect_text_content(doc, text_id);
+            let ann_props = TextProperties::from_style(&text_style);
+            let ann_metrics = text_measurer.measure(
+                &ann_text,
+                text_style.font_size,
+                &text_style.font_family,
+                text_style.font_weight,
+                None,
+                &ann_props,
+            );
+            (ann_metrics.width, ann_metrics.height)
+        } else {
+            (0.0, 0.0)
+        };
+
+        pairs_input.push(RubyInput {
+            base_width: base_metrics.width,
+            base_height: base_metrics.height,
+            annotation_width: ann_w,
+            annotation_height: ann_h,
+        });
+    }
+
+    let config = RubyConfig {
+        position,
+        align,
+        gap: 2.0,
+        start_x,
+        baseline_y,
+    };
+
+    let (pairs, total_advance) = layout_ruby_container(&config, &pairs_input);
+
+    let max_base_h = pairs_input
+        .iter()
+        .map(|p| p.base_height)
+        .fold(0.0f32, f32::max);
+    let max_ann_h = pairs_input
+        .iter()
+        .map(|p| p.annotation_height)
+        .fold(0.0f32, f32::max);
+
+    RubyContainerResult {
+        inline_advance: total_advance,
+        base_height: max_base_h,
+        annotation_height: max_ann_h,
+        gap: config.gap,
+        position,
+        pairs,
+    }
+}
+
+/// Recursively collect text content from a node and its descendants.
+fn collect_text_content(doc: &Document, node_id: NodeId) -> String {
+    let mut result = String::new();
+    if let Some(node) = doc.get(node_id) {
+        if let Some(text) = node.text_content() {
+            result.push_str(text);
+        }
+    }
+    for &child_id in doc.children(node_id) {
+        result.push_str(&collect_text_content(doc, child_id));
+    }
+    result
 }
 
 #[cfg(test)]

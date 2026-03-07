@@ -134,6 +134,33 @@ impl LayoutBox {
     }
 }
 
+/// Registry mapping CSS `anchor-name` values to their layout rects.
+///
+/// This implements a subset of CSS Anchor Positioning Level 1: elements
+/// with `anchor-name` register their border rect here so that positioned
+/// elements with `position-anchor` can look them up.
+#[derive(Clone, Debug, Default)]
+pub struct AnchorRegistry {
+    anchors: HashMap<String, Rect>,
+}
+
+impl AnchorRegistry {
+    /// Register an anchor name with its layout rect.
+    pub fn register(&mut self, name: String, rect: Rect) {
+        self.anchors.insert(name, rect);
+    }
+
+    /// Look up an anchor by name.
+    pub fn get(&self, name: &str) -> Option<&Rect> {
+        self.anchors.get(name)
+    }
+
+    /// Clear all registered anchors.
+    pub fn clear(&mut self) {
+        self.anchors.clear();
+    }
+}
+
 /// The laid-out tree — result of running the layout engine.
 #[derive(Clone)]
 pub struct LayoutTree {
@@ -143,6 +170,8 @@ pub struct LayoutTree {
     pub root: LayoutBoxId,
     /// Node → box index for O(1) lookup.
     node_index: HashMap<NodeId, LayoutBoxId>,
+    /// Anchor positioning registry (anchor-name → rect).
+    pub anchor_registry: AnchorRegistry,
 }
 
 impl LayoutTree {
@@ -151,6 +180,7 @@ impl LayoutTree {
             boxes: Vec::new(),
             root: 0,
             node_index: HashMap::new(),
+            anchor_registry: AnchorRegistry::default(),
         }
     }
 

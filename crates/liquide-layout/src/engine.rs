@@ -185,7 +185,10 @@ impl LayoutEngine {
             root_box_ref.margin_rect = vp_rect;
         }
 
-        // Second pass: layout positioned elements
+        // Second pass: register anchor names for anchor positioning
+        self.register_anchors(doc, root, styles, &mut tree);
+
+        // Third pass: layout positioned elements
         self.layout_positioned_elements(
             doc,
             root,
@@ -827,6 +830,34 @@ impl LayoutEngine {
                     b.margin_rect.y += dy;
                 }
             }
+        }
+    }
+
+    /// First pass of positioned layout: register all anchor names.
+    ///
+    /// Walks the DOM and records the border rect of every element that has
+    /// `anchor-name` set, so that positioned elements can reference them
+    /// via `position-anchor`.
+    fn register_anchors(
+        &self,
+        doc: &Document,
+        node_id: NodeId,
+        styles: &StyleMap,
+        tree: &mut LayoutTree,
+    ) {
+        let style = styles.get(node_id).cloned().unwrap_or_default();
+        if let Some(ref name) = style.anchor_name {
+            if !name.is_empty() {
+                // Use the absolute border rect so anchors work across nesting.
+                if let Some(box_id) = tree.find_box_id_by_node(node_id) {
+                    let rect = tree.absolute_border_rect(box_id);
+                    tree.anchor_registry.register(name.clone(), rect);
+                }
+            }
+        }
+        let children = doc.children(node_id).to_vec();
+        for &child_id in &children {
+            self.register_anchors(doc, child_id, styles, tree);
         }
     }
 
