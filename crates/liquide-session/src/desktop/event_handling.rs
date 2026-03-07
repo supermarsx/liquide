@@ -11,7 +11,8 @@ use super::{DesktopCompositor, RenderMsg};
 impl DesktopCompositor {
     /// Handle a platform event: route through shell and input state.
     ///
-    /// Returns `true` if the event requires a redraw.
+    /// Returns `true` if the event requires a full redraw.
+    /// Sets `self.cursor_dirty` when only cursor position changed.
     pub fn handle_event(&mut self, event: &PlatformEvent) -> bool {
         let mut needs_redraw = false;
 
@@ -188,8 +189,11 @@ impl DesktopCompositor {
                 use liquide_input::mouse::MouseEvent;
                 match me {
                     MouseEvent::Move { x, y } => {
-                        // Only redraw if cursor position actually changed
-                        // (avoid redundant full redraws on minor sub-pixel jitter).
+                        // Only mark cursor dirty if position actually changed
+                        // (avoid redundant redraws on minor sub-pixel jitter).
+                        // We set cursor_dirty instead of needs_redraw so the
+                        // event loop can use the cursor-only fast path when no
+                        // shell state changed.
                         let new_x = *x;
                         let new_y = *y;
                         if (new_x - self.cursor_x).abs() > 0.1
@@ -197,7 +201,7 @@ impl DesktopCompositor {
                         {
                             self.cursor_x = new_x;
                             self.cursor_y = new_y;
-                            needs_redraw = true;
+                            self.cursor_dirty = true;
                         }
                         // Forward to devtools element picker.
                         if self.dev_mode {
@@ -295,6 +299,17 @@ impl DesktopCompositor {
                 if self.shell.execute_action(&action) {
                     needs_redraw = true;
                 }
+            }
+        }
+
+        // Sync hardware cursor shape when it changes. This is free (just
+        // a Win32 SetCursor call) and avoids needing to re-render the
+        // entire framebuffer for cursor shape changes.
+        if self.use_hardware_cursor {
+            let current_shape = self.shell.cursor_shape();
+            if current_shape != self.last_hw_cursor_shape {
+                self.last_hw_cursor_shape = current_shape;
+                self.hw_cursor_needs_sync = true;
             }
         }
 

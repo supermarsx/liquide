@@ -31,6 +31,8 @@ pub(super) struct RenderJob {
     pub(super) tile_size: u32,
     /// Window ID being dragged (for skeleton rendering - outline only).
     pub(super) dragged_window: Option<u64>,
+    /// When true, the OS renders the cursor — skip the software cursor node.
+    pub(super) hardware_cursor: bool,
 }
 
 /// A completed rendered frame sent back from the render thread.
@@ -48,9 +50,21 @@ pub(super) struct RenderedFrame {
     pub(super) has_pending_glyphs: bool,
 }
 
+/// A lightweight cursor-only update that reuses the cached scene.
+pub(super) struct CursorOnlyJob {
+    pub(super) cursor_x: f32,
+    pub(super) cursor_y: f32,
+    pub(super) cursor_shape: CursorShape,
+    pub(super) width: u32,
+    pub(super) height: u32,
+    pub(super) tile_size: u32,
+}
+
 /// Message sent to the render thread.
 pub(super) enum RenderMsg {
     Job(RenderJob),
+    /// Cursor-only update — reuse cached scene, just move the cursor.
+    CursorOnly(CursorOnlyJob),
     Resize { width: u32, height: u32 },
     Shutdown,
 }
@@ -112,8 +126,8 @@ impl DesktopCompositor {
             }
         }
 
-        // 2. Add software cursor to the scene.
-        if !self.loading {
+        // 2. Add software cursor to the scene (skip if hardware cursor handles it).
+        if !self.loading && !self.use_hardware_cursor {
             let cursor_size = 24.0_f32;
             let cursor_bounds = Rect::new(self.cursor_x, self.cursor_y, cursor_size, cursor_size);
             scene.add_child(SceneNode::new(
@@ -237,10 +251,36 @@ impl DesktopCompositor {
             height: self.height,
             tile_size: self.tile_size,
             dragged_window: dragged_window.map(|wid| wid.0),
+            hardware_cursor: self.use_hardware_cursor,
         };
 
         if let Some(ref tx) = self.render_tx {
             if tx.send(RenderMsg::Job(job)).is_ok() {
+                self.render_in_flight = true;
+            }
+        }
+    }
+
+    /// Submit a cursor-only render job to the background render thread.
+    ///
+    /// Skips the CSS pipeline entirely — the render thread reuses its
+    /// cached scene and only updates the cursor position.
+    pub(super) fn submit_cursor_only_render(&mut self) {
+        if self.render_in_flight || self.render_tx.is_none() {
+            return;
+        }
+
+        let job = CursorOnlyJob {
+            cursor_x: self.cursor_x,
+            cursor_y: self.cursor_y,
+            cursor_shape: self.shell.cursor_shape(),
+            width: self.width,
+            height: self.height,
+            tile_size: self.tile_size,
+        };
+
+        if let Some(ref tx) = self.render_tx {
+            if tx.send(RenderMsg::CursorOnly(job)).is_ok() {
                 self.render_in_flight = true;
             }
         }
@@ -370,6 +410,8 @@ impl DesktopCompositor {
         _debug_perf: bool,
     ) {
         let mut fb: Option<FrameBuffer> = None;
+        // Cache the last scene (without cursor) for cursor-only updates.
+        let mut cached_scene: Option<SceneNode> = None;
 
         while let Ok(msg) = rx.recv() {
             match msg {
@@ -382,6 +424,110 @@ impl DesktopCompositor {
                         .is_some_and(|f| f.width != width || f.height != height)
                     {
                         fb = None;
+                    }
+                }
+                RenderMsg::CursorOnly(mut cursor_job) => {
+                    // Drain any queued messages — a full Job supersedes cursor-only.
+                    let mut upgrade_to_full: Option<RenderJob> = None;
+                    while let Ok(msg) = rx.try_recv() {
+                        match msg {
+                            RenderMsg::Shutdown => return,
+                            RenderMsg::Resize { width, height } => {
+                                let _ = compositor.resize(width, height);
+                                fb = None;
+                            }
+                            RenderMsg::Job(j) => {
+                                upgrade_to_full = Some(j);
+                            }
+                            RenderMsg::CursorOnly(c) => {
+                                cursor_job = c;
+                            }
+                        }
+                    }
+
+                    // If a full job arrived while draining, process it instead.
+                    if let Some(full_job) = upgrade_to_full {
+                        Self::render_full_job(
+                            full_job,
+                            &mut renderer,
+                            &mut compositor,
+                            &mut fb,
+                            &mut cached_scene,
+                            &tx,
+                        );
+                        continue;
+                    }
+
+                    // Reuse cached scene — just update cursor position.
+                    let scene = match cached_scene.as_ref() {
+                        Some(s) => s.clone(),
+                        None => continue, // No cached scene yet, skip
+                    };
+
+                    let t_total = Instant::now();
+
+                    // Add cursor to cloned scene.
+                    let mut scene = scene;
+                    let cursor_size = 24.0_f32;
+                    let cursor_bounds = Rect::new(
+                        cursor_job.cursor_x,
+                        cursor_job.cursor_y,
+                        cursor_size,
+                        cursor_size,
+                    );
+                    scene.add_child(SceneNode::new(
+                        999_999,
+                        SceneNodeKind::Cursor {
+                            shape: cursor_job.cursor_shape,
+                        },
+                        NodeProperties::new(cursor_bounds).with_z_order(9999),
+                    ));
+
+                    // Submit to compositor and flatten.
+                    let _ = compositor.submit_scene(scene);
+                    compositor.begin_frame();
+
+                    let flat_nodes =
+                        compositor.scene().map(|s| s.flatten()).unwrap_or_default();
+
+                    // Ensure framebuffer matches.
+                    let needs_new = fb.as_ref().map_or(true, |f| {
+                        f.width != cursor_job.width || f.height != cursor_job.height
+                    });
+                    if needs_new {
+                        fb = Some(FrameBuffer::new(
+                            cursor_job.width,
+                            cursor_job.height,
+                            PixelFormat::Bgra8,
+                        ));
+                    }
+                    let framebuf = fb.as_mut().unwrap();
+
+                    // Full-screen damage (cursor moved).
+                    let mut damage = DamageSet::new(cursor_job.tile_size);
+                    let grid_w = cursor_job.width.div_ceil(cursor_job.tile_size);
+                    let grid_h = cursor_job.height.div_ceil(cursor_job.tile_size);
+                    damage.mark_all(grid_w, grid_h);
+
+                    let _ = renderer.render(&flat_nodes, framebuf, &damage);
+
+                    let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;
+                    renderer.report_render_time(total_ms);
+                    compositor.report_frame_time(total_ms);
+
+                    let result = RenderedFrame {
+                        pixels: framebuf.pixels.clone(),
+                        width: framebuf.width,
+                        height: framebuf.height,
+                        stride: framebuf.stride,
+                        format: framebuf.format,
+                        render_ms: total_ms,
+                        blur_enabled: renderer.blur_enabled(),
+                        has_pending_glyphs: renderer.has_pending_glyphs(),
+                    };
+
+                    if tx.send(result).is_err() {
+                        break;
                     }
                 }
                 RenderMsg::Job(job) => {
@@ -397,128 +543,153 @@ impl DesktopCompositor {
                             RenderMsg::Job(j) => {
                                 latest_job = j;
                             }
+                            RenderMsg::CursorOnly(_) => {
+                                // Full job supersedes cursor-only; ignore.
+                            }
                         }
                     }
 
-                    let t_total = Instant::now();
-
-                    // 1. Add cursor to scene.
-                    let mut scene = latest_job.scene;
-                    let cursor_size = 24.0_f32;
-                    let cursor_bounds = Rect::new(
-                        latest_job.cursor_x,
-                        latest_job.cursor_y,
-                        cursor_size,
-                        cursor_size,
+                    Self::render_full_job(
+                        latest_job,
+                        &mut renderer,
+                        &mut compositor,
+                        &mut fb,
+                        &mut cached_scene,
+                        &tx,
                     );
-                    scene.add_child(SceneNode::new(
-                        999_999,
-                        SceneNodeKind::Cursor {
-                            shape: latest_job.cursor_shape,
-                        },
-                        NodeProperties::new(cursor_bounds).with_z_order(9999),
-                    ));
-
-                    // 2. Submit to compositor and flatten.
-                    let _ = compositor.submit_scene(scene);
-                    compositor.begin_frame();
-
-                    let mut flat_nodes =
-                        compositor.scene().map(|s| s.flatten()).unwrap_or_default();
-
-                    // 3. Skeleton mode filtering during drag.
-                    if let Some(window_id) = latest_job.dragged_window {
-                        const NODE_WINDOW_BASE: u64 = 10_000;
-                        const NODE_WINDOW_STRIDE: u64 = 10;
-                        let win_base = NODE_WINDOW_BASE + window_id * NODE_WINDOW_STRIDE;
-                        let win_end = win_base + NODE_WINDOW_STRIDE;
-
-                        flat_nodes.retain(|node| {
-                            let node_id = node.id;
-                            let is_dragged_window_node = node_id >= win_base && node_id < win_end;
-
-                            if is_dragged_window_node {
-                                // For dragged window: only keep basic decoration border
-                                matches!(node.kind, SceneNodeKind::Decoration { .. })
-                            } else {
-                                // All other windows and UI elements: render normally
-                                true
-                            }
-                        });
-                    }
-
-                    // 4. Ensure framebuffer matches requested dimensions.
-                    let needs_new = fb.as_ref().map_or(true, |f| {
-                        f.width != latest_job.width || f.height != latest_job.height
-                    });
-                    if needs_new {
-                        fb = Some(FrameBuffer::new(
-                            latest_job.width,
-                            latest_job.height,
-                            PixelFormat::Bgra8,
-                        ));
-                    }
-                    let framebuf = fb.as_mut().unwrap();
-
-                    // 5. Build damage set.
-                    let mut damage = DamageSet::new(latest_job.tile_size);
-                    let grid_w = latest_job.width.div_ceil(latest_job.tile_size);
-                    let grid_h = latest_job.height.div_ceil(latest_job.tile_size);
-                    damage.mark_all(grid_w, grid_h);
-
-                    // 6. Render with performance optimizations for dragging.
-                    let t_render = Instant::now();
-
-                    let saved_blur = renderer.blur_enabled();
-                    let saved_lod_mode = renderer.get_lod_performance_mode();
-
-                    if latest_job.dragged_window.is_some() && saved_blur {
-                        renderer.set_blur_enabled(false);
-                    }
-                    if latest_job.dragged_window.is_some() {
-                        renderer.set_lod_performance_mode(
-                            liquide_renderer_cpu::lod::PerformanceMode::Performance,
-                        );
-                    }
-                    renderer.set_skeleton_window(latest_job.dragged_window);
-
-                    let _ = renderer.render(&flat_nodes, framebuf, &damage);
-
-                    // Restore rendering quality.
-                    renderer.set_skeleton_window(None);
-                    if latest_job.dragged_window.is_some() && saved_blur {
-                        renderer.set_blur_enabled(true);
-                    }
-                    if latest_job.dragged_window.is_some() {
-                        renderer.set_lod_performance_mode(saved_lod_mode);
-                    }
-
-                    let render_ms = t_render.elapsed().as_secs_f64() * 1000.0;
-                    let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;
-
-                    // Report render time for adaptive blur.
-                    renderer.report_render_time(render_ms);
-
-                    // Report frame time to compositor.
-                    compositor.report_frame_time(total_ms);
-
-                    // Send completed frame back.
-                    let result = RenderedFrame {
-                        pixels: framebuf.pixels.clone(),
-                        width: framebuf.width,
-                        height: framebuf.height,
-                        stride: framebuf.stride,
-                        format: framebuf.format,
-                        render_ms: total_ms,
-                        blur_enabled: renderer.blur_enabled(),
-                        has_pending_glyphs: renderer.has_pending_glyphs(),
-                    };
-
-                    if tx.send(result).is_err() {
-                        break; // main thread dropped
-                    }
                 }
             }
         }
+    }
+
+    /// Render a full scene job (used by both Job and upgraded CursorOnly paths).
+    fn render_full_job(
+        latest_job: RenderJob,
+        renderer: &mut SoftwareRenderer,
+        compositor: &mut Compositor,
+        fb: &mut Option<FrameBuffer>,
+        cached_scene: &mut Option<SceneNode>,
+        tx: &mpsc::Sender<RenderedFrame>,
+    ) {
+        let t_total = Instant::now();
+
+        // Cache the scene (without cursor) for cursor-only updates.
+        *cached_scene = Some(latest_job.scene.clone());
+
+        // 1. Add software cursor to scene (skip if hardware cursor is active).
+        let mut scene = latest_job.scene;
+        if !latest_job.hardware_cursor {
+            let cursor_size = 24.0_f32;
+            let cursor_bounds = Rect::new(
+                latest_job.cursor_x,
+                latest_job.cursor_y,
+                cursor_size,
+                cursor_size,
+            );
+            scene.add_child(SceneNode::new(
+                999_999,
+                SceneNodeKind::Cursor {
+                    shape: latest_job.cursor_shape,
+                },
+                NodeProperties::new(cursor_bounds).with_z_order(9999),
+            ));
+        }
+
+        // 2. Submit to compositor and flatten.
+        let _ = compositor.submit_scene(scene);
+        compositor.begin_frame();
+
+        let mut flat_nodes =
+            compositor.scene().map(|s| s.flatten()).unwrap_or_default();
+
+        // 3. Skeleton mode filtering during drag.
+        if let Some(window_id) = latest_job.dragged_window {
+            const NODE_WINDOW_BASE: u64 = 10_000;
+            const NODE_WINDOW_STRIDE: u64 = 10;
+            let win_base = NODE_WINDOW_BASE + window_id * NODE_WINDOW_STRIDE;
+            let win_end = win_base + NODE_WINDOW_STRIDE;
+
+            flat_nodes.retain(|node| {
+                let node_id = node.id;
+                let is_dragged_window_node = node_id >= win_base && node_id < win_end;
+
+                if is_dragged_window_node {
+                    // For dragged window: only keep basic decoration border
+                    matches!(node.kind, SceneNodeKind::Decoration { .. })
+                } else {
+                    // All other windows and UI elements: render normally
+                    true
+                }
+            });
+        }
+
+        // 4. Ensure framebuffer matches requested dimensions.
+        let needs_new = fb.as_ref().map_or(true, |f| {
+            f.width != latest_job.width || f.height != latest_job.height
+        });
+        if needs_new {
+            *fb = Some(FrameBuffer::new(
+                latest_job.width,
+                latest_job.height,
+                PixelFormat::Bgra8,
+            ));
+        }
+        let framebuf = fb.as_mut().unwrap();
+
+        // 5. Build damage set.
+        let mut damage = DamageSet::new(latest_job.tile_size);
+        let grid_w = latest_job.width.div_ceil(latest_job.tile_size);
+        let grid_h = latest_job.height.div_ceil(latest_job.tile_size);
+        damage.mark_all(grid_w, grid_h);
+
+        // 6. Render with performance optimizations for dragging.
+        let t_render = Instant::now();
+
+        let saved_blur = renderer.blur_enabled();
+        let saved_lod_mode = renderer.get_lod_performance_mode();
+
+        if latest_job.dragged_window.is_some() && saved_blur {
+            renderer.set_blur_enabled(false);
+        }
+        if latest_job.dragged_window.is_some() {
+            renderer.set_lod_performance_mode(
+                liquide_renderer_cpu::lod::PerformanceMode::Performance,
+            );
+        }
+        renderer.set_skeleton_window(latest_job.dragged_window);
+
+        let _ = renderer.render(&flat_nodes, framebuf, &damage);
+
+        // Restore rendering quality.
+        renderer.set_skeleton_window(None);
+        if latest_job.dragged_window.is_some() && saved_blur {
+            renderer.set_blur_enabled(true);
+        }
+        if latest_job.dragged_window.is_some() {
+            renderer.set_lod_performance_mode(saved_lod_mode);
+        }
+
+        let render_ms = t_render.elapsed().as_secs_f64() * 1000.0;
+        let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;
+
+        // Report render time for adaptive blur.
+        renderer.report_render_time(render_ms);
+
+        // Report frame time to compositor.
+        compositor.report_frame_time(total_ms);
+
+        // Send completed frame back.
+        let result = RenderedFrame {
+            pixels: framebuf.pixels.clone(),
+            width: framebuf.width,
+            height: framebuf.height,
+            stride: framebuf.stride,
+            format: framebuf.format,
+            render_ms: total_ms,
+            blur_enabled: renderer.blur_enabled(),
+            has_pending_glyphs: renderer.has_pending_glyphs(),
+        };
+
+        let _ = tx.send(result);
     }
 }

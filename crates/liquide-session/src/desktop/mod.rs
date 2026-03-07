@@ -61,6 +61,10 @@ pub struct DesktopCompositor {
     frame_count: u64,
     running: bool,
     dirty: bool,
+    /// Whether only the cursor position changed (no shell state change).
+    /// When true and `dirty` is false, we can skip the full CSS pipeline
+    /// and reuse the cached scene with just the cursor position updated.
+    cursor_dirty: bool,
     last_tick: Instant,
     last_render: Instant,
     cursor_x: f32,
@@ -84,6 +88,13 @@ pub struct DesktopCompositor {
     dev_mode: bool,
     /// DevTools panel (only active in dev_mode).
     devtools: Option<DevToolsPanel>,
+    /// When true, the OS renders the cursor (zero CPU for mouse movement).
+    /// Set to true after confirming the platform supports `set_cursor_shape`.
+    use_hardware_cursor: bool,
+    /// Last cursor shape sent to the platform (avoid redundant calls).
+    last_hw_cursor_shape: liquide_compositor::scene::CursorShape,
+    /// Whether the hardware cursor shape needs to be synced to the platform.
+    hw_cursor_needs_sync: bool,
 }
 
 impl DesktopCompositor {
@@ -160,6 +171,7 @@ impl DesktopCompositor {
             frame_count: 0,
             running: true,
             dirty: true,
+            cursor_dirty: false,
             last_tick: Instant::now(),
             last_render: Instant::now(),
             cursor_x: width as f32 / 2.0,
@@ -174,6 +186,9 @@ impl DesktopCompositor {
             telemetry: create_telemetry(60), // 60fps target
             dev_mode: false,
             devtools: None,
+            use_hardware_cursor: false,
+            last_hw_cursor_shape: liquide_compositor::scene::CursorShape::Arrow,
+            hw_cursor_needs_sync: false,
         }
     }
 

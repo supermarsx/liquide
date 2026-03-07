@@ -291,6 +291,18 @@ pub const BI_RGB: DWORD = 0;
 // ---------------------------------------------------------------------------
 
 pub const IDC_ARROW: LPCWSTR = 32512 as LPCWSTR;
+pub const IDC_IBEAM: LPCWSTR = 32513 as LPCWSTR;
+pub const IDC_WAIT: LPCWSTR = 32514 as LPCWSTR;
+pub const IDC_CROSS: LPCWSTR = 32515 as LPCWSTR;
+pub const IDC_SIZEALL: LPCWSTR = 32646 as LPCWSTR;
+pub const IDC_SIZENWSE: LPCWSTR = 32642 as LPCWSTR;
+pub const IDC_SIZENESW: LPCWSTR = 32643 as LPCWSTR;
+pub const IDC_SIZEWE: LPCWSTR = 32644 as LPCWSTR;
+pub const IDC_SIZENS: LPCWSTR = 32645 as LPCWSTR;
+pub const IDC_HAND: LPCWSTR = 32649 as LPCWSTR;
+pub const IDC_HELP: LPCWSTR = 32651 as LPCWSTR;
+pub const IDC_NO: LPCWSTR = 32648 as LPCWSTR;
+pub const IDC_APPSTARTING: LPCWSTR = 32650 as LPCWSTR;
 
 // ---------------------------------------------------------------------------
 // SetWindowPos constants

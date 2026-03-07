@@ -186,6 +186,26 @@ pub trait PlatformBackend: Send {
     /// This causes a [`PlatformEvent::WindowRedraw`] to be emitted on the
     /// next event loop iteration.
     fn request_redraw(&mut self, _handle: NativeWindowHandle) {}
+
+    /// Set the hardware cursor shape for a window.
+    ///
+    /// When supported, the OS renders the cursor directly — eliminating
+    /// the need for software cursor rendering and allowing zero-cost
+    /// mouse movement.  Returns `true` if the hardware cursor was set
+    /// successfully, `false` if software cursor should be used instead.
+    fn set_cursor_shape(
+        &mut self,
+        _handle: NativeWindowHandle,
+        _shape: &str,
+    ) -> bool {
+        false
+    }
+
+    /// Hide the OS cursor for a window (for software cursor rendering).
+    fn hide_cursor(&mut self, _handle: NativeWindowHandle) {}
+
+    /// Show the OS cursor for a window.
+    fn show_cursor(&mut self, _handle: NativeWindowHandle) {}
 }
 
 /// A [`PlatformBackend`] composed entirely of null / no-op sub-backends.

@@ -84,6 +84,16 @@ impl DesktopCompositor {
             "desktop window created"
         );
 
+        // Probe for hardware cursor support. If the platform supports it,
+        // we skip software cursor rendering entirely — zero CPU for mouse moves.
+        if let Some(handle) = self.window_handle {
+            let shape = self.shell.cursor_shape();
+            if platform.set_cursor_shape(handle, shape.css_name()) {
+                self.use_hardware_cursor = true;
+                info!("hardware cursor enabled — zero-cost mouse movement");
+            }
+        }
+
         // Show loading overlay (synchronous — render thread not spawned yet).
         debug!("rendering loading overlay");
         self.loading = true;
@@ -143,6 +153,22 @@ impl DesktopCompositor {
                 }
             }
 
+            // Sync hardware cursor shape to the platform backend.
+            // This is a cheap Win32 SetCursor call — no rendering needed.
+            if self.hw_cursor_needs_sync {
+                self.hw_cursor_needs_sync = false;
+                if let Some(handle) = self.window_handle {
+                    let css_name = self.last_hw_cursor_shape.css_name();
+                    platform.set_cursor_shape(handle, css_name);
+                }
+            }
+
+            // When hardware cursor is active, cursor-only moves are free —
+            // the OS draws the cursor. Discard cursor_dirty entirely.
+            if self.use_hardware_cursor {
+                self.cursor_dirty = false;
+            }
+
             // Check for completed frames from the render thread.
             if self.try_present(platform) {
                 self.last_render = Instant::now();
@@ -151,6 +177,10 @@ impl DesktopCompositor {
                 if self.dirty {
                     self.submit_render();
                     self.dirty = false;
+                    self.cursor_dirty = false;
+                } else if self.cursor_dirty {
+                    self.submit_cursor_only_render();
+                    self.cursor_dirty = false;
                 }
             }
 
@@ -178,6 +208,16 @@ impl DesktopCompositor {
                 if can_render {
                     self.submit_render();
                     self.dirty = false;
+                    self.cursor_dirty = false;
+                }
+            } else if self.cursor_dirty && !self.dirty && !self.render_in_flight {
+                // Cursor moved but nothing else changed — use fast path
+                // that reuses the cached scene without running the CSS pipeline.
+                let can_render = self.frame_interval.is_zero()
+                    || self.last_render.elapsed() >= self.frame_interval;
+                if can_render {
+                    self.submit_cursor_only_render();
+                    self.cursor_dirty = false;
                 }
             }
 

@@ -66,6 +66,9 @@ struct WindowData {
     /// The queue lives inside the `Win32Platform`, which owns all windows
     /// and outlives them.
     event_queue: *mut VecDeque<PlatformEvent>,
+    /// Current hardware cursor handle. When non-null, the wndproc uses
+    /// this for `WM_SETCURSOR` so the OS renders the cursor shape.
+    cursor: std::sync::atomic::AtomicIsize,
 }
 
 // ---------------------------------------------------------------------------
@@ -158,11 +161,13 @@ unsafe extern "system" fn wndproc(
         }
 
         ffi::WM_SETCURSOR => {
-            // Hide the hardware cursor over the client area — we render
-            // a software cursor into the framebuffer instead.
+            // Over the client area, use our stored cursor handle.
+            // If the handle is non-null, show the hardware cursor.
+            // If null, hide it (software cursor mode).
             if (lp & 0xFFFF) as i32 == ffi::HTCLIENT {
+                let cursor_val = wd.cursor.load(std::sync::atomic::Ordering::Relaxed);
                 unsafe {
-                    ffi::SetCursor(std::ptr::null_mut());
+                    ffi::SetCursor(cursor_val as ffi::HCURSOR);
                 }
                 return 1; // Handled
             }
@@ -583,9 +588,12 @@ impl NativeWindowHost for Win32WindowHost {
         };
 
         // Allocate per-window data on the heap.
+        // Load the default arrow cursor for the hardware cursor.
+        let default_cursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), ffi::IDC_ARROW) };
         let data = Box::new(WindowData {
             handle,
             event_queue: self.event_queue,
+            cursor: std::sync::atomic::AtomicIsize::new(default_cursor as isize),
         });
 
         // Safety: CreateWindowExW creates a native Win32 window. All
@@ -1339,6 +1347,69 @@ impl PlatformBackend for Win32Platform {
             // client area, causing a WM_PAINT message to be posted.
             unsafe {
                 ffi::InvalidateRect(info.hwnd, ptr::null(), ffi::FALSE);
+            }
+        }
+    }
+
+    fn set_cursor_shape(
+        &mut self,
+        handle: NativeWindowHandle,
+        shape: &str,
+    ) -> bool {
+        let cursor_id = match shape {
+            "default" | "arrow" => ffi::IDC_ARROW,
+            "pointer" | "hand" => ffi::IDC_HAND,
+            "text" | "ibeam" => ffi::IDC_IBEAM,
+            "crosshair" => ffi::IDC_CROSS,
+            "move" | "all-scroll" => ffi::IDC_SIZEALL,
+            "not-allowed" | "no-drop" => ffi::IDC_NO,
+            "wait" => ffi::IDC_WAIT,
+            "progress" => ffi::IDC_APPSTARTING,
+            "help" => ffi::IDC_HELP,
+            "ns-resize" | "row-resize" => ffi::IDC_SIZENS,
+            "ew-resize" | "col-resize" => ffi::IDC_SIZEWE,
+            "nwse-resize" => ffi::IDC_SIZENWSE,
+            "nesw-resize" => ffi::IDC_SIZENESW,
+            "none" | "hidden" => ptr::null(),
+            _ => ffi::IDC_ARROW,
+        };
+
+        if let Some(info) = self.window_host.windows.get(&handle.0) {
+            let hcursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), cursor_id) };
+            // Store the cursor handle in the WindowData so the wndproc
+            // uses it on WM_SETCURSOR.
+            info._data
+                .cursor
+                .store(hcursor as isize, std::sync::atomic::Ordering::Relaxed);
+            // Also set it immediately (in case we're already in the client area).
+            unsafe {
+                ffi::SetCursor(hcursor);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn hide_cursor(&mut self, handle: NativeWindowHandle) {
+        if let Some(info) = self.window_host.windows.get(&handle.0) {
+            info._data
+                .cursor
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            unsafe {
+                ffi::SetCursor(ptr::null_mut());
+            }
+        }
+    }
+
+    fn show_cursor(&mut self, handle: NativeWindowHandle) {
+        if let Some(info) = self.window_host.windows.get(&handle.0) {
+            let hcursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), ffi::IDC_ARROW) };
+            info._data
+                .cursor
+                .store(hcursor as isize, std::sync::atomic::Ordering::Relaxed);
+            unsafe {
+                ffi::SetCursor(hcursor);
             }
         }
     }
