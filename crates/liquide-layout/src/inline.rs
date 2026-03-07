@@ -3,7 +3,7 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{Display, OverflowWrap, Position, TextAlign, TextAlignLast, TextWrapMode, VerticalAlign, WhiteSpace};
+use liquide_style_engine::computed::{Display, Hyphens, Overflow, OverflowWrap, Position, TextAlign, TextAlignLast, TextOverflow, TextWrapMode, VerticalAlign, WhiteSpace};
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree, LineBox};
@@ -186,6 +186,66 @@ fn allows_wrap(ws: WhiteSpace) -> bool {
     !matches!(ws, WhiteSpace::Pre | WhiteSpace::NoWrap)
 }
 
+/// The Unicode soft-hyphen character.
+const SOFT_HYPHEN: char = '\u{00AD}';
+
+/// Check if a character is a vowel (English).
+fn is_vowel(ch: char) -> bool {
+    matches!(ch.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u' | 'y')
+}
+
+/// Find candidate hyphenation break points in a word using a simple
+/// vowel-cluster algorithm.  Returns byte offsets where the word can be
+/// split (the hyphen is inserted after the returned offset).
+///
+/// Rules:
+/// - Minimum 2 characters before and after the break.
+/// - Break after a vowel cluster followed by a consonant (i.e. between
+///   the last vowel of the cluster and the following consonant).
+fn auto_hyphenation_points(word: &str) -> Vec<usize> {
+    let chars: Vec<char> = word.chars().collect();
+    let len = chars.len();
+    if len < 4 {
+        // Too short to hyphenate (need min 2+2).
+        return Vec::new();
+    }
+
+    let mut points = Vec::new();
+    let mut byte_offset = 0usize;
+    let mut in_vowel_cluster = false;
+
+    for (i, &ch) in chars.iter().enumerate() {
+        let char_len = ch.len_utf8();
+        if is_vowel(ch) {
+            in_vowel_cluster = true;
+        } else if in_vowel_cluster {
+            // Transition from vowel cluster to consonant — candidate break
+            // point is right before this consonant (after the vowel cluster).
+            let before = i; // chars before this position
+            let after = len - i; // chars from this position onward
+            if before >= 2 && after >= 2 {
+                points.push(byte_offset);
+            }
+            in_vowel_cluster = false;
+        }
+        byte_offset += char_len;
+    }
+
+    points
+}
+
+/// Find soft-hyphen break points in a word.  Returns byte offsets of the
+/// soft-hyphen characters.
+fn soft_hyphen_points(word: &str) -> Vec<usize> {
+    let mut points = Vec::new();
+    for (i, ch) in word.char_indices() {
+        if ch == SOFT_HYPHEN {
+            points.push(i);
+        }
+    }
+    points
+}
+
 /// Tokenise a text string into `InlineItem`s respecting `white-space`.
 fn tokenise_text(
     text: &str,
@@ -348,13 +408,24 @@ fn collect_inline_items(
 // ── Line breaking ───────────────────────────────────────────────────────────
 
 /// Break a flat list of inline items into lines, respecting `max_width`.
+///
+/// When `hyphens` is `Auto` or `Manual`, words that don't fit may be split
+/// with a hyphen.  The `items` vec is mutable because hyphenation may need
+/// to split a `Word` item into two (the first part stays on the current line,
+/// the remainder is inserted right after and processed on the next line).
 fn break_into_lines(
-    items: &[InlineItem],
+    items: &mut Vec<InlineItem>,
     max_width: f32,
     text_indent: f32,
     wraps: bool,
     overflow_wrap: OverflowWrap,
     text_wrap_mode: TextWrapMode,
+    hyphens: Hyphens,
+    hyphenate_char: &str,
+    text_measurer: &dyn TextMeasurer,
+    font_family: &[String],
+    font_weight: u16,
+    text_props: &TextProperties,
 ) -> Vec<Vec<usize>> {
     // text-wrap-mode: nowrap overrides normal wrapping
     let wraps = wraps && !matches!(text_wrap_mode, TextWrapMode::NoWrap);
@@ -371,7 +442,9 @@ fn break_into_lines(
     // Track nested inline edge contributions.
     let mut pending_open_width: f32 = 0.0;
 
-    for (idx, item) in items.iter().enumerate() {
+    let mut idx = 0;
+    while idx < items.len() {
+        let item = items[idx].clone();
         match item {
             InlineItem::ForcedBreak => {
                 current_line.push(idx);
@@ -379,12 +452,12 @@ fn break_into_lines(
                 cursor_x = 0.0;
                 is_first_line = false;
             }
-            InlineItem::OpenInline { edges, .. } => {
+            InlineItem::OpenInline { ref edges, .. } => {
                 pending_open_width += edges.inline_start();
                 cursor_x += edges.inline_start();
                 current_line.push(idx);
             }
-            InlineItem::CloseInline { edges, .. } => {
+            InlineItem::CloseInline { ref edges, .. } => {
                 cursor_x += edges.inline_end();
                 current_line.push(idx);
             }
@@ -396,38 +469,65 @@ fn break_into_lines(
                         .all(|&i| matches!(&items[i], InlineItem::OpenInline { .. }))
                 {
                     // Skip leading space on a new line.
+                    idx += 1;
                     continue;
                 }
                 cursor_x += width;
                 current_line.push(idx);
             }
-            InlineItem::Word { width, .. } => {
+            InlineItem::Word { ref text, width, height, baseline, node_id, font_size } => {
                 let _needed = pending_open_width + width;
                 pending_open_width = 0.0;
                 let effective_max = if is_first_line { max_width } else { max_width };
                 let _ = effective_max;
 
-                // If word doesn't fit and wrapping is allowed, start a new line.
+                // If word doesn't fit and wrapping is allowed, start a new line
+                // — but first try hyphenation if enabled.
                 if wraps
                     && cursor_x + width > max_width + 0.01
                     && !current_line.is_empty()
                     && cursor_x > MIN_FRAGMENT_WIDTH
                 {
-                    // Trim trailing spaces from previous line.
-                    while let Some(&last) = current_line.last() {
-                        if matches!(&items[last], InlineItem::Space { .. }) {
-                            current_line.pop();
-                        } else {
-                            break;
+                    // ── Try hyphenation ──
+                    let remaining_space = max_width - cursor_x;
+                    let hyphenated = if remaining_space > 0.0 {
+                        try_hyphenate_word(
+                            text, font_size, font_family, font_weight,
+                            text_measurer, text_props, hyphens, hyphenate_char,
+                            remaining_space, height, baseline, node_id,
+                        )
+                    } else {
+                        None
+                    };
+
+                    if let Some((first_item, second_item, _first_w)) = hyphenated {
+                        // Replace current item with first part, insert remainder after.
+                        items[idx] = first_item;
+                        items.insert(idx + 1, second_item);
+                        current_line.push(idx);
+                        // Now wrap the line — the remainder at idx+1 will be
+                        // picked up on the next iteration.
+                        lines.push(std::mem::take(&mut current_line));
+                        cursor_x = 0.0;
+                        is_first_line = false;
+                    } else {
+                        // No hyphenation — normal wrap.
+                        // Trim trailing spaces from previous line.
+                        while let Some(&last) = current_line.last() {
+                            if matches!(&items[last], InlineItem::Space { .. }) {
+                                current_line.pop();
+                            } else {
+                                break;
+                            }
                         }
+                        lines.push(std::mem::take(&mut current_line));
+                        cursor_x = width;
+                        is_first_line = false;
+                        current_line.push(idx);
                     }
-                    lines.push(std::mem::take(&mut current_line));
-                    cursor_x = *width;
-                    is_first_line = false;
-                    current_line.push(idx);
                 } else if wraps
                     && matches!(overflow_wrap, OverflowWrap::BreakWord | OverflowWrap::Anywhere)
-                    && *width > max_width
+                    && width > max_width
                     && current_line.is_empty()
                 {
                     // overflow-wrap: break-word — the word itself is wider than the line,
@@ -442,6 +542,7 @@ fn break_into_lines(
                 }
             }
         }
+        idx += 1;
     }
     if !current_line.is_empty() {
         lines.push(current_line);
@@ -450,6 +551,114 @@ fn break_into_lines(
         lines.push(vec![]);
     }
     lines
+}
+
+/// Try to hyphenate a word so the first part (plus hyphen) fits in
+/// `available_width`.  Returns `Some((first_item, second_item, first_width))`
+/// on success or `None` if no valid break point exists.
+fn try_hyphenate_word(
+    word: &str,
+    font_size: f32,
+    font_family: &[String],
+    font_weight: u16,
+    text_measurer: &dyn TextMeasurer,
+    props: &TextProperties,
+    hyphens: Hyphens,
+    hyphenate_char: &str,
+    available_width: f32,
+    height: f32,
+    baseline: f32,
+    node_id: NodeId,
+) -> Option<(InlineItem, InlineItem, f32)> {
+    // Determine break points based on hyphens mode.
+    let break_points = match hyphens {
+        Hyphens::Auto => {
+            // For auto, first check soft hyphens, then use algorithmic breaks.
+            let sh = soft_hyphen_points(word);
+            if sh.is_empty() {
+                auto_hyphenation_points(word)
+            } else {
+                sh
+            }
+        }
+        Hyphens::Manual => {
+            soft_hyphen_points(word)
+        }
+        Hyphens::None => return None,
+    };
+
+    if break_points.is_empty() {
+        return None;
+    }
+
+    // Measure the hyphen character width.
+    let hyphen_metrics = text_measurer.measure(
+        hyphenate_char, font_size, font_family, font_weight, None, props,
+    );
+    let _hyphen_w = hyphen_metrics.width;
+
+    // Try break points from last to first (prefer longer first part).
+    for &bp in break_points.iter().rev() {
+        // For soft-hyphen points, the break is AT the soft-hyphen char.
+        // The first part is word[..bp] (excluding the SHY), displayed with a
+        // visible hyphen.  The second part is word[bp + SHY_len..].
+        let (first_text, second_text) = if word.as_bytes().get(bp) == Some(&0xC2)
+            && word.as_bytes().get(bp + 1) == Some(&0xAD)
+        {
+            // Soft-hyphen (U+00AD is 2 bytes in UTF-8: 0xC2 0xAD).
+            // Strip the soft hyphen from the split but show a visible hyphen.
+            let first = &word[..bp];
+            let second = &word[bp + SOFT_HYPHEN.len_utf8()..];
+            (first, second)
+        } else {
+            (&word[..bp], &word[bp..])
+        };
+
+        if first_text.is_empty() || second_text.is_empty() {
+            continue;
+        }
+
+        // Measure first part + hyphen.
+        let first_display = format!("{}{}", first_text, hyphenate_char);
+        let m = text_measurer.measure(
+            &first_display, font_size, font_family, font_weight, None, props,
+        );
+
+        if m.width <= available_width + 0.01 {
+            // Strip any remaining soft hyphens from the text fragments so they
+            // don't interfere with rendering.
+            let clean_first = first_text.replace(SOFT_HYPHEN, "");
+            let clean_second = second_text.replace(SOFT_HYPHEN, "");
+
+            let first_display_clean = format!("{}{}", clean_first, hyphenate_char);
+            let m1 = text_measurer.measure(
+                &first_display_clean, font_size, font_family, font_weight, None, props,
+            );
+            let m2 = text_measurer.measure(
+                &clean_second, font_size, font_family, font_weight, None, props,
+            );
+
+            let first_item = InlineItem::Word {
+                text: first_display_clean,
+                width: m1.width,
+                height: m1.height.max(height),
+                baseline: m1.baseline.max(baseline),
+                node_id,
+                font_size,
+            };
+            let second_item = InlineItem::Word {
+                text: clean_second,
+                width: m2.width,
+                height: m2.height.max(height),
+                baseline: m2.baseline.max(baseline),
+                node_id,
+                font_size,
+            };
+            return Some((first_item, second_item, m1.width));
+        }
+    }
+
+    None
 }
 
 // ── Vertical alignment ─────────────────────────────────────────────────────
@@ -744,7 +953,25 @@ pub fn layout_inline(
     let available = if max_width > 0.0 { max_width } else { f32::MAX };
     let overflow_wrap = style.overflow_wrap;
     let text_wrap_mode = style.text_wrap_mode;
-    let line_indices = break_into_lines(&items, available, text_indent, wraps, overflow_wrap, text_wrap_mode);
+    let hyphens = style.hyphens;
+    let hyphenate_char = style.hyphenate_character.as_deref().unwrap_or("-");
+    let text_overflow = style.text_overflow;
+    let overflow_hidden = matches!(style.overflow_x, Overflow::Hidden | Overflow::Clip);
+    let text_props = TextProperties::from_style(&style);
+    let line_indices = break_into_lines(
+        &mut items,
+        available,
+        text_indent,
+        wraps,
+        overflow_wrap,
+        text_wrap_mode,
+        hyphens,
+        hyphenate_char,
+        text_measurer,
+        &font_family,
+        style.font_weight,
+        &text_props,
+    );
 
     // ── 3. Position fragments on lines ──────────────────────────────────
 
@@ -942,6 +1169,16 @@ pub fn layout_inline(
         border_rect.height + root_edges.margin_top + root_edges.margin_bottom,
     );
 
+    // ── 7. Text-overflow: ellipsis detection ────────────────────────────
+    //
+    // When `overflow: hidden` (or clip) and `text-overflow: ellipsis`, mark
+    // the layout box so the painter can render "…" at the truncation point.
+    // The ellipsis applies when any line's content width exceeds the
+    // available container width.
+    let needs_ellipsis = overflow_hidden
+        && matches!(text_overflow, TextOverflow::Ellipsis)
+        && built_lines.iter().any(|ln| ln.width > available + 0.01);
+
     if let Some(b) = tree.get_mut(box_id) {
         b.box_type = BoxType::Text {
             line_boxes: std::mem::take(&mut line_boxes),
@@ -951,6 +1188,7 @@ pub fn layout_inline(
         b.border_rect = border_rect;
         b.margin_rect = margin_rect;
         b.baseline = first_baseline;
+        b.text_overflow_ellipsis = needs_ellipsis;
     }
 
     box_id
