@@ -9,6 +9,7 @@ use liquide_style_engine::style_map::PseudoKind;
 use crate::float::{ClearSide, FloatContext, FloatSide};
 use crate::geometry::{Rect, Size};
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree, PseudoElementKind};
+use crate::writing_mode::WritingModeContext;
 use crate::{ImageMeasurer, TextMeasurer};
 
 /// Perform block layout for a node and its children.
@@ -34,6 +35,14 @@ pub fn layout_block(
 
     let box_id = tree.alloc(node_id, BoxType::Block);
 
+    // Writing mode context — determines which physical axis is inline vs block.
+    let wm = WritingModeContext::with_direction(style.writing_mode, style.direction);
+
+    // In vertical writing modes, the "inline" axis is vertical and the "block"
+    // axis is horizontal, so we swap which container dimension is used for
+    // resolving inline-size (width in horizontal-tb, height in vertical modes).
+    let (_container_inline, _container_block) = wm.to_logical(container_width, container_height);
+
     // Consume generated-content properties — counter-increment/reset/set
     // maintain CSS counter state, quotes defines the quote pair for open-quote.
     // Full counter resolution requires a document-order counter registry (TODO);
@@ -43,7 +52,11 @@ pub fn layout_block(
     let _counter_set = &style.counter_set;
     let _quotes = &style.quotes;
 
-    // Resolve own dimensions
+    // Resolve own dimensions.
+    // In vertical writing modes, CSS `width` maps to the block-size and `height`
+    // to the inline-size. However, we resolve the explicit width/height properties
+    // as written — the writing-mode swapping is handled by using the correct
+    // container dimension for percentage resolution.
     let font_size = style.font_size;
     let explicit_width = style.width.resolve_px(
         container_width,
@@ -647,10 +660,12 @@ pub fn layout_block(
                     );
                     // Clamp text width to available width so it doesn't overflow
                     let clamped_text_w = metrics.width.min(child_avail_w);
-                    let text_x = child_float_offset_x + crate::inline::align_offset(
+                    let child_is_rtl = matches!(child_style.direction, liquide_style_engine::computed::Direction::Rtl);
+                    let text_x = child_float_offset_x + crate::inline::align_offset_directional(
                         child_style.text_align,
                         child_avail_w,
                         clamped_text_w,
+                        child_is_rtl,
                     );
                     let text_box = tree.alloc(
                         child_id,
@@ -1112,9 +1127,24 @@ pub fn layout_block(
     };
     let content_width = content_width - gutter_width;
 
-    // Set geometry
-    let content_x = offset_x + mar_left + border_left + pad_left;
-    let content_y = offset_y + mar_top + border_top + pad_top;
+    // Set geometry.
+    // In horizontal-tb the block cursor (child_y) advances along y.
+    // In vertical modes, the block cursor advances along x (via position_block_child).
+    let content_x;
+    let content_y;
+    if wm.is_vertical() {
+        // Vertical writing mode: inline offset → y, block offset → x
+        let (px, py) = wm.position_block_child(
+            mar_left + border_left + pad_left,
+            mar_top + border_top + pad_top,
+            container_width,
+        );
+        content_x = offset_x + px;
+        content_y = offset_y + py;
+    } else {
+        content_x = offset_x + mar_left + border_left + pad_left;
+        content_y = offset_y + mar_top + border_top + pad_top;
+    }
 
     // Compute scroll_size for scroll containers before the mutable borrow.
     let is_scroll_container = matches!(
