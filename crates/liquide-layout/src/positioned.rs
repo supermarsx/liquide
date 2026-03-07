@@ -42,13 +42,17 @@ pub fn layout_positioned(
 
     let font_size = style.font_size;
 
-    // Consume anchor positioning properties — CSS Anchor Positioning Level 1.
-    // anchor-name defines the anchor, position-anchor selects which anchor to
-    // reference, and position-area constrains the positioned box relative to it.
-    // Full anchor resolution requires a cross-element anchor registry (TODO).
-    let _anchor_name = &style.anchor_name;
-    let _position_anchor = &style.position_anchor;
-    let _position_area = &style.position_area;
+    // ── Anchor positioning — CSS Anchor Positioning Level 1 ──────────
+    // If this element itself has `anchor-name`, it was already registered
+    // in the anchor registry during the registration pass.
+    //
+    // If `position-anchor` is set, look up the referenced anchor's rect
+    // and use it as the reference for positioning instead of the
+    // containing block.  `position-area` further constrains alignment.
+    let anchor_rect = style.position_anchor.as_ref().and_then(|anchor_ref| {
+        tree.anchor_registry.get(anchor_ref).copied()
+    });
+    let position_area = style.position_area.clone();
 
     // Resolve width/height
     let width = style
@@ -144,7 +148,11 @@ pub fn layout_positioned(
     let content_h = (outer_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);
 
     // ── Calculate position ──────────────────────────────────────────────
-    let (x, y) = if is_sticky {
+    let (x, y) = if let Some(anchor) = anchor_rect {
+        // Anchor positioning: place relative to the anchor element's rect.
+        // The `position-area` value determines which edge/area to align to.
+        anchor_position(anchor, outer_w, outer_h, position_area.as_deref())
+    } else if is_sticky {
         // Sticky positioning: lay out in normal flow first, then clamp.
         // The normal-flow position is roughly cb.x / cb.y (the containing
         // block origin), since the element participates in normal flow.
@@ -400,6 +408,92 @@ fn layout_children_in_positioned(
             if let Some(cb) = tree.get(child_box) {
                 child_y += cb.margin_rect.height;
             }
+        }
+    }
+}
+
+/// Compute position for an anchor-positioned element.
+///
+/// Given the anchor element's absolute rect, the positioned element's
+/// outer size, and an optional `position-area` keyword, returns the
+/// (x, y) placement.
+///
+/// Supported `position-area` keywords (CSS Anchor Positioning Level 1):
+///   - `"top"` — centered above the anchor
+///   - `"bottom"` — centered below the anchor
+///   - `"left"` — to the left, vertically centered
+///   - `"right"` — to the right, vertically centered
+///   - `"center"` — centered over the anchor
+///   - `"top left"` / `"top right"` / `"bottom left"` / `"bottom right"`
+///
+/// If `position_area` is None or unrecognized, defaults to placing the
+/// element directly below the anchor, horizontally aligned to its start.
+fn anchor_position(
+    anchor: Rect,
+    elem_w: f32,
+    elem_h: f32,
+    position_area: Option<&str>,
+) -> (f32, f32) {
+    let area = position_area.unwrap_or("");
+    // Normalize: lowercase, trim
+    let area = area.trim();
+
+    match area {
+        "top" => {
+            // Center above the anchor.
+            let x = anchor.x + (anchor.width - elem_w) / 2.0;
+            let y = anchor.y - elem_h;
+            (x, y)
+        }
+        "bottom" => {
+            // Center below the anchor.
+            let x = anchor.x + (anchor.width - elem_w) / 2.0;
+            let y = anchor.y + anchor.height;
+            (x, y)
+        }
+        "left" => {
+            // To the left, vertically centered.
+            let x = anchor.x - elem_w;
+            let y = anchor.y + (anchor.height - elem_h) / 2.0;
+            (x, y)
+        }
+        "right" => {
+            // To the right, vertically centered.
+            let x = anchor.x + anchor.width;
+            let y = anchor.y + (anchor.height - elem_h) / 2.0;
+            (x, y)
+        }
+        "center" => {
+            // Centered over the anchor.
+            let x = anchor.x + (anchor.width - elem_w) / 2.0;
+            let y = anchor.y + (anchor.height - elem_h) / 2.0;
+            (x, y)
+        }
+        "top left" => {
+            let x = anchor.x - elem_w;
+            let y = anchor.y - elem_h;
+            (x, y)
+        }
+        "top right" => {
+            let x = anchor.x + anchor.width;
+            let y = anchor.y - elem_h;
+            (x, y)
+        }
+        "bottom left" => {
+            let x = anchor.x - elem_w;
+            let y = anchor.y + anchor.height;
+            (x, y)
+        }
+        "bottom right" => {
+            let x = anchor.x + anchor.width;
+            let y = anchor.y + anchor.height;
+            (x, y)
+        }
+        _ => {
+            // Default: place below the anchor, aligned to its left edge.
+            let x = anchor.x;
+            let y = anchor.y + anchor.height;
+            (x, y)
         }
     }
 }

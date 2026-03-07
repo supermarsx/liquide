@@ -6,6 +6,7 @@ use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{Display, OverflowWrap, Position, TextAlign, TextAlignLast, TextWrapMode, VerticalAlign, WhiteSpace};
 
 use crate::geometry::Rect;
+use crate::ruby::RubyContainerResult;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree, LineBox};
 use crate::{TextMeasurer, TextProperties};
 
@@ -98,6 +99,13 @@ enum InlineItem {
         node_id: NodeId,
         box_id: LayoutBoxId,
         edges: InlineEdges,
+    },
+    /// A ruby container (`display: ruby`) treated as an inline-level element.
+    RubyContainer {
+        node_id: NodeId,
+        box_id: LayoutBoxId,
+        /// Result of ruby layout (base+annotation pairs, sizes).
+        result: RubyContainerResult,
     },
 }
 
@@ -305,6 +313,26 @@ fn collect_inline_items(
         if style.display == Display::None {
             return;
         }
+
+        // Handle display: ruby as an inline-level atomic box.
+        if style.display == Display::Ruby {
+            let box_id = tree.alloc(node_id, BoxType::Inline);
+            let result = crate::ruby::layout_ruby_from_dom(
+                doc,
+                node_id,
+                styles,
+                text_measurer,
+                0.0, // start_x resolved later during line layout
+                0.0, // baseline_y resolved later
+            );
+            items.push(InlineItem::RubyContainer {
+                node_id,
+                box_id,
+                result,
+            });
+            return;
+        }
+
         let edges = edges_from_style(&style, parent_width);
         let va = style.vertical_align.clone();
         let fs = style.font_size;
@@ -441,6 +469,31 @@ fn break_into_lines(
                     current_line.push(idx);
                 }
             }
+            InlineItem::RubyContainer { result, .. } => {
+                // Treat ruby container as an atomic inline box.
+                let width = result.inline_advance;
+                pending_open_width = 0.0;
+                if wraps
+                    && cursor_x + width > max_width + 0.01
+                    && !current_line.is_empty()
+                    && cursor_x > MIN_FRAGMENT_WIDTH
+                {
+                    while let Some(&last) = current_line.last() {
+                        if matches!(&items[last], InlineItem::Space { .. }) {
+                            current_line.pop();
+                        } else {
+                            break;
+                        }
+                    }
+                    lines.push(std::mem::take(&mut current_line));
+                    cursor_x = width;
+                    is_first_line = false;
+                    current_line.push(idx);
+                } else {
+                    cursor_x += width;
+                    current_line.push(idx);
+                }
+            }
         }
     }
     if !current_line.is_empty() {
@@ -528,6 +581,19 @@ fn layout_lines(
                 InlineItem::CloseInline { .. } => {
                     edge_stack.pop();
                 }
+                InlineItem::RubyContainer { result, .. } => {
+                    // The base contributes to the normal ascent/descent.
+                    let base_h = result.base_height;
+                    let base_baseline = base_h * 0.8; // approximate baseline
+                    let asc = base_baseline + result.annotation_overhead();
+                    let desc = (base_h - base_baseline) + result.annotation_underhang();
+                    if asc > max_ascent {
+                        max_ascent = asc;
+                    }
+                    if desc > max_descent {
+                        max_descent = desc;
+                    }
+                }
                 _ => {}
             }
         }
@@ -572,6 +638,22 @@ fn layout_lines(
                 }
                 InlineItem::CloseInline { edges, .. } => {
                     cursor_x += edges.inline_end();
+                }
+                InlineItem::RubyContainer {
+                    node_id,
+                    result,
+                    ..
+                } => {
+                    // Place ruby container as an atomic inline fragment.
+                    let total_h = result.total_block_size();
+                    fragments.push(PlacedFragment {
+                        x: cursor_x,
+                        width: result.inline_advance,
+                        height: total_h,
+                        baseline: result.base_height * 0.8 + result.annotation_overhead(),
+                        node_id: *node_id,
+                    });
+                    cursor_x += result.inline_advance;
                 }
                 InlineItem::ForcedBreak => {}
             }
@@ -874,6 +956,47 @@ pub fn layout_inline(
                             b.baseline = Some(child_baseline);
                         }
 
+                        tree.add_child(box_id, *child_box_id);
+                    }
+                }
+                InlineItem::RubyContainer {
+                    box_id: child_box_id,
+                    node_id: ruby_node,
+                    result,
+                } => {
+                    let li = if idx < item_to_line.len() {
+                        item_to_line[idx]
+                    } else {
+                        0
+                    };
+
+                    if li < built_lines.len() {
+                        let ln = &built_lines[li];
+
+                        // Find the fragment for this ruby container.
+                        let mut frag_x = 0.0f32;
+                        for frag in &ln.fragments {
+                            if frag.node_id == *ruby_node {
+                                frag_x = frag.x;
+                                break;
+                            }
+                        }
+
+                        let total_h = result.total_block_size();
+                        let cx = offset_x + frag_x;
+                        let cy = offset_y + ln.line_y;
+                        let cw = result.inline_advance;
+
+                        let content_rect = Rect::new(cx, cy, cw, total_h);
+                        if let Some(b) = tree.get_mut(*child_box_id) {
+                            b.content_rect = content_rect;
+                            b.padding_rect = content_rect;
+                            b.border_rect = content_rect;
+                            b.margin_rect = content_rect;
+                            b.baseline = Some(
+                                result.annotation_overhead() + result.base_height * 0.8,
+                            );
+                        }
                         tree.add_child(box_id, *child_box_id);
                     }
                 }

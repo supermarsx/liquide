@@ -22,7 +22,7 @@ pub mod writing_mode;
 
 pub use engine::{LayoutEngine, LayoutInput};
 pub use geometry::{Point, Rect, Size};
-pub use tree::{BoxType, LayoutBox, LayoutBoxId, LayoutTree, LineBox};
+pub use tree::{AnchorRegistry, BoxType, LayoutBox, LayoutBoxId, LayoutTree, LineBox};
 
 use liquide_style_engine::computed::{
     FontKerning, FontOpticalSizing, FontStretch, FontStyle, FontSynthesisSmallCaps,
