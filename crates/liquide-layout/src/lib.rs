@@ -15,6 +15,7 @@ pub mod inline;
 pub mod intrinsic;
 pub mod multicol;
 pub mod positioned;
+pub mod replaced;
 pub mod ruby;
 pub mod table;
 pub mod tree;

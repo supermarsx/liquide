@@ -1127,6 +1127,20 @@ impl ComputedStyle {
             || matches!(self.perspective, Perspective::Length(_))
     }
 
+    /// Does this element establish a containing block for fixed-position descendants?
+    ///
+    /// Per CSS Transforms §7.1, an element with a transform, perspective, filter,
+    /// backdrop-filter, or contain:paint creates a containing block for all descendants
+    /// (including fixed-position ones), overriding the viewport as containing block.
+    pub fn establishes_fixed_containing_block(&self) -> bool {
+        !self.transform.is_empty()
+            || matches!(self.perspective, Perspective::Length(_))
+            || !self.filter.is_empty()
+            || !self.backdrop_filter.is_empty()
+            || self.contain.paint
+            || self.will_change.iter().any(|prop| prop == "transform" || prop == "perspective" || prop == "filter")
+    }
+
     /// Is this element visible?
     pub fn is_visible(&self) -> bool {
         self.display != Display::None
@@ -1137,6 +1151,11 @@ impl ComputedStyle {
     /// Is this element a flex container?
     pub fn is_flex_container(&self) -> bool {
         matches!(self.display, Display::Flex | Display::InlineFlex)
+    }
+
+    /// Is this flex container using row direction?
+    pub fn is_flex_row(&self) -> bool {
+        matches!(self.flex_direction, FlexDirection::Row | FlexDirection::RowReverse)
     }
 
     /// Is this element a grid container?
@@ -1188,11 +1207,11 @@ impl ComputedStyle {
             || matches!(self.position, Position::Absolute | Position::Fixed)
             || matches!(
                 self.overflow_x,
-                Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+                Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
             )
             || matches!(
                 self.overflow_y,
-                Overflow::Hidden | Overflow::Scroll | Overflow::Auto
+                Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
             )
             || self.display == Display::InlineBlock
             || self.is_table_wrapper()

@@ -13,7 +13,7 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{Display, Position};
+use liquide_style_engine::computed::{Display, Position, VerticalAlign};
 use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
@@ -192,7 +192,7 @@ pub fn layout_table(
     let _hide_empty = style.empty_cells == liquide_style_engine::computed::EmptyCells::Hide;
 
     // table-layout: auto (default) or fixed — fixed uses first-row widths only.
-    let _table_layout_fixed = style.table_layout == liquide_style_engine::computed::TableLayout::Fixed;
+    let table_layout_fixed = style.table_layout == liquide_style_engine::computed::TableLayout::Fixed;
 
     // ── Step 0: Layout captions ──
     let children = doc.children(node_id).to_vec();
@@ -466,40 +466,77 @@ pub fn layout_table(
     }
 
     // ── Step 2: Determine column widths ──
-    // First: max intrinsic width per column from non-spanning cells only.
+    // table-layout: fixed — use first row only, ignore intrinsic content widths.
+    // This is faster and more predictable (CSS 2.1 §17.5.2.1).
     let mut col_max_widths = vec![0.0f32; num_cols];
-    for (ri, row) in rows.iter().enumerate() {
-        for (ci, cell) in row.cells.iter().enumerate() {
+    if table_layout_fixed && !rows.is_empty() {
+        // Fixed layout: only the first row determines column widths
+        let first_row = &rows[0];
+        for (ci, cell) in first_row.cells.iter().enumerate() {
             if cell.colspan == 1 {
-                let gc = cell_grid_col[ri][ci];
+                let gc = cell_grid_col[0][ci];
                 if gc < num_cols {
-                    col_max_widths[gc] = col_max_widths[gc].max(cell.intrinsic_width);
+                    // Use explicit width from style if available, else intrinsic
+                    let cell_style = styles.get(cell._node_id).cloned().unwrap_or_default();
+                    let explicit_w = cell_style.width.resolve_px(
+                        content_width, base_font_size, font_size, viewport_w, viewport_h,
+                    );
+                    col_max_widths[gc] = explicit_w.unwrap_or(cell.intrinsic_width);
                 }
             }
         }
-    }
-
-    // Distribute spanning cells' excess width equally among spanned columns.
-    for (ri, row) in rows.iter().enumerate() {
-        for (ci, cell) in row.cells.iter().enumerate() {
+        // Spanning cells in first row
+        for (ci, cell) in first_row.cells.iter().enumerate() {
             if cell.colspan > 1 {
-                let gc = cell_grid_col[ri][ci];
+                let gc = cell_grid_col[0][ci];
                 let end_col = (gc + cell.colspan).min(num_cols);
                 let span = end_col - gc;
-                if span == 0 {
-                    continue;
-                }
-                let spanned_spacing = if span > 1 {
-                    (span - 1) as f32 * effective_spacing
-                } else {
-                    0.0
-                };
+                if span == 0 { continue; }
                 let current_sum: f32 = col_max_widths[gc..end_col].iter().sum();
-                let needed = cell.intrinsic_width - spanned_spacing;
+                let needed = cell.intrinsic_width;
                 if needed > current_sum {
                     let extra_per_col = (needed - current_sum) / span as f32;
                     for c in gc..end_col {
                         col_max_widths[c] += extra_per_col;
+                    }
+                }
+            }
+        }
+    } else {
+        // Auto layout: use all rows' intrinsic widths
+        for (ri, row) in rows.iter().enumerate() {
+            for (ci, cell) in row.cells.iter().enumerate() {
+                if cell.colspan == 1 {
+                    let gc = cell_grid_col[ri][ci];
+                    if gc < num_cols {
+                        col_max_widths[gc] = col_max_widths[gc].max(cell.intrinsic_width);
+                    }
+                }
+            }
+        }
+
+        // Distribute spanning cells' excess width equally among spanned columns.
+        for (ri, row) in rows.iter().enumerate() {
+            for (ci, cell) in row.cells.iter().enumerate() {
+                if cell.colspan > 1 {
+                    let gc = cell_grid_col[ri][ci];
+                    let end_col = (gc + cell.colspan).min(num_cols);
+                    let span = end_col - gc;
+                    if span == 0 {
+                        continue;
+                    }
+                    let spanned_spacing = if span > 1 {
+                        (span - 1) as f32 * effective_spacing
+                    } else {
+                        0.0
+                    };
+                    let current_sum: f32 = col_max_widths[gc..end_col].iter().sum();
+                    let needed = cell.intrinsic_width - spanned_spacing;
+                    if needed > current_sum {
+                        let extra_per_col = (needed - current_sum) / span as f32;
+                        for c in gc..end_col {
+                            col_max_widths[c] += extra_per_col;
+                        }
                     }
                 }
             }
@@ -614,10 +651,20 @@ pub fn layout_table(
             let cell_x = col_x_positions[gc];
             let cell_y = caption_y + row_y_positions[ri];
 
+            // Apply vertical-align within cell (CSS 2.1 §17.5.4)
+            let cell_style = styles.get(cell._node_id).cloned().unwrap_or_default();
+            let content_h = cell.intrinsic_height.min(cell_h);
+            let v_offset = match cell_style.vertical_align {
+                VerticalAlign::Middle => (cell_h - content_h) / 2.0,
+                VerticalAlign::Bottom | VerticalAlign::TextBottom => cell_h - content_h,
+                // Top, Baseline, and others → content at top of cell
+                _ => 0.0,
+            };
+
             // Reposition the cell box
             if let Some(b) = tree.get_mut(cell.box_id) {
                 let dx = cell_x - b.content_rect.x;
-                let dy = cell_y - b.content_rect.y;
+                let dy = (cell_y + v_offset) - b.content_rect.y;
                 let dw = cell_w - b.content_rect.width;
                 let dh = cell_h - b.content_rect.height;
 

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{BoxSizing, Display, GridAutoFlow, GridLine, JustifyItems, JustifySelf, Position, TrackSize};
+use liquide_style_engine::computed::{AlignContent, AlignItems, AlignSelf, BoxSizing, Display, GridAutoFlow, GridLine, JustifyContent, JustifyItems, JustifySelf, Position, TrackSize};
 use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
@@ -289,7 +289,12 @@ pub fn layout_grid(
         }
     }
 
-    // Auto-place remaining items into unoccupied cells
+    // Auto-place remaining items into unoccupied cells.
+    // grid-auto-flow: column/column-dense iterates columns-first (down then across).
+    let column_flow = matches!(
+        style.grid_auto_flow,
+        GridAutoFlow::Column | GridAutoFlow::ColumnDense
+    );
     let mut auto_cursor_row: usize = 0;
     let mut auto_cursor_col: usize = 0;
     for child_id in auto_items {
@@ -301,18 +306,33 @@ pub fn layout_grid(
 
         // Find next unoccupied cell
         loop {
-            if auto_cursor_row >= num_rows {
+            if column_flow {
+                if auto_cursor_row >= num_rows {
+                    // Extend to next column
+                    auto_cursor_row = 0;
+                    auto_cursor_col += 1;
+                }
+            } else if auto_cursor_row >= num_rows {
                 // Extend the grid
                 num_rows += 1;
                 occupied.push(vec![false; num_cols]);
             }
-            if !occupied[auto_cursor_row][auto_cursor_col] {
+            // Ensure occupied grid is large enough
+            while auto_cursor_row >= occupied.len() {
+                num_rows += 1;
+                occupied.push(vec![false; num_cols]);
+            }
+            if auto_cursor_col < num_cols && !occupied[auto_cursor_row][auto_cursor_col] {
                 break;
             }
-            auto_cursor_col += 1;
-            if auto_cursor_col >= num_cols {
-                auto_cursor_col = 0;
+            if column_flow {
                 auto_cursor_row += 1;
+            } else {
+                auto_cursor_col += 1;
+                if auto_cursor_col >= num_cols {
+                    auto_cursor_col = 0;
+                    auto_cursor_row += 1;
+                }
             }
         }
         occupied[auto_cursor_row][auto_cursor_col] = true;
@@ -324,10 +344,14 @@ pub fn layout_grid(
             row_end: auto_cursor_row + 1,
             box_id: None,
         });
-        auto_cursor_col += 1;
-        if auto_cursor_col >= num_cols {
-            auto_cursor_col = 0;
+        if column_flow {
             auto_cursor_row += 1;
+        } else {
+            auto_cursor_col += 1;
+            if auto_cursor_col >= num_cols {
+                auto_cursor_col = 0;
+                auto_cursor_row += 1;
+            }
         }
     }
 
@@ -530,20 +554,23 @@ pub fn layout_grid(
     }
 
     // Position items
-    let mut y_offsets: Vec<f32> = vec![0.0; num_rows];
-    let mut cumulative_y = 0.0f32;
-    for row in 0..num_rows {
-        y_offsets[row] = cumulative_y;
-        cumulative_y += row_heights[row] + if row < num_rows - 1 { gap_row } else { 0.0 };
-    }
-
-    let mut x_offsets: Vec<f32> = vec![0.0; num_cols];
-    let mut cumulative_x = 0.0f32;
+    // First compute raw track offsets, then apply justify-content / align-content.
     let fallback_col_pos = if implicit_col_size > 0.0 {
         implicit_col_size
     } else {
-        content_width / num_cols as f32
+        content_width / num_cols.max(1) as f32
     };
+
+    // ── justify-content: distribute horizontal free space between column tracks ──
+    let total_col_width: f32 = (0..num_cols)
+        .map(|c| if c < col_tracks.len() { col_tracks[c] } else { fallback_col_pos })
+        .sum::<f32>()
+        + if num_cols > 1 { (num_cols - 1) as f32 * gap_col } else { 0.0 };
+    let free_x = (content_width - total_col_width).max(0.0);
+    let (jc_start, jc_extra) = grid_content_distribute(style.justify_content, free_x, num_cols);
+
+    let mut x_offsets: Vec<f32> = vec![0.0; num_cols];
+    let mut cumulative_x = jc_start;
     for col in 0..num_cols {
         x_offsets[col] = cumulative_x;
         let cw = if col < col_tracks.len() {
@@ -551,7 +578,24 @@ pub fn layout_grid(
         } else {
             fallback_col_pos
         };
-        cumulative_x += cw + if col < num_cols - 1 { gap_col } else { 0.0 };
+        cumulative_x += cw + gap_col + if col < num_cols - 1 { jc_extra } else { 0.0 };
+    }
+
+    // ── align-content: distribute vertical free space between row tracks ──
+    let explicit_container_h = style.height.resolve_px(
+        container_height, base_font_size, font_size, viewport_w, viewport_h,
+    );
+    let total_row_height: f32 = row_heights.iter().sum::<f32>()
+        + if num_rows > 1 { (num_rows - 1) as f32 * gap_row } else { 0.0 };
+    let container_h_for_align = explicit_container_h.unwrap_or(total_row_height);
+    let free_y = (container_h_for_align - total_row_height).max(0.0);
+    let (ac_start, ac_extra) = grid_content_distribute_align(style.align_content, free_y, num_rows);
+
+    let mut y_offsets: Vec<f32> = vec![0.0; num_rows];
+    let mut cumulative_y = ac_start;
+    for row in 0..num_rows {
+        y_offsets[row] = cumulative_y;
+        cumulative_y += row_heights[row] + gap_row + if row < num_rows - 1 { ac_extra } else { 0.0 };
     }
 
     // Update child positions using placed_items (supports spanning)
@@ -590,7 +634,7 @@ pub fn layout_grid(
         }
 
         if let Some(b) = tree.get_mut(child_box_id) {
-            // Apply justify-items / justify-self alignment within the grid cell
+            // Apply justify-items / justify-self alignment within the grid cell (horizontal)
             let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
             let child_w = b.margin_rect.width.min(cell_w);
             let alignment = match child_style.justify_self {
@@ -604,10 +648,36 @@ pub fn layout_grid(
                 JustifyItems::End | JustifyItems::FlexEnd | JustifyItems::SelfEnd | JustifyItems::Right => cell_w - child_w,
                 _ => 0.0, // Start, Stretch, Normal
             };
-            b.content_rect = Rect::new(cell_x + x_offset, cell_y, cell_w, cell_h);
-            b.padding_rect = b.content_rect;
-            b.border_rect = b.content_rect;
-            b.margin_rect = b.content_rect;
+
+            // Apply align-items / align-self alignment within the grid cell (vertical)
+            let child_h = b.margin_rect.height.min(cell_h);
+            let v_alignment = match child_style.align_self {
+                AlignSelf::Auto => style.align_items,
+                AlignSelf::Stretch => AlignItems::Stretch,
+                AlignSelf::Center => AlignItems::Center,
+                AlignSelf::FlexStart => AlignItems::FlexStart,
+                AlignSelf::FlexEnd => AlignItems::FlexEnd,
+                AlignSelf::Baseline => AlignItems::Baseline,
+            };
+            let y_offset = match v_alignment {
+                AlignItems::Center => (cell_h - child_h) / 2.0,
+                AlignItems::FlexEnd => cell_h - child_h,
+                _ => 0.0, // FlexStart, Stretch, Baseline
+            };
+
+            // Reposition the child box to its cell position.
+            // Use delta-based shifting to preserve the child's own
+            // padding/border/margin box geometry from its layout pass.
+            let dx = cell_x + x_offset - b.margin_rect.x;
+            let dy = cell_y + y_offset - b.margin_rect.y;
+            b.content_rect.x += dx;
+            b.content_rect.y += dy;
+            b.padding_rect.x += dx;
+            b.padding_rect.y += dy;
+            b.border_rect.x += dx;
+            b.border_rect.y += dy;
+            b.margin_rect.x += dx;
+            b.margin_rect.y += dy;
         }
     }
 
@@ -685,8 +755,16 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
                 sizes[i] = max_px.min(available / track_count);
                 fixed_total += sizes[i];
             }
-            TrackSize::Auto | TrackSize::MinContent | TrackSize::MaxContent => {
-                // Auto tracks get a share of remaining space
+            TrackSize::MinContent => {
+                // MinContent gets a smaller share of remaining space
+                fr_total += 0.5;
+            }
+            TrackSize::MaxContent => {
+                // MaxContent gets a larger share of remaining space
+                fr_total += 1.5;
+            }
+            TrackSize::Auto => {
+                // Auto behaves like minmax(min-content, max-content) — default weight
                 fr_total += 1.0;
             }
             TrackSize::Subgrid => {
@@ -707,7 +785,13 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
         for (i, track) in tracks.iter().enumerate() {
             match track {
                 TrackSize::Fr(v) => sizes[i] = remaining * (*v / fr_total),
-                TrackSize::Auto | TrackSize::MinContent | TrackSize::MaxContent => {
+                TrackSize::MinContent => {
+                    sizes[i] = remaining * (0.5 / fr_total);
+                }
+                TrackSize::MaxContent => {
+                    sizes[i] = remaining * (1.5 / fr_total);
+                }
+                TrackSize::Auto => {
                     sizes[i] = remaining * (1.0 / fr_total);
                 }
                 TrackSize::MinMax(_min, max) => {
@@ -898,5 +982,60 @@ fn resolve_grid_line(
             area_names.get(&key).copied()
         }
         GridLine::Span(_) | GridLine::Auto => None,
+    }
+}
+
+/// Distribute free space between grid tracks for `justify-content`.
+///
+/// CSS Grid §10.5: The justify-content property aligns the grid within the
+/// grid container along the inline axis when the total grid size is less
+/// than the container size.
+fn grid_content_distribute(jc: JustifyContent, free: f32, count: usize) -> (f32, f32) {
+    if count == 0 || free <= 0.0 {
+        return (0.0, 0.0);
+    }
+    match jc {
+        JustifyContent::FlexStart => (0.0, 0.0),
+        JustifyContent::FlexEnd => (free, 0.0),
+        JustifyContent::Center => (free / 2.0, 0.0),
+        JustifyContent::SpaceBetween => {
+            if count > 1 {
+                (0.0, free / (count - 1) as f32)
+            } else {
+                (0.0, 0.0)
+            }
+        }
+        JustifyContent::SpaceAround => {
+            let s = free / count as f32;
+            (s / 2.0, s)
+        }
+        JustifyContent::SpaceEvenly => {
+            let s = free / (count + 1) as f32;
+            (s, s)
+        }
+    }
+}
+
+/// Distribute free space between grid tracks for `align-content`.
+fn grid_content_distribute_align(ac: AlignContent, free: f32, count: usize) -> (f32, f32) {
+    if count == 0 || free <= 0.0 {
+        return (0.0, 0.0);
+    }
+    match ac {
+        AlignContent::FlexStart => (0.0, 0.0),
+        AlignContent::FlexEnd => (free, 0.0),
+        AlignContent::Center => (free / 2.0, 0.0),
+        AlignContent::SpaceBetween => {
+            if count > 1 {
+                (0.0, free / (count - 1) as f32)
+            } else {
+                (0.0, 0.0)
+            }
+        }
+        AlignContent::SpaceAround => {
+            let s = free / count as f32;
+            (s / 2.0, s)
+        }
+        AlignContent::Stretch => (0.0, free / count as f32),
     }
 }

@@ -593,6 +593,39 @@ fn layout_lines(
         } else {
             text_align
         };
+        // ── Apply text-align: justify — distribute extra space between words ──
+        // Justify applies to all lines except the last (CSS 2.1 §16.5).
+        // On the last line, normal left alignment is used (unless
+        // text-align-last overrides to Justify, handled via effective_align).
+        // For the last line, justify only applies if text-align-last explicitly
+        // requests it; the default text-align: justify leaves the last line
+        // left-aligned (CSS 2.1 §16.5).
+        let should_justify = matches!(effective_align, TextAlign::Justify)
+            && (!is_last_line || text_align_last == TextAlignLast::Justify);
+        if should_justify && line_content_width < max_width
+        {
+            // Count space fragments (gaps between words).
+            let space_count = fragments
+                .iter()
+                .filter(|f| f.height == 0.0 && f.width > 0.0) // Space fragments have height 0
+                .count();
+
+            if space_count > 0 {
+                let extra = max_width - line_content_width;
+                let per_space = extra / space_count as f32;
+                let mut accumulated = 0.0_f32;
+
+                for frag in &mut fragments {
+                    frag.x += accumulated;
+                    // Detect space fragments (height == 0 and positive width).
+                    if frag.height == 0.0 && frag.width > 0.0 {
+                        frag.width += per_space;
+                        accumulated += per_space;
+                    }
+                }
+            }
+        }
+
         let shift = align_offset(effective_align, max_width, line_content_width);
         if shift > 0.0 {
             for frag in &mut fragments {
@@ -887,9 +920,9 @@ pub fn layout_inline(
     // Apply the root element's own inline edges.
     let root_edges = edges_from_style(&style, max_width);
 
-    // Clamp total_width to max_width so box doesn't extend beyond container
-    let clamped_width = total_width.min(max_width);
-    let content_rect = Rect::new(offset_x, offset_y, clamped_width, total_height);
+    // Per CSS 2.1 §9.4.2, inline content is allowed to overflow the container;
+    // the content rect uses the actual total_width, not a clamped version.
+    let content_rect = Rect::new(offset_x, offset_y, total_width, total_height);
     let padding_rect = Rect::new(
         content_rect.x - root_edges.padding_left,
         content_rect.y - root_edges.padding_top,

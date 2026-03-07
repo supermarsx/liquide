@@ -712,6 +712,27 @@ impl LayoutEngine {
         text_measurer: &dyn TextMeasurer,
         image_measurer: &dyn ImageMeasurer,
     ) {
+        let viewport_rect = Rect::new(0.0, 0.0, self.viewport.width, self.viewport.height);
+        self.layout_positioned_recursive(
+            doc, node_id, styles, tree, text_measurer, image_measurer, viewport_rect,
+        );
+    }
+
+    /// Recursive positioned layout with tracked fixed-position containing block.
+    ///
+    /// Per CSS Transforms §7.1, an ancestor with transform/perspective/filter/
+    /// contain:paint creates a containing block for fixed-position descendants,
+    /// overriding the viewport.
+    fn layout_positioned_recursive(
+        &self,
+        doc: &Document,
+        node_id: NodeId,
+        styles: &StyleMap,
+        tree: &mut LayoutTree,
+        text_measurer: &dyn TextMeasurer,
+        image_measurer: &dyn ImageMeasurer,
+        fixed_cb: Rect,
+    ) {
         let children = doc.children(node_id).to_vec();
 
         // Find the containing block rect for this node (CSS2.1 §10.1: padding edge)
@@ -725,10 +746,30 @@ impl LayoutEngine {
                 self.viewport.height,
             ));
 
+        // Determine the fixed-position containing block for children.
+        // If this node establishes one (via transform/filter/etc.), use its
+        // padding rect; otherwise inherit from parent.
+        let node_style = styles.get(node_id).cloned().unwrap_or_default();
+        let child_fixed_cb = if node_style.establishes_fixed_containing_block() {
+            containing_rect
+        } else {
+            fixed_cb
+        };
+
         for &child_id in &children {
             let child_style = styles.get(child_id).cloned().unwrap_or_default();
 
             if matches!(child_style.position, Position::Absolute | Position::Fixed) {
+                // For fixed positioning, use the tracked fixed_cb instead of
+                // always using viewport. layout_positioned handles this via
+                // the containing_rect parameter — for fixed elements, we pass
+                // child_fixed_cb (which is the viewport unless an ancestor
+                // with transform/filter/etc. exists).
+                let cb = if child_style.position == Position::Fixed {
+                    child_fixed_cb
+                } else {
+                    containing_rect
+                };
                 if let Some(pos_box) = crate::positioned::layout_positioned(
                     doc,
                     child_id,
@@ -736,7 +777,7 @@ impl LayoutEngine {
                     tree,
                     text_measurer,
                     image_measurer,
-                    containing_rect,
+                    cb,
                     self.viewport.width,
                     self.viewport.height,
                     self.base_font_size,
@@ -749,13 +790,14 @@ impl LayoutEngine {
             }
 
             // Recurse
-            self.layout_positioned_elements(
+            self.layout_positioned_recursive(
                 doc,
                 child_id,
                 styles,
                 tree,
                 text_measurer,
                 image_measurer,
+                child_fixed_cb,
             );
         }
     }

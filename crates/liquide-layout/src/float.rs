@@ -49,28 +49,48 @@ impl FloatContext {
     }
 
     /// Place a left float at the current position.
-    pub fn place_left(&mut self, width: f32, height: f32, y: f32) -> Rect {
-        // Find the leftmost x that doesn't overlap existing floats at this y
-        let x = self.left_edge_at(y, height);
-        let rect = Rect::new(x, y, width, height);
-        self.left_floats.push(PlacedFloat {
-            rect,
-            _side: FloatSide::Left,
-        });
-        rect
+    ///
+    /// If the float doesn't fit alongside existing floats at `y`, it is
+    /// shifted down until it finds room (CSS 2.1 §9.5.1 rule 6).
+    pub fn place_left(&mut self, width: f32, height: f32, mut y: f32) -> Rect {
+        // Try to place; if it doesn't fit, shift down past interfering floats
+        loop {
+            let x = self.left_edge_at(y, height);
+            let right = self.right_edge_at(y, height);
+            let available = right - x;
+            if width <= available || y > self.bottom_edge() {
+                let rect = Rect::new(x, y, width, height);
+                self.left_floats.push(PlacedFloat {
+                    rect,
+                    _side: FloatSide::Left,
+                });
+                return rect;
+            }
+            // Shift down past the lowest interfering float at this y
+            y = self.next_clear_y(y, height);
+        }
     }
 
     /// Place a right float at the current position.
-    pub fn place_right(&mut self, width: f32, height: f32, y: f32) -> Rect {
-        // Find the rightmost x that doesn't overlap existing floats at this y
-        let right_edge = self.right_edge_at(y, height);
-        let x = (right_edge - width).max(0.0);
-        let rect = Rect::new(x, y, width, height);
-        self.right_floats.push(PlacedFloat {
-            rect,
-            _side: FloatSide::Right,
-        });
-        rect
+    ///
+    /// If the float doesn't fit alongside existing floats at `y`, it is
+    /// shifted down until it finds room (CSS 2.1 §9.5.1 rule 6).
+    pub fn place_right(&mut self, width: f32, height: f32, mut y: f32) -> Rect {
+        loop {
+            let right_edge = self.right_edge_at(y, height);
+            let left_edge = self.left_edge_at(y, height);
+            let available = right_edge - left_edge;
+            if width <= available || y > self.bottom_edge() {
+                let x = (right_edge - width).max(0.0);
+                let rect = Rect::new(x, y, width, height);
+                self.right_floats.push(PlacedFloat {
+                    rect,
+                    _side: FloatSide::Right,
+                });
+                return rect;
+            }
+            y = self.next_clear_y(y, height);
+        }
     }
 
     /// Get the available width for content at a given y position.
@@ -127,6 +147,25 @@ impl FloatContext {
     /// Check if two vertical ranges overlap.
     fn ranges_overlap(a_top: f32, a_bottom: f32, b_top: f32, b_bottom: f32) -> bool {
         a_top < b_bottom && a_bottom > b_top
+    }
+
+    /// Get the bottom edge of all placed floats.
+    fn bottom_edge(&self) -> f32 {
+        let l = self.left_floats.iter().map(|f| f.rect.y + f.rect.height).fold(0.0f32, f32::max);
+        let r = self.right_floats.iter().map(|f| f.rect.y + f.rect.height).fold(0.0f32, f32::max);
+        l.max(r)
+    }
+
+    /// Find the next y position below any float overlapping the range [y, y+height].
+    fn next_clear_y(&self, y: f32, height: f32) -> f32 {
+        let mut next_y = f32::MAX;
+        for f in self.left_floats.iter().chain(self.right_floats.iter()) {
+            let f_bottom = f.rect.y + f.rect.height;
+            if Self::ranges_overlap(y, y + height, f.rect.y, f_bottom) {
+                next_y = next_y.min(f_bottom);
+            }
+        }
+        if next_y == f32::MAX { y + 1.0 } else { next_y }
     }
 }
 
@@ -257,7 +296,11 @@ pub fn layout_block_with_floats(
             tree.add_child(parent_box_id, float_box);
         } else {
             // Normal flow child — determine available width around floats
-            let line_height = child_style.font_size * 1.2; // estimate
+            let line_height = match &child_style.line_height {
+                liquide_style_engine::computed::LineHeight::Px(px) => *px,
+                liquide_style_engine::computed::LineHeight::Number(n) => n * child_style.font_size,
+                liquide_style_engine::computed::LineHeight::Normal => child_style.font_size * 1.2,
+            };
             let (left_edge, _right_edge, avail_w) =
                 float_ctx.available_width_at(block_y, line_height);
 

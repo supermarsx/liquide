@@ -32,11 +32,11 @@ pub fn layout_positioned(
         _ => return None,
     };
 
-    let cb = if style.position == Position::Fixed {
-        Rect::new(0.0, 0.0, viewport_w, viewport_h)
-    } else {
-        containing_rect
-    };
+    // The caller provides the correct containing block:
+    // - For absolute: nearest positioned ancestor's padding box
+    // - For fixed: viewport, unless an ancestor has transform/filter/etc.
+    //   (CSS Transforms §7.1 — handled by the engine's positioned layout pass)
+    let cb = containing_rect;
 
     let is_sticky = style.position == Position::Sticky;
 
@@ -104,10 +104,16 @@ pub fn layout_positioned(
     // ── Determine content dimensions ────────────────────────────────────
     // If width/height are specified, use them after subtracting padding+border.
     // Otherwise, use intrinsic sizing via a child layout pass.
+    //
+    // For sticky elements we ALWAYS do the layout pass, even if width/height
+    // are explicit, because we need the resulting position to know where the
+    // element would have been placed in normal flow.  That in-flow position
+    // is used as the base for sticky clamping.
     let needs_intrinsic = width.is_none() && !(left.is_some() && right.is_some());
 
-    // For intrinsic sizing, temporarily lay out children to measure content.
-    let intrinsic_box = if needs_intrinsic {
+    // For intrinsic sizing (or sticky in-flow position), temporarily lay out
+    // children to measure content and determine the normal-flow position.
+    let intrinsic_box = if needs_intrinsic || is_sticky {
         Some(crate::block::layout_block(
             doc,
             node_id,
@@ -145,11 +151,17 @@ pub fn layout_positioned(
 
     // ── Calculate position ──────────────────────────────────────────────
     let (x, y) = if is_sticky {
-        // Sticky positioning: lay out in normal flow first, then clamp.
-        // The normal-flow position is roughly cb.x / cb.y (the containing
-        // block origin), since the element participates in normal flow.
-        let normal_x = cb.x;
-        let normal_y = cb.y;
+        // Sticky positioning: the element is first laid out in normal flow,
+        // then clamped to stay within the containing block's visible area
+        // according to the specified sticky offsets.
+        //
+        // The in-flow position comes from the block layout pass we ran
+        // above (intrinsic_box).  Its border_rect.x/y gives us where the
+        // element would naturally sit relative to the containing block.
+        let flow_rect = intrinsic_box
+            .and_then(|id| tree.get(id).map(|b| b.border_rect));
+        let normal_x = cb.x + flow_rect.map_or(0.0, |r| r.x);
+        let normal_y = cb.y + flow_rect.map_or(0.0, |r| r.y);
 
         // Clamp so the element sticks within the containing block's
         // padding area, offset by the specified sticky edges.

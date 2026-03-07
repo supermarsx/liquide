@@ -39,6 +39,9 @@ pub enum BoxType {
     Sticky,
     /// List marker (bullet, number, etc.) for display: list-item.
     ListMarker,
+    /// Anonymous block box created when inline and block children are mixed
+    /// (CSS 2.1 §9.2.1.1).
+    AnonBlock,
     /// Pseudo-element box (::before, ::after) with its generated content.
     PseudoElement {
         /// Which pseudo-element this is (before/after).

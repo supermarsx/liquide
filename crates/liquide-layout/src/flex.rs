@@ -12,9 +12,15 @@
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{
-    AlignContent, AlignItems, AspectRatio, BoxSizing, Display, FlexDirection, FlexWrap, JustifyContent, Position,
+    AlignContent, AlignItems, AspectRatio, BoxSizing, Display, FlexDirection, FlexWrap,
+    JustifyContent, Position, Visibility,
 };
 use liquide_style_engine::dimension::Dimension;
+
+/// Check if a Dimension is `auto`.
+fn is_auto(dim: &Dimension) -> bool {
+    matches!(dim, Dimension::Auto)
+}
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
@@ -231,6 +237,11 @@ pub fn layout_flex(
                         max_main: f32::INFINITY,
                         order: child_style.order,
                         baseline: metrics.baseline,
+                        collapsed: child_style.visibility == Visibility::Collapse,
+                        main_start_auto_margin: false,
+                        main_end_auto_margin: false,
+                        cross_start_auto_margin: false,
+                        cross_end_auto_margin: false,
                     });
                     continue;
                 }
@@ -300,12 +311,43 @@ pub fn layout_flex(
             viewport_h,
         );
 
-        let main_size = if is_row {
-            flex_basis.unwrap_or(intrinsic.width)
+        // CSS Flexbox §9.2 step 3: Determine the flex base size.
+        // When flex-basis is `auto`, use the item's main-axis size property.
+        // When that is also `auto` (i.e. `content` sizing), use the item's
+        // max-content size as the flex base size.
+        let main_size = if let Some(basis_px) = flex_basis {
+            basis_px
+        } else if is_row {
+            // flex-basis resolved to None (auto) — check if width is also auto
+            let explicit_w = child_style.width.resolve_px(
+                content_width,
+                base_font_size,
+                child_style.font_size,
+                viewport_w,
+                viewport_h,
+            );
+            explicit_w.unwrap_or_else(|| {
+                // Both flex-basis and width are auto → use max-content width
+                crate::intrinsic::max_content_width(doc, child_id, styles, text_measurer)
+                    .max(intrinsic.width)
+            })
         } else {
-            flex_basis.unwrap_or(intrinsic.height)
+            // Column direction: check height
+            let explicit_h = child_style.height.resolve_px(
+                container_height,
+                base_font_size,
+                child_style.font_size,
+                viewport_w,
+                viewport_h,
+            );
+            explicit_h.unwrap_or(intrinsic.height)
         };
 
+        // CSS Flexbox §4.5: min-width: auto on flex items resolves to
+        // min(content size, specified size) — not 0. When min-width/height
+        // is explicitly set (resolves to Some), use that value. When auto
+        // (resolves to None), use the item's intrinsic content size clamped
+        // by the specified main size (flex-basis or width/height).
         let min_main = if is_row {
             child_style
                 .min_width
@@ -316,7 +358,13 @@ pub fn layout_flex(
                     viewport_w,
                     viewport_h,
                 )
-                .unwrap_or(0.0)
+                .unwrap_or_else(|| {
+                    // auto: use content min size, capped by specified size
+                    let content_min = crate::intrinsic::min_content_width(
+                        doc, child_id, styles, text_measurer,
+                    );
+                    content_min.min(main_size)
+                })
         } else {
             child_style
                 .min_height
@@ -327,7 +375,7 @@ pub fn layout_flex(
                     viewport_w,
                     viewport_h,
                 )
-                .unwrap_or(0.0)
+                .unwrap_or(0.0) // min-height: auto is 0 for block axis
         };
 
         let max_main = if is_row {
@@ -364,6 +412,25 @@ pub fn layout_flex(
                 if is_row { intrinsic.height } else { intrinsic.width }
             });
 
+        let is_collapsed = child_style.visibility == Visibility::Collapse;
+
+        // CSS Flexbox §8.1/§8.3: detect auto margins for main/cross axis
+        let (ms_auto, me_auto, cs_auto, ce_auto) = if is_row {
+            (
+                is_auto(&child_style.margin.left),
+                is_auto(&child_style.margin.right),
+                is_auto(&child_style.margin.top),
+                is_auto(&child_style.margin.bottom),
+            )
+        } else {
+            (
+                is_auto(&child_style.margin.top),
+                is_auto(&child_style.margin.bottom),
+                is_auto(&child_style.margin.left),
+                is_auto(&child_style.margin.right),
+            )
+        };
+
         items.push(FlexItem {
             box_id: child_box,
             node_id: child_id,
@@ -371,17 +438,49 @@ pub fn layout_flex(
             flex_shrink: child_style.flex_shrink,
             base_main_size: main_size,
             main_size,
+            collapsed: is_collapsed,
+            main_start_auto_margin: ms_auto,
+            main_end_auto_margin: me_auto,
+            cross_start_auto_margin: cs_auto,
+            cross_end_auto_margin: ce_auto,
             cross_size: {
                 let intrinsic_cross = if is_row {
                     intrinsic.height
                 } else {
                     intrinsic.width
                 };
-                // Apply aspect-ratio when cross size is 0 (no explicit dimension)
-                match child_style.aspect_ratio {
-                    AspectRatio::Ratio(w, h) if intrinsic_cross <= 0.0 && w > 0.0 => {
-                        if is_row { main_size * (h / w) } else { main_size * (w / h) }
+                // CSS Flexbox: apply aspect-ratio when the cross-axis
+                // dimension is auto (not explicitly set).  If the child has
+                // an explicit cross size, honour it; otherwise derive the
+                // cross size from main_size via the ratio.
+                let explicit_cross = if is_row {
+                    child_style.height.resolve_px(
+                        container_height,
+                        base_font_size,
+                        child_style.font_size,
+                        viewport_w,
+                        viewport_h,
+                    )
+                } else {
+                    child_style.width.resolve_px(
+                        content_width,
+                        base_font_size,
+                        child_style.font_size,
+                        viewport_w,
+                        viewport_h,
+                    )
+                };
+                match (explicit_cross, &child_style.aspect_ratio) {
+                    // Explicit cross dimension set — use the intrinsic
+                    // (already-resolved) cross size.
+                    (Some(_), _) => intrinsic_cross,
+                    // Cross is auto and aspect-ratio is defined — compute
+                    // cross from main_size.
+                    (None, AspectRatio::Ratio(w, h)) if *w > 0.0 => {
+                        if is_row { main_size * (*h / *w) } else { main_size * (*w / *h) }
                     }
+                    // No explicit cross, no (valid) aspect-ratio — fall
+                    // back to intrinsic cross size.
                     _ => intrinsic_cross,
                 }
             },
@@ -465,9 +564,16 @@ pub fn layout_flex(
         let free_space = available_main - total_main;
 
         if free_space > 0.0 {
-            let total_grow: f32 = line_items.iter().map(|i| i.flex_grow).sum();
+            let total_grow: f32 = line_items
+                .iter()
+                .filter(|i| !i.collapsed)
+                .map(|i| i.flex_grow)
+                .sum();
             if total_grow > 0.0 {
                 for item in line_items.iter_mut() {
+                    if item.collapsed {
+                        continue;
+                    }
                     let grow = free_space * (item.flex_grow / total_grow);
                     item.main_size = (item.main_size + grow)
                         .min(item.max_main)
@@ -477,16 +583,31 @@ pub fn layout_flex(
         } else if free_space < 0.0 {
             let total_shrink: f32 = line_items
                 .iter()
+                .filter(|i| !i.collapsed)
                 .map(|i| i.flex_shrink * i.base_main_size)
                 .sum();
             if total_shrink > 0.0 {
                 for item in line_items.iter_mut() {
+                    if item.collapsed {
+                        continue;
+                    }
                     let factor = (item.flex_shrink * item.base_main_size) / total_shrink;
                     item.main_size = (item.main_size + free_space * factor)
                         .min(item.max_main)
                         .max(item.min_main);
                 }
             }
+        }
+    }
+
+    // ── Step 4a: visibility: collapse (CSS Flexbox §4.4) ──
+    // Collapsed flex items are laid out normally (their cross size contributes
+    // to the line's cross size) but their main-axis size is treated as zero
+    // so they don't consume space along the main axis.
+    for item in &mut items {
+        if item.collapsed {
+            item.main_size = 0.0;
+            // Keep cross_size intact — it still determines the line's cross extent.
         }
     }
 
@@ -595,8 +716,29 @@ pub fn layout_flex(
         let used_main: f32 = line_items.iter().map(|i| i.main_size).sum::<f32>() + total_gaps;
         let remaining = available_main - used_main;
 
-        // Justify content
-        let (mut main_pos, extra_gap) = justify(style.justify_content, remaining, count);
+        // CSS Flexbox §8.1: Auto margins on the main axis absorb remaining
+        // space *before* justify-content is applied.
+        let auto_margin_count: usize = line_items
+            .iter()
+            .map(|i| {
+                (if i.main_start_auto_margin { 1 } else { 0 })
+                    + (if i.main_end_auto_margin { 1 } else { 0 })
+            })
+            .sum();
+
+        let has_auto_margins = auto_margin_count > 0 && remaining > 0.0;
+        let auto_margin_size = if has_auto_margins {
+            remaining / auto_margin_count as f32
+        } else {
+            0.0
+        };
+
+        // When auto margins absorb space, justify-content has no effect
+        let (mut main_pos, extra_gap) = if has_auto_margins {
+            (0.0, 0.0)
+        } else {
+            justify(style.justify_content, remaining, count)
+        };
 
         let line_cross: f32 = line_items
             .iter()
@@ -605,6 +747,12 @@ pub fn layout_flex(
 
         for (i, idx) in (line.start..line.end).enumerate() {
             let item = &mut items[idx];
+
+            // Apply main-axis auto margins
+            if has_auto_margins && item.main_start_auto_margin {
+                main_pos += auto_margin_size;
+            }
+
             // (x, y) is the desired LOCAL margin-edge position within the
             // flex container's content area (offsets from 0,0).
             let (x, y) = if is_row {
@@ -619,7 +767,11 @@ pub fn layout_flex(
                 shift_box(b, dx, dy);
             }
 
-            main_pos += item.main_size + gap + if i < count - 1 { extra_gap } else { 0.0 };
+            main_pos += item.main_size;
+            if has_auto_margins && item.main_end_auto_margin {
+                main_pos += auto_margin_size;
+            }
+            main_pos += gap + if i < count - 1 { extra_gap } else { 0.0 };
         }
 
         line_cross_sizes.push(line_cross);
@@ -648,8 +800,11 @@ pub fn layout_flex(
         content_width
     };
 
-    // Align-content (distributes space between lines)
-    if lines.len() > 1 {
+    // Align-content (distributes space between lines).
+    // CSS Flexbox §8.4: align-content has no effect on single-line flex
+    // containers (flex-wrap: nowrap). On multi-line containers it applies even
+    // when there is only a single line of items.
+    if should_wrap {
         let free_cross = container_cross - total_cross;
         let (mut cross_start, cross_extra) =
             align_content(style.align_content, free_cross, lines.len());
@@ -692,13 +847,24 @@ pub fn layout_flex(
         for idx in line.start..line.end {
             let item = &items[idx];
             let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
-            let align = match child_style.align_self {
-                liquide_style_engine::computed::AlignSelf::Auto => style.align_items,
-                liquide_style_engine::computed::AlignSelf::FlexStart => AlignItems::FlexStart,
-                liquide_style_engine::computed::AlignSelf::FlexEnd => AlignItems::FlexEnd,
-                liquide_style_engine::computed::AlignSelf::Center => AlignItems::Center,
-                liquide_style_engine::computed::AlignSelf::Baseline => AlignItems::Baseline,
-                liquide_style_engine::computed::AlignSelf::Stretch => AlignItems::Stretch,
+
+            // CSS Flexbox §8.3: auto margins on the cross axis override align-self.
+            // If both cross margins are auto, center the item. If only one is auto,
+            // push the item to the opposite edge.
+            let has_cross_auto = item.cross_start_auto_margin || item.cross_end_auto_margin;
+
+            let align = if has_cross_auto {
+                // Auto margins override align — we handle this in the offset calc below
+                AlignItems::FlexStart // placeholder, overridden
+            } else {
+                match child_style.align_self {
+                    liquide_style_engine::computed::AlignSelf::Auto => style.align_items,
+                    liquide_style_engine::computed::AlignSelf::FlexStart => AlignItems::FlexStart,
+                    liquide_style_engine::computed::AlignSelf::FlexEnd => AlignItems::FlexEnd,
+                    liquide_style_engine::computed::AlignSelf::Center => AlignItems::Center,
+                    liquide_style_engine::computed::AlignSelf::Baseline => AlignItems::Baseline,
+                    liquide_style_engine::computed::AlignSelf::Stretch => AlignItems::Stretch,
+                }
             };
 
             if let Some(b) = tree.get_mut(item.box_id) {
@@ -708,7 +874,19 @@ pub fn layout_flex(
                 } else {
                     b.margin_rect.width
                 };
-                let cross_offset_val = match align {
+
+                // Handle cross-axis auto margins first
+                let cross_offset_val = if has_cross_auto {
+                    let free_cross = (line_cross - item_cross).max(0.0);
+                    if item.cross_start_auto_margin && item.cross_end_auto_margin {
+                        free_cross / 2.0 // center
+                    } else if item.cross_start_auto_margin {
+                        free_cross // push to end
+                    } else {
+                        0.0 // push to start
+                    }
+                } else {
+                match align {
                     AlignItems::FlexStart => 0.0,
                     AlignItems::FlexEnd => line_cross - item_cross,
                     AlignItems::Center => (line_cross - item_cross) / 2.0,
@@ -732,7 +910,8 @@ pub fn layout_flex(
                         // Move item down by (max_baseline - item_baseline)
                         max_baseline - item.baseline
                     }
-                };
+                }
+                }; // close the if has_cross_auto / else
 
                 let (dx, dy) = if is_row {
                     (0.0, cross_offset_val)
@@ -806,9 +985,15 @@ struct FlexItem {
     max_main: f32,
     order: i32,
     /// Baseline offset from the cross-start edge (for baseline alignment).
-    /// For text items, this is the distance from the top of the box to the first
-    /// baseline. For non-text items, defaults to the bottom of margin box.
     baseline: f32,
+    /// CSS Flexbox §4.4: `visibility: collapse`.
+    collapsed: bool,
+    /// CSS Flexbox §8.1: auto margins on the main axis absorb free space.
+    main_start_auto_margin: bool,
+    main_end_auto_margin: bool,
+    /// CSS Flexbox §8.3: auto margins on the cross axis center/push the item.
+    cross_start_auto_margin: bool,
+    cross_end_auto_margin: bool,
 }
 
 struct FlexLine {
@@ -873,14 +1058,20 @@ fn justify(jc: JustifyContent, remaining: f32, count: usize) -> (f32, f32) {
 
 /// Compute align-content start offset and inter-line extra gap.
 fn align_content(ac: AlignContent, free: f32, line_count: usize) -> (f32, f32) {
-    if line_count <= 1 || free <= 0.0 {
+    if line_count == 0 || free <= 0.0 {
         return (0.0, 0.0);
     }
     match ac {
         AlignContent::FlexStart => (0.0, 0.0),
         AlignContent::FlexEnd => (free, 0.0),
         AlignContent::Center => (free / 2.0, 0.0),
-        AlignContent::SpaceBetween => (0.0, free / (line_count - 1) as f32),
+        AlignContent::SpaceBetween => {
+            if line_count > 1 {
+                (0.0, free / (line_count - 1) as f32)
+            } else {
+                (0.0, 0.0)
+            }
+        }
         AlignContent::SpaceAround => {
             let s = free / line_count as f32;
             (s / 2.0, s)

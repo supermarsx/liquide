@@ -75,6 +75,26 @@ pub fn layout_block(
         viewport_h,
     ).is_some();
 
+    // Resolve intrinsic sizing keywords: width: min-content | max-content | fit-content(...)
+    let explicit_width = match &style.width {
+        Dimension::MinContent if explicit_width.is_none() => {
+            Some(crate::intrinsic::min_content_width(doc, node_id, styles, text_measurer))
+        }
+        Dimension::MaxContent if explicit_width.is_none() => {
+            Some(crate::intrinsic::max_content_width(doc, node_id, styles, text_measurer))
+        }
+        Dimension::FitContent(limit) if explicit_width.is_none() => {
+            let min_cw = crate::intrinsic::min_content_width(doc, node_id, styles, text_measurer);
+            let max_cw = crate::intrinsic::max_content_width(doc, node_id, styles, text_measurer);
+            let limit_px = limit
+                .resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h)
+                .unwrap_or(container_width);
+            // fit-content(limit) = clamp(min-content, limit, max-content)
+            Some(min_cw.max(limit_px.min(max_cw)))
+        }
+        _ => explicit_width,
+    };
+
     let width = explicit_width.unwrap_or(container_width);
 
     // Resolve padding
@@ -203,6 +223,26 @@ pub fn layout_block(
         }
     };
 
+    // ── Replaced element short-circuit ──
+    // If this node is a replaced element (img, video, canvas, etc.), delegate
+    // to the replaced-element layout algorithm and return early.
+    if crate::replaced::is_replaced_element(doc, node_id) {
+        return crate::replaced::layout_replaced(
+            doc,
+            node_id,
+            styles,
+            tree,
+            image_measurer,
+            container_width,
+            container_height,
+            offset_x,
+            offset_y,
+            viewport_w,
+            viewport_h,
+            base_font_size,
+        );
+    }
+
     // ── Margin collapsing state ──
     // CSS §8.3.1: Vertical margins of adjacent block-level boxes collapse.
     // The collapsed margin is the max of the two adjoining margins.
@@ -211,12 +251,8 @@ pub fn layout_block(
     let mut prev_margin_bottom: Option<f32> = None;
 
     // Parent-child margin collapsing detection
-    // A new BFC prevents margin collapsing with children
-    let parent_establishes_bfc = style.is_flex_container()
-        || style.is_grid_container()
-        || matches!(style.position, Position::Absolute | Position::Fixed)
-        || matches!(style.overflow_x, liquide_style_engine::computed::Overflow::Hidden | liquide_style_engine::computed::Overflow::Scroll | liquide_style_engine::computed::Overflow::Auto)
-        || matches!(style.overflow_y, liquide_style_engine::computed::Overflow::Hidden | liquide_style_engine::computed::Overflow::Scroll | liquide_style_engine::computed::Overflow::Auto);
+    // A new BFC prevents margin collapsing with children (CSS §8.3.1)
+    let parent_establishes_bfc = style.establishes_bfc();
 
     // Parent's top margin can collapse with first child's top margin if:
     // - No top border/padding separating them
@@ -239,6 +275,11 @@ pub fn layout_block(
     let mut last_child_margin_bottom: Option<f32> = None;
 
     let children = doc.children(node_id).to_vec();
+
+    // CSS 2.1 §9.2.1.1 — block-in-inline: when a block container has both
+    // inline-level and block-level children in normal flow, consecutive runs
+    // of inline content must be wrapped in anonymous block boxes.
+    let mixed = has_mixed_inline_block_children(doc, node_id, styles);
 
     // Generate ::before pseudo-element box if present
     if let Some(before_style) = styles.get_pseudo(node_id, PseudoKind::Before) {
@@ -269,6 +310,167 @@ pub fn layout_block(
         }
     }
 
+    // When children mix inline and block display types (CSS 2.1 §9.2.1.1),
+    // we accumulate consecutive inline-level children and flush them into an
+    // anonymous block box before processing the next block-level child.
+    let mut pending_inline_run: Vec<NodeId> = Vec::new();
+
+    /// Flush accumulated inline children into an anonymous block box.
+    ///
+    /// Each child in the run is laid out (text nodes via measure, inline
+    /// elements via `layout_inline`) and appended as a child of the anonymous
+    /// block.  The anonymous block is then appended to `parent_box`.
+    #[allow(clippy::too_many_arguments)]
+    fn flush_inline_run(
+        run: &mut Vec<NodeId>,
+        doc: &Document,
+        styles: &StyleMap,
+        tree: &mut LayoutTree,
+        text_measurer: &dyn TextMeasurer,
+        image_measurer: &dyn ImageMeasurer,
+        content_width: f32,
+        container_height: f32,
+        viewport_w: f32,
+        viewport_h: f32,
+        base_font_size: f32,
+        parent_box: LayoutBoxId,
+        child_y: &mut f32,
+        prev_margin_bottom: &mut Option<f32>,
+        parent_node: NodeId,
+    ) {
+        if run.is_empty() {
+            return;
+        }
+
+        // Create the anonymous block box — it inherits the parent node id
+        // but has its own layout box.
+        let anon_box = tree.alloc(parent_node, BoxType::AnonBlock);
+        let mut inner_y = 0.0f32;
+
+        for &cid in run.iter() {
+            let cs = styles.get(cid).cloned().unwrap_or_default();
+
+            // Text nodes
+            if let Some(child_node) = doc.get(cid) {
+                if child_node.is_text() {
+                    if let Some(text) = child_node.text_content() {
+                        let text_props = crate::TextProperties::from_style(&cs);
+                        let metrics = text_measurer.measure(
+                            text,
+                            cs.font_size,
+                            &cs.font_family,
+                            cs.font_weight,
+                            Some(content_width),
+                            &text_props,
+                        );
+                        let clamped_text_w = metrics.width.min(content_width);
+                        let text_x = crate::inline::align_offset(
+                            cs.text_align,
+                            content_width,
+                            clamped_text_w,
+                        );
+                        let text_box = tree.alloc(
+                            cid,
+                            BoxType::Text {
+                                line_boxes: Vec::new(),
+                            },
+                        );
+                        if let Some(tb) = tree.get_mut(text_box) {
+                            tb.content_rect =
+                                Rect::new(text_x, inner_y, clamped_text_w, metrics.height);
+                            tb.padding_rect = tb.content_rect;
+                            tb.border_rect = tb.content_rect;
+                            tb.margin_rect = tb.content_rect;
+                            tb.baseline = Some(metrics.baseline);
+                        }
+                        tree.add_child(anon_box, text_box);
+                        inner_y += metrics.height;
+                        continue;
+                    }
+                }
+            }
+
+            // Inline elements — lay out via the inline formatting context
+            if matches!(cs.display, Display::Inline) {
+                let inline_box = crate::inline::layout_inline(
+                    doc,
+                    cid,
+                    styles,
+                    tree,
+                    text_measurer,
+                    content_width,
+                    0.0,
+                    inner_y,
+                );
+                tree.add_child(anon_box, inline_box);
+                if let Some(ib) = tree.get(inline_box) {
+                    inner_y += ib.margin_rect.height;
+                }
+            } else if matches!(cs.display, Display::InlineBlock) {
+                let ib_width = if cs.width.resolve_px(
+                    content_width, base_font_size, cs.font_size, viewport_w, viewport_h,
+                ).is_some() {
+                    content_width
+                } else {
+                    let min_cw = crate::intrinsic::min_content_width(doc, cid, styles, text_measurer);
+                    let max_cw = crate::intrinsic::max_content_width(doc, cid, styles, text_measurer);
+                    min_cw.max(content_width.min(max_cw))
+                };
+                let ib_box = layout_block(
+                    doc,
+                    cid,
+                    styles,
+                    tree,
+                    text_measurer,
+                    image_measurer,
+                    ib_width,
+                    container_height,
+                    0.0,
+                    inner_y,
+                    viewport_w,
+                    viewport_h,
+                    base_font_size,
+                );
+                tree.add_child(anon_box, ib_box);
+                if let Some(cb) = tree.get(ib_box) {
+                    inner_y += cb.margin_rect.height;
+                }
+            } else {
+                // Other inline-level types (inline-flex, inline-grid, ruby)
+                // fall back to inline layout.
+                let inline_box = crate::inline::layout_inline(
+                    doc,
+                    cid,
+                    styles,
+                    tree,
+                    text_measurer,
+                    content_width,
+                    0.0,
+                    inner_y,
+                );
+                tree.add_child(anon_box, inline_box);
+                if let Some(ib) = tree.get(inline_box) {
+                    inner_y += ib.margin_rect.height;
+                }
+            }
+        }
+
+        // Set the anonymous block's geometry — it spans full content_width
+        // and is as tall as its inline content.
+        if let Some(ab) = tree.get_mut(anon_box) {
+            ab.content_rect = Rect::new(0.0, *child_y, content_width, inner_y);
+            ab.padding_rect = ab.content_rect;
+            ab.border_rect = ab.content_rect;
+            ab.margin_rect = ab.content_rect;
+        }
+        tree.add_child(parent_box, anon_box);
+        *child_y += inner_y;
+        // Anonymous blocks break the margin collapsing sequence
+        *prev_margin_bottom = None;
+
+        run.clear();
+    }
+
     for (idx, &child_id) in children.iter().enumerate() {
         let child_style = styles.get(child_id).cloned().unwrap_or_default();
 
@@ -284,6 +486,16 @@ pub fn layout_block(
 
         // Delegate floated children to the float layout engine
         if child_style.float != Float::None {
+            // Flush any pending inline run before the float
+            if mixed {
+                flush_inline_run(
+                    &mut pending_inline_run,
+                    doc, styles, tree, text_measurer, image_measurer,
+                    content_width, container_height,
+                    viewport_w, viewport_h, base_font_size,
+                    box_id, &mut child_y, &mut prev_margin_bottom, node_id,
+                );
+            }
             let cx = offset_x + mar_left + border_left + pad_left;
             let cy = offset_y + mar_top + border_top + pad_top;
             let float_height = crate::float::layout_block_with_floats(
@@ -307,6 +519,28 @@ pub fn layout_block(
         }
         if matches!(child_style.position, Position::Absolute | Position::Fixed) {
             continue;
+        }
+
+        // ── Block-in-inline: accumulate inline children when mixed ──
+        // When the parent has mixed inline/block children, inline-level
+        // children and text nodes are accumulated into a pending run.
+        // They will be flushed into an anonymous block box when the next
+        // block-level child is encountered or at the end of the child list.
+        if mixed {
+            let is_text = doc.get(child_id).map_or(false, |n| n.is_text());
+            if is_text || is_inline_level(child_style.display) {
+                pending_inline_run.push(child_id);
+                continue;
+            }
+            // Block-level child in mixed context — flush the pending inline run
+            flush_inline_run(
+                &mut pending_inline_run,
+                doc, styles, tree, text_measurer, image_measurer,
+                content_width, container_height,
+                viewport_w, viewport_h, base_font_size,
+                box_id, &mut child_y, &mut prev_margin_bottom, node_id,
+            );
+            // Fall through to normal block-level child processing below
         }
 
         // Check if child is a text node
@@ -470,9 +704,18 @@ pub fn layout_block(
                 child_y,
             )
         } else if matches!(child_style.display, Display::InlineBlock) {
-            // Inline-block: lay out as block internally, but participate
-            // in inline flow (simplified: treat as block for now with
-            // shrink-to-fit width)
+            // Inline-block: lay out as block internally with shrink-to-fit width.
+            // Per CSS 2.1 §10.3.9, if width is auto, use:
+            //   min(max(min-content, available), max-content)
+            let ib_width = if child_style.width.resolve_px(
+                content_width, base_font_size, child_style.font_size, viewport_w, viewport_h,
+            ).is_some() {
+                content_width // explicit width — let layout_block handle it
+            } else {
+                let min_cw = crate::intrinsic::min_content_width(doc, child_id, styles, text_measurer);
+                let max_cw = crate::intrinsic::max_content_width(doc, child_id, styles, text_measurer);
+                min_cw.max(content_width.min(max_cw))
+            };
             layout_block(
                 doc,
                 child_id,
@@ -480,7 +723,7 @@ pub fn layout_block(
                 tree,
                 text_measurer,
                 image_measurer,
-                content_width,
+                ib_width,
                 container_height,
                 0.0,
                 child_y,
@@ -587,12 +830,58 @@ pub fn layout_block(
 
         tree.add_child(box_id, child_box);
 
-        if let Some(cb) = tree.get(child_box) {
-            child_y += cb.margin_rect.height;
-        }
+        // CSS §8.3.1: Empty block collapsing — if a child has zero height,
+        // no border, no padding, and doesn't establish a BFC, its own top
+        // and bottom margins collapse through it. The collapsed margin is
+        // then used for sibling collapsing.
+        let child_is_empty = {
+            let ch_border_t = child_style.border_width.top;
+            let ch_border_b = child_style.border_width.bottom;
+            let ch_pad_t = child_style.padding.top.resolve_px(
+                container_width, base_font_size, child_style.font_size, viewport_w, viewport_h,
+            ).unwrap_or(0.0);
+            let ch_pad_b = child_style.padding.bottom.resolve_px(
+                container_width, base_font_size, child_style.font_size, viewport_w, viewport_h,
+            ).unwrap_or(0.0);
+            let ch_min_h = child_style.min_height.resolve_px(
+                container_height, base_font_size, child_style.font_size, viewport_w, viewport_h,
+            ).unwrap_or(0.0);
+            let ch_content_h = tree.get(child_box)
+                .map(|cb| cb.content_rect.height)
+                .unwrap_or(0.0);
+            ch_content_h == 0.0
+                && ch_border_t == 0.0
+                && ch_border_b == 0.0
+                && ch_pad_t == 0.0
+                && ch_pad_b == 0.0
+                && ch_min_h == 0.0
+                && !child_style.establishes_bfc()
+        };
 
-        // Track this child's bottom margin for collapsing with next sibling
-        prev_margin_bottom = Some(child_mar_bottom);
+        if child_is_empty {
+            // Margins collapse through: treat as a single collapsed margin
+            let collapsed_through = collapse_margins(child_mar_top, child_mar_bottom);
+            // This acts as the "previous margin bottom" for next sibling
+            prev_margin_bottom = Some(collapsed_through);
+            // Don't advance child_y — the box has zero height
+        } else {
+            if let Some(cb) = tree.get(child_box) {
+                child_y += cb.margin_rect.height;
+            }
+            // Track this child's bottom margin for collapsing with next sibling
+            prev_margin_bottom = Some(child_mar_bottom);
+        }
+    }
+
+    // Flush any trailing inline run that was accumulated in mixed mode.
+    if mixed {
+        flush_inline_run(
+            &mut pending_inline_run,
+            doc, styles, tree, text_measurer, image_measurer,
+            content_width, container_height,
+            viewport_w, viewport_h, base_font_size,
+            box_id, &mut child_y, &mut prev_margin_bottom, node_id,
+        );
     }
 
     // Generate ::after pseudo-element box if present
@@ -638,25 +927,23 @@ pub fn layout_block(
             (h - pad_top - pad_bottom - border_top - border_bottom).max(0.0)
         }
         (None, _) => {
-            // If no explicit height, check aspect-ratio first
-            match style.aspect_ratio {
-                AspectRatio::Ratio(w, h) if w > 0.0 => {
-                    content_width * (h / w)
-                }
-                _ => {
-                    // contain:size means don't use children for sizing
-                    // Use contain-intrinsic-height if set, otherwise 0
-                    if style.contain.size {
-                        style.contain_intrinsic_height.resolve_px(
-                            container_height,
-                            base_font_size,
-                            font_size,
-                            viewport_w,
-                            viewport_h,
-                        ).unwrap_or(0.0)
-                    } else {
-                        child_y
+            // contain:size takes priority — don't use children or aspect-ratio
+            // for sizing; use contain-intrinsic-height if set, otherwise 0.
+            if style.contain.size {
+                style.contain_intrinsic_height.resolve_px(
+                    container_height,
+                    base_font_size,
+                    font_size,
+                    viewport_w,
+                    viewport_h,
+                ).unwrap_or(0.0)
+            } else {
+                // Check aspect-ratio before falling back to child_y
+                match style.aspect_ratio {
+                    AspectRatio::Ratio(w, h) if w > 0.0 => {
+                        content_width * (h / w)
                     }
+                    _ => child_y,
                 }
             }
         }
@@ -818,6 +1105,73 @@ fn resolve_dim(
 ) -> f32 {
     dim.resolve_px(parent_px, base_font_size, font_size, vw, vh)
         .unwrap_or(0.0)
+}
+
+/// Returns `true` if the given display value is inline-level (CSS 2.1 §9.2.1).
+///
+/// Inline-level elements generate inline-level boxes that participate in an
+/// inline formatting context.  Everything else is block-level for the purpose
+/// of anonymous block box generation.
+fn is_inline_level(display: Display) -> bool {
+    matches!(
+        display,
+        Display::Inline
+            | Display::InlineBlock
+            | Display::InlineFlex
+            | Display::InlineGrid
+            | Display::Ruby
+            | Display::RubyText
+    )
+}
+
+/// Check whether a node's children mix inline-level and block-level display
+/// types (ignoring `display: none`, absolutely positioned, and floated
+/// children, which do not participate in normal flow).
+///
+/// Returns `true` when at least one normal-flow child is inline-level and at
+/// least one is block-level.  When this is the case, CSS 2.1 §9.2.1.1
+/// requires that consecutive runs of inline content be wrapped in anonymous
+/// block boxes.
+fn has_mixed_inline_block_children(
+    doc: &Document,
+    parent: NodeId,
+    styles: &StyleMap,
+) -> bool {
+    let children = doc.children(parent);
+    let mut has_inline = false;
+    let mut has_block = false;
+    for &child_id in children {
+        // Text nodes are always inline-level.
+        if let Some(node) = doc.get(child_id) {
+            if node.is_text() {
+                has_inline = true;
+                if has_block {
+                    return true;
+                }
+                continue;
+            }
+        }
+        let child_style = match styles.get(child_id) {
+            Some(s) => s,
+            None => continue,
+        };
+        // Skip out-of-flow children — they don't affect anonymous box creation.
+        if child_style.display == Display::None
+            || matches!(child_style.position, Position::Absolute | Position::Fixed)
+            || child_style.float != Float::None
+        {
+            continue;
+        }
+        if is_inline_level(child_style.display) {
+            has_inline = true;
+        } else {
+            has_block = true;
+        }
+        if has_inline && has_block {
+            return true;
+        }
+    }
+    false
 }
 
 /// CSS margin collapsing: when two vertical margins meet, they collapse into one.
