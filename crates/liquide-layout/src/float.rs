@@ -23,7 +23,7 @@ struct PlacedFloat {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum FloatSide {
+pub enum FloatSide {
     Left,
     Right,
 }

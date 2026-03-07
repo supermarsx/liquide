@@ -6,6 +6,7 @@ use liquide_style_engine::computed::{AspectRatio, BoxSizing, Display, Float, Lin
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::style_map::PseudoKind;
 
+use crate::float::{ClearSide, FloatContext, FloatSide};
 use crate::geometry::{Rect, Size};
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree, PseudoElementKind};
 use crate::{ImageMeasurer, TextMeasurer};
@@ -254,6 +255,12 @@ pub fn layout_block(
     // A new BFC prevents margin collapsing with children (CSS §8.3.1)
     let parent_establishes_bfc = style.establishes_bfc();
 
+    // ── Float context ──
+    // A block formatting context (BFC) contains its own floats.
+    // We always create a float context; it is only meaningful when
+    // children have float:left/right or clear:left/right/both.
+    let mut float_ctx = FloatContext::new(content_width);
+
     // Parent's top margin can collapse with first child's top margin if:
     // - No top border/padding separating them
     // - Parent doesn't establish a BFC
@@ -484,8 +491,29 @@ pub fn layout_block(
             continue;
         }
 
-        // Delegate floated children to the float layout engine
-        if child_style.float != Float::None {
+        // ── Handle `clear` property ──
+        // `clear: left/right/both` forces this child below the cleared floats.
+        let clear: ClearSide = child_style.clear.into();
+        if clear != ClearSide::None {
+            let clear_y = float_ctx.clear_y(clear);
+            if clear_y > child_y {
+                child_y = clear_y;
+                // Clearing breaks the margin collapsing sequence
+                prev_margin_bottom = None;
+            }
+        }
+
+        // ── Handle floated children ──
+        // Floated elements are taken out of normal flow: they don't advance
+        // child_y but they create exclusion zones that shrink the available
+        // width for subsequent in-flow content.
+        let float_side = match child_style.float {
+            Float::Left | Float::InlineStart => Some(FloatSide::Left),
+            Float::Right | Float::InlineEnd => Some(FloatSide::Right),
+            Float::None => None,
+        };
+
+        if let Some(side) = float_side {
             // Flush any pending inline run before the float
             if mixed {
                 flush_inline_run(
@@ -496,28 +524,56 @@ pub fn layout_block(
                     box_id, &mut child_y, &mut prev_margin_bottom, node_id,
                 );
             }
-            let cx = offset_x + mar_left + border_left + pad_left;
-            let cy = offset_y + mar_top + border_top + pad_top;
-            let float_height = crate::float::layout_block_with_floats(
+
+            // Layout the float to determine its intrinsic size.
+            let float_box = layout_block(
                 doc,
-                node_id,
+                child_id,
                 styles,
                 tree,
                 text_measurer,
                 image_measurer,
                 content_width,
                 container_height,
-                cx,
-                cy + child_y,
+                0.0,
+                0.0,
                 viewport_w,
                 viewport_h,
                 base_font_size,
-                box_id,
             );
-            child_y += float_height;
-            continue;
-        }
-        if matches!(child_style.position, Position::Absolute | Position::Fixed) {
+
+            let (fw, fh) = tree
+                .get(float_box)
+                .map(|b| (b.margin_rect.width, b.margin_rect.height))
+                .unwrap_or((0.0, 0.0));
+
+            // Place the float via the float context. The float's top may not
+            // be higher than child_y (the current block-flow position).
+            let placed = match side {
+                FloatSide::Left => float_ctx.place_left(fw, fh, child_y),
+                FloatSide::Right => float_ctx.place_right(fw, fh, child_y),
+            };
+
+            // Reposition the float box to its placed coordinates (relative
+            // to the parent's content area).
+            if let Some(b) = tree.get_mut(float_box) {
+                let dx = placed.x - b.margin_rect.x;
+                let dy = placed.y - b.margin_rect.y;
+                b.content_rect.x += dx;
+                b.content_rect.y += dy;
+                b.padding_rect.x += dx;
+                b.padding_rect.y += dy;
+                b.border_rect.x += dx;
+                b.border_rect.y += dy;
+                b.margin_rect.x += dx;
+                b.margin_rect.y += dy;
+            }
+
+            tree.add_child(box_id, float_box);
+
+            // Floats do NOT advance child_y — they are out of normal flow.
+            // They also break the margin collapsing sequence.
+            prev_margin_bottom = None;
             continue;
         }
 
@@ -543,6 +599,23 @@ pub fn layout_block(
             // Fall through to normal block-level child processing below
         }
 
+        // ── Query float exclusion zone for in-flow children ──
+        // Estimate child height for the float query (refined after actual layout).
+        let est_h = child_style.font_size * 1.2;
+        let (float_left_edge, _float_right_edge, float_avail_w) =
+            float_ctx.available_width_at(child_y, est_h);
+        // Effective available width and x-offset for this child, accounting for floats.
+        let child_avail_w = if float_avail_w < content_width {
+            float_avail_w
+        } else {
+            content_width
+        };
+        let child_float_offset_x = if float_left_edge > 0.0 {
+            float_left_edge
+        } else {
+            0.0
+        };
+
         // Check if child is a text node
         if let Some(child_node) = doc.get(child_id) {
             if child_node.is_text() {
@@ -553,14 +626,14 @@ pub fn layout_block(
                         child_style.font_size,
                         &child_style.font_family,
                         child_style.font_weight,
-                        Some(content_width),
+                        Some(child_avail_w),
                         &text_props,
                     );
-                    // Clamp text width to container width so it doesn't overflow
-                    let clamped_text_w = metrics.width.min(content_width);
-                    let text_x = crate::inline::align_offset(
+                    // Clamp text width to available width so it doesn't overflow
+                    let clamped_text_w = metrics.width.min(child_avail_w);
+                    let text_x = child_float_offset_x + crate::inline::align_offset(
                         child_style.text_align,
-                        content_width,
+                        child_avail_w,
                         clamped_text_w,
                     );
                     let text_box = tree.alloc(
@@ -626,7 +699,9 @@ pub fn layout_block(
             // add the child's top margin here as extra space
         }
 
-        // Recurse for element children — pass 0.0 as offset, we position after
+        // Recurse for element children.
+        // Use float-adjusted available width and x-offset so in-flow content
+        // flows around active floats.
         let child_box = if child_style.is_flex_container() {
             crate::flex::layout_flex(
                 doc,
@@ -635,9 +710,9 @@ pub fn layout_block(
                 tree,
                 text_measurer,
                 image_measurer,
-                content_width,
+                child_avail_w,
                 container_height,
-                0.0,
+                child_float_offset_x,
                 child_y,
                 viewport_w,
                 viewport_h,
@@ -651,9 +726,9 @@ pub fn layout_block(
                 tree,
                 text_measurer,
                 image_measurer,
-                content_width,
+                child_avail_w,
                 container_height,
-                0.0,
+                child_float_offset_x,
                 child_y,
                 viewport_w,
                 viewport_h,
@@ -667,9 +742,9 @@ pub fn layout_block(
                 tree,
                 text_measurer,
                 image_measurer,
-                content_width,
+                child_avail_w,
                 container_height,
-                0.0,
+                child_float_offset_x,
                 child_y,
                 viewport_w,
                 viewport_h,
@@ -683,9 +758,9 @@ pub fn layout_block(
                 tree,
                 text_measurer,
                 image_measurer,
-                content_width,
+                child_avail_w,
                 container_height,
-                0.0,
+                child_float_offset_x,
                 child_y,
                 viewport_w,
                 viewport_h,
@@ -699,8 +774,8 @@ pub fn layout_block(
                 styles,
                 tree,
                 text_measurer,
-                content_width,
-                0.0,
+                child_avail_w,
+                child_float_offset_x,
                 child_y,
             )
         } else if matches!(child_style.display, Display::InlineBlock) {
@@ -723,9 +798,9 @@ pub fn layout_block(
                 tree,
                 text_measurer,
                 image_measurer,
-                ib_width,
+                ib_width.min(child_avail_w),
                 container_height,
-                0.0,
+                child_float_offset_x,
                 child_y,
                 viewport_w,
                 viewport_h,
@@ -744,9 +819,9 @@ pub fn layout_block(
                     tree,
                     text_measurer,
                     image_measurer,
-                    content_width,
+                    child_avail_w,
                     container_height,
-                    0.0,
+                    child_float_offset_x,
                     child_y,
                     viewport_w,
                     viewport_h,
@@ -778,9 +853,9 @@ pub fn layout_block(
                 tree,
                 text_measurer,
                 image_measurer,
-                content_width,
+                child_avail_w,
                 container_height,
-                0.0,
+                child_float_offset_x,
                 child_y,
                 viewport_w,
                 viewport_h,
@@ -794,14 +869,14 @@ pub fn layout_block(
                 match child_style.list_style_position {
                     ListStylePosition::Inside => {
                         // Inside: marker is first child, shifts content
-                        mb.content_rect = Rect::new(0.0, child_y, marker_width, marker_h);
+                        mb.content_rect = Rect::new(child_float_offset_x, child_y, marker_width, marker_h);
                         mb.border_rect = mb.content_rect;
                         mb.padding_rect = mb.content_rect;
                         mb.margin_rect = mb.content_rect;
                     }
                     ListStylePosition::Outside => {
                         // Outside: marker is positioned to the left
-                        mb.content_rect = Rect::new(-marker_width, child_y, marker_width, marker_h);
+                        mb.content_rect = Rect::new(child_float_offset_x - marker_width, child_y, marker_width, marker_h);
                         mb.border_rect = mb.content_rect;
                         mb.padding_rect = mb.content_rect;
                         mb.margin_rect = mb.content_rect;
@@ -818,9 +893,9 @@ pub fn layout_block(
                 tree,
                 text_measurer,
                 image_measurer,
-                content_width,
+                child_avail_w,
                 container_height,
-                0.0,
+                child_float_offset_x,
                 child_y,
                 viewport_w,
                 viewport_h,
@@ -882,6 +957,14 @@ pub fn layout_block(
             viewport_w, viewport_h, base_font_size,
             box_id, &mut child_y, &mut prev_margin_bottom, node_id,
         );
+    }
+
+    // ── BFC float containment ──
+    // A block formatting context must be tall enough to contain all of its
+    // floats. Ensure child_y is at least past the bottom of every float.
+    let float_clear_all = float_ctx.clear_y(ClearSide::Both);
+    if float_clear_all > child_y {
+        child_y = float_clear_all;
     }
 
     // Generate ::after pseudo-element box if present
