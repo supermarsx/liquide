@@ -14,6 +14,47 @@
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{Display, Position, VerticalAlign};
+
+/// Classification of a table child for row-group ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TableGroupKind {
+    Header,
+    Body,
+    Footer,
+}
+
+/// Classify a table child as header, body, or footer group.
+fn classify_table_group(doc: &Document, node_id: NodeId, style: &liquide_style_engine::computed::ComputedStyle) -> TableGroupKind {
+    match style.display {
+        Display::TableHeaderGroup => return TableGroupKind::Header,
+        Display::TableFooterGroup => return TableGroupKind::Footer,
+        Display::TableRowGroup => return TableGroupKind::Body,
+        _ => {}
+    }
+    if let Some(node) = doc.get(node_id) {
+        match node.tag_name().as_str() {
+            "thead" => return TableGroupKind::Header,
+            "tfoot" => return TableGroupKind::Footer,
+            "tbody" => return TableGroupKind::Body,
+            _ => {}
+        }
+    }
+    TableGroupKind::Body
+}
+
+/// Check if a child is a table row group (thead/tbody/tfoot).
+fn is_table_row_group(doc: &Document, node_id: NodeId, style: &liquide_style_engine::computed::ComputedStyle) -> bool {
+    matches!(
+        style.display,
+        Display::TableHeaderGroup | Display::TableFooterGroup | Display::TableRowGroup
+    ) || doc
+        .get(node_id)
+        .map(|n| {
+            let tag = n.tag_name();
+            tag == "thead" || tag == "tbody" || tag == "tfoot"
+        })
+        .unwrap_or(false)
+}
 use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
@@ -257,8 +298,16 @@ pub fn layout_table(
     }
 
     // ── Step 1: Collect rows and cells ──
+    //
+    // Sort children so that header groups come first, then row groups (body),
+    // then footer groups — per CSS 2.1 §17.  Row group elements (thead, tbody,
+    // tfoot / display: table-header-group, table-row-group, table-footer-group)
+    // are treated as passthrough containers: their children are collected as rows.
     let mut rows: Vec<TableRow> = Vec::new();
 
+    // Build an ordered list of (group_kind, child_id) so we can sort by kind
+    // while preserving relative order within each kind.
+    let mut grouped_children: Vec<(TableGroupKind, NodeId)> = Vec::new();
     for &child_id in &children {
         let child_style = styles.get(child_id).cloned().unwrap_or_default();
         if child_style.display == Display::None {
@@ -267,7 +316,6 @@ pub fn layout_table(
         if matches!(child_style.position, Position::Absolute | Position::Fixed) {
             continue;
         }
-        // Skip captions; already handled above.
         let is_caption = child_style.display == Display::TableCaption
             || doc
                 .get(child_id)
@@ -276,59 +324,118 @@ pub fn layout_table(
         if is_caption {
             continue;
         }
+        let kind = classify_table_group(doc, child_id, &child_style);
+        grouped_children.push((kind, child_id));
+    }
+    // Stable sort: headers first, then body, then footers
+    grouped_children.sort_by_key(|(kind, _)| *kind);
 
-        let is_row = child_style.display == Display::TableRow || is_table_row_tag(doc, child_id);
+    /// Helper: collect cells from a row element and push a TableRow.
+    #[allow(clippy::too_many_arguments)]
+    fn collect_row(
+        doc: &Document,
+        row_id: NodeId,
+        styles: &StyleMap,
+        tree: &mut LayoutTree,
+        text_measurer: &dyn TextMeasurer,
+        image_measurer: &dyn ImageMeasurer,
+        content_width: f32,
+        container_height: f32,
+        viewport_w: f32,
+        viewport_h: f32,
+        base_font_size: f32,
+        parent_box_id: LayoutBoxId,
+        rows: &mut Vec<TableRow>,
+    ) {
+        let row_children = doc.children(row_id).to_vec();
+        let mut cells = Vec::new();
+        for &cell_id in &row_children {
+            let cell_style = styles.get(cell_id).cloned().unwrap_or_default();
+            if cell_style.display == Display::None {
+                continue;
+            }
 
-        if is_row {
-            // This child is a row — collect its cells
-            let row_children = doc.children(child_id).to_vec();
-            let mut cells = Vec::new();
-            for &cell_id in &row_children {
-                let cell_style = styles.get(cell_id).cloned().unwrap_or_default();
-                if cell_style.display == Display::None {
+            let colspan = read_span_attr(doc, cell_id, "colspan");
+            let rowspan = read_span_attr(doc, cell_id, "rowspan");
+
+            let cell_box = crate::block::layout_block(
+                doc,
+                cell_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                0.0,
+                0.0,
+                viewport_w,
+                viewport_h,
+                base_font_size,
+            );
+
+            let (iw, ih) = tree
+                .get(cell_box)
+                .map(|b| (b.margin_rect.width, b.margin_rect.height))
+                .unwrap_or((0.0, 0.0));
+
+            cells.push(TableCell {
+                _node_id: cell_id,
+                box_id: cell_box,
+                intrinsic_width: iw,
+                intrinsic_height: ih,
+                colspan,
+                rowspan,
+            });
+
+            tree.add_child(parent_box_id, cell_box);
+        }
+        rows.push(TableRow {
+            _node_id: row_id,
+            cells,
+        });
+    }
+
+    for &(_, child_id) in &grouped_children {
+        let child_style = styles.get(child_id).cloned().unwrap_or_default();
+
+        // If this child is a row group (thead/tbody/tfoot), iterate its children as rows
+        if is_table_row_group(doc, child_id, &child_style) {
+            let group_children = doc.children(child_id).to_vec();
+            for &gc_id in &group_children {
+                let gc_style = styles.get(gc_id).cloned().unwrap_or_default();
+                if gc_style.display == Display::None {
                     continue;
                 }
-
-                let colspan = read_span_attr(doc, cell_id, "colspan");
-                let rowspan = read_span_attr(doc, cell_id, "rowspan");
-
-                // Layout cell to get intrinsic size
-                let cell_box = crate::block::layout_block(
-                    doc,
-                    cell_id,
-                    styles,
-                    tree,
-                    text_measurer,
-                    image_measurer,
-                    content_width,
-                    container_height,
-                    0.0,
-                    0.0,
-                    viewport_w,
-                    viewport_h,
-                    base_font_size,
-                );
-
-                let (iw, ih) = tree
-                    .get(cell_box)
-                    .map(|b| (b.margin_rect.width, b.margin_rect.height))
-                    .unwrap_or((0.0, 0.0));
-
-                cells.push(TableCell {
-                    _node_id: cell_id,
-                    box_id: cell_box,
-                    intrinsic_width: iw,
-                    intrinsic_height: ih,
-                    colspan,
-                    rowspan,
-                });
-
-                tree.add_child(box_id, cell_box);
+                let gc_is_row = gc_style.display == Display::TableRow
+                    || doc
+                        .get(gc_id)
+                        .map(|n| n.tag_name() == "tr")
+                        .unwrap_or(false);
+                if gc_is_row {
+                    collect_row(
+                        doc, gc_id, styles, tree, text_measurer, image_measurer,
+                        content_width, container_height, viewport_w, viewport_h,
+                        base_font_size, box_id, &mut rows,
+                    );
+                }
+                // Non-row children inside a group are ignored (per spec)
             }
-            rows.push(TableRow {
-                _node_id: child_id,
-                cells,
-            });
+            continue;
+        }
+
+        let is_row = child_style.display == Display::TableRow
+            || doc
+                .get(child_id)
+                .map(|n| n.tag_name() == "tr")
+                .unwrap_or(false);
+
+        if is_row {
+            collect_row(
+                doc, child_id, styles, tree, text_measurer, image_measurer,
+                content_width, container_height, viewport_w, viewport_h,
+                base_font_size, box_id, &mut rows,
+            );
         } else {
             // Non-row child: treat as a single-cell row (anonymous table row)
             let cell_box = crate::block::layout_block(
@@ -753,13 +860,10 @@ pub fn layout_table(
 }
 
 /// Check if a node's tag name indicates a table row.
+#[allow(dead_code)]
 fn is_table_row_tag(doc: &Document, node_id: NodeId) -> bool {
     doc.get(node_id)
-        .map(|n| {
-            let binding = n.tag_name();
-            let tag = binding.as_str();
-            tag == "tr" || tag == "thead" || tag == "tbody" || tag == "tfoot"
-        })
+        .map(|n| n.tag_name() == "tr")
         .unwrap_or(false)
 }
 
