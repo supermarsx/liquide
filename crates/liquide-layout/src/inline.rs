@@ -3,7 +3,7 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{Display, OverflowWrap, Position, TextAlign, TextAlignLast, TextWrapMode, VerticalAlign, WhiteSpace};
+use liquide_style_engine::computed::{Direction, Display, OverflowWrap, Position, TextAlign, TextAlignLast, TextWrapMode, UnicodeBidi, VerticalAlign, WhiteSpace};
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree, LineBox};
@@ -17,14 +17,33 @@ const MIN_FRAGMENT_WIDTH: f32 = 1.0;
 // ── Public helpers ──────────────────────────────────────────────────────────
 
 /// Calculate the x-offset for text alignment within a container.
+///
+/// When `is_rtl` is true, `Start` means right-aligned and `End` means left-aligned,
+/// matching CSS logical alignment for `direction: rtl`.
 pub fn align_offset(align: TextAlign, container_width: f32, content_width: f32) -> f32 {
+    align_offset_directional(align, container_width, content_width, false)
+}
+
+/// Directional variant of `align_offset` that respects RTL.
+pub fn align_offset_directional(
+    align: TextAlign,
+    container_width: f32,
+    content_width: f32,
+    is_rtl: bool,
+) -> f32 {
     if content_width >= container_width {
         return 0.0;
     }
     match align {
         TextAlign::Center => (container_width - content_width) / 2.0,
-        TextAlign::Right | TextAlign::End => container_width - content_width,
-        TextAlign::Left | TextAlign::Start | TextAlign::Justify => 0.0,
+        TextAlign::Right => container_width - content_width,
+        TextAlign::Left => 0.0,
+        TextAlign::End => {
+            if is_rtl { 0.0 } else { container_width - content_width }
+        }
+        TextAlign::Start | TextAlign::Justify => {
+            if is_rtl { container_width - content_width } else { 0.0 }
+        }
     }
 }
 
@@ -491,6 +510,7 @@ fn layout_lines(
     start_y: f32,
     default_font_size: f32,
     default_font_family: &[String],
+    is_rtl: bool,
 ) -> Vec<BuiltLine> {
     let mut built: Vec<BuiltLine> = Vec::new();
     let mut y = start_y;
@@ -593,7 +613,23 @@ fn layout_lines(
         } else {
             text_align
         };
-        let shift = align_offset(effective_align, max_width, line_content_width);
+
+        // For RTL lines, reverse the visual order of fragments so inline
+        // items appear right-to-left, then apply alignment.
+        if is_rtl {
+            // Mirror fragment positions: place them right-to-left within
+            // the line content width, then shift by alignment offset.
+            let mut cursor = 0.0f32;
+            for frag in fragments.iter_mut().rev() {
+                frag.x = cursor;
+                cursor += frag.width;
+            }
+            // Fragments are now placed LTR in reversed order; reverse the
+            // vec itself so visual order matches DOM order reversed.
+            fragments.reverse();
+        }
+
+        let shift = align_offset_directional(effective_align, max_width, line_content_width, is_rtl);
         if shift > 0.0 {
             for frag in &mut fragments {
                 frag.x += shift;
@@ -657,6 +693,18 @@ pub fn layout_inline(
     let font_size = style.font_size;
     let font_family = style.font_family.clone();
     let wraps = allows_wrap(white_space);
+
+    // RTL / bidi support
+    let direction = style.direction;
+    let unicode_bidi = style.unicode_bidi;
+    let is_rtl = match unicode_bidi {
+        // bidi-override forces all text to the element's specified direction
+        UnicodeBidi::BidiOverride | UnicodeBidi::IsolateOverride => {
+            matches!(direction, Direction::Rtl)
+        }
+        // For normal/embed/isolate, just respect the direction property
+        _ => matches!(direction, Direction::Rtl),
+    };
 
     // ── 1. Collect inline items ─────────────────────────────────────────
 
@@ -726,6 +774,7 @@ pub fn layout_inline(
         0.0,
         font_size,
         &font_family,
+        is_rtl,
     );
 
     // ── 4. Build LineBox records and compute total geometry ──────────────
@@ -948,6 +997,42 @@ mod tests {
     fn align_offset_overflow() {
         // Content wider than container → no offset.
         assert_eq!(align_offset(TextAlign::Center, 40.0, 100.0), 0.0);
+    }
+
+    #[test]
+    fn align_offset_rtl_start() {
+        // In RTL, Start means right-aligned.
+        assert_eq!(
+            align_offset_directional(TextAlign::Start, 100.0, 40.0, true),
+            60.0
+        );
+    }
+
+    #[test]
+    fn align_offset_rtl_end() {
+        // In RTL, End means left-aligned.
+        assert_eq!(
+            align_offset_directional(TextAlign::End, 100.0, 40.0, true),
+            0.0
+        );
+    }
+
+    #[test]
+    fn align_offset_ltr_start() {
+        // In LTR, Start means left-aligned.
+        assert_eq!(
+            align_offset_directional(TextAlign::Start, 100.0, 40.0, false),
+            0.0
+        );
+    }
+
+    #[test]
+    fn align_offset_rtl_center() {
+        // Center is the same regardless of direction.
+        assert_eq!(
+            align_offset_directional(TextAlign::Center, 100.0, 40.0, true),
+            30.0
+        );
     }
 
     #[test]

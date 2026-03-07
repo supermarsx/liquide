@@ -6,6 +6,7 @@ use liquide_style_engine::computed::{Display, Position};
 
 use crate::geometry::{Rect, Size};
 use crate::tree::{LayoutBoxId, LayoutTree};
+use crate::writing_mode::WritingModeContext;
 use crate::{ImageMeasurer, TextMeasurer};
 
 /// The layout engine. Computes geometry for all elements in the document.
@@ -61,6 +62,13 @@ impl LayoutEngine {
         let root = doc.root();
 
         let root_style = styles.get(root).cloned().unwrap_or_default();
+
+        // Read writing-mode and direction from the root element's computed style.
+        // These determine the document's inline/block axis mapping.
+        let _root_wm = WritingModeContext::with_direction(
+            root_style.writing_mode,
+            root_style.direction,
+        );
 
         // Root layout starts as block
         let root_box = if root_style.is_flex_container() {
