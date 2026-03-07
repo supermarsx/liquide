@@ -183,11 +183,27 @@ pub fn layout_flex(
     let children = doc.children(node_id).to_vec();
     let mut items: Vec<FlexItem> = Vec::new();
 
-    for &child_id in &children {
-        let child_style = styles.get(child_id).cloned().unwrap_or_default();
-        if child_style.display == Display::None {
-            continue;
+    // Collect effective children, flattening display:contents nodes
+    let mut effective_children: Vec<NodeId> = Vec::new();
+    fn collect_flex_children(doc: &Document, children: &[NodeId], styles: &StyleMap, out: &mut Vec<NodeId>) {
+        for &child_id in children {
+            let child_style = styles.get(child_id).cloned().unwrap_or_default();
+            if child_style.display == Display::None {
+                continue;
+            }
+            if matches!(child_style.display, Display::Contents) {
+                // Promote grandchildren as flex items
+                let grandchildren = doc.children(child_id).to_vec();
+                collect_flex_children(doc, &grandchildren, styles, out);
+                continue;
+            }
+            out.push(child_id);
         }
+    }
+    collect_flex_children(doc, &children, styles, &mut effective_children);
+
+    for &child_id in &effective_children {
+        let child_style = styles.get(child_id).cloned().unwrap_or_default();
         if matches!(child_style.position, Position::Absolute | Position::Fixed) {
             continue;
         }

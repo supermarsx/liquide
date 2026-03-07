@@ -63,6 +63,7 @@ impl LayoutEngine {
         let root_style = styles.get(root).cloned().unwrap_or_default();
 
         // Root layout starts as block
+        // display: contents on root — treat as block (root must generate a box)
         let root_box = if root_style.is_flex_container() {
             crate::flex::layout_flex(
                 doc,
@@ -186,7 +187,10 @@ impl LayoutEngine {
             image_measurer,
         );
 
-        // Third pass: adjust sticky-positioned elements based on scroll offsets
+        // Third pass: apply relative positioning offsets
+        Self::apply_relative_offsets(&mut tree, styles);
+
+        // Fourth pass: adjust sticky-positioned elements based on scroll offsets
         Self::apply_sticky_offsets(&mut tree, styles, doc);
 
         tree
@@ -254,6 +258,7 @@ impl LayoutEngine {
             input.text_measurer,
             input.image_measurer,
         );
+        Self::apply_relative_offsets(&mut relaid_subtree, input.styles);
 
         // Align the newly generated subtree to the original subtree origin.
         if let Some(new_root_box) = relaid_subtree.get(relaid_root) {
@@ -368,6 +373,41 @@ impl LayoutEngine {
         offset_y: f32,
     ) -> LayoutBoxId {
         let style = input.styles.get(node_id).cloned().unwrap_or_default();
+
+        // display: contents — skip this node, promote children.
+        // Create a wrapper block box to hold the promoted children.
+        if matches!(style.display, Display::Contents) {
+            let wrapper = tree.alloc(node_id, crate::tree::BoxType::Block);
+            let children = input.doc.children(node_id).to_vec();
+            let mut child_y = 0.0f32;
+            for &child_id in &children {
+                let child_style = input.styles.get(child_id).cloned().unwrap_or_default();
+                if child_style.display == Display::None {
+                    continue;
+                }
+                let child_box = self.layout_node_in_context(
+                    input,
+                    child_id,
+                    tree,
+                    container_width,
+                    container_height,
+                    offset_x,
+                    offset_y + child_y,
+                );
+                tree.add_child(wrapper, child_box);
+                if let Some(cb) = tree.get(child_box) {
+                    child_y += cb.margin_rect.height;
+                }
+            }
+            if let Some(b) = tree.get_mut(wrapper) {
+                b.content_rect = Rect::new(offset_x, offset_y, container_width, child_y);
+                b.padding_rect = b.content_rect;
+                b.border_rect = b.content_rect;
+                b.margin_rect = b.content_rect;
+            }
+            return wrapper;
+        }
+
         if style.is_flex_container() {
             crate::flex::layout_flex(
                 input.doc,
@@ -590,6 +630,86 @@ impl LayoutEngine {
 
             parent_box_id = grandparent_id;
             changed_child_index = next_index;
+        }
+    }
+
+    /// Apply relative positioning offsets.
+    ///
+    /// For each element with `position: relative`, shift its visual position
+    /// by the resolved top/left (or bottom/right) offsets. This does NOT
+    /// affect the layout of surrounding elements — only the element's own
+    /// coordinates are shifted.
+    fn apply_relative_offsets(tree: &mut LayoutTree, styles: &StyleMap) {
+        let all_ids: Vec<LayoutBoxId> = (0..tree.boxes.len()).collect();
+
+        for box_id in all_ids {
+            let node_id = match tree.get(box_id) {
+                Some(b) => b.node,
+                None => continue,
+            };
+            let style = match styles.get(node_id) {
+                Some(s) => s.clone(),
+                None => continue,
+            };
+            if style.position != Position::Relative {
+                continue;
+            }
+
+            let font_size = style.font_size;
+            let base_font_size = 16.0f32; // TODO: propagate from engine
+
+            // Use the containing block dimensions for percentage resolution.
+            // For relative positioning, percentages resolve against the
+            // containing block (approximated here by the parent's content rect).
+            let (cb_w, cb_h) = tree
+                .get(box_id)
+                .and_then(|b| b.parent)
+                .and_then(|pid| tree.get(pid))
+                .map(|p| (p.content_rect.width, p.content_rect.height))
+                .unwrap_or((0.0, 0.0));
+
+            let top = style
+                .top
+                .resolve_px(cb_h, base_font_size, font_size, cb_w, cb_h);
+            let bottom = style
+                .bottom
+                .resolve_px(cb_h, base_font_size, font_size, cb_w, cb_h);
+            let left = style
+                .left
+                .resolve_px(cb_w, base_font_size, font_size, cb_w, cb_h);
+            let right = style
+                .right
+                .resolve_px(cb_w, base_font_size, font_size, cb_w, cb_h);
+
+            // Compute offsets: top takes precedence over bottom, left over right
+            let dy = if let Some(t) = top {
+                t
+            } else if let Some(b_val) = bottom {
+                -b_val
+            } else {
+                0.0
+            };
+
+            let dx = if let Some(l) = left {
+                l
+            } else if let Some(r) = right {
+                -r
+            } else {
+                0.0
+            };
+
+            if dx.abs() > 0.001 || dy.abs() > 0.001 {
+                if let Some(b) = tree.get_mut(box_id) {
+                    b.content_rect.x += dx;
+                    b.content_rect.y += dy;
+                    b.padding_rect.x += dx;
+                    b.padding_rect.y += dy;
+                    b.border_rect.x += dx;
+                    b.border_rect.y += dy;
+                    b.margin_rect.x += dx;
+                    b.margin_rect.y += dy;
+                }
+            }
         }
     }
 
