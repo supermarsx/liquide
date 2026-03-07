@@ -35,9 +35,11 @@ impl StyleEngine {
 
         // ── Full cascade via CascadeMap ──
         let mut cascade = CascadeMap::new();
+        let tag_name = node.tag_name();
 
         for sheet in &self.sheets {
-            for rule in &sheet.rules {
+            for rule_idx in sheet.candidate_indices(&tag_name) {
+                let rule = &sheet.rules[rule_idx];
                 // Skip rules whose media condition does not match the viewport
                 if let Some(ref cond) = rule.media_condition {
                     if !self.evaluate_media_condition(cond) {
@@ -133,10 +135,14 @@ impl StyleEngine {
         if !node.is_text() {
             // ── Full cascade via CascadeMap ──
             let mut cascade = CascadeMap::new();
+            let tag_name = node.tag_name();
 
-            // Collect matching rules and add to cascade with proper priority
+            // Collect matching rules and add to cascade with proper priority.
+            // Only check rules whose key selector tag matches this node's tag
+            // (plus universal/class-only rules), skipping all others.
             for sheet in &self.sheets {
-                for rule in &sheet.rules {
+                for rule_idx in sheet.candidate_indices(&tag_name) {
+                    let rule = &sheet.rules[rule_idx];
                     // Skip rules whose media condition does not match the viewport
                     if let Some(ref cond) = rule.media_condition {
                         if !self.evaluate_media_condition(cond) {
@@ -187,45 +193,56 @@ impl StyleEngine {
             // Respect @property `inherits` flag: non-inheriting custom properties
             // that aren't explicitly set on this element get their initial value
             // instead of inheriting from the parent scope.
-            let mut local_vars = scope_vars.clone();
+            //
+            // Defer cloning scope_vars until we actually need to modify it
+            // (i.e. when custom properties or @property rules are present).
+            let has_custom_props = resolved.iter().any(|(p, _)| p.starts_with("--"));
+            let needs_property_overrides = !self.registered_properties.is_empty();
+            let needs_local_vars = has_custom_props || needs_property_overrides;
 
-            // Collect which custom properties are explicitly declared on this element
-            let mut explicitly_set: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            for (prop, val) in &resolved {
-                if prop.starts_with("--") {
-                    local_vars.insert(prop.clone(), val.clone());
-                    explicitly_set.insert(prop.clone());
+            // Use Cow-like pattern: only clone when modifications are needed.
+            let mut owned_vars: Option<std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>> = None;
+
+            if needs_local_vars {
+                let local_vars = owned_vars.insert(scope_vars.clone());
+
+                // Collect which custom properties are explicitly declared on this element
+                let mut explicitly_set: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for (prop, val) in &resolved {
+                    if prop.starts_with("--") {
+                        local_vars.insert(prop.clone(), val.clone());
+                        explicitly_set.insert(prop.clone());
+                    }
+                }
+
+                // For registered @property definitions: enforce `inherits: false`
+                // by resetting inherited values to initial when not explicitly set
+                for (name, def) in &self.registered_properties {
+                    if !def.inherits && !explicitly_set.contains(name) {
+                        if let Some(ref initial) = def.initial_value {
+                            local_vars.insert(
+                                name.clone(),
+                                liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
+                            );
+                        } else {
+                            local_vars.remove(name);
+                        }
+                    } else if !local_vars.contains_key(name) {
+                        if let Some(ref initial) = def.initial_value {
+                            local_vars.insert(
+                                name.clone(),
+                                liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
+                            );
+                        }
+                    }
                 }
             }
 
-            // For registered @property definitions: enforce `inherits: false`
-            // by resetting inherited values to initial when not explicitly set
-            for (name, def) in &self.registered_properties {
-                if !def.inherits && !explicitly_set.contains(name) {
-                    // Non-inheriting property not set on this element: use initial value
-                    if let Some(ref initial) = def.initial_value {
-                        local_vars.insert(
-                            name.clone(),
-                            liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
-                        );
-                    } else {
-                        // No initial value → remove any inherited value
-                        local_vars.remove(name);
-                    }
-                } else if !local_vars.contains_key(name) {
-                    // Inheriting (or unregistered) property not in scope: use initial value
-                    if let Some(ref initial) = def.initial_value {
-                        local_vars.insert(
-                            name.clone(),
-                            liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
-                        );
-                    }
-                }
-            }
+            let effective_vars = owned_vars.as_ref().unwrap_or(scope_vars);
 
             for (prop, val) in &resolved {
-                self.apply_single_property(prop, val, &mut style, &local_vars);
+                self.apply_single_property(prop, val, &mut style, effective_vars);
             }
 
             // Assemble TextDecoration composite from longhands if set
@@ -241,12 +258,13 @@ impl StyleEngine {
 
             let style = Arc::new(style);
             map.insert_shared(node_id, style.clone());
-            self.compute_pseudo_styles(doc, node_id, &style, map, &local_vars);
+            let child_vars = owned_vars.as_ref().unwrap_or(scope_vars);
+            self.compute_pseudo_styles(doc, node_id, &style, map, child_vars);
 
             // Recurse into children with scoped variables
             let children = doc.children(node_id).to_vec();
             for child_id in children {
-                self.restyle_node(doc, child_id, Some(&style), map, &local_vars);
+                self.restyle_node(doc, child_id, Some(&style), map, child_vars);
             }
             return;
         }
@@ -300,12 +318,14 @@ impl StyleEngine {
     ) {
         use crate::style_map::PseudoKind;
 
+        let tag_name = doc.get(node_id).map(|n| n.tag_name()).unwrap_or_default();
         for (pseudo_name, kind) in [("before", PseudoKind::Before), ("after", PseudoKind::After)] {
             let mut cascade = CascadeMap::new();
             let mut has_rules = false;
 
             for sheet in &self.sheets {
-                for rule in &sheet.rules {
+                for rule_idx in sheet.candidate_indices(&tag_name) {
+                    let rule = &sheet.rules[rule_idx];
                     // Only consider rules targeting this pseudo-element
                     if rule.pseudo_element.as_deref() != Some(pseudo_name) {
                         continue;

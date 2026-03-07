@@ -586,16 +586,19 @@ impl ComplexSelector {
                     current = parent_id;
                 }
                 Combinator::Descendant => {
-                    // Some ancestor must match
-                    let ancestors = doc.ancestors(current);
+                    // Walk up the parent chain without allocating a Vec
                     let mut found = false;
-                    for &anc_id in &ancestors {
-                        if let Some(anc) = doc.get(anc_id) {
-                            if next_compound.matches_node(anc, doc) {
+                    let mut anc = doc.parent(current);
+                    while let Some(anc_id) = anc {
+                        if let Some(anc_node) = doc.get(anc_id) {
+                            if next_compound.matches_node(anc_node, doc) {
                                 current = anc_id;
                                 found = true;
                                 break;
                             }
+                            anc = anc_node.parent;
+                        } else {
+                            break;
                         }
                     }
                     if !found {

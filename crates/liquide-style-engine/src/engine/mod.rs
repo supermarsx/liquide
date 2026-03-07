@@ -57,6 +57,48 @@ pub struct PreparedFontFace {
 /// A prepared stylesheet — all rules compiled and ready.
 pub struct PreparedSheet {
     pub rules: Vec<PreparedRule>,
+    /// Index: tag name → rule indices. Rules with no tag filter (universal
+    /// selector, class-only, etc.) are stored in `universal_rule_indices`.
+    tag_index: std::collections::HashMap<String, Vec<usize>>,
+    /// Rule indices that have no tag filter and must be checked against every node.
+    universal_rule_indices: Vec<usize>,
+}
+
+impl PreparedSheet {
+    /// Build a new PreparedSheet with a tag-name index for fast lookup.
+    pub fn new(rules: Vec<PreparedRule>) -> Self {
+        let mut tag_index: std::collections::HashMap<String, Vec<usize>> =
+            std::collections::HashMap::new();
+        let mut universal_rule_indices = Vec::new();
+
+        for (i, rule) in rules.iter().enumerate() {
+            // The key selector is compounds[0] (rightmost in CSS, first in our array)
+            if let Some(tag) = rule.selector.compounds[0].tag.as_ref() {
+                tag_index.entry(tag.clone()).or_default().push(i);
+            } else {
+                universal_rule_indices.push(i);
+            }
+        }
+
+        Self {
+            rules,
+            tag_index,
+            universal_rule_indices,
+        }
+    }
+
+    /// Iterate rule indices that could potentially match a node with the given tag name.
+    pub fn candidate_indices(&self, tag_name: &str) -> impl Iterator<Item = usize> + '_ {
+        let tag_iter = self
+            .tag_index
+            .get(tag_name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .copied();
+        let universal_iter = self.universal_rule_indices.iter().copied();
+        tag_iter.chain(universal_iter)
+    }
 }
 
 /// Viewport size for resolving viewport units.

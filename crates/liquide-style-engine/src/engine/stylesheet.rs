@@ -170,8 +170,6 @@ impl StyleEngine {
             }
         }
 
-        self.sheets.push(PreparedSheet {
-            rules: prepared_rules,
-        });
+        self.sheets.push(PreparedSheet::new(prepared_rules));
     }
 }
