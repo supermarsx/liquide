@@ -33,8 +33,43 @@
 //! └── (on demand) <context-menu> → <menu-item> / <menu-separator>
 //! ```
 
+use std::path::Path;
+
 use liquide_dom::{Document, NodeId, PseudoStateFlags};
-use tracing::debug;
+use liquide_dom::html_parser::parse_html_into;
+use tracing::{debug, warn};
+
+// ── Embedded HTML templates ─────────────────────────────────────────
+
+/// Default desktop layout template. Parsed by `from_html()` to build the
+/// initial DOM tree. Users can override this by placing a `desktop.html`
+/// file in `assets/` or `~/.config/liquide/`.
+const DEFAULT_DESKTOP_HTML: &str = r#"
+<desktop-background id="desktop-bg" />
+<statusbar id="shell-statusbar">
+  <statusbar-slot class="left" id="statusbar-slot-left" />
+  <statusbar-slot class="center" id="statusbar-slot-center" />
+  <statusbar-slot class="right" id="statusbar-slot-right" />
+</statusbar>
+<workspace-container id="workspace-container" />
+<dock id="shell-dock" />
+<notification-area id="notification-area" />
+"#;
+
+/// Default window template used by `add_window_from_html()`.
+const DEFAULT_WINDOW_HTML: &str = r#"
+<window>
+  <window-titlebar>
+    <window-title></window-title>
+    <titlebar-buttons>
+      <minimize-button />
+      <maximize-button />
+      <close-button />
+    </titlebar-buttons>
+  </window-titlebar>
+  <window-content />
+</window>
+"#;
 
 /// Well-known element IDs for shell surfaces.
 pub mod element_ids {
@@ -74,163 +109,289 @@ pub struct DesktopDocument {
 }
 
 impl DesktopDocument {
-    /// Build the initial desktop DOM with empty containers.
+    /// Build the initial desktop DOM using the embedded default HTML template.
     pub fn new() -> Self {
+        Self::from_html(DEFAULT_DESKTOP_HTML)
+    }
+
+    /// Build the desktop DOM from an HTML template string.
+    ///
+    /// The HTML is parsed and well-known element IDs are looked up from the
+    /// resulting tree. Any missing required elements are created
+    /// programmatically as a fallback so the shell always has a valid tree.
+    pub fn from_html(html: &str) -> Self {
         let mut doc = Document::new();
         let root = doc.root();
 
-        // <desktop-background>
-        let desktop_bg = doc.create_element("desktop-background");
-        doc.set_id(desktop_bg, element_ids::DESKTOP_BG);
-        doc.append_child(root, desktop_bg);
+        // Parse the HTML template into the document under root.
+        parse_html_into(&mut doc, root, html);
 
-        // <statusbar> with three flex slots
-        let statusbar = doc.create_element("statusbar");
-        doc.set_id(statusbar, element_ids::STATUSBAR);
-        doc.append_child(root, statusbar);
+        // Look up well-known elements by ID, creating missing ones as fallbacks.
+        let desktop_bg = doc.get_element_by_id(element_ids::DESKTOP_BG).unwrap_or_else(|| {
+            warn!("HTML template missing #{}; creating fallback", element_ids::DESKTOP_BG);
+            let el = doc.create_element("desktop-background");
+            doc.set_id(el, element_ids::DESKTOP_BG);
+            doc.append_child(root, el);
+            el
+        });
 
-        let slot_left = doc.create_element("statusbar-slot");
-        doc.set_id(slot_left, element_ids::STATUSBAR_SLOT_LEFT);
-        doc.add_class(slot_left, "left");
-        doc.append_child(statusbar, slot_left);
+        let statusbar = doc.get_element_by_id(element_ids::STATUSBAR).unwrap_or_else(|| {
+            warn!("HTML template missing #{}; creating fallback", element_ids::STATUSBAR);
+            let el = doc.create_element("statusbar");
+            doc.set_id(el, element_ids::STATUSBAR);
+            doc.append_child(root, el);
+            el
+        });
 
-        let slot_center = doc.create_element("statusbar-slot");
-        doc.set_id(slot_center, element_ids::STATUSBAR_SLOT_CENTER);
-        doc.add_class(slot_center, "center");
-        doc.append_child(statusbar, slot_center);
+        let statusbar_slot_left = doc.get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT).unwrap_or_else(|| {
+            warn!("HTML template missing #{}; creating fallback", element_ids::STATUSBAR_SLOT_LEFT);
+            let el = doc.create_element("statusbar-slot");
+            doc.set_id(el, element_ids::STATUSBAR_SLOT_LEFT);
+            doc.add_class(el, "left");
+            doc.append_child(statusbar, el);
+            el
+        });
 
-        let slot_right = doc.create_element("statusbar-slot");
-        doc.set_id(slot_right, element_ids::STATUSBAR_SLOT_RIGHT);
-        doc.add_class(slot_right, "right");
-        doc.append_child(statusbar, slot_right);
+        let statusbar_slot_center = doc.get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER).unwrap_or_else(|| {
+            warn!("HTML template missing #{}; creating fallback", element_ids::STATUSBAR_SLOT_CENTER);
+            let el = doc.create_element("statusbar-slot");
+            doc.set_id(el, element_ids::STATUSBAR_SLOT_CENTER);
+            doc.add_class(el, "center");
+            doc.append_child(statusbar, el);
+            el
+        });
 
-        // <workspace-container>
-        let workspace = doc.create_element("workspace-container");
-        doc.set_id(workspace, element_ids::WORKSPACE);
-        doc.append_child(root, workspace);
+        let statusbar_slot_right = doc.get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT).unwrap_or_else(|| {
+            warn!("HTML template missing #{}; creating fallback", element_ids::STATUSBAR_SLOT_RIGHT);
+            let el = doc.create_element("statusbar-slot");
+            doc.set_id(el, element_ids::STATUSBAR_SLOT_RIGHT);
+            doc.add_class(el, "right");
+            doc.append_child(statusbar, el);
+            el
+        });
 
-        // <dock>
-        let dock = doc.create_element("dock");
-        doc.set_id(dock, element_ids::DOCK);
-        doc.append_child(root, dock);
+        let workspace = doc.get_element_by_id(element_ids::WORKSPACE).unwrap_or_else(|| {
+            warn!("HTML template missing #{}; creating fallback", element_ids::WORKSPACE);
+            let el = doc.create_element("workspace-container");
+            doc.set_id(el, element_ids::WORKSPACE);
+            doc.append_child(root, el);
+            el
+        });
 
-        // <notification-area> — persistent container for toast notifications
-        let notification_area = doc.create_element("notification-area");
-        doc.set_id(notification_area, element_ids::NOTIFICATION_AREA);
-        doc.append_child(root, notification_area);
+        let dock = doc.get_element_by_id(element_ids::DOCK).unwrap_or_else(|| {
+            warn!("HTML template missing #{}; creating fallback", element_ids::DOCK);
+            let el = doc.create_element("dock");
+            doc.set_id(el, element_ids::DOCK);
+            doc.append_child(root, el);
+            el
+        });
+
+        let notification_area = doc.get_element_by_id(element_ids::NOTIFICATION_AREA).unwrap_or_else(|| {
+            warn!("HTML template missing #{}; creating fallback", element_ids::NOTIFICATION_AREA);
+            let el = doc.create_element("notification-area");
+            doc.set_id(el, element_ids::NOTIFICATION_AREA);
+            doc.append_child(root, el);
+            el
+        });
 
         debug!(
             nodes = doc.node_count(),
-            "DesktopDocument: initial tree built"
+            "DesktopDocument: tree built from HTML template"
         );
 
         Self {
             doc,
             desktop_bg,
             statusbar,
-            statusbar_slot_left: slot_left,
-            statusbar_slot_center: slot_center,
-            statusbar_slot_right: slot_right,
+            statusbar_slot_left,
+            statusbar_slot_center,
+            statusbar_slot_right,
             workspace,
             dock,
             notification_area,
         }
     }
 
-    // ── Dock helpers ──────────────────────────────────────────────
-
-    /// Clear and rebuild the dock items subtree from the current dock data.
+    /// Build the desktop DOM from an HTML file on disk.
     ///
-    /// Each item becomes a `<dock-item>` with an optional `.active` class
-    /// and `data-app-id`, `data-label` attributes.
-    pub fn sync_dock_items(&mut self, items: &[DockItemInfo]) {
-        // Remove stale children
-        let old_children: Vec<NodeId> = self.doc.children(self.dock).to_vec();
-        for child in old_children {
-            self.doc.remove_child(self.dock, child);
-            self.doc.destroy_node(child);
-        }
-
-        // Add fresh items
-        for (i, item) in items.iter().enumerate() {
-            let el = self.doc.create_element("dock-item");
-            if item.is_running {
-                self.doc.add_class(el, "active");
+    /// If the file cannot be read, falls back to the embedded default template.
+    pub fn from_file(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(html) => {
+                debug!(?path, "DesktopDocument: loaded HTML template from file");
+                Self::from_html(&html)
             }
-            if item.is_pinned {
-                self.doc.add_class(el, "pinned");
+            Err(e) => {
+                warn!(?path, %e, "DesktopDocument: failed to read HTML file, using embedded default");
+                Self::new()
             }
-            self.doc.set_attribute(el, "data-app-id", &item.app_id);
-            self.doc.set_attribute(el, "data-label", &item.label);
-            self.doc.set_attribute(el, "data-icon", &item.icon);
-            self.doc
-                .set_attribute(el, "data-index", &i.to_string());
-
-            // Text child with the label (for accessibility / CSS content)
-            let txt = self.doc.create_text(&item.label);
-            self.doc.append_child(el, txt);
-
-            self.doc.append_child(self.dock, el);
         }
     }
 
-    /// Set the hover pseudo-state on a dock item by index.
-    pub fn set_dock_hover(&mut self, index: Option<usize>) {
-        let children: Vec<NodeId> = self.doc.children(self.dock).to_vec();
-        for (i, &child) in children.iter().enumerate() {
-            let hover = index == Some(i);
-            self.doc
-                .set_pseudo_state(child, PseudoStateFlags::HOVER, hover);
+    /// Load the desktop DOM from disk if available, otherwise use the
+    /// embedded default template.
+    ///
+    /// Search order:
+    /// 1. `assets/desktop.html` relative to the executable
+    /// 2. `~/.config/liquide/desktop.html` for user customization
+    /// 3. Embedded `DEFAULT_DESKTOP_HTML`
+    pub fn load_or_default() -> Self {
+        // Try relative to executable
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                let candidate = exe_dir.join("assets").join("desktop.html");
+                if candidate.exists() {
+                    debug!(?candidate, "DesktopDocument: found desktop.html next to executable");
+                    return Self::from_file(&candidate);
+                }
+            }
         }
+
+        // Try assets/ in the current working directory
+        {
+            let candidate = Path::new("assets").join("desktop.html");
+            if candidate.exists() {
+                debug!(?candidate, "DesktopDocument: found desktop.html in assets/");
+                return Self::from_file(&candidate);
+            }
+        }
+
+        // Try user config directory
+        if let Some(home) = home_dir() {
+            let candidate = home.join(".config").join("liquide").join("desktop.html");
+            if candidate.exists() {
+                debug!(?candidate, "DesktopDocument: found user desktop.html");
+                return Self::from_file(&candidate);
+            }
+        }
+
+        debug!("DesktopDocument: no external HTML template found, using embedded default");
+        Self::new()
     }
 
-    // ── Status-bar helpers ───────────────────────────────────────
+    // ── HTML-based dynamic element helpers ────────────────────────
 
-    /// Set / update a status-bar item in the given slot.
+    /// Add a window to the workspace container using an HTML template.
     ///
-    /// If an item with the given `id` already exists it is updated in place;
-    /// otherwise a new `<statusbar-item>` is appended to the slot.
-    pub fn set_statusbar_item(
+    /// The `html` parameter should contain a `<window>` element tree.
+    /// The window's `id` is set to `window_id`, the `<window-title>` text
+    /// is replaced with `title`, and focus state is applied.
+    ///
+    /// Returns the `<window>` node id.
+    pub fn add_window_from_html(
         &mut self,
-        slot: StatusBarSlotKind,
-        item_id: &str,
-        text: &str,
-        classes: &[&str],
-    ) {
-        let parent = match slot {
-            StatusBarSlotKind::Left => self.statusbar_slot_left,
-            StatusBarSlotKind::Center => self.statusbar_slot_center,
-            StatusBarSlotKind::Right => self.statusbar_slot_right,
+        html: &str,
+        window_id: &str,
+        title: &str,
+        focused: bool,
+    ) -> NodeId {
+        // Parse into a temporary container to get the top-level window element
+        let fragment = self.doc.create_element("__fragment");
+        parse_html_into(&mut self.doc, fragment, html);
+
+        // Take the first child element as the window node
+        let win_node = if let Some(first) = self.doc.children(fragment).first().copied() {
+            first
+        } else {
+            // Fallback: use programmatic method
+            let win = self.doc.create_element("window");
+            self.doc.append_child(fragment, win);
+            win
         };
 
-        // Try to find existing item
-        if let Some(existing) = self.doc.get_element_by_id(item_id) {
-            // Update text of first child
-            let kids: Vec<NodeId> = self.doc.children(existing).to_vec();
-            if let Some(&txt_node) = kids.first() {
-                self.doc.set_text_content(txt_node, text);
-            }
-            return;
+        // Detach from fragment and set up
+        self.doc.remove_child(fragment, win_node);
+        self.doc.destroy_node(fragment);
+
+        // Set the window ID
+        self.doc.set_id(win_node, window_id);
+
+        // Apply focus state
+        if focused {
+            self.doc.add_class(win_node, "focused");
+            self.doc
+                .set_pseudo_state(win_node, PseudoStateFlags::FOCUS, true);
         }
 
-        // Create new
-        let el = self.doc.create_element("statusbar-item");
-        self.doc.set_id(el, item_id);
-        for cls in classes {
-            self.doc.add_class(el, cls);
-        }
-        let txt = self.doc.create_text(text);
-        self.doc.append_child(el, txt);
-        self.doc.append_child(parent, el);
+        // Find and set the title text
+        Self::set_descendant_text(&mut self.doc, win_node, "window-title", title);
+
+        // Append to workspace
+        self.doc.append_child(self.workspace, win_node);
+        win_node
     }
 
-    /// Populate default status-bar items matching `ShellStatusBar` defaults.
-    pub fn populate_default_statusbar(&mut self) {
-        self.set_statusbar_item(StatusBarSlotKind::Center, "clock", "00:00", &[]);
-        self.set_statusbar_item(StatusBarSlotKind::Right, "notifications", "", &[]);
-        self.set_statusbar_item(StatusBarSlotKind::Right, "connection", "", &[]);
-        self.set_statusbar_item(StatusBarSlotKind::Right, "tray", "", &[]);
-        self.set_statusbar_item(StatusBarSlotKind::Right, "session", "", &[]);
+    /// Add a notification using an HTML template.
+    ///
+    /// The `html` parameter should contain a `<notification>` element tree.
+    /// The notification's `id` is set to `notif_id`, and title/body text
+    /// are filled in.
+    ///
+    /// Returns the `<notification>` node id.
+    pub fn add_notification_from_html(
+        &mut self,
+        html: &str,
+        notif_id: &str,
+        title: &str,
+        body: &str,
+    ) -> NodeId {
+        let fragment = self.doc.create_element("__fragment");
+        parse_html_into(&mut self.doc, fragment, html);
+
+        let notif_node = if let Some(first) = self.doc.children(fragment).first().copied() {
+            first
+        } else {
+            let el = self.doc.create_element("notification");
+            self.doc.append_child(fragment, el);
+            el
+        };
+
+        self.doc.remove_child(fragment, notif_node);
+        self.doc.destroy_node(fragment);
+
+        self.doc.set_id(notif_node, notif_id);
+
+        // Fill in title and body
+        Self::set_descendant_text(&mut self.doc, notif_node, "notification-title", title);
+        Self::set_descendant_text(&mut self.doc, notif_node, "notification-body", body);
+
+        self.doc.append_child(self.notification_area, notif_node);
+        notif_node
+    }
+
+    /// Find a descendant element by tag name and set its text content.
+    ///
+    /// If the element has a text child, that child's content is updated.
+    /// If it has no children, a text node is created.
+    fn set_descendant_text(doc: &mut Document, root: NodeId, tag: &str, text: &str) {
+        if let Some(node_id) = Self::find_descendant_by_tag(doc, root, tag) {
+            let children: Vec<NodeId> = doc.children(node_id).to_vec();
+            if let Some(&first_child) = children.first() {
+                // Update existing text child
+                doc.set_text_content(first_child, text);
+            } else {
+                // Create a text node
+                let txt = doc.create_text(text);
+                doc.append_child(node_id, txt);
+            }
+        }
+    }
+
+    /// Find the first descendant element with the given tag name (depth-first).
+    fn find_descendant_by_tag(doc: &Document, parent: NodeId, tag: &str) -> Option<NodeId> {
+        let children: Vec<NodeId> = doc.children(parent).to_vec();
+        for child in children {
+            if let Some(node) = doc.get(child) {
+                if node.tag_name() == tag {
+                    return Some(child);
+                }
+                // Recurse
+                if let Some(found) = Self::find_descendant_by_tag(doc, child, tag) {
+                    return Some(found);
+                }
+            }
+        }
+        None
     }
 
     // ── Window helpers ───────────────────────────────────────────
@@ -301,56 +462,6 @@ impl DesktopDocument {
                 self.doc
                     .set_pseudo_state(child, PseudoStateFlags::FOCUS, false);
             }
-        }
-    }
-
-    // ── Context menu helpers ─────────────────────────────────────
-
-    /// Add a context menu overlay to the DOM.
-    pub fn add_context_menu(
-        &mut self,
-        menu_id: &str,
-        items: &[ContextMenuItemInfo],
-    ) -> NodeId {
-        let el = self.doc.create_element("context-menu");
-        self.doc.set_id(el, menu_id);
-        let root = self.doc.root();
-
-        for (i, item) in items.iter().enumerate() {
-            match item {
-                ContextMenuItemInfo::Action { label, disabled } => {
-                    let mi = self.doc.create_element("menu-item");
-                    self.doc
-                        .set_attribute(mi, "data-index", &i.to_string());
-                    if *disabled {
-                        self.doc.add_class(mi, "disabled");
-                        self.doc.set_pseudo_state(
-                            mi,
-                            PseudoStateFlags::DISABLED,
-                            true,
-                        );
-                    }
-                    let txt = self.doc.create_text(label);
-                    self.doc.append_child(mi, txt);
-                    self.doc.append_child(el, mi);
-                }
-                ContextMenuItemInfo::Separator => {
-                    let sep = self.doc.create_element("menu-separator");
-                    self.doc.append_child(el, sep);
-                }
-            }
-        }
-
-        self.doc.append_child(root, el);
-        el
-    }
-
-    /// Remove a context menu by id.
-    pub fn remove_context_menu(&mut self, menu_id: &str) {
-        if let Some(node_id) = self.doc.get_element_by_id(menu_id) {
-            let root = self.doc.root();
-            self.doc.remove_child(root, node_id);
-            self.doc.destroy_node(node_id);
         }
     }
 
@@ -459,41 +570,6 @@ impl DesktopDocument {
         }
     }
 
-    // ── Session-menu helpers ─────────────────────────────────────
-
-    /// Show the session menu (lock, logout, restart, shutdown etc).
-    pub fn show_session_menu(&mut self, items: &[MenuItemInfo]) -> NodeId {
-        self.hide_session_menu();
-
-        let root = self.doc.root();
-        let menu = self.doc.create_element("session-menu");
-        self.doc.set_id(menu, element_ids::SESSION_MENU);
-
-        for (i, item) in items.iter().enumerate() {
-            let mi = self.doc.create_element("menu-item");
-            self.doc.set_attribute(mi, "data-action", &item.action);
-            self.doc.set_attribute(mi, "data-index", &i.to_string());
-            if !item.icon.is_empty() {
-                self.doc.set_attribute(mi, "data-icon", &item.icon);
-            }
-            let txt = self.doc.create_text(&item.label);
-            self.doc.append_child(mi, txt);
-            self.doc.append_child(menu, mi);
-        }
-
-        self.doc.append_child(root, menu);
-        menu
-    }
-
-    /// Hide the session menu.
-    pub fn hide_session_menu(&mut self) {
-        if let Some(node) = self.doc.get_element_by_id(element_ids::SESSION_MENU) {
-            let root = self.doc.root();
-            self.doc.remove_child(root, node);
-            self.doc.destroy_node(node);
-        }
-    }
-
     // ── App-menu helpers ─────────────────────────────────────────
 
     /// Show an application menu (triggered from titlebar or statusbar).
@@ -594,6 +670,18 @@ impl Default for DesktopDocument {
     }
 }
 
+/// Cross-platform home directory resolution (no external crate dependency).
+fn home_dir() -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("USERPROFILE").map(std::path::PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME").map(std::path::PathBuf::from)
+    }
+}
+
 // ── Lightweight info structs (no dependency on dock/statusbar crates) ──
 
 /// Minimal dock item info for DOM sync.
@@ -612,13 +700,6 @@ pub enum StatusBarSlotKind {
     Left,
     Center,
     Right,
-}
-
-/// Minimal context menu item info for DOM construction.
-#[derive(Debug, Clone)]
-pub enum ContextMenuItemInfo {
-    Action { label: String, disabled: bool },
-    Separator,
 }
 
 /// Minimal launcher item info for DOM construction.
@@ -656,57 +737,6 @@ mod tests {
     }
 
     #[test]
-    fn sync_dock_items() {
-        let mut desktop = DesktopDocument::new();
-        let items = vec![
-            DockItemInfo {
-                app_id: "files".into(),
-                label: "Files".into(),
-                icon: "folder".into(),
-                is_running: true,
-                is_pinned: true,
-            },
-            DockItemInfo {
-                app_id: "terminal".into(),
-                label: "Terminal".into(),
-                icon: "terminal".into(),
-                is_running: false,
-                is_pinned: true,
-            },
-        ];
-
-        desktop.sync_dock_items(&items);
-        assert_eq!(desktop.doc.children(desktop.dock).len(), 2);
-
-        // First item should have .active class
-        let first = desktop.doc.children(desktop.dock)[0];
-        assert!(desktop.doc.get(first).unwrap().has_class("active"));
-        assert!(desktop.doc.get(first).unwrap().has_class("pinned"));
-
-        // Second item should NOT have .active
-        let second = desktop.doc.children(desktop.dock)[1];
-        assert!(!desktop.doc.get(second).unwrap().has_class("active"));
-    }
-
-    #[test]
-    fn statusbar_items() {
-        let mut desktop = DesktopDocument::new();
-        desktop.populate_default_statusbar();
-
-        // Center slot should have "clock"
-        let center_kids = desktop.doc.children(desktop.statusbar_slot_center);
-        assert_eq!(center_kids.len(), 1);
-        assert_eq!(
-            desktop.doc.get(center_kids[0]).unwrap().element_id.as_deref(),
-            Some("clock")
-        );
-
-        // Right slot should have 4 items
-        let right_kids = desktop.doc.children(desktop.statusbar_slot_right);
-        assert_eq!(right_kids.len(), 4);
-    }
-
-    #[test]
     fn window_management() {
         let mut desktop = DesktopDocument::new();
         let win = desktop.add_window("win-1", "Test App", true);
@@ -730,29 +760,6 @@ mod tests {
     }
 
     #[test]
-    fn context_menu() {
-        let mut desktop = DesktopDocument::new();
-        let items = vec![
-            ContextMenuItemInfo::Action {
-                label: "Copy".into(),
-                disabled: false,
-            },
-            ContextMenuItemInfo::Separator,
-            ContextMenuItemInfo::Action {
-                label: "Paste".into(),
-                disabled: true,
-            },
-        ];
-
-        let menu = desktop.add_context_menu("ctx-1", &items);
-        let kids = desktop.doc.children(menu);
-        assert_eq!(kids.len(), 3);
-
-        desktop.remove_context_menu("ctx-1");
-        assert!(desktop.doc.get_element_by_id("ctx-1").is_none());
-    }
-
-    #[test]
     fn notification() {
         let mut desktop = DesktopDocument::new();
         let n = desktop.add_notification("notif-1", "Alert", "Something happened");
@@ -760,33 +767,6 @@ mod tests {
 
         desktop.remove_notification("notif-1");
         assert!(desktop.doc.get_element_by_id("notif-1").is_none());
-    }
-
-    #[test]
-    fn dock_hover_state() {
-        let mut desktop = DesktopDocument::new();
-        let items = vec![
-            DockItemInfo {
-                app_id: "a".into(),
-                label: "A".into(),
-                icon: "a".into(),
-                is_running: false,
-                is_pinned: false,
-            },
-            DockItemInfo {
-                app_id: "b".into(),
-                label: "B".into(),
-                icon: "b".into(),
-                is_running: false,
-                is_pinned: false,
-            },
-        ];
-        desktop.sync_dock_items(&items);
-        desktop.set_dock_hover(Some(1));
-
-        let kids: Vec<NodeId> = desktop.doc.children(desktop.dock).to_vec();
-        assert!(!desktop.doc.get(kids[0]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
-        assert!(desktop.doc.get(kids[1]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
     }
 
     #[test]
@@ -825,30 +805,6 @@ mod tests {
     }
 
     #[test]
-    fn session_menu_show_hide() {
-        let mut desktop = DesktopDocument::new();
-        let items = vec![
-            MenuItemInfo {
-                label: "Lock".into(),
-                action: "lock".into(),
-                icon: "lock".into(),
-            },
-            MenuItemInfo {
-                label: "Shutdown".into(),
-                action: "shutdown".into(),
-                icon: "power".into(),
-            },
-        ];
-
-        let menu = desktop.show_session_menu(&items);
-        assert!(desktop.doc.get_element_by_id(element_ids::SESSION_MENU).is_some());
-        assert_eq!(desktop.doc.children(menu).len(), 2);
-
-        desktop.hide_session_menu();
-        assert!(desktop.doc.get_element_by_id(element_ids::SESSION_MENU).is_none());
-    }
-
-    #[test]
     fn app_menu_show_hide() {
         let mut desktop = DesktopDocument::new();
         let items = vec![MenuItemInfo {
@@ -877,6 +833,169 @@ mod tests {
 
         desktop.remove_notification("notif-a");
         assert_eq!(desktop.doc.children(desktop.notification_area).len(), 0);
+    }
+
+    // ── HTML template tests ────────────────────────────────────────
+
+    #[test]
+    fn from_html_matches_new() {
+        let from_new = DesktopDocument::new();
+        let from_html = DesktopDocument::from_html(DEFAULT_DESKTOP_HTML);
+
+        // Both should have 5 root children
+        assert_eq!(
+            from_new.doc.children(from_new.doc.root()).len(),
+            from_html.doc.children(from_html.doc.root()).len(),
+        );
+
+        // Both should resolve all well-known IDs
+        assert!(from_html.doc.get_element_by_id(element_ids::DESKTOP_BG).is_some());
+        assert!(from_html.doc.get_element_by_id(element_ids::STATUSBAR).is_some());
+        assert!(from_html.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT).is_some());
+        assert!(from_html.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER).is_some());
+        assert!(from_html.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT).is_some());
+        assert!(from_html.doc.get_element_by_id(element_ids::WORKSPACE).is_some());
+        assert!(from_html.doc.get_element_by_id(element_ids::DOCK).is_some());
+        assert!(from_html.doc.get_element_by_id(element_ids::NOTIFICATION_AREA).is_some());
+
+        // Statusbar should have 3 slots
+        assert_eq!(from_html.doc.children(from_html.statusbar).len(), 3);
+    }
+
+    #[test]
+    fn from_html_finds_all_well_known_ids() {
+        let desktop = DesktopDocument::from_html(DEFAULT_DESKTOP_HTML);
+
+        // Verify the struct fields match the looked-up IDs
+        assert_eq!(
+            desktop.doc.get_element_by_id(element_ids::DESKTOP_BG),
+            Some(desktop.desktop_bg)
+        );
+        assert_eq!(
+            desktop.doc.get_element_by_id(element_ids::STATUSBAR),
+            Some(desktop.statusbar)
+        );
+        assert_eq!(
+            desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT),
+            Some(desktop.statusbar_slot_left)
+        );
+        assert_eq!(
+            desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER),
+            Some(desktop.statusbar_slot_center)
+        );
+        assert_eq!(
+            desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT),
+            Some(desktop.statusbar_slot_right)
+        );
+        assert_eq!(
+            desktop.doc.get_element_by_id(element_ids::WORKSPACE),
+            Some(desktop.workspace)
+        );
+        assert_eq!(
+            desktop.doc.get_element_by_id(element_ids::DOCK),
+            Some(desktop.dock)
+        );
+        assert_eq!(
+            desktop.doc.get_element_by_id(element_ids::NOTIFICATION_AREA),
+            Some(desktop.notification_area)
+        );
+    }
+
+    #[test]
+    fn from_html_fallback_for_missing_elements() {
+        // HTML template with only desktop-bg — all other elements should be
+        // created as fallbacks.
+        let desktop = DesktopDocument::from_html(r#"<desktop-background id="desktop-bg" />"#);
+
+        // All well-known fields should still be valid
+        assert!(desktop.doc.get_element_by_id(element_ids::DESKTOP_BG).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::WORKSPACE).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::DOCK).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::NOTIFICATION_AREA).is_some());
+
+        // Statusbar fallback should also create its child slots
+        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT).is_some());
+    }
+
+    #[test]
+    fn load_or_default_uses_embedded_when_no_files() {
+        // When no files exist on disk, load_or_default() should produce the
+        // same structure as new().
+        let desktop = DesktopDocument::load_or_default();
+        assert!(desktop.doc.get_element_by_id(element_ids::DESKTOP_BG).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::WORKSPACE).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::DOCK).is_some());
+        assert!(desktop.doc.get_element_by_id(element_ids::NOTIFICATION_AREA).is_some());
+    }
+
+    #[test]
+    fn add_window_from_html_template() {
+        let mut desktop = DesktopDocument::new();
+        let win = desktop.add_window_from_html(
+            DEFAULT_WINDOW_HTML,
+            "win-html-1",
+            "HTML Window",
+            true,
+        );
+
+        // Window should be in workspace
+        assert!(desktop.doc.children(desktop.workspace).contains(&win));
+
+        // Should have the correct ID
+        assert_eq!(
+            desktop.doc.get(win).unwrap().element_id.as_deref(),
+            Some("win-html-1")
+        );
+
+        // Should be focused
+        assert!(desktop.doc.get(win).unwrap().has_class("focused"));
+
+        // Should have titlebar + content children
+        let kids = desktop.doc.children(win);
+        assert_eq!(kids.len(), 2);
+
+        // Titlebar should contain the title text
+        let titlebar = kids[0];
+        let title_el = desktop.doc.children(titlebar)[0];
+        let title_text = desktop.doc.children(title_el)[0];
+        assert_eq!(
+            desktop.doc.get(title_text).unwrap().text_content(),
+            Some("HTML Window")
+        );
+    }
+
+    #[test]
+    fn add_notification_from_html_template() {
+        let mut desktop = DesktopDocument::new();
+        let html = r#"
+<notification>
+  <notification-title></notification-title>
+  <notification-body></notification-body>
+</notification>
+"#;
+        let notif = desktop.add_notification_from_html(
+            html,
+            "notif-html-1",
+            "Test Title",
+            "Test Body",
+        );
+
+        // Notification should be in notification-area
+        assert!(desktop.doc.children(desktop.notification_area).contains(&notif));
+
+        // Should have the correct ID
+        assert_eq!(
+            desktop.doc.get(notif).unwrap().element_id.as_deref(),
+            Some("notif-html-1")
+        );
+
+        // Should have 2 children: title and body
+        let kids = desktop.doc.children(notif);
+        assert_eq!(kids.len(), 2);
     }
 
     #[test]
