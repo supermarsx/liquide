@@ -250,12 +250,22 @@ impl ThemeParser {
                 let css_str = self.to_css_string(size);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("width".into(), v);
+                } else {
+                    let trimmed = css_str.trim();
+                    if matches!(trimmed, "auto" | "min-content" | "max-content" | "fit-content") {
+                        properties.insert("width".into(), PropertyValue::Keyword(trimmed.into()));
+                    }
                 }
             }
             Property::Height(size) => {
                 let css_str = self.to_css_string(size);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("height".into(), v);
+                } else {
+                    let trimmed = css_str.trim();
+                    if matches!(trimmed, "auto" | "min-content" | "max-content" | "fit-content") {
+                        properties.insert("height".into(), PropertyValue::Keyword(trimmed.into()));
+                    }
                 }
             }
 
@@ -519,21 +529,31 @@ impl ThemeParser {
                 if let Some(v) = self.parse_length_value(&row_str) {
                     properties.insert("row-gap".into(), v.clone());
                     properties.insert("gap".into(), v);
+                } else if row_str.trim() == "normal" {
+                    let kw = PropertyValue::Keyword("normal".into());
+                    properties.insert("row-gap".into(), kw.clone());
+                    properties.insert("gap".into(), kw);
                 }
                 if let Some(v) = self.parse_length_value(&col_str) {
                     properties.insert("column-gap".into(), v);
+                } else if col_str.trim() == "normal" {
+                    properties.insert("column-gap".into(), PropertyValue::Keyword("normal".into()));
                 }
             }
             Property::RowGap(gap) => {
                 let css_str = self.to_css_string(gap);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("row-gap".into(), v);
+                } else if css_str.trim() == "normal" {
+                    properties.insert("row-gap".into(), PropertyValue::Keyword("normal".into()));
                 }
             }
             Property::ColumnGap(gap) => {
                 let css_str = self.to_css_string(gap);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("column-gap".into(), v);
+                } else if css_str.trim() == "normal" {
+                    properties.insert("column-gap".into(), PropertyValue::Keyword("normal".into()));
                 }
             }
 
@@ -542,24 +562,32 @@ impl ThemeParser {
                 let css_str = self.to_css_string(val);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("top".into(), v);
+                } else if css_str.trim() == "auto" {
+                    properties.insert("top".into(), PropertyValue::Keyword("auto".into()));
                 }
             }
             Property::Right(val) => {
                 let css_str = self.to_css_string(val);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("right".into(), v);
+                } else if css_str.trim() == "auto" {
+                    properties.insert("right".into(), PropertyValue::Keyword("auto".into()));
                 }
             }
             Property::Bottom(val) => {
                 let css_str = self.to_css_string(val);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("bottom".into(), v);
+                } else if css_str.trim() == "auto" {
+                    properties.insert("bottom".into(), PropertyValue::Keyword("auto".into()));
                 }
             }
             Property::Left(val) => {
                 let css_str = self.to_css_string(val);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("left".into(), v);
+                } else if css_str.trim() == "auto" {
+                    properties.insert("left".into(), PropertyValue::Keyword("auto".into()));
                 }
             }
 
@@ -568,24 +596,44 @@ impl ThemeParser {
                 let css_str = self.to_css_string(size);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("min-width".into(), v);
+                } else {
+                    let trimmed = css_str.trim();
+                    if matches!(trimmed, "auto" | "min-content" | "max-content" | "fit-content") {
+                        properties.insert("min-width".into(), PropertyValue::Keyword(trimmed.into()));
+                    }
                 }
             }
             Property::MaxWidth(size) => {
                 let css_str = self.to_css_string(size);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("max-width".into(), v);
+                } else {
+                    let trimmed = css_str.trim();
+                    if matches!(trimmed, "none" | "min-content" | "max-content" | "fit-content") {
+                        properties.insert("max-width".into(), PropertyValue::Keyword(trimmed.into()));
+                    }
                 }
             }
             Property::MinHeight(size) => {
                 let css_str = self.to_css_string(size);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("min-height".into(), v);
+                } else {
+                    let trimmed = css_str.trim();
+                    if matches!(trimmed, "auto" | "min-content" | "max-content" | "fit-content") {
+                        properties.insert("min-height".into(), PropertyValue::Keyword(trimmed.into()));
+                    }
                 }
             }
             Property::MaxHeight(size) => {
                 let css_str = self.to_css_string(size);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("max-height".into(), v);
+                } else {
+                    let trimmed = css_str.trim();
+                    if matches!(trimmed, "none" | "min-content" | "max-content" | "fit-content") {
+                        properties.insert("max-height".into(), PropertyValue::Keyword(trimmed.into()));
+                    }
                 }
             }
 
@@ -720,6 +768,12 @@ impl ThemeParser {
                 let css_str = self.to_css_string(fb);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("flex-basis".into(), v);
+                } else {
+                    // Keywords: auto, min-content, max-content, fit-content, content
+                    let trimmed = css_str.trim();
+                    if matches!(trimmed, "auto" | "content" | "min-content" | "max-content" | "fit-content") {
+                        properties.insert("flex-basis".into(), PropertyValue::Keyword(trimmed.into()));
+                    }
                 }
             }
             Property::Order(order, _) => {
@@ -731,6 +785,11 @@ impl ThemeParser {
                 let css_str = self.to_css_string(&flex.basis);
                 if let Some(v) = self.parse_length_value(&css_str) {
                     properties.insert("flex-basis".into(), v);
+                } else {
+                    let trimmed = css_str.trim();
+                    if matches!(trimmed, "auto" | "content" | "min-content" | "max-content" | "fit-content") {
+                        properties.insert("flex-basis".into(), PropertyValue::Keyword(trimmed.into()));
+                    }
                 }
             }
 
@@ -837,7 +896,7 @@ impl ThemeParser {
         val: &LengthPercentageOrAuto,
     ) -> Option<PropertyValue> {
         match val {
-            LengthPercentageOrAuto::Auto => None,
+            LengthPercentageOrAuto::Auto => Some(PropertyValue::Keyword("auto".into())),
             LengthPercentageOrAuto::LengthPercentage(lp) => {
                 let css_str = self.to_css_string(lp);
                 self.parse_length_value(&css_str)

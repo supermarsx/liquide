@@ -68,6 +68,7 @@ pub fn resolve_dimension(val: &PropertyValue) -> Dimension {
             "none" => Dimension::None,
             "min-content" => Dimension::MinContent,
             "max-content" => Dimension::MaxContent,
+            "fit-content" => Dimension::FitContent(Box::new(Dimension::Auto)),
             _ => Dimension::Auto,
         },
         PropertyValue::MathExpr(expr) => {

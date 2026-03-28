@@ -426,8 +426,8 @@ impl StyleEngine {
                             .box_shadow
                             .push(liquide_compositor::scene::BoxShadowSpec {
                                 offset_x: 0.0,
-                                offset_y: 4.0,
-                                blur_radius: 12.0,
+                                offset_y: 0.0,
+                                blur_radius: 2.0,
                                 spread_radius: 0.0,
                                 color: c,
                                 inset: false,

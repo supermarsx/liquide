@@ -172,4 +172,75 @@ impl StyleEngine {
 
         self.sheets.push(PreparedSheet::new(prepared_rules));
     }
+
+    /// Load and add a CSS stylesheet from a file on disk.
+    ///
+    /// Reads the file contents and delegates to [`add_stylesheet`]. Returns
+    /// `Err` with a human-readable message if the file cannot be read.
+    pub fn load_stylesheet_file(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let css = std::fs::read_to_string(path).map_err(|e| {
+            format!("Failed to read stylesheet {}: {}", path.display(), e)
+        })?;
+        tracing::info!("Loaded stylesheet from {}", path.display());
+        self.add_stylesheet(&css);
+        Ok(())
+    }
+
+    /// Load all `.css` files from a directory.
+    ///
+    /// Files are loaded in alphabetical order. Returns the number of
+    /// stylesheets successfully loaded, or `Err` if the directory itself
+    /// cannot be read. Individual file errors are logged as warnings and
+    /// skipped.
+    pub fn load_stylesheet_dir(&mut self, dir: &std::path::Path) -> Result<usize, String> {
+        let entries = std::fs::read_dir(dir).map_err(|e| {
+            format!("Failed to read stylesheet directory {}: {}", dir.display(), e)
+        })?;
+
+        let mut css_files: Vec<std::path::PathBuf> = entries
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext == "css") && path.is_file() {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Sort alphabetically for deterministic load order.
+        css_files.sort();
+
+        let mut loaded = 0usize;
+        for path in &css_files {
+            match self.load_stylesheet_file(path) {
+                Ok(()) => loaded += 1,
+                Err(e) => tracing::warn!("{}", e),
+            }
+        }
+
+        tracing::info!(
+            "Loaded {}/{} stylesheets from {}",
+            loaded,
+            css_files.len(),
+            dir.display()
+        );
+        Ok(loaded)
+    }
+
+    /// Load user CSS overrides from a configuration directory.
+    ///
+    /// Looks for `custom.css` inside `config_dir`. If it exists, the file
+    /// is loaded **after** theme stylesheets so its rules take precedence.
+    /// If the file does not exist, this is a no-op.
+    pub fn load_user_overrides(&mut self, config_dir: &std::path::Path) {
+        let custom_css = config_dir.join("custom.css");
+        if custom_css.is_file() {
+            match self.load_stylesheet_file(&custom_css) {
+                Ok(()) => tracing::info!("Loaded user CSS overrides from {}", custom_css.display()),
+                Err(e) => tracing::warn!("Could not load user CSS overrides: {}", e),
+            }
+        }
+    }
 }

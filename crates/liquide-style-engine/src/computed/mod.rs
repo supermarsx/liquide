@@ -1031,6 +1031,8 @@ impl ComputedStyle {
         self.visibility = parent.visibility;
         self.cursor = parent.cursor;
         self.caret_color = parent.caret_color;
+        self.accent_color = parent.accent_color;
+        self.text_shadow = parent.text_shadow.clone();
         // List styling (inherited)
         self.list_style_type = parent.list_style_type;
         self.list_style_position = parent.list_style_position;

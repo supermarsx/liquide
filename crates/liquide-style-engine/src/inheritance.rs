@@ -26,7 +26,10 @@ pub fn is_inherited(property: &str) -> bool {
             | "hyphens"
             | "tab-size"
             | "direction"
-            | "unicode-bidi"
+            | "text-shadow"
+            | "caret-color"
+            | "accent-color"
+            | "text-decoration-skip-ink"
             // List
             | "list-style"
             | "list-style-type"
@@ -63,6 +66,14 @@ mod tests {
     }
 
     #[test]
+    fn inherited_text_props() {
+        assert!(is_inherited("text-shadow"));
+        assert!(is_inherited("caret-color"));
+        assert!(is_inherited("accent-color"));
+        assert!(is_inherited("text-decoration-skip-ink"));
+    }
+
+    #[test]
     fn non_inherited_props() {
         assert!(!is_inherited("display"));
         assert!(!is_inherited("width"));
@@ -72,5 +83,7 @@ mod tests {
         assert!(!is_inherited("border"));
         assert!(!is_inherited("position"));
         assert!(!is_inherited("opacity"));
+        assert!(!is_inherited("unicode-bidi"));
+        assert!(!is_inherited("text-decoration"));
     }
 }

@@ -275,11 +275,19 @@ impl CompoundSelector {
             PseudoClassSelector::Root => node.has_pseudo_state(PseudoStateFlags::ROOT),
             PseudoClassSelector::Empty => node.has_pseudo_state(PseudoStateFlags::EMPTY),
             PseudoClassSelector::NthChild(anb) => {
-                // Determine 1-based index among siblings
+                // Determine 1-based index among element siblings (skip text nodes)
                 if let Some(parent_id) = node.parent {
                     let children = doc.children(parent_id);
-                    if let Some(index) = children.iter().position(|&c| c == node.id) {
-                        return anb.matches((index + 1) as i32);
+                    let mut elem_index = 0i32;
+                    for &c in children {
+                        if let Some(child) = doc.get(c) {
+                            if child.is_element() {
+                                elem_index += 1;
+                                if c == node.id {
+                                    return anb.matches(elem_index);
+                                }
+                            }
+                        }
                     }
                 }
                 false
@@ -287,9 +295,16 @@ impl CompoundSelector {
             PseudoClassSelector::NthLastChild(anb) => {
                 if let Some(parent_id) = node.parent {
                     let children = doc.children(parent_id);
-                    if let Some(index) = children.iter().position(|&c| c == node.id) {
-                        let from_end = (children.len() - index) as i32;
-                        return anb.matches(from_end);
+                    let mut elem_index = 0i32;
+                    for &c in children.iter().rev() {
+                        if let Some(child) = doc.get(c) {
+                            if child.is_element() {
+                                elem_index += 1;
+                                if c == node.id {
+                                    return anb.matches(elem_index);
+                                }
+                            }
+                        }
                     }
                 }
                 false
@@ -368,10 +383,20 @@ impl CompoundSelector {
             PseudoClassSelector::OnlyChild => {
                 if let Some(parent_id) = node.parent {
                     let children = doc.children(parent_id);
-                    let element_children: Vec<_> = children.iter().filter(|&&c| {
-                        doc.get(c).map_or(false, |n| !n.is_text())
-                    }).collect();
-                    return element_children.len() == 1 && *element_children[0] == node.id;
+                    let mut element_count = 0;
+                    let mut only_element_is_self = false;
+                    for &c in children {
+                        if doc.get(c).map_or(false, |n| n.is_element()) {
+                            element_count += 1;
+                            if c == node.id {
+                                only_element_is_self = true;
+                            }
+                            if element_count > 1 {
+                                return false;
+                            }
+                        }
+                    }
+                    return element_count == 1 && only_element_is_self;
                 }
                 false
             }
@@ -563,98 +588,114 @@ impl ComplexSelector {
             return false;
         }
 
-        // Walk left through combinators
-        let mut current = node_id;
-        for i in 0..self.combinators.len() {
-            let combinator = self.combinators[i];
-            let next_compound = &self.compounds[i + 1];
+        // Recursively match remaining combinators with backtracking
+        Self::match_rest(&self.compounds, &self.combinators, 0, node_id, doc)
+    }
 
-            match combinator {
-                Combinator::Child => {
-                    // Parent must match
-                    let parent_id = match doc.parent(current) {
-                        Some(p) => p,
-                        None => return false,
-                    };
-                    let parent = match doc.get(parent_id) {
-                        Some(n) => n,
-                        None => return false,
-                    };
-                    if !next_compound.matches_node(parent, doc) {
-                        return false;
-                    }
-                    current = parent_id;
-                }
-                Combinator::Descendant => {
-                    // Walk up the parent chain without allocating a Vec
-                    let mut found = false;
-                    let mut anc = doc.parent(current);
-                    while let Some(anc_id) = anc {
-                        if let Some(anc_node) = doc.get(anc_id) {
-                            if next_compound.matches_node(anc_node, doc) {
-                                current = anc_id;
-                                found = true;
-                                break;
-                            }
-                            anc = anc_node.parent;
-                        } else {
-                            break;
-                        }
-                    }
-                    if !found {
-                        return false;
-                    }
-                }
-                Combinator::NextSibling => {
-                    // Previous sibling must match
-                    let parent_id = match doc.parent(current) {
-                        Some(p) => p,
-                        None => return false,
-                    };
-                    let children = doc.children(parent_id);
-                    let pos = match children.iter().position(|&c| c == current) {
-                        Some(p) if p > 0 => p,
-                        _ => return false,
-                    };
-                    let prev_id = children[pos - 1];
-                    let prev = match doc.get(prev_id) {
-                        Some(n) => n,
-                        None => return false,
-                    };
-                    if !next_compound.matches_node(prev, doc) {
-                        return false;
-                    }
-                    current = prev_id;
-                }
-                Combinator::SubsequentSibling => {
-                    // Some preceding sibling must match
-                    let parent_id = match doc.parent(current) {
-                        Some(p) => p,
-                        None => return false,
-                    };
-                    let children = doc.children(parent_id);
-                    let pos = match children.iter().position(|&c| c == current) {
-                        Some(p) => p,
-                        None => return false,
-                    };
-                    let mut found = false;
-                    for &sib_id in &children[..pos] {
-                        if let Some(sib) = doc.get(sib_id) {
-                            if next_compound.matches_node(sib, doc) {
-                                current = sib_id;
-                                found = true;
-                                break;
-                            }
-                        }
-                    }
-                    if !found {
-                        return false;
-                    }
-                }
-            }
+    /// Recursively match combinators starting at index `idx`, with `current` as
+    /// the node matched by `compounds[idx]`. Returns true if all remaining
+    /// combinators can be satisfied.
+    fn match_rest(
+        compounds: &[CompoundSelector],
+        combinators: &[Combinator],
+        idx: usize,
+        current: NodeId,
+        doc: &Document,
+    ) -> bool {
+        if idx >= combinators.len() {
+            return true; // all combinators matched
         }
 
-        true
+        let combinator = combinators[idx];
+        let next_compound = &compounds[idx + 1];
+
+        match combinator {
+            Combinator::Child => {
+                let parent_id = match doc.parent(current) {
+                    Some(p) => p,
+                    None => return false,
+                };
+                let parent = match doc.get(parent_id) {
+                    Some(n) => n,
+                    None => return false,
+                };
+                if !next_compound.matches_node(parent, doc) {
+                    return false;
+                }
+                Self::match_rest(compounds, combinators, idx + 1, parent_id, doc)
+            }
+            Combinator::Descendant => {
+                // Try each ancestor; backtrack if subsequent combinators fail
+                let mut anc = doc.parent(current);
+                while let Some(anc_id) = anc {
+                    if let Some(anc_node) = doc.get(anc_id) {
+                        if next_compound.matches_node(anc_node, doc)
+                            && Self::match_rest(compounds, combinators, idx + 1, anc_id, doc)
+                        {
+                            return true;
+                        }
+                        anc = anc_node.parent;
+                    } else {
+                        break;
+                    }
+                }
+                false
+            }
+            Combinator::NextSibling => {
+                let parent_id = match doc.parent(current) {
+                    Some(p) => p,
+                    None => return false,
+                };
+                let children = doc.children(parent_id);
+                let pos = match children.iter().position(|&c| c == current) {
+                    Some(p) => p,
+                    None => return false,
+                };
+                // Find the previous element sibling
+                let mut prev_elem = None;
+                for &sib_id in children[..pos].iter().rev() {
+                    if doc.get(sib_id).map_or(false, |n| n.is_element()) {
+                        prev_elem = Some(sib_id);
+                        break;
+                    }
+                }
+                let prev_id = match prev_elem {
+                    Some(id) => id,
+                    None => return false,
+                };
+                let prev = match doc.get(prev_id) {
+                    Some(n) => n,
+                    None => return false,
+                };
+                if !next_compound.matches_node(prev, doc) {
+                    return false;
+                }
+                Self::match_rest(compounds, combinators, idx + 1, prev_id, doc)
+            }
+            Combinator::SubsequentSibling => {
+                // Try each preceding element sibling; backtrack if needed
+                let parent_id = match doc.parent(current) {
+                    Some(p) => p,
+                    None => return false,
+                };
+                let children = doc.children(parent_id);
+                let pos = match children.iter().position(|&c| c == current) {
+                    Some(p) => p,
+                    None => return false,
+                };
+                for &sib_id in children[..pos].iter().rev() {
+                    if let Some(sib) = doc.get(sib_id) {
+                        if sib.is_element()
+                            && next_compound.matches_node(sib, doc)
+                            && Self::match_rest(compounds, combinators, idx + 1, sib_id, doc)
+                        {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+        }
     }
 
     /// Parse a CSS selector string into a ComplexSelector.
