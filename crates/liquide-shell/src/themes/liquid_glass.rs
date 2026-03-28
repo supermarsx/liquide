@@ -20,8 +20,8 @@ desktop-background {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    right: 0;
+    bottom: 0;
 }
 
 /* ── Status bar ────────────────────────────────────── */
@@ -31,7 +31,7 @@ statusbar {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
+    right: 0;
     height: 34;
     padding-left: 14;
     padding-right: 14;
@@ -45,7 +45,6 @@ statusbar {
     font-size: 13;
     font-weight: 500;
     blur-radius: 32;
-    box-shadow-color: rgba(15, 40, 120, 0.35);
     glass-tint: rgba(14, 18, 42, 0.80);
 }
 
@@ -252,6 +251,7 @@ window {
 window.focused {
     border-color: rgba(70, 140, 255, 0.25);
     box-shadow-color: rgba(30, 80, 220, 0.35);
+    titlebar-background: rgba(30, 50, 100, 0.20);
 }
 
 window-titlebar {
@@ -343,8 +343,8 @@ dock {
     position: fixed;
     bottom: 0;
     left: 0;
-    width: 100%;
-    height: 58;
+    right: 0;
+    height: 56;
     justify-content: center;
     align-items: center;
     gap: 4;
@@ -355,15 +355,14 @@ dock {
     border-top-width: 1;
     blur-radius: 32;
     glass-tint: rgba(14, 18, 42, 0.75);
-    box-shadow-color: rgba(15, 40, 120, 0.30);
 }
 
 dock-item {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 46;
-    height: 46;
+    width: 44;
+    height: 44;
     border-radius: 13;
     color: rgba(160, 190, 255, 0.75);
 }
@@ -379,14 +378,33 @@ dock-item:hover {
     box-shadow-color: rgba(40, 100, 220, 0.20);
 }
 
+dock-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-grow: 1;
+}
+
+dock-item-label {
+    display: none;
+}
+
+dock-indicator {
+    display: flex;
+    width: 4;
+    height: 4;
+    border-radius: 2;
+    background: rgba(60, 120, 220, 0.80);
+}
+
 /* ── Workspace container ───────────────────────────── */
 
 workspace-container {
     position: fixed;
     top: 34;
     left: 0;
-    width: 100%;
-    bottom: 58;
+    right: 0;
+    bottom: 56;
     overflow: hidden;
 }
 
@@ -396,7 +414,7 @@ notification-area {
     display: flex;
     flex-direction: column;
     position: fixed;
-    top: 42;
+    top: 38;
     right: 12;
     z-index: 20;
     gap: 8;
@@ -428,6 +446,36 @@ notification-body {
     color: rgba(170, 195, 255, 0.75);
 }
 
+notification-icon {
+    display: flex;
+    width: 32;
+    height: 32;
+    margin-right: 10;
+    color: rgba(180, 200, 255, 0.5);
+}
+
+notification-content {
+    flex-grow: 1;
+}
+
+notification-actions {
+    display: flex;
+    gap: 6;
+    margin-top: 8;
+}
+
+notification-action {
+    display: flex;
+    padding-left: 8;
+    padding-right: 8;
+    height: 24;
+    border-radius: 6;
+    font-size: 12;
+    align-items: center;
+    background: rgba(60, 120, 220, 0.12);
+    color: rgba(200, 220, 255, 0.85);
+}
+
 /* ── Launcher ──────────────────────────────────────── */
 
 launcher-overlay {
@@ -435,8 +483,8 @@ launcher-overlay {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    right: 0;
+    bottom: 0;
     align-items: center;
     justify-content: center;
     z-index: 30;
@@ -448,7 +496,7 @@ launcher {
     flex-direction: column;
     width: 480;
     max-height: 600;
-    padding: 18;
+    padding: 16;
     border-radius: 18;
     background: rgba(14, 18, 42, 0.88);
     border-color: rgba(60, 120, 220, 0.14);
@@ -459,7 +507,7 @@ launcher {
 }
 
 launcher-search {
-    height: 38;
+    height: 36;
     padding-left: 14;
     padding-right: 14;
     border-radius: 10;
@@ -468,7 +516,7 @@ launcher-search {
     border-width: 1;
     color: rgba(220, 235, 255, 1.0);
     font-size: 14;
-    margin-bottom: 10;
+    margin-bottom: 8;
 }
 
 launcher-results {
@@ -499,6 +547,17 @@ launcher-item.selected {
     box-shadow-color: rgba(40, 100, 220, 0.15);
 }
 
+launcher-item-icon {
+    display: flex;
+    width: 24;
+    height: 24;
+    margin-right: 10;
+}
+
+launcher-item-label {
+    flex-grow: 1;
+}
+
 /* ── Menus (context, session, app) ─────────────────── */
 
 context-menu {
@@ -506,7 +565,7 @@ context-menu {
     flex-direction: column;
     position: fixed;
     z-index: 25;
-    padding: 5;
+    padding: 4;
     border-radius: 10;
     background: rgba(16, 22, 46, 0.92);
     border-color: rgba(60, 120, 220, 0.16);
@@ -526,7 +585,7 @@ session-menu {
     flex-direction: column;
     position: fixed;
     z-index: 25;
-    padding: 5;
+    padding: 4;
     border-radius: 10;
     background: rgba(16, 22, 46, 0.92);
     border-color: rgba(60, 120, 220, 0.16);
@@ -546,7 +605,7 @@ app-menu {
     flex-direction: column;
     position: fixed;
     z-index: 25;
-    padding: 5;
+    padding: 4;
     border-radius: 10;
     background: rgba(16, 22, 46, 0.92);
     border-color: rgba(60, 120, 220, 0.16);
@@ -564,10 +623,10 @@ app-menu {
 menu-item {
     display: flex;
     align-items: center;
-    height: 30;
+    height: 28;
     padding-left: 12;
     padding-right: 12;
-    border-radius: 7;
+    border-radius: 6;
     color: rgba(200, 220, 255, 1.0);
     font-size: 13;
     overflow: hidden;
@@ -582,6 +641,45 @@ menu-item:hover {
 
 menu-item.disabled {
     color: rgba(140, 160, 200, 0.35);
+}
+
+menu-item-icon {
+    display: flex;
+    width: 16;
+    height: 16;
+    margin-right: 8;
+}
+
+menu-item-label {
+    flex-grow: 1;
+}
+
+menu-item-shortcut {
+    color: rgba(160, 185, 255, 0.45);
+    font-size: 11;
+    margin-left: 12;
+}
+
+/* ── Tooltip ───────────────────────────────────────── */
+
+tooltip {
+    position: fixed;
+    z-index: 6000;
+    pointer-events: none;
+    max-width: 300;
+}
+
+tooltip-content {
+    background: rgba(16, 20, 40, 0.95);
+    color: rgba(200, 220, 255, 0.9);
+    padding: 4 8;
+    border-radius: 6;
+    font-size: 12;
+    white-space: nowrap;
+}
+
+tooltip-arrow {
+    display: none;
 }
 
 menu-separator {
@@ -600,8 +698,8 @@ loading-overlay {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    right: 0;
+    bottom: 0;
     align-items: center;
     justify-content: center;
     z-index: 50;

@@ -310,6 +310,88 @@ pub fn midday_css() -> &'static str {
     themes::midday::CSS
 }
 
+// ── External CSS file loading ─────────────────────────────────────────────
+
+/// Map a theme preset ID to its external `.css` filename (without path).
+fn theme_id_to_filename(theme_id: &str) -> Option<&'static str> {
+    match theme_id {
+        "liquid-glass" | "standard" => Some("liquid_glass.css"),
+        "night" | "default" => Some("night.css"),
+        "sunset" => Some("sunset.css"),
+        "midday" => Some("midday.css"),
+        _ => None,
+    }
+}
+
+/// Get the embedded (fallback) CSS for a theme preset ID.
+fn embedded_css_for_id(theme_id: &str) -> Option<&'static str> {
+    themes::ThemePreset::from_id(theme_id).map(|p| p.css())
+}
+
+/// Load a theme by ID, preferring an external `.css` file from `assets_dir`.
+///
+/// Resolution order:
+/// 1. Try `{assets_dir}/themes/{theme_name}.css` on disk.
+/// 2. Fall back to the embedded `const CSS` from the `themes/` module.
+///
+/// Returns the CSS text as an owned `String`. If neither source is
+/// available, returns `None`.
+pub fn resolve_theme_css(theme_id: &str, assets_dir: &std::path::Path) -> Option<String> {
+    // 1. Try external file
+    if let Some(filename) = theme_id_to_filename(theme_id) {
+        let css_path = assets_dir.join("themes").join(filename);
+        if css_path.is_file() {
+            match std::fs::read_to_string(&css_path) {
+                Ok(css) => {
+                    info!("Loaded external theme CSS from {}", css_path.display());
+                    return Some(css);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to read external theme {}: {}, falling back to embedded",
+                        css_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    // 2. Fall back to embedded CSS
+    embedded_css_for_id(theme_id).map(|css| {
+        info!("Using embedded CSS for theme '{}'", theme_id);
+        css.to_string()
+    })
+}
+
+/// Load a theme into a [`liquide_style_engine::StyleEngine`], with optional
+/// user overrides.
+///
+/// * Tries external CSS file first, falls back to embedded.
+/// * Loads `{config_dir}/custom.css` last (if it exists) so user rules win.
+pub fn load_theme_into_engine(
+    engine: &mut liquide_style_engine::StyleEngine,
+    theme_id: &str,
+    assets_dir: &std::path::Path,
+    config_dir: Option<&std::path::Path>,
+) {
+    // Load theme CSS (external → embedded fallback)
+    if let Some(css) = resolve_theme_css(theme_id, assets_dir) {
+        engine.add_stylesheet(&css);
+    } else {
+        warn!(
+            "Theme '{}' not found externally or embedded; using Night fallback",
+            theme_id
+        );
+        engine.add_stylesheet(default_theme_css());
+    }
+
+    // Load user overrides last
+    if let Some(cfg) = config_dir {
+        engine.load_user_overrides(cfg);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

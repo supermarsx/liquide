@@ -15,8 +15,8 @@ desktop-background {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    right: 0;
+    bottom: 0;
 }
 
 /* ── Status bar ── */
@@ -26,18 +26,21 @@ statusbar {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 28;
-    padding-left: 8;
-    padding-right: 8;
+    right: 0;
+    height: 34;
+    padding-left: 12;
+    padding-right: 12;
     align-items: center;
+    justify-content: space-between;
     z-index: 10;
-    background: rgba(0, 0, 0, 0.95);
-    border-bottom-color: rgba(255, 255, 255, 0.05);
+    background: linear-gradient(180deg, rgba(8, 8, 12, 0.88), rgba(4, 4, 8, 0.82));
+    border-bottom-color: rgba(255, 255, 255, 0.06);
     border-bottom-width: 1;
     color: rgba(255, 255, 255, 1.0);
     font-size: 13;
-    blur-radius: 5;
+    font-weight: 500;
+    blur-radius: 24;
+    glass-tint: rgba(6, 6, 10, 0.80);
 }
 
 statusbar-slot {
@@ -50,7 +53,7 @@ statusbar-slot {
 }
 
 statusbar-slot.left { justify-content: flex-start; }
-statusbar-slot.center { justify-content: center; }
+statusbar-slot.center { justify-content: center; flex-grow: 0; flex-shrink: 0; flex-basis: auto; }
 statusbar-slot.right { justify-content: flex-end; }
 
 statusbar-item {
@@ -63,10 +66,97 @@ statusbar-item {
     white-space: nowrap;
 }
 
+/* ── Logo / brand area ── */
+
+statusbar-logo {
+    display: flex;
+    align-items: center;
+    gap: 6;
+    padding-left: 6;
+    padding-right: 10;
+    height: 24;
+    border-radius: 7;
+    font-weight: 700;
+    font-size: 13;
+    color: rgba(10, 132, 255, 1.0);
+}
+
+statusbar-logo:hover {
+    background: rgba(10, 132, 255, 0.15);
+    color: rgba(64, 156, 255, 1.0);
+}
+
+/* ── Status indicators ── */
+
+status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4;
+    padding-left: 8;
+    padding-right: 8;
+    height: 22;
+    border-radius: 6;
+    font-size: 12;
+    color: rgba(255, 255, 255, 0.60);
+}
+
+status-indicator:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.85);
+}
+
 status-indicator.connected { color: rgb(48, 209, 88); }
 status-indicator.degraded { color: rgb(255, 214, 10); }
+status-indicator.disconnected { color: rgb(142, 142, 147); }
+
+/* ── Notification indicator ── */
+
+notification-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22;
+    height: 22;
+    padding-left: 6;
+    padding-right: 6;
+    border-radius: 11;
+    font-size: 11;
+    font-weight: 600;
+    color: rgba(100, 210, 255, 0.55);
+}
+
+notification-indicator:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
 notification-indicator.active { color: rgb(255, 69, 58); }
-notification-indicator { color: rgba(100, 210, 255, 0.55); }
+
+notification-indicator.dnd {
+    background: rgba(255, 149, 0, 0.15);
+    color: rgb(255, 179, 64);
+}
+
+/* ── Session / user button ── */
+
+session-button {
+    display: flex;
+    align-items: center;
+    gap: 6;
+    padding-left: 8;
+    padding-right: 10;
+    height: 24;
+    border-radius: 12;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.08);
+    border-width: 1;
+    font-size: 12;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.90);
+}
+
+session-button:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
 
 status-tray {
     background: rgba(255, 255, 255, 0.08);
@@ -178,17 +268,18 @@ dock {
     position: fixed;
     bottom: 0;
     left: 0;
-    width: 100%;
+    right: 0;
     height: 56;
     justify-content: center;
     align-items: center;
     gap: 4;
     padding-left: 12;
     padding-right: 12;
-    background: rgba(10, 10, 10, 0.88);
-    border-top-color: rgba(255, 255, 255, 0.05);
+    background: linear-gradient(0deg, rgba(4, 4, 8, 0.85), rgba(8, 8, 12, 0.78));
+    border-top-color: rgba(255, 255, 255, 0.06);
     border-top-width: 1;
-    blur-radius: 10;
+    blur-radius: 24;
+    glass-tint: rgba(6, 6, 10, 0.78);
 }
 
 dock-item {
@@ -204,13 +295,32 @@ dock-item {
 dock-item.active { color: rgba(255, 255, 255, 1.0); }
 dock-item:hover { background: rgba(255, 255, 255, 0.10); }
 
+dock-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-grow: 1;
+}
+
+dock-item-label {
+    display: none;
+}
+
+dock-indicator {
+    display: flex;
+    width: 4;
+    height: 4;
+    border-radius: 2;
+    background: rgba(10, 132, 255, 0.80);
+}
+
 /* ── Workspace container ── */
 
 workspace-container {
     position: fixed;
-    top: 28;
+    top: 34;
     left: 0;
-    width: 100%;
+    right: 0;
     bottom: 56;
     overflow: hidden;
 }
@@ -249,6 +359,36 @@ notification-body {
     color: rgba(255, 255, 255, 0.70);
 }
 
+notification-icon {
+    display: flex;
+    width: 32;
+    height: 32;
+    margin-right: 10;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+notification-content {
+    flex-grow: 1;
+}
+
+notification-actions {
+    display: flex;
+    gap: 6;
+    margin-top: 8;
+}
+
+notification-action {
+    display: flex;
+    padding-left: 8;
+    padding-right: 8;
+    height: 24;
+    border-radius: 6;
+    font-size: 12;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.8);
+}
+
 /* ── Launcher ── */
 
 launcher-overlay {
@@ -256,8 +396,8 @@ launcher-overlay {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    right: 0;
+    bottom: 0;
     align-items: center;
     justify-content: center;
     z-index: 30;
@@ -307,6 +447,17 @@ launcher-item {
 
 launcher-item:hover { background: rgba(255, 255, 255, 0.06); }
 launcher-item.selected { background: rgba(10, 132, 255, 0.25); }
+
+launcher-item-icon {
+    display: flex;
+    width: 24;
+    height: 24;
+    margin-right: 10;
+}
+
+launcher-item-label {
+    flex-grow: 1;
+}
 
 /* ── Menus ── */
 
@@ -375,6 +526,45 @@ menu-item {
 menu-item:hover { background: rgba(10, 132, 255, 0.25); }
 menu-item.disabled { color: rgba(255, 255, 255, 0.30); }
 
+menu-item-icon {
+    display: flex;
+    width: 16;
+    height: 16;
+    margin-right: 8;
+}
+
+menu-item-label {
+    flex-grow: 1;
+}
+
+menu-item-shortcut {
+    color: rgba(255, 255, 255, 0.40);
+    font-size: 11;
+    margin-left: 12;
+}
+
+/* ── Tooltip ── */
+
+tooltip {
+    position: fixed;
+    z-index: 6000;
+    pointer-events: none;
+    max-width: 300;
+}
+
+tooltip-content {
+    background: rgba(30, 30, 30, 0.95);
+    color: rgba(255, 255, 255, 0.9);
+    padding: 4 8;
+    border-radius: 6;
+    font-size: 12;
+    white-space: nowrap;
+}
+
+tooltip-arrow {
+    display: none;
+}
+
 menu-separator {
     height: 1;
     margin-top: 4;
@@ -391,8 +581,8 @@ loading-overlay {
     position: fixed;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    right: 0;
+    bottom: 0;
     align-items: center;
     justify-content: center;
     z-index: 50;
