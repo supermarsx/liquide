@@ -393,7 +393,7 @@ impl Dock {
     pub fn compute_bounds(&self, screen: Rect) -> Rect {
         let icon = self.config.icon_size as f32;
         let count = self.items.len().max(1) as f32;
-        let pad = 12.0_f32; // horizontal/vertical padding around items
+        let pad = 8.0_f32; // horizontal/vertical padding around items
         match self.config.position {
             DockPosition::Bottom => {
                 let w = count * icon + pad * 2.0;
@@ -422,7 +422,7 @@ impl Dock {
     #[must_use]
     pub fn compute_item_rects(&self, screen: Rect) -> Vec<(usize, Rect)> {
         let icon = self.config.icon_size as f32;
-        let pad = 12.0_f32;
+        let pad = 8.0_f32;
         let bounds = self.compute_bounds(screen);
         let mut rects = Vec::new();
         for (i, _item) in self.items.iter().enumerate() {

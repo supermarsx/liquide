@@ -26,9 +26,12 @@ pub mod class_list;
 pub mod dirty;
 pub mod document;
 pub mod events;
+pub mod html_parser;
 pub mod node;
 pub mod pseudo;
 pub mod tag;
+pub mod template;
+pub mod template_registry;
 pub mod visitor;
 
 pub use attrs::AttributeMap;

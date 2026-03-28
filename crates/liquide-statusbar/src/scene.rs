@@ -62,7 +62,7 @@ pub struct StatusBarLayout {
 impl Default for StatusBarLayout {
     fn default() -> Self {
         Self {
-            height: 28.0,
+            height: 34.0,
             padding: 8.0,
             border_height: 2.0,
             blur_radius: 15,

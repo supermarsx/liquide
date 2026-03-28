@@ -37,7 +37,7 @@ impl Default for StatusBarConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            height: 28.0,
+            height: 34.0,
             show_app_menu: true,
             app_name: "Liquide".into(),
             show_clock: true,

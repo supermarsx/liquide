@@ -134,3 +134,258 @@ pub fn status_bar_menu() -> Vec<MenuItem> {
         MenuItem::action("Quick Settings", ACTION_OPEN_QUICK_SETTINGS),
     ]
 }
+
+// ---------------------------------------------------------------------------
+// Extended action tag constants
+// ---------------------------------------------------------------------------
+
+// File context menu actions (500–599)
+pub const ACTION_OPEN_FILE: MenuAction = MenuAction(500);
+pub const ACTION_OPEN_WITH: MenuAction = MenuAction(501);
+pub const ACTION_CUT_FILE: MenuAction = MenuAction(502);
+pub const ACTION_COPY_FILE: MenuAction = MenuAction(503);
+pub const ACTION_PASTE_FILE: MenuAction = MenuAction(504);
+pub const ACTION_RENAME_FILE: MenuAction = MenuAction(505);
+pub const ACTION_MOVE_TO_TRASH: MenuAction = MenuAction(506);
+pub const ACTION_FILE_PROPERTIES: MenuAction = MenuAction(507);
+pub const ACTION_COMPRESS: MenuAction = MenuAction(508);
+pub const ACTION_OPEN_IN_TERMINAL: MenuAction = MenuAction(509);
+pub const ACTION_COPY_PATH: MenuAction = MenuAction(510);
+
+// Text editing context menu actions (600–699)
+pub const ACTION_UNDO: MenuAction = MenuAction(600);
+pub const ACTION_REDO: MenuAction = MenuAction(601);
+pub const ACTION_CUT_TEXT: MenuAction = MenuAction(602);
+pub const ACTION_COPY_TEXT: MenuAction = MenuAction(603);
+pub const ACTION_PASTE_TEXT: MenuAction = MenuAction(604);
+pub const ACTION_SELECT_ALL: MenuAction = MenuAction(605);
+pub const ACTION_DELETE_TEXT: MenuAction = MenuAction(606);
+
+// Desktop extended actions (150–199)
+pub const ACTION_NEW_FOLDER: MenuAction = MenuAction(150);
+pub const ACTION_PASTE_ON_DESKTOP: MenuAction = MenuAction(151);
+pub const ACTION_SORT_BY_NAME: MenuAction = MenuAction(152);
+pub const ACTION_SORT_BY_DATE: MenuAction = MenuAction(153);
+pub const ACTION_SORT_BY_SIZE: MenuAction = MenuAction(154);
+pub const ACTION_SORT_BY_TYPE: MenuAction = MenuAction(155);
+
+// Window titlebar extended (210–249)
+pub const ACTION_MOVE_WINDOW: MenuAction = MenuAction(210);
+pub const ACTION_RESIZE_WINDOW: MenuAction = MenuAction(211);
+
+// Open With submenu entries (520–539)
+pub const ACTION_OPEN_WITH_TEXT_EDITOR: MenuAction = MenuAction(520);
+pub const ACTION_OPEN_WITH_IMAGE_VIEWER: MenuAction = MenuAction(521);
+pub const ACTION_OPEN_WITH_BROWSER: MenuAction = MenuAction(522);
+pub const ACTION_OPEN_WITH_OTHER: MenuAction = MenuAction(523);
+
+// ---------------------------------------------------------------------------
+// Extended preset menus
+// ---------------------------------------------------------------------------
+
+/// Enhanced desktop right-click context menu with submenus and separators.
+///
+/// Includes: Change Wallpaper, Display Settings, Sort By submenu,
+/// Paste, New Folder, Open Terminal, Settings.
+pub fn desktop_context_menu() -> Vec<MenuItem> {
+    vec![
+        MenuItem::action_with_icon(
+            "Change Wallpaper",
+            "camera",
+            ACTION_CHANGE_WALLPAPER,
+        ),
+        MenuItem::action_with_icon(
+            "Display Settings",
+            "preferences-system",
+            ACTION_DISPLAY_SETTINGS,
+        ),
+        MenuItem::separator(),
+        MenuItem::submenu("Sort By", vec![
+            MenuItem::radio("Name", ACTION_SORT_BY_NAME, 1, true),
+            MenuItem::radio("Date Modified", ACTION_SORT_BY_DATE, 1, false),
+            MenuItem::radio("Size", ACTION_SORT_BY_SIZE, 1, false),
+            MenuItem::radio("Type", ACTION_SORT_BY_TYPE, 1, false),
+        ]),
+        MenuItem::separator(),
+        MenuItem::action_with_icon("Paste", "edit-paste", ACTION_PASTE_ON_DESKTOP)
+            .with_shortcut("Ctrl+V"),
+        MenuItem::action_with_icon("New Folder", "folder-new", ACTION_NEW_FOLDER)
+            .with_shortcut("Ctrl+Shift+N"),
+        MenuItem::separator(),
+        MenuItem::action_with_icon(
+            "Open Terminal Here",
+            "terminal",
+            ACTION_OPEN_TERMINAL_HERE,
+        ),
+        MenuItem::action_with_icon(
+            "Settings",
+            "preferences-system",
+            ACTION_OPEN_SETTINGS,
+        ),
+    ]
+}
+
+/// File / folder right-click context menu.
+///
+/// # Parameters
+/// - `is_dir`: if true, "Open" label changes to "Open Folder"
+/// - `selection_count`: number of selected items (affects plural labels)
+pub fn file_context_menu(is_dir: bool, selection_count: u32) -> Vec<MenuItem> {
+    let open_label = if is_dir { "Open Folder" } else { "Open" };
+    let delete_label = if selection_count > 1 {
+        format!("Move {} Items to Trash", selection_count)
+    } else {
+        "Move to Trash".to_string()
+    };
+
+    let mut items = vec![
+        MenuItem::action_with_icon(open_label, "document-open", ACTION_OPEN_FILE),
+    ];
+
+    if !is_dir {
+        items.push(
+            MenuItem::submenu("Open With", vec![
+                MenuItem::action_with_icon(
+                    "Text Editor",
+                    "text-editor",
+                    ACTION_OPEN_WITH_TEXT_EDITOR,
+                ),
+                MenuItem::action_with_icon(
+                    "Image Viewer",
+                    "image-viewer",
+                    ACTION_OPEN_WITH_IMAGE_VIEWER,
+                ),
+                MenuItem::action_with_icon(
+                    "Web Browser",
+                    "web-browser",
+                    ACTION_OPEN_WITH_BROWSER,
+                ),
+                MenuItem::separator(),
+                MenuItem::action("Other Application...", ACTION_OPEN_WITH_OTHER),
+            ]),
+        );
+    }
+
+    items.extend([
+        MenuItem::separator(),
+        MenuItem::action_with_icon("Cut", "edit-cut", ACTION_CUT_FILE)
+            .with_shortcut("Ctrl+X"),
+        MenuItem::action_with_icon("Copy", "edit-copy", ACTION_COPY_FILE)
+            .with_shortcut("Ctrl+C"),
+        MenuItem::action_with_icon("Paste", "edit-paste", ACTION_PASTE_FILE)
+            .with_shortcut("Ctrl+V"),
+        MenuItem::separator(),
+        MenuItem::action("Rename", ACTION_RENAME_FILE).with_shortcut("F2"),
+        MenuItem::action(&delete_label, ACTION_MOVE_TO_TRASH)
+            .with_shortcut("Del")
+            .with_danger(true),
+        MenuItem::separator(),
+        MenuItem::action("Copy Path", ACTION_COPY_PATH),
+        MenuItem::action_with_icon("Compress", "package-x-generic", ACTION_COMPRESS),
+    ]);
+
+    if is_dir {
+        items.push(
+            MenuItem::action_with_icon(
+                "Open in Terminal",
+                "terminal",
+                ACTION_OPEN_IN_TERMINAL,
+            ),
+        );
+    }
+
+    items.push(MenuItem::separator());
+    items.push(
+        MenuItem::action_with_icon("Properties", "document-properties", ACTION_FILE_PROPERTIES)
+            .with_shortcut("Alt+Enter"),
+    );
+
+    items
+}
+
+/// Text editing context menu.
+///
+/// # Parameters
+/// - `has_selection`: whether text is currently selected (enables Cut/Copy/Delete)
+/// - `is_editable`: whether the text field is editable (enables Cut/Paste/Undo/Redo)
+pub fn text_context_menu(has_selection: bool, is_editable: bool) -> Vec<MenuItem> {
+    let mut items = Vec::new();
+
+    if is_editable {
+        items.push(
+            MenuItem::action_with_icon("Undo", "edit-undo", ACTION_UNDO)
+                .with_shortcut("Ctrl+Z"),
+        );
+        items.push(
+            MenuItem::action_with_icon("Redo", "edit-redo", ACTION_REDO)
+                .with_shortcut("Ctrl+Y"),
+        );
+        items.push(MenuItem::separator());
+    }
+
+    if is_editable {
+        items.push(
+            MenuItem::action_with_icon("Cut", "edit-cut", ACTION_CUT_TEXT)
+                .with_shortcut("Ctrl+X")
+                .with_disabled(!has_selection),
+        );
+    }
+
+    items.push(
+        MenuItem::action_with_icon("Copy", "edit-copy", ACTION_COPY_TEXT)
+            .with_shortcut("Ctrl+C")
+            .with_disabled(!has_selection),
+    );
+
+    if is_editable {
+        items.push(
+            MenuItem::action_with_icon("Paste", "edit-paste", ACTION_PASTE_TEXT)
+                .with_shortcut("Ctrl+V"),
+        );
+    }
+
+    if has_selection && is_editable {
+        items.push(
+            MenuItem::action("Delete", ACTION_DELETE_TEXT)
+                .with_shortcut("Del")
+                .with_danger(true),
+        );
+    }
+
+    items.push(MenuItem::separator());
+    items.push(
+        MenuItem::action("Select All", ACTION_SELECT_ALL)
+            .with_shortcut("Ctrl+A"),
+    );
+
+    items
+}
+
+/// Enhanced window titlebar context menu.
+///
+/// Includes: Minimize, Maximize, Move, Resize, Always on Top (toggle), Close.
+pub fn window_titlebar_menu() -> Vec<MenuItem> {
+    vec![
+        MenuItem::action_with_icon("Minimize", "window-minimize", ACTION_MINIMIZE_WINDOW)
+            .with_shortcut("Super+H"),
+        MenuItem::action_with_icon("Maximize", "window-maximize", ACTION_MAXIMIZE_WINDOW)
+            .with_shortcut("Super+Up"),
+        MenuItem::action("Restore", ACTION_RESTORE_WINDOW),
+        MenuItem::separator(),
+        MenuItem::action("Move", ACTION_MOVE_WINDOW),
+        MenuItem::action("Resize", ACTION_RESIZE_WINDOW),
+        MenuItem::separator(),
+        MenuItem::action("Tile Left", ACTION_TILE_LEFT)
+            .with_shortcut("Super+Left"),
+        MenuItem::action("Tile Right", ACTION_TILE_RIGHT)
+            .with_shortcut("Super+Right"),
+        MenuItem::action("Fullscreen", ACTION_FULLSCREEN_TOGGLE)
+            .with_shortcut("F11"),
+        MenuItem::separator(),
+        MenuItem::checkbox("Always on Top", ACTION_ALWAYS_ON_TOP, false),
+        MenuItem::separator(),
+        MenuItem::action("Close", ACTION_CLOSE_WINDOW)
+            .with_shortcut("Alt+F4")
+            .with_danger(true),
+    ]
+}

@@ -66,9 +66,24 @@ pub enum MenuItemKind {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct MenuSeparator;
 
+/// Unique identifier for a menu item, used for hit-testing and action dispatch.
+pub type MenuItemId = u32;
+
 /// A single entry in a context menu.
+///
+/// Items can be normal actions, toggles, radio buttons, separators, or
+/// submenu parents. The builder methods allow fluent construction:
+///
+/// ```ignore
+/// MenuItem::action("Copy", MenuAction(1))
+///     .with_icon("edit-copy")
+///     .with_shortcut("Ctrl+C")
+///     .with_tooltip("Copy selection to clipboard");
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MenuItem {
+    /// Unique action ID used for hit-testing and action dispatch.
+    pub id: MenuItemId,
     /// Display label.
     pub label: String,
     /// Optional icon name (resolved elsewhere).
@@ -79,17 +94,47 @@ pub struct MenuItem {
     pub disabled: bool,
     /// Optional keyboard shortcut hint displayed on the right.
     pub shortcut_hint: Option<String>,
+    /// If `Some`, this item renders a checkbox indicator.
+    /// `Some(true)` = checked, `Some(false)` = unchecked, `None` = no checkbox.
+    pub checked: Option<bool>,
+    /// If `Some`, this item is part of a radio button group.
+    /// Only one item in the group can be active at a time.
+    pub radio_group: Option<u32>,
+    /// This item is rendered as a horizontal separator line.
+    pub separator: bool,
+    /// Destructive action — rendered in a danger color (typically red).
+    pub danger: bool,
+    /// Tooltip text shown on prolonged hover.
+    pub tooltip: Option<String>,
+}
+
+/// Global counter for auto-assigned item IDs.
+static NEXT_ITEM_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// Reset the global item ID counter (useful for deterministic tests).
+pub fn reset_item_id_counter() {
+    NEXT_ITEM_ID.store(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn next_item_id() -> MenuItemId {
+    NEXT_ITEM_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl MenuItem {
     /// Create a simple action item.
     pub fn action(label: impl Into<String>, action: MenuAction) -> Self {
         Self {
+            id: next_item_id(),
             label: label.into(),
             icon: None,
             kind: MenuItemKind::Action(action),
             disabled: false,
             shortcut_hint: None,
+            checked: None,
+            radio_group: None,
+            separator: false,
+            danger: false,
+            tooltip: None,
         }
     }
 
@@ -100,22 +145,89 @@ impl MenuItem {
         action: MenuAction,
     ) -> Self {
         Self {
+            id: next_item_id(),
             label: label.into(),
             icon: Some(icon.into()),
             kind: MenuItemKind::Action(action),
             disabled: false,
             shortcut_hint: None,
+            checked: None,
+            radio_group: None,
+            separator: false,
+            danger: false,
+            tooltip: None,
         }
     }
 
     /// Create a submenu item.
     pub fn submenu(label: impl Into<String>, children: Vec<MenuItem>) -> Self {
         Self {
+            id: next_item_id(),
             label: label.into(),
             icon: None,
             kind: MenuItemKind::Submenu(children),
             disabled: false,
             shortcut_hint: None,
+            checked: None,
+            radio_group: None,
+            separator: false,
+            danger: false,
+            tooltip: None,
+        }
+    }
+
+    /// Create a separator item (horizontal line).
+    #[must_use]
+    pub fn separator() -> Self {
+        Self {
+            id: next_item_id(),
+            label: String::new(),
+            icon: None,
+            kind: MenuItemKind::Action(MenuAction(0)),
+            disabled: true,
+            shortcut_hint: None,
+            checked: None,
+            radio_group: None,
+            separator: true,
+            danger: false,
+            tooltip: None,
+        }
+    }
+
+    /// Create a checkbox item.
+    pub fn checkbox(label: impl Into<String>, action: MenuAction, checked: bool) -> Self {
+        Self {
+            id: next_item_id(),
+            label: label.into(),
+            icon: None,
+            kind: MenuItemKind::Toggle { action, checked },
+            disabled: false,
+            shortcut_hint: None,
+            checked: Some(checked),
+            radio_group: None,
+            separator: false,
+            danger: false,
+            tooltip: None,
+        }
+    }
+
+    /// Create a radio button item in the given group.
+    pub fn radio(label: impl Into<String>, action: MenuAction, group: u32, selected: bool) -> Self {
+        Self {
+            id: next_item_id(),
+            label: label.into(),
+            icon: None,
+            kind: MenuItemKind::Toggle {
+                action,
+                checked: selected,
+            },
+            disabled: false,
+            shortcut_hint: None,
+            checked: Some(selected),
+            radio_group: Some(group),
+            separator: false,
+            danger: false,
+            tooltip: None,
         }
     }
 
@@ -132,6 +244,82 @@ impl MenuItem {
         self.disabled = disabled;
         self
     }
+
+    /// Builder: set the icon name.
+    #[must_use]
+    pub fn with_icon(mut self, icon: impl Into<String>) -> Self {
+        self.icon = Some(icon.into());
+        self
+    }
+
+    /// Builder: mark this item as a destructive / danger action.
+    #[must_use]
+    pub fn with_danger(mut self, danger: bool) -> Self {
+        self.danger = danger;
+        self
+    }
+
+    /// Builder: set tooltip text.
+    #[must_use]
+    pub fn with_tooltip(mut self, tip: impl Into<String>) -> Self {
+        self.tooltip = Some(tip.into());
+        self
+    }
+
+    /// Builder: set an explicit item ID (overriding auto-assigned).
+    #[must_use]
+    pub fn with_id(mut self, id: MenuItemId) -> Self {
+        self.id = id;
+        self
+    }
+
+    /// Builder: set checked state for checkbox/toggle items.
+    #[must_use]
+    pub fn with_checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
+        if let MenuItemKind::Toggle {
+            checked: ref mut c, ..
+        } = self.kind
+        {
+            *c = checked;
+        }
+        self
+    }
+
+    /// Builder: assign this item to a radio group.
+    #[must_use]
+    pub fn with_radio_group(mut self, group: u32) -> Self {
+        self.radio_group = Some(group);
+        self
+    }
+
+    /// Whether this item has a submenu.
+    #[must_use]
+    pub fn has_submenu(&self) -> bool {
+        matches!(self.kind, MenuItemKind::Submenu(_))
+    }
+
+    /// Whether this item can be activated (not separator, not disabled).
+    #[must_use]
+    pub fn is_activatable(&self) -> bool {
+        !self.separator && !self.disabled
+    }
+
+    /// Whether this item is a separator.
+    #[must_use]
+    pub fn is_separator(&self) -> bool {
+        self.separator
+    }
+
+    /// Get the `MenuAction` for this item, if it is an action or toggle.
+    #[must_use]
+    pub fn action_id(&self) -> Option<MenuAction> {
+        match &self.kind {
+            MenuItemKind::Action(a) if !self.separator => Some(*a),
+            MenuItemKind::Toggle { action, .. } => Some(*action),
+            _ => None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -143,12 +331,121 @@ impl MenuItem {
 /// `ContextMenu` manages visibility, position, items, and hover state.
 /// The shell is responsible for translating `MenuAction` into its own
 /// action type.
+///
+/// # Builder pattern
+///
+/// Use the builder methods to construct a menu fluently:
+///
+/// ```ignore
+/// let menu = ContextMenu::builder()
+///     .add_item(MenuItem::action("Cut", MenuAction(1)).with_shortcut("Ctrl+X"))
+///     .add_item(MenuItem::action("Copy", MenuAction(2)).with_shortcut("Ctrl+C"))
+///     .add_separator()
+///     .add_item(MenuItem::action("Paste", MenuAction(3)).with_shortcut("Ctrl+V"))
+///     .build();
+/// ```
 pub struct ContextMenu {
     config: ContextMenuConfig,
     items: Vec<MenuItem>,
     visible: bool,
     position: Point,
     hover_index: Option<usize>,
+}
+
+/// Builder for constructing a [`ContextMenu`] fluently.
+pub struct ContextMenuBuilder {
+    items: Vec<MenuItem>,
+    config: ContextMenuConfig,
+}
+
+impl ContextMenuBuilder {
+    /// Create a new builder with default configuration.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            items: Vec::new(),
+            config: ContextMenuConfig::default(),
+        }
+    }
+
+    /// Set a custom config for the menu.
+    #[must_use]
+    pub fn config(mut self, config: ContextMenuConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Add a menu item.
+    #[must_use]
+    pub fn add_item(mut self, item: MenuItem) -> Self {
+        self.items.push(item);
+        self
+    }
+
+    /// Add a horizontal separator.
+    #[must_use]
+    pub fn add_separator(mut self) -> Self {
+        self.items.push(MenuItem::separator());
+        self
+    }
+
+    /// Add a submenu with the given label and children.
+    #[must_use]
+    pub fn add_submenu(
+        mut self,
+        label: impl Into<String>,
+        children: Vec<MenuItem>,
+    ) -> Self {
+        self.items.push(MenuItem::submenu(label, children));
+        self
+    }
+
+    /// Add a checkbox item.
+    #[must_use]
+    pub fn add_checkbox(
+        mut self,
+        label: impl Into<String>,
+        action: MenuAction,
+        checked: bool,
+    ) -> Self {
+        self.items.push(MenuItem::checkbox(label, action, checked));
+        self
+    }
+
+    /// Add a group of mutually exclusive radio items.
+    ///
+    /// `items` is a slice of `(label, action, selected)` tuples.
+    /// `group_id` links them as a radio group.
+    #[must_use]
+    pub fn add_radio_group(
+        mut self,
+        group_id: u32,
+        items: &[(&str, MenuAction, bool)],
+    ) -> Self {
+        for &(label, action, selected) in items {
+            self.items
+                .push(MenuItem::radio(label, action, group_id, selected));
+        }
+        self
+    }
+
+    /// Build the final `ContextMenu`.
+    #[must_use]
+    pub fn build(self) -> ContextMenu {
+        ContextMenu {
+            config: self.config,
+            items: self.items,
+            visible: false,
+            position: Point::new(0.0, 0.0),
+            hover_index: None,
+        }
+    }
+}
+
+impl Default for ContextMenuBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ContextMenu {
@@ -174,6 +471,12 @@ impl ContextMenu {
             position: Point::new(0.0, 0.0),
             hover_index: None,
         }
+    }
+
+    /// Start building a context menu with the builder pattern.
+    #[must_use]
+    pub fn builder() -> ContextMenuBuilder {
+        ContextMenuBuilder::new()
     }
 
     /// Replace the items in this menu.
@@ -216,10 +519,44 @@ impl ContextMenu {
         &self.items
     }
 
+    /// Mutable access to menu items.
+    pub fn items_mut(&mut self) -> &mut Vec<MenuItem> {
+        &mut self.items
+    }
+
     /// Current hover index.
     #[must_use]
     pub fn hover_index(&self) -> Option<usize> {
         self.hover_index
+    }
+
+    /// The menu configuration.
+    #[must_use]
+    pub fn config(&self) -> &ContextMenuConfig {
+        &self.config
+    }
+
+    /// The current menu position.
+    #[must_use]
+    pub fn position(&self) -> Point {
+        self.position
+    }
+
+    /// Count of actionable items (excludes separators).
+    #[must_use]
+    pub fn item_count(&self) -> usize {
+        self.items.iter().filter(|i| !i.separator).count()
+    }
+
+    /// Find a menu item by its unique `id`.
+    #[must_use]
+    pub fn find_item(&self, id: MenuItemId) -> Option<&MenuItem> {
+        find_item_recursive(&self.items, id)
+    }
+
+    /// Find a menu item by its unique `id` (mutable).
+    pub fn find_item_mut(&mut self, id: MenuItemId) -> Option<&mut MenuItem> {
+        find_item_mut_recursive(&mut self.items, id)
     }
 
     /// Compute the bounding rectangle of this menu on screen,
@@ -278,7 +615,7 @@ impl ContextMenu {
     pub fn activate_hovered(&self) -> Option<MenuAction> {
         let idx = self.hover_index?;
         let item = self.items.get(idx)?;
-        if item.disabled {
+        if item.disabled || item.separator {
             return None;
         }
         match &item.kind {
@@ -292,7 +629,7 @@ impl ContextMenu {
     #[must_use]
     pub fn activate_at(&self, index: usize) -> Option<MenuAction> {
         let item = self.items.get(index)?;
-        if item.disabled {
+        if item.disabled || item.separator {
             return None;
         }
         match &item.kind {
@@ -456,6 +793,38 @@ impl ContextMenu {
 
         Some(panel)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Recursive item search helpers
+// ---------------------------------------------------------------------------
+
+fn find_item_recursive(items: &[MenuItem], id: MenuItemId) -> Option<&MenuItem> {
+    for item in items {
+        if item.id == id {
+            return Some(item);
+        }
+        if let MenuItemKind::Submenu(ref children) = item.kind {
+            if let Some(found) = find_item_recursive(children, id) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn find_item_mut_recursive(items: &mut [MenuItem], id: MenuItemId) -> Option<&mut MenuItem> {
+    for item in items.iter_mut() {
+        if item.id == id {
+            return Some(item);
+        }
+        if let MenuItemKind::Submenu(ref mut children) = item.kind {
+            if let Some(found) = find_item_mut_recursive(children, id) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 impl std::fmt::Display for ContextMenu {

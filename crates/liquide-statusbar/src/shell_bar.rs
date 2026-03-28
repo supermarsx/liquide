@@ -45,7 +45,7 @@ impl Default for ShellBarConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            height: 28.0,
+            height: 34.0,
             show_clock: true,
             clock_format: "%H:%M".into(),
             show_tray: true,

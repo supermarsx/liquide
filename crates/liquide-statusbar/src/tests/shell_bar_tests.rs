@@ -230,7 +230,7 @@ fn status_bar_find_item_nonexistent() {
 #[test]
 fn status_bar_compute_bounds_top_position() {
     let bar = ShellStatusBar::new(ShellBarConfig {
-        height: 28.0,
+        height: 34.0,
         ..ShellBarConfig::default()
     });
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
@@ -238,7 +238,7 @@ fn status_bar_compute_bounds_top_position() {
     assert_eq!(bounds.x, 0.0);
     assert_eq!(bounds.y, 0.0);
     assert_eq!(bounds.width, 1920.0);
-    assert_eq!(bounds.height, 28.0);
+    assert_eq!(bounds.height, 34.0);
 }
 
 // ========== is_enabled ==========
