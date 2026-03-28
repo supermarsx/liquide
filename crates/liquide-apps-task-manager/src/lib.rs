@@ -27,6 +27,7 @@ pub mod services;
 pub mod shortcut;
 pub mod startup;
 pub mod system_events;
+pub mod system_monitor;
 pub mod ui;
 pub mod unlock;
 pub mod users;

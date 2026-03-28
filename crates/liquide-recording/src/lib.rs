@@ -1,5 +1,8 @@
 //! Session recording engine — captures tiles, audio, and input events
 //! into a structured recording format.
+//!
+//! Also provides screen-capture session management, frame buffering,
+//! GIF encoding, and streaming (screen-sharing) support.
 
 pub mod format;
 pub mod segment;
@@ -8,6 +11,11 @@ pub mod storage;
 pub mod retention;
 pub mod session;
 pub mod metadata;
+pub mod capture;
+pub mod capture_session;
+pub mod frame_buffer;
+pub mod gif_encoder;
+pub mod streaming;
 
 #[cfg(test)]
 mod tests;
@@ -19,6 +27,11 @@ pub use storage::{StorageBackend, MemoryStorage, FilePathStorage};
 pub use retention::{RetentionPolicy, RecordingEntry};
 pub use session::{RecordingSession, RecordingSessionConfig, RecordingStats};
 pub use metadata::{RecordingMetadata, Annotation, AccessLogEntry, AccessAction};
+pub use capture::{CaptureRegion, OutputFormat, RecordingQuality, RecordingConfig, RecordingResult};
+pub use capture_session::{CaptureSession, CaptureState};
+pub use frame_buffer::{CapturedFrame, FrameRingBuffer};
+pub use gif_encoder::GifEncoder;
+pub use streaming::{StreamConfig, StreamSession, StreamState};
 
 use thiserror::Error;
 

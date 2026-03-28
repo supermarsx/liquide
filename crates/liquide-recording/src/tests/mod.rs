@@ -6,3 +6,8 @@ mod retention_tests;
 mod session_tests;
 mod metadata_tests;
 mod edge_case_tests;
+mod capture_tests;
+mod capture_session_tests;
+mod frame_buffer_tests;
+mod gif_encoder_tests;
+mod streaming_tests;
