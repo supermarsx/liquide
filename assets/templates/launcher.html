@@ -1,20 +1,42 @@
-<!-- Launcher Component Template
-     Full-screen app launcher overlay.
-     Data attributes: data-app-id, data-icon, data-query, data-index
-     Classes: .selected (keyboard-selected item)
+<!-- LiquiDE Launcher Template
+     Full-screen application search/launch overlay.
+     Instantiated by DesktopDocument::show_launcher().
+     Appended as child of root.
+
+     Structure:
+       launcher-overlay (full-screen backdrop)
+         launcher (centered card)
+           launcher-search (search input)
+           launcher-results (scrollable item list)
+             launcher-item (per-application entry)
+
+     Data attributes:
+       data-app-id  — application identifier for launch
+       data-icon    — icon name for rendering
+       data-index   — item index for keyboard navigation
+       data-query   — current search query on launcher-search
+
+     Classes: .selected (keyboard-highlighted item)
+     Pseudo-states: :hover on hovered items
 -->
+
 <launcher-overlay id="launcher-overlay">
   <launcher id="shell-launcher">
-    <launcher-search id="launcher-search" data-query="">
-      Search…
+    <launcher-search id="launcher-search" data-query="{{query}}">
+      {{#if query}}
+      {{query}}
+      {{else}}
+      Search applications...
+      {{/if}}
     </launcher-search>
 
     <launcher-results>
-      <!-- Items generated dynamically -->
-      <launcher-item class="selected" data-app-id="files" data-icon="folder">
-        <launcher-item-icon data-icon="folder" />
-        <launcher-item-label>Files</launcher-item-label>
+      {{#each results}}
+      <launcher-item data-app-id="{{app_id}}" data-icon="{{icon}}" data-index="{{index}}" {{#if selected}}class="selected"{{/if}}>
+        <launcher-item-icon data-icon="{{icon}}" />
+        <launcher-item-label>{{label}}</launcher-item-label>
       </launcher-item>
+      {{/each}}
     </launcher-results>
   </launcher>
 </launcher-overlay>

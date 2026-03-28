@@ -1,0 +1,35 @@
+<!-- LiquiDE HeaderBar Component Template
+     App-level header bar with title and action buttons.
+     Maps to the HeaderBar model in liquide-app-components.
+
+     Data attributes:
+       data-action — action id on header-action buttons
+       data-icon   — icon name for rendering
+
+     Classes: .active (toggled action), .disabled (greyed out action)
+-->
+
+<header-bar id="{{id}}">
+  <header-bar-leading>
+    {{#each leading_actions}}
+    <header-action data-action="{{id}}" data-icon="{{icon}}" {{#if active}}class="active"{{/if}} {{#unless enabled}}class="disabled"{{/unless}}>
+      <header-action-icon data-icon="{{icon}}" />
+    </header-action>
+    {{/each}}
+  </header-bar-leading>
+
+  <header-bar-title-group>
+    <header-bar-title>{{title}}</header-bar-title>
+    {{#if subtitle}}
+    <header-bar-subtitle>{{subtitle}}</header-bar-subtitle>
+    {{/if}}
+  </header-bar-title-group>
+
+  <header-bar-trailing>
+    {{#each trailing_actions}}
+    <header-action data-action="{{id}}" data-icon="{{icon}}" {{#if active}}class="active"{{/if}} {{#unless enabled}}class="disabled"{{/unless}}>
+      <header-action-icon data-icon="{{icon}}" />
+    </header-action>
+    {{/each}}
+  </header-bar-trailing>
+</header-bar>

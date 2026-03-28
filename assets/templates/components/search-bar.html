@@ -1,0 +1,28 @@
+<!-- LiquiDE SearchBar Component Template
+     Reusable search input with optional toggles and result count.
+     Maps to the SearchBar model in liquide-app-components.
+
+     Data attributes:
+       data-query    — current search text (for programmatic read)
+       data-action   — "search" on input, "clear" on clear button,
+                        "toggle-regex" / "toggle-case" on toggles
+
+     Classes: .focused (input has focus), .has-query (non-empty query)
+-->
+
+<search-bar id="{{id}}" class="{{classes}}{{#if is_focused}} focused{{/if}}{{#if has_query}} has-query{{/if}}">
+  <search-icon />
+  <search-input placeholder="{{placeholder}}" data-query="{{query}}">{{query}}</search-input>
+  {{#if show_regex_toggle}}
+  <search-toggle data-action="toggle-regex" {{#if regex_enabled}}class="active"{{/if}}>.*</search-toggle>
+  {{/if}}
+  {{#if show_case_toggle}}
+  <search-toggle data-action="toggle-case" {{#if case_sensitive}}class="active"{{/if}}>Aa</search-toggle>
+  {{/if}}
+  {{#if result_count}}
+  <search-result-count>{{result_current}} of {{result_total}}</search-result-count>
+  {{/if}}
+  {{#if has_clear}}
+  <search-clear data-action="clear" />
+  {{/if}}
+</search-bar>

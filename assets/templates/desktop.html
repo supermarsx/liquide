@@ -1,0 +1,86 @@
+<!-- LiquiDE Desktop Shell
+     Root template for the entire desktop environment.
+     Instantiated once by DesktopDocument::new().
+
+     Elements: desktop-background, statusbar, workspace-container, dock,
+               notification-area. On-demand overlays (launcher, session-menu,
+               app-menu, context-menu) are appended to root dynamically.
+-->
+
+<desktop-background id="desktop-bg" />
+
+<statusbar id="shell-statusbar">
+  <statusbar-slot class="left" id="statusbar-slot-left">
+    <statusbar-logo id="logo">LiquiDE</statusbar-logo>
+    {{#each left_items}}
+    <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
+    {{/each}}
+  </statusbar-slot>
+
+  <statusbar-slot class="center" id="statusbar-slot-center">
+    {{#each center_items}}
+    <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
+    {{/each}}
+  </statusbar-slot>
+
+  <statusbar-slot class="right" id="statusbar-slot-right">
+    {{#each right_items}}
+    {{#if type_indicator}}
+    <notification-indicator id="{{id}}" class="{{classes}}">{{text}}</notification-indicator>
+    {{else}}
+    {{#if type_status}}
+    <status-indicator id="{{id}}" class="{{classes}}">{{text}}</status-indicator>
+    {{else}}
+    {{#if type_tray}}
+    <status-tray id="{{id}}" />
+    {{else}}
+    {{#if type_session}}
+    <session-button id="{{id}}">{{text}}</session-button>
+    {{else}}
+    <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
+    {{/if}}
+    {{/if}}
+    {{/if}}
+    {{/if}}
+    {{/each}}
+  </statusbar-slot>
+</statusbar>
+
+<workspace-container id="workspace-container">
+  {{#each windows}}
+  <!-- windows are inserted dynamically via add_window() -->
+  {{/each}}
+</workspace-container>
+
+<dock id="shell-dock">
+  {{#each dock_items}}
+  <dock-item data-app-id="{{app_id}}" data-label="{{label}}" data-icon="{{icon}}" data-index="{{index}}" {{#if is_running}}class="active{{#if is_pinned}} pinned{{/if}}"{{/if}}{{#unless is_running}}{{#if is_pinned}}class="pinned"{{/if}}{{/unless}}>
+    <dock-item-icon data-icon="{{icon}}" />
+    <dock-item-label>{{label}}</dock-item-label>
+    {{#if is_running}}
+    <dock-indicator class="running" />
+    {{/if}}
+  </dock-item>
+  {{/each}}
+</dock>
+
+<notification-area id="notification-area">
+  {{#each notifications}}
+  <notification id="{{id}}" class="{{urgency_class}}" data-key="{{id}}">
+    {{#if icon}}
+    <notification-icon data-icon="{{icon}}" />
+    {{/if}}
+    <notification-content>
+      <notification-title>{{title}}</notification-title>
+      <notification-body>{{body}}</notification-body>
+    </notification-content>
+    {{#if has_actions}}
+    <notification-actions>
+      {{#each actions}}
+      <notification-action data-action-id="{{action_id}}">{{label}}</notification-action>
+      {{/each}}
+    </notification-actions>
+    {{/if}}
+  </notification>
+  {{/each}}
+</notification-area>

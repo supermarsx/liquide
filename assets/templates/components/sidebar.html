@@ -1,0 +1,33 @@
+<!-- LiquiDE Sidebar Component Template
+     Section-based navigation sidebar.
+     Maps to the Sidebar model in liquide-app-components.
+
+     Data attributes:
+       data-action     — item id on sidebar-item for click handling
+       data-section    — section identifier
+       data-collapsed  — "true"/"false" on collapsed sidebar
+
+     Classes: .active (selected item), .collapsed (sidebar hidden),
+              .collapsible (can be collapsed)
+-->
+
+<sidebar id="{{id}}" class="{{position}}{{#if collapsed}} collapsed{{/if}}{{#if collapsible}} collapsible{{/if}}" data-collapsed="{{collapsed}}">
+  {{#each sections}}
+  <sidebar-section data-section="{{section_id}}">
+    {{#if title}}
+    <sidebar-section-title>{{title}}</sidebar-section-title>
+    {{/if}}
+    {{#each items}}
+    <sidebar-item data-action="{{id}}" {{#if active}}class="active"{{/if}}>
+      {{#if icon}}
+      <sidebar-item-icon data-icon="{{icon}}" />
+      {{/if}}
+      <sidebar-item-label>{{label}}</sidebar-item-label>
+      {{#if badge}}
+      <sidebar-item-badge>{{badge}}</sidebar-item-badge>
+      {{/if}}
+    </sidebar-item>
+    {{/each}}
+  </sidebar-section>
+  {{/each}}
+</sidebar>

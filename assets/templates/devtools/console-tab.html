@@ -1,0 +1,25 @@
+<!-- LiquiDE DevTools Console Tab Template
+     Interactive command console with log entries and input line.
+     Console entries are virtually scrolled.
+
+     Entry classes (on devtools-console-entry):
+       .info   — informational / input echo
+       .log    — standard output
+       .warn   — warning message
+       .error  — error message
+       .system — system message
+       .result — evaluation result
+
+     The input line has a ">" prompt and editable field.
+-->
+
+<devtools-console-log>
+  {{#each entries}}
+  <devtools-console-entry data-key="ce-{{index}}" class="{{kind}}">{{text}}</devtools-console-entry>
+  {{/each}}
+</devtools-console-log>
+
+<devtools-console-input {{#if console_focused}}class="focused"{{/if}}>
+  <devtools-console-prompt>&gt;</devtools-console-prompt>
+  <devtools-console-field>{{input_text}}</devtools-console-field>
+</devtools-console-input>

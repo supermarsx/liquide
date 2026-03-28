@@ -1,0 +1,24 @@
+<!-- LiquiDE TabBar Component Template
+     Horizontal tab strip for switching between views.
+     Used in apps like Settings, DevTools side-panels, etc.
+
+     Data attributes:
+       data-tab    — tab identifier for event dispatch
+       data-action — "select-tab" on tab click
+
+     Classes: .active (currently selected tab), .closable (has close button)
+-->
+
+<tab-bar id="{{id}}" class="{{classes}}">
+  {{#each tabs}}
+  <tab-item data-tab="{{id}}" data-action="select-tab" {{#if active}}class="active"{{/if}}>
+    {{#if icon}}
+    <tab-icon data-icon="{{icon}}" />
+    {{/if}}
+    <tab-label>{{label}}</tab-label>
+    {{#if closable}}
+    <tab-close data-action="close-tab" data-tab="{{id}}" />
+    {{/if}}
+  </tab-item>
+  {{/each}}
+</tab-bar>

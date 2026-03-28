@@ -1,0 +1,27 @@
+<!-- LiquiDE Window Template
+     Instantiated by DesktopDocument::add_window().
+     Appended as child of workspace-container.
+
+     Classes: .focused (active window), .maximized, .minimized
+     Pseudo-states: :focus on the window element when focused
+
+     Titlebar buttons: minimize-button, maximize-button, close-button
+     These match the DOM element names used in desktop_dom.rs and
+     the CSS selectors in the night theme.
+-->
+
+<window id="{{window_id}}" {{#if focused}}class="focused"{{/if}}>
+  <window-titlebar>
+    <window-title>{{title}}</window-title>
+    <titlebar-buttons>
+      <minimize-button data-action="minimize" />
+      <maximize-button data-action="maximize" />
+      <close-button data-action="close" />
+    </titlebar-buttons>
+  </window-titlebar>
+  <window-content>
+    {{#if has_app_content}}
+    {{app_content}}
+    {{/if}}
+  </window-content>
+</window>

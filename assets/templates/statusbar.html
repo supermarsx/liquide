@@ -1,26 +1,48 @@
-<!-- StatusBar Component Template
+<!-- LiquiDE StatusBar Component Template
      Three slots: left, center, right. Items placed by StatusBarComponent.
-     Item types map to tag names:
-       - statusbar-item: generic item (clock, etc.)
-       - notification-indicator: notification badge
-       - status-indicator: connection/status badge (.connected, .degraded, .disconnected)
-       - status-tray: system tray area
-       - session-button: user/session button
-       - statusbar-logo: OS logo
+     Rendered as CHILDREN of the existing <statusbar id="shell-statusbar">
+     element via apply_template().
+
+     Item tag names:
+       statusbar-item         — generic item (clock, etc.)
+       statusbar-logo         — OS logo / branding
+       notification-indicator — notification badge
+       status-indicator       — connection/status (.connected, .degraded, .disconnected)
+       status-tray            — system tray area
+       session-button         — user/session button
 -->
-<statusbar id="shell-statusbar">
-  <statusbar-slot class="left">
-    <statusbar-logo id="logo">LiquiDE</statusbar-logo>
-  </statusbar-slot>
 
-  <statusbar-slot class="center">
-    <statusbar-item id="clock">12:34</statusbar-item>
-  </statusbar-slot>
+<statusbar-slot class="left" id="statusbar-slot-left">
+  <statusbar-logo id="logo">LiquiDE</statusbar-logo>
+  {{#each left_items}}
+  <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
+  {{/each}}
+</statusbar-slot>
 
-  <statusbar-slot class="right">
-    <notification-indicator id="notifications" class="active">3</notification-indicator>
-    <status-indicator id="connection" class="connected">Connected</status-indicator>
-    <status-tray id="tray" />
-    <session-button id="session">User</session-button>
-  </statusbar-slot>
-</statusbar>
+<statusbar-slot class="center" id="statusbar-slot-center">
+  {{#each center_items}}
+  <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
+  {{/each}}
+</statusbar-slot>
+
+<statusbar-slot class="right" id="statusbar-slot-right">
+  {{#each right_items}}
+  {{#if type_notification}}
+  <notification-indicator id="{{id}}" class="{{classes}}">{{text}}</notification-indicator>
+  {{else}}
+  {{#if type_status}}
+  <status-indicator id="{{id}}" class="{{classes}}">{{text}}</status-indicator>
+  {{else}}
+  {{#if type_tray}}
+  <status-tray id="{{id}}" />
+  {{else}}
+  {{#if type_session}}
+  <session-button id="{{id}}">{{text}}</session-button>
+  {{else}}
+  <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
+  {{/if}}
+  {{/if}}
+  {{/if}}
+  {{/if}}
+  {{/each}}
+</statusbar-slot>

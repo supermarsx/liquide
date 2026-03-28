@@ -1,0 +1,60 @@
+<!-- LiquiDE DevTools Panel Template
+     Main developer tools panel layout.
+     Rendered by DevToolsPanel::render_template().
+
+     Dock positions (class on devtools-panel):
+       .dock-bottom   — anchored to bottom edge
+       .dock-right    — anchored to right edge
+       .dock-left     — anchored to left edge
+       .dock-float    — floating window
+       .dock-detached — separate window
+
+     Tabs: Elements, Console, Sources, Performance, Mutations, Scene.
+     The active tab panel is the only one with class="active".
+
+     Data attributes:
+       data-tab    — tab identifier on devtools-tab and devtools-tab-panel
+       data-action — action identifier on devtools-btn buttons
+       data-key    — reconciliation key for keyed children
+
+     Classes:
+       .active     — active tab / visible panel / toggled button
+       .selected   — selected element in tree
+       .hovered    — hovered element in tree
+       .dim        — dimmed text
+       .ok/.warn/.error — status coloring
+-->
+
+<devtools-panel id="devtools-panel" class="{{dock_class}}">
+  <!-- Toolbar: tab bar + action buttons -->
+  <devtools-toolbar>
+    <devtools-tabs>
+      {{#each tabs}}
+      <devtools-tab data-tab="{{id}}" data-key="tab-{{id}}" {{#if active}}class="active"{{/if}}>{{label}}</devtools-tab>
+      {{/each}}
+    </devtools-tabs>
+    <devtools-actions>
+      <devtools-btn data-action="picker" data-key="btn-picker" {{#if picker_active}}class="active"{{/if}}>&#x2295;</devtools-btn>
+      <devtools-btn data-action="detach" data-key="btn-detach" {{#if detached}}class="active"{{/if}}>&#x25EB;</devtools-btn>
+      <devtools-btn data-action="dock-bottom" data-key="btn-dock-bottom" {{#if dock_bottom}}class="active"{{/if}}>&#x22A5;</devtools-btn>
+      <devtools-btn data-action="dock-right" data-key="btn-dock-right" {{#if dock_right}}class="active"{{/if}}>&#x22A2;</devtools-btn>
+      <devtools-btn data-action="close" data-key="btn-close">&#x00D7;</devtools-btn>
+    </devtools-actions>
+  </devtools-toolbar>
+
+  <!-- Content area: one panel per tab -->
+  <devtools-content>
+    {{#each tab_panels}}
+    <devtools-tab-panel data-tab="{{id}}" data-key="panel-{{id}}" {{#if active}}class="active"{{/if}}>
+      {{#if active}}
+      {{content}}
+      {{/if}}
+    </devtools-tab-panel>
+    {{/each}}
+  </devtools-content>
+
+  <!-- Status bar -->
+  <devtools-statusbar>
+    <devtools-status-text>{{status_text}}</devtools-status-text>
+  </devtools-statusbar>
+</devtools-panel>

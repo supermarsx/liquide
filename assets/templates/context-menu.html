@@ -1,11 +1,28 @@
-<!-- Context Menu Component Template
-     Positioned popup menu. Items can be .disabled.
-     Includes separators via <menu-separator>.
-     Inline styles set position: left, top.
+<!-- LiquiDE Context Menu Template
+     Right-click popup menu.
+     Instantiated by DesktopDocument::add_context_menu().
+     Appended as child of root.
+
+     Position is set via inline style (left, top) by the shell.
+     Items have data-index for event dispatch.
+     Separators are <menu-separator> elements.
+     Disabled items have class="disabled" and :disabled pseudo-state.
 -->
-<context-menu id="ctx-shell">
-  <menu-item data-index="0">Copy</menu-item>
-  <menu-item data-index="1">Paste</menu-item>
+
+<context-menu id="{{id}}" style="left: {{pos_left}}; top: {{pos_top}}">
+  {{#each items}}
+  {{#if is_separator}}
   <menu-separator />
-  <menu-item data-index="2" class="disabled">Delete</menu-item>
+  {{else}}
+  <menu-item data-index="{{index}}" {{#if disabled}}class="disabled"{{/if}}>
+    {{#if icon}}
+    <menu-item-icon data-icon="{{icon}}" />
+    {{/if}}
+    <menu-item-label>{{label}}</menu-item-label>
+    {{#if shortcut}}
+    <menu-item-shortcut>{{shortcut}}</menu-item-shortcut>
+    {{/if}}
+  </menu-item>
+  {{/if}}
+  {{/each}}
 </context-menu>

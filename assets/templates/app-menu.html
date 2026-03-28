@@ -1,21 +1,27 @@
-<!-- App Menu Component Template
-     Window-level app actions menu.
-     Each item has data-action and optional data-icon + keyboard shortcut.
+<!-- LiquiDE App Menu Template
+     Window-level application actions menu.
+     Instantiated by DesktopDocument::show_app_menu().
+     Appended as child of root.
+
+     Each menu-item has data-action for event dispatch.
+     Optional data-icon for icon rendering and keyboard shortcut display.
+     Separators via <menu-separator>.
 -->
-<app-menu id="app-menu">
-  <menu-item data-action="minimize" data-icon="minus">
-    <menu-item-icon data-icon="minus" />
-    <menu-item-label>Minimize</menu-item-label>
-    <menu-item-shortcut>Super+H</menu-item-shortcut>
-  </menu-item>
-  <menu-item data-action="maximize" data-icon="maximize">
-    <menu-item-icon data-icon="maximize" />
-    <menu-item-label>Maximize</menu-item-label>
-  </menu-item>
+
+<app-menu id="app-menu" style="left: {{pos_left}}; top: {{pos_top}}">
+  {{#each items}}
+  {{#if is_separator}}
   <menu-separator />
-  <menu-item data-action="close" data-icon="x">
-    <menu-item-icon data-icon="x" />
-    <menu-item-label>Close</menu-item-label>
-    <menu-item-shortcut>Alt+F4</menu-item-shortcut>
+  {{else}}
+  <menu-item data-action="{{action}}" data-index="{{index}}" {{#if icon}}data-icon="{{icon}}"{{/if}}>
+    {{#if icon}}
+    <menu-item-icon data-icon="{{icon}}" />
+    {{/if}}
+    <menu-item-label>{{label}}</menu-item-label>
+    {{#if shortcut}}
+    <menu-item-shortcut>{{shortcut}}</menu-item-shortcut>
+    {{/if}}
   </menu-item>
+  {{/if}}
+  {{/each}}
 </app-menu>

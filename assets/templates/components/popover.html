@@ -1,0 +1,36 @@
+<!-- LiquiDE Popover Component Template
+     Anchored popup panel with optional arrow.
+     Used for dropdown menus, color pickers, date pickers, etc.
+
+     Data attributes:
+       data-position  — "top", "bottom", "left", "right"
+       data-anchor    — id of the element this popover is anchored to
+       data-action    — "dismiss" on the backdrop overlay
+
+     Classes: .has-arrow (show directional arrow)
+-->
+
+<popover-backdrop data-action="dismiss" />
+<popover id="{{id}}" data-position="{{position}}" data-anchor="{{anchor_id}}" class="{{#if has_arrow}}has-arrow{{/if}}">
+  {{#if has_arrow}}
+  <popover-arrow />
+  {{/if}}
+  {{#if title}}
+  <popover-header>
+    <popover-title>{{title}}</popover-title>
+    {{#if has_close}}
+    <popover-close data-action="close" />
+    {{/if}}
+  </popover-header>
+  {{/if}}
+  <popover-body>
+    {{body}}
+  </popover-body>
+  {{#if has_actions}}
+  <popover-actions>
+    {{#each actions}}
+    <popover-action data-action="{{action}}">{{label}}</popover-action>
+    {{/each}}
+  </popover-actions>
+  {{/if}}
+</popover>

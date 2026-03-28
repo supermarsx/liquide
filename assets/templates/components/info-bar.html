@@ -1,0 +1,55 @@
+<!-- LiquiDE InfoBar Component Template
+     App-level bottom status strip with left/center/right slots.
+     Maps to the InfoBar model in liquide-app-components.
+
+     Item types:
+       info-bar-text      — static text label
+       info-bar-separator — visual divider between items
+       info-bar-clickable — clickable text with data-action
+
+     Not to be confused with the desktop statusbar.
+-->
+
+<info-bar id="{{id}}">
+  <info-bar-slot class="left">
+    {{#each left_items}}
+    {{#if is_separator}}
+    <info-bar-separator />
+    {{else}}
+    {{#if is_clickable}}
+    <info-bar-clickable data-action="{{action_id}}">{{label}}</info-bar-clickable>
+    {{else}}
+    <info-bar-text>{{text}}</info-bar-text>
+    {{/if}}
+    {{/if}}
+    {{/each}}
+  </info-bar-slot>
+
+  <info-bar-slot class="center">
+    {{#each center_items}}
+    {{#if is_separator}}
+    <info-bar-separator />
+    {{else}}
+    {{#if is_clickable}}
+    <info-bar-clickable data-action="{{action_id}}">{{label}}</info-bar-clickable>
+    {{else}}
+    <info-bar-text>{{text}}</info-bar-text>
+    {{/if}}
+    {{/if}}
+    {{/each}}
+  </info-bar-slot>
+
+  <info-bar-slot class="right">
+    {{#each right_items}}
+    {{#if is_separator}}
+    <info-bar-separator />
+    {{else}}
+    {{#if is_clickable}}
+    <info-bar-clickable data-action="{{action_id}}">{{label}}</info-bar-clickable>
+    {{else}}
+    <info-bar-text>{{text}}</info-bar-text>
+    {{/if}}
+    {{/if}}
+    {{/each}}
+  </info-bar-slot>
+</info-bar>

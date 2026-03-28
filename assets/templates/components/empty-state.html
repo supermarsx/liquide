@@ -1,0 +1,19 @@
+<!-- LiquiDE EmptyState Component Template
+     Placeholder shown when a content area has no items.
+     Maps to the EmptyState model in liquide-app-components.
+
+     Optional elements: icon, description, call-to-action button.
+-->
+
+<empty-state id="{{id}}">
+  {{#if icon}}
+  <empty-state-icon data-icon="{{icon}}" />
+  {{/if}}
+  <empty-state-title>{{title}}</empty-state-title>
+  {{#if description}}
+  <empty-state-description>{{description}}</empty-state-description>
+  {{/if}}
+  {{#if action_label}}
+  <empty-state-action data-action="{{action_id}}">{{action_label}}</empty-state-action>
+  {{/if}}
+</empty-state>

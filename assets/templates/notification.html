@@ -1,0 +1,27 @@
+<!-- LiquiDE Notification Template
+     Individual notification toast.
+     Instantiated by DesktopDocument::add_notification().
+     Appended as child of notification-area.
+
+     Urgency classes: .urgency-low, .urgency-normal, .urgency-critical
+     Sub-elements: notification-icon, notification-content,
+                   notification-title, notification-body,
+                   notification-actions, notification-action
+-->
+
+<notification id="{{id}}" class="{{urgency_class}}" data-key="{{id}}">
+  {{#if icon}}
+  <notification-icon data-icon="{{icon}}" />
+  {{/if}}
+  <notification-content>
+    <notification-title>{{title}}</notification-title>
+    <notification-body>{{body}}</notification-body>
+  </notification-content>
+  {{#if has_actions}}
+  <notification-actions>
+    {{#each actions}}
+    <notification-action data-action-id="{{action_id}}">{{label}}</notification-action>
+    {{/each}}
+  </notification-actions>
+  {{/if}}
+</notification>

@@ -1,0 +1,1141 @@
+/* ===================================================
+   LiquiDE Component Styles (Comprehensive)
+   Default dark-theme styles for ALL UI components.
+
+   This file provides standalone styling for every custom
+   element used in the template system. Theme files
+   (night.css, midday.css, etc.) override colors via
+   CSS custom properties defined in variables.css.
+
+   Sections:
+     1. Search Bar
+     2. Sidebar
+     3. Dialog
+     4. Header Bar
+     5. Info Bar
+     6. Empty State
+     7. Tooltip
+     8. Popover
+     9. Tab Bar
+    10. Loading Overlay
+    11. Desktop Background
+    12. Workspace Container
+    13. Window (shell-level)
+    14. Cursor
+    15. App-specific elements
+   =================================================== */
+
+
+/* ═══════════════════════════════════════════════════
+   1. SEARCH BAR
+   ═══════════════════════════════════════════════════ */
+
+search-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8;
+  height: 36;
+  padding-left: 12;
+  padding-right: 8;
+  border-radius: 8;
+  background: rgba(255, 255, 255, 0.06);
+  border-width: 1;
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.08);
+  font-size: 14;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+search-bar.focused {
+  border-color: rgba(66, 133, 244, 0.60);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+search-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16;
+  height: 16;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.40);
+}
+
+search-input {
+  display: flex;
+  flex-grow: 1;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 14;
+  min-width: 0;
+}
+
+search-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24;
+  height: 24;
+  border-radius: 4;
+  font-size: 11;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.40);
+  cursor: pointer;
+}
+
+search-toggle:hover {
+  color: rgba(255, 255, 255, 0.70);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+search-toggle.active {
+  color: rgba(66, 133, 244, 1.0);
+  background: rgba(66, 133, 244, 0.15);
+}
+
+search-result-count {
+  display: flex;
+  align-items: center;
+  font-size: 11;
+  color: rgba(255, 255, 255, 0.50);
+  white-space: nowrap;
+  padding-left: 4;
+  padding-right: 4;
+}
+
+search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20;
+  height: 20;
+  border-radius: 10;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.40);
+}
+
+search-clear:hover {
+  color: rgba(255, 255, 255, 0.80);
+  background: rgba(255, 255, 255, 0.10);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   2. SIDEBAR
+   ═══════════════════════════════════════════════════ */
+
+sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 200;
+  min-width: 160;
+  max-width: 320;
+  background: rgba(25, 25, 25, 0.95);
+  border-right-width: 1;
+  border-right-style: solid;
+  border-right-color: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  padding-top: 4;
+  padding-bottom: 4;
+}
+
+sidebar.collapsed {
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  border-right-width: 0;
+  overflow: hidden;
+}
+
+sidebar-section {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 4;
+}
+
+sidebar-section-title {
+  display: flex;
+  align-items: center;
+  height: 24;
+  padding-left: 12;
+  padding-right: 12;
+  font-size: 10;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.40);
+  text-transform: uppercase;
+  letter-spacing: 0.5;
+}
+
+sidebar-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8;
+  height: 32;
+  padding-left: 12;
+  padding-right: 12;
+  border-radius: 6;
+  margin-left: 4;
+  margin-right: 4;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.80);
+  font-size: 13;
+}
+
+sidebar-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+sidebar-item.active {
+  background: rgba(66, 133, 244, 0.20);
+  color: rgba(255, 255, 255, 1.0);
+}
+
+sidebar-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16;
+  height: 16;
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.60);
+}
+
+sidebar-item.active > sidebar-item-icon {
+  color: rgba(66, 133, 244, 1.0);
+}
+
+sidebar-item-label {
+  display: flex;
+  flex-grow: 1;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+sidebar-item-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18;
+  height: 18;
+  padding-left: 6;
+  padding-right: 6;
+  border-radius: 9;
+  background: rgba(255, 255, 255, 0.10);
+  font-size: 10;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.70);
+  flex-shrink: 0;
+}
+
+
+/* ═══════════════════════════════════════════════════
+   3. DIALOG
+   ═══════════════════════════════════════════════════ */
+
+dialog-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3000;
+  background: rgba(0, 0, 0, 0.50);
+}
+
+dialog {
+  display: flex;
+  flex-direction: column;
+  min-width: 320;
+  max-width: 480;
+  border-radius: 16;
+  background: rgba(40, 40, 40, 0.98);
+  border-width: 1;
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.10);
+  overflow: hidden;
+}
+
+dialog-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8;
+  padding: 16;
+  padding-bottom: 0;
+}
+
+dialog-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24;
+  height: 24;
+  flex-shrink: 0;
+}
+
+dialog-title {
+  display: flex;
+  flex-grow: 1;
+  align-items: center;
+  font-size: 16;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+dialog-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24;
+  height: 24;
+  border-radius: 12;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.50);
+  flex-shrink: 0;
+}
+
+dialog-close:hover {
+  background: rgba(255, 255, 255, 0.10);
+  color: rgba(255, 255, 255, 0.80);
+}
+
+dialog-body {
+  display: flex;
+  flex-direction: column;
+  padding: 16;
+  gap: 12;
+}
+
+dialog-message {
+  font-size: 14;
+  color: rgba(255, 255, 255, 0.70);
+  line-height: 1.5;
+}
+
+dialog-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4;
+}
+
+dialog-progress-bar {
+  display: flex;
+  height: 4;
+  border-radius: 2;
+  background: rgba(255, 255, 255, 0.10);
+  overflow: hidden;
+}
+
+dialog-progress-text {
+  font-size: 12;
+  color: rgba(255, 255, 255, 0.50);
+  text-align: center;
+}
+
+dialog-actions {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 8;
+  padding: 12;
+  padding-top: 0;
+}
+
+dialog-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32;
+  padding-left: 16;
+  padding-right: 16;
+  border-radius: 8;
+  font-size: 13;
+  font-weight: 500;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.90);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+dialog-button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+dialog-button.primary {
+  background: rgba(66, 133, 244, 0.90);
+  color: rgba(255, 255, 255, 1.0);
+}
+
+dialog-button.primary:hover {
+  background: rgba(100, 160, 255, 0.90);
+}
+
+dialog-button.danger {
+  background: rgba(255, 69, 58, 0.80);
+  color: rgba(255, 255, 255, 1.0);
+}
+
+dialog-button.danger:hover {
+  background: rgba(255, 69, 58, 0.95);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   4. HEADER BAR
+   ═══════════════════════════════════════════════════ */
+
+header-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  height: 48;
+  padding-left: 8;
+  padding-right: 8;
+  background: rgba(30, 30, 30, 0.95);
+  border-bottom-width: 1;
+  border-bottom-style: solid;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+header-bar-leading {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4;
+  flex-shrink: 0;
+}
+
+header-bar-title-group {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+header-bar-title {
+  font-size: 14;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+header-bar-subtitle {
+  font-size: 11;
+  color: rgba(255, 255, 255, 0.50);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+header-bar-trailing {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4;
+  flex-shrink: 0;
+}
+
+header-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32;
+  height: 32;
+  border-radius: 8;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.70);
+}
+
+header-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+header-action.active {
+  background: rgba(66, 133, 244, 0.20);
+  color: rgba(66, 133, 244, 1.0);
+}
+
+header-action.disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+header-action-icon {
+  display: flex;
+  width: 16;
+  height: 16;
+}
+
+
+/* ═══════════════════════════════════════════════════
+   5. INFO BAR
+   ═══════════════════════════════════════════════════ */
+
+info-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  height: 24;
+  padding-left: 8;
+  padding-right: 8;
+  background: rgba(30, 30, 30, 0.95);
+  border-top-width: 1;
+  border-top-style: solid;
+  border-top-color: rgba(255, 255, 255, 0.08);
+  font-size: 12;
+  color: rgba(255, 255, 255, 0.60);
+}
+
+info-bar-slot {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8;
+}
+
+info-bar-slot.left {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+}
+
+info-bar-slot.center {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+info-bar-slot.right {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+info-bar-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+info-bar-separator {
+  display: flex;
+  width: 1;
+  height: 12;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+info-bar-clickable {
+  cursor: pointer;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.60);
+}
+
+info-bar-clickable:hover {
+  color: rgba(255, 255, 255, 0.90);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   6. EMPTY STATE
+   ═══════════════════════════════════════════════════ */
+
+empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48;
+  gap: 12;
+  flex-grow: 1;
+}
+
+empty-state-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48;
+  height: 48;
+  color: rgba(255, 255, 255, 0.20);
+  margin-bottom: 8;
+}
+
+empty-state-title {
+  font-size: 16;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.70);
+  text-align: center;
+}
+
+empty-state-description {
+  font-size: 13;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: center;
+  max-width: 300;
+  line-height: 1.5;
+}
+
+empty-state-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32;
+  padding-left: 16;
+  padding-right: 16;
+  border-radius: 8;
+  background: rgba(66, 133, 244, 0.85);
+  color: rgba(255, 255, 255, 1.0);
+  font-size: 13;
+  font-weight: 500;
+  cursor: pointer;
+  margin-top: 8;
+}
+
+empty-state-action:hover {
+  background: rgba(100, 160, 255, 0.90);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   7. TOOLTIP
+   ═══════════════════════════════════════════════════ */
+
+tooltip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: fixed;
+  z-index: 6000;
+  pointer-events: none;
+  max-width: 300;
+}
+
+tooltip[data-position="bottom"] {
+  flex-direction: column-reverse;
+}
+
+tooltip[data-position="left"] {
+  flex-direction: row-reverse;
+}
+
+tooltip[data-position="right"] {
+  flex-direction: row;
+}
+
+tooltip-content {
+  padding: 4 8;
+  border-radius: 6;
+  font-size: 12;
+  white-space: nowrap;
+  background: rgba(50, 50, 50, 0.95);
+  color: rgba(230, 230, 230, 1.0);
+  border-width: 1;
+  border-style: solid;
+  border-color: rgba(80, 80, 80, 0.50);
+}
+
+tooltip-arrow {
+  display: block;
+  width: 8;
+  height: 8;
+  background: rgba(50, 50, 50, 0.95);
+  transform: rotate(45deg);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   8. POPOVER
+   ═══════════════════════════════════════════════════ */
+
+popover-backdrop {
+  display: flex;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3900;
+  background: transparent;
+}
+
+popover {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  z-index: 4000;
+  min-width: 200;
+  max-width: 400;
+  border-radius: 12;
+  background: rgba(40, 40, 40, 0.98);
+  border-width: 1;
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.10);
+  overflow: hidden;
+}
+
+popover-arrow {
+  display: block;
+  width: 10;
+  height: 10;
+  background: rgba(40, 40, 40, 0.98);
+  border-width: 1;
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.10);
+  transform: rotate(45deg);
+  position: absolute;
+}
+
+popover-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 12;
+  padding-bottom: 0;
+}
+
+popover-title {
+  display: flex;
+  flex-grow: 1;
+  font-size: 14;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+popover-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20;
+  height: 20;
+  border-radius: 10;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.50);
+}
+
+popover-close:hover {
+  background: rgba(255, 255, 255, 0.10);
+  color: rgba(255, 255, 255, 0.80);
+}
+
+popover-body {
+  display: flex;
+  flex-direction: column;
+  padding: 12;
+  font-size: 13;
+  color: rgba(255, 255, 255, 0.80);
+}
+
+popover-actions {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 8;
+  padding: 8 12;
+  border-top-width: 1;
+  border-top-style: solid;
+  border-top-color: rgba(255, 255, 255, 0.06);
+}
+
+popover-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28;
+  padding-left: 12;
+  padding-right: 12;
+  border-radius: 6;
+  font-size: 12;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.80);
+}
+
+popover-action:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   9. TAB BAR
+   ═══════════════════════════════════════════════════ */
+
+tab-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  height: 36;
+  border-bottom-width: 1;
+  border-bottom-style: solid;
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  background: rgba(30, 30, 30, 0.95);
+  padding-left: 4;
+  padding-right: 4;
+  overflow: hidden;
+}
+
+tab-item {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6;
+  height: 36;
+  padding-left: 12;
+  padding-right: 12;
+  font-size: 13;
+  color: rgba(255, 255, 255, 0.60);
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom-width: 2;
+  border-bottom-style: solid;
+  border-bottom-color: transparent;
+  box-sizing: border-box;
+}
+
+tab-item:hover {
+  color: rgba(255, 255, 255, 0.80);
+}
+
+tab-item.active {
+  color: rgba(255, 255, 255, 1.0);
+  border-bottom-color: rgba(66, 133, 244, 1.0);
+}
+
+tab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14;
+  height: 14;
+  flex-shrink: 0;
+}
+
+tab-label {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16;
+  height: 16;
+  border-radius: 8;
+  font-size: 10;
+  color: rgba(255, 255, 255, 0.30);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 2;
+}
+
+tab-close:hover {
+  color: rgba(255, 255, 255, 0.80);
+  background: rgba(255, 255, 255, 0.10);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   10. LOADING OVERLAY
+   ═══════════════════════════════════════════════════ */
+
+loading-overlay {
+  display: flex;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.90);
+}
+
+loading-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16;
+  padding: 32;
+  border-radius: 16;
+  background: rgba(30, 30, 30, 0.98);
+  color: rgba(255, 255, 255, 1.0);
+}
+
+loading-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48;
+  height: 48;
+}
+
+loading-title {
+  font-size: 16;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+loading-message {
+  font-size: 13;
+  color: rgba(255, 255, 255, 0.60);
+}
+
+loading-progress {
+  display: flex;
+  width: 200;
+  height: 4;
+  border-radius: 2;
+  background: rgba(255, 255, 255, 0.10);
+  overflow: hidden;
+}
+
+
+/* ═══════════════════════════════════════════════════
+   11. DESKTOP BACKGROUND
+   ═══════════════════════════════════════════════════ */
+
+desktop-background {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgb(20, 20, 22);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   12. WORKSPACE CONTAINER
+   ═══════════════════════════════════════════════════ */
+
+workspace-container {
+  position: fixed;
+  top: 34;
+  left: 0;
+  width: 100%;
+  bottom: 64;
+  overflow: hidden;
+}
+
+
+/* ═══════════════════════════════════════════════════
+   13. WINDOW (shell-level, matching desktop_dom.rs)
+   ═══════════════════════════════════════════════════ */
+
+window {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: rgba(30, 30, 30, 0.95);
+  border-color: rgba(255, 255, 255, 0.10);
+  border-width: 1;
+  border-radius: 16;
+  overflow: hidden;
+}
+
+window.focused {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+window-titlebar {
+  display: flex;
+  align-items: center;
+  height: 36;
+  padding-left: 12;
+  padding-right: 8;
+  background: rgba(35, 35, 35, 0.98);
+  color: rgba(255, 255, 255, 1.0);
+  font-size: 13;
+  font-weight: 500;
+}
+
+window-title {
+  flex-grow: 1;
+  text-align: center;
+  color: rgba(255, 255, 255, 1.0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+titlebar-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6;
+}
+
+close-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14;
+  height: 14;
+  border-radius: 7;
+  background: rgba(255, 69, 58, 0.70);
+  color: rgba(255, 255, 255, 0.94);
+  cursor: pointer;
+}
+
+close-button:hover {
+  background: rgba(255, 69, 58, 0.85);
+}
+
+maximize-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14;
+  height: 14;
+  border-radius: 7;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.80);
+  cursor: pointer;
+}
+
+maximize-button:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+minimize-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14;
+  height: 14;
+  border-radius: 7;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.80);
+  cursor: pointer;
+}
+
+minimize-button:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+window-content {
+  flex-grow: 1;
+  background: rgba(25, 25, 25, 0.95);
+  overflow: hidden;
+}
+
+
+/* ═══════════════════════════════════════════════════
+   14. CURSOR
+   ═══════════════════════════════════════════════════ */
+
+cursor {
+  color: rgba(255, 255, 255, 1.0);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   15. APP-SPECIFIC ELEMENTS
+   ═══════════════════════════════════════════════════ */
+
+app-settings sidebar-item {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+app-terminal {
+  background: rgb(0, 0, 0);
+  color: rgb(80, 220, 80);
+  font-family: "JetBrains Mono", "Cascadia Code", monospace;
+}
+
+app-browser urlbar {
+  display: flex;
+  align-items: center;
+  height: 32;
+  padding-left: 12;
+  padding-right: 12;
+  border-radius: 8;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 13;
+  color: rgba(255, 255, 255, 0.90);
+}
+
+
+/* ═══════════════════════════════════════════════════
+   16. WINDOW DECORATION (CSD variant)
+   ═══════════════════════════════════════════════════ */
+
+window-decoration {
+  display: flex;
+  flex-direction: column;
+}
+
+titlebar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  height: 36;
+  padding-left: 8;
+  padding-right: 8;
+}
+
+titlebar-icon {
+  display: block;
+  width: 16;
+  height: 16;
+  margin-right: 8;
+  flex-shrink: 0;
+}
+
+titlebar-title {
+  font-size: 13;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+titlebar-spacer {
+  flex: 1 1 auto;
+}
+
+titlebar-controls {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4;
+  flex-shrink: 0;
+}
+
+titlebar-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28;
+  height: 28;
+  border-radius: 14;
+  cursor: pointer;
+}
+
+titlebar-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+titlebar-button.close:hover {
+  background: rgba(255, 69, 58, 0.80);
+}
+
+titlebar-button-icon {
+  display: block;
+  width: 12;
+  height: 12;
+}

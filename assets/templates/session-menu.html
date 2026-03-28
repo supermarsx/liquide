@@ -1,22 +1,20 @@
-<!-- Session Menu Component Template
-     Power/session actions menu.
-     Each item has data-action and optional data-icon.
+<!-- LiquiDE Session Menu Template
+     Power/session actions dropdown.
+     Instantiated by DesktopDocument::show_session_menu().
+     Appended as child of root.
+
+     Each menu-item has data-action for event dispatch and
+     optional data-icon for icon rendering.
+     Typical actions: lock, logout, restart, shutdown, suspend.
 -->
-<session-menu id="session-menu">
-  <menu-item data-action="lock" data-icon="lock">
-    <menu-item-icon data-icon="lock" />
-    <menu-item-label>Lock</menu-item-label>
+
+<session-menu id="{{id}}" style="left: {{pos_left}}; top: {{pos_top}}">
+  {{#each items}}
+  <menu-item data-action="{{action}}" data-index="{{index}}" {{#if icon}}data-icon="{{icon}}"{{/if}}>
+    {{#if icon}}
+    <menu-item-icon data-icon="{{icon}}" />
+    {{/if}}
+    <menu-item-label>{{label}}</menu-item-label>
   </menu-item>
-  <menu-item data-action="logout" data-icon="logout">
-    <menu-item-icon data-icon="logout" />
-    <menu-item-label>Log Out</menu-item-label>
-  </menu-item>
-  <menu-item data-action="restart" data-icon="refresh">
-    <menu-item-icon data-icon="refresh" />
-    <menu-item-label>Restart</menu-item-label>
-  </menu-item>
-  <menu-item data-action="shutdown" data-icon="power">
-    <menu-item-icon data-icon="power" />
-    <menu-item-label>Shut Down</menu-item-label>
-  </menu-item>
+  {{/each}}
 </session-menu>

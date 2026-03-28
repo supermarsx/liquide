@@ -1,0 +1,40 @@
+<!-- LiquiDE DevTools Tree Row Template
+     Individual DOM tree node row, used recursively in the Elements tab.
+     Virtual scrolling means only visible rows are instantiated.
+
+     Data attributes:
+       data-node       — DOM NodeId for selection/hover
+       data-tree-arrow — marker for expand/collapse click handler
+       data-key        — reconciliation key
+
+     Classes:
+       .selected — this node is the inspector's selected node
+       .hovered  — this node is being hovered by the element picker
+
+     Inline style:
+       padding-left — depth * 16 + 4 px for tree indentation
+
+     Text nodes render as quoted strings in devtools-tree-text.
+     Element nodes render as: [arrow] <tag id="..." class="...">
+-->
+
+<devtools-tree-row data-node="{{node_id}}" data-key="n-{{node_id}}" {{#if selected}}class="selected"{{/if}}{{#if hovered}}class="hovered"{{/if}} style="padding-left: {{indent}}px">
+  {{#if is_text}}
+  <devtools-tree-text>"{{text}}"</devtools-tree-text>
+  {{else}}
+  {{#if has_children}}
+  <devtools-tree-arrow data-tree-arrow="" data-node="{{node_id}}">{{#if expanded}}&#x25BC;{{else}}&#x25B6;{{/if}}</devtools-tree-arrow>
+  {{/if}}
+  <devtools-tree-tag>&lt;{{tag}}</devtools-tree-tag>
+  {{#if element_id}}
+  <devtools-tree-attr> id="{{element_id}}"</devtools-tree-attr>
+  {{/if}}
+  {{#if classes}}
+  <devtools-tree-attr> class="{{classes}}"</devtools-tree-attr>
+  {{/if}}
+  {{#each attributes}}
+  <devtools-tree-attr> {{name}}="{{value}}"</devtools-tree-attr>
+  {{/each}}
+  <devtools-tree-tag>&gt;</devtools-tree-tag>
+  {{/if}}
+</devtools-tree-row>

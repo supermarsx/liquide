@@ -1,0 +1,162 @@
+/* ===================================================
+   LiquiDE Theme: CSS Custom Property Definitions
+   Base design tokens for all themes. Override these
+   in theme-specific files (night.css, midday.css, etc.)
+   to change the entire look without touching templates.
+   =================================================== */
+
+:root {
+  /* ── Surface colors ── */
+  --bg-primary: rgb(30, 30, 30);
+  --bg-secondary: rgb(45, 45, 45);
+  --bg-surface: rgb(55, 55, 55);
+  --bg-elevated: rgb(60, 60, 60);
+  --bg-overlay: rgba(0, 0, 0, 0.60);
+  --bg-glass: rgba(30, 30, 30, 0.85);
+
+  /* ── Text colors ── */
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.70);
+  --text-tertiary: rgba(255, 255, 255, 0.50);
+  --text-disabled: rgba(255, 255, 255, 0.30);
+  --text-inverse: rgba(0, 0, 0, 0.90);
+
+  /* ── Accent / brand ── */
+  --accent-color: rgb(66, 133, 244);
+  --accent-hover: rgb(100, 160, 255);
+  --accent-active: rgb(50, 110, 220);
+  --accent-subtle: rgba(66, 133, 244, 0.15);
+  --accent-text: rgb(130, 180, 255);
+
+  /* ── Semantic colors ── */
+  --color-success: rgb(48, 209, 88);
+  --color-success-bg: rgba(48, 209, 88, 0.12);
+  --color-warning: rgb(255, 214, 10);
+  --color-warning-bg: rgba(255, 214, 10, 0.12);
+  --color-error: rgb(255, 69, 58);
+  --color-error-bg: rgba(255, 69, 58, 0.12);
+  --color-info: rgb(100, 210, 255);
+  --color-info-bg: rgba(100, 210, 255, 0.12);
+
+  /* ── Borders ── */
+  --border-color: rgba(255, 255, 255, 0.10);
+  --border-color-strong: rgba(255, 255, 255, 0.18);
+  --border-color-subtle: rgba(255, 255, 255, 0.05);
+  --border-width: 1;
+
+  /* ── Shadows ── */
+  --shadow-color: rgba(0, 0, 0, 0.50);
+  --shadow-small: 0 2 8 rgba(0, 0, 0, 0.30);
+  --shadow-medium: 0 4 16 rgba(0, 0, 0, 0.40);
+  --shadow-large: 0 8 32 rgba(0, 0, 0, 0.50);
+
+  /* ── Border radius ── */
+  --radius-xs: 2;
+  --radius-small: 4;
+  --radius-medium: 8;
+  --radius-large: 12;
+  --radius-xl: 16;
+  --radius-round: 9999;
+
+  /* ── Spacing scale ── */
+  --spacing-xxs: 2;
+  --spacing-xs: 4;
+  --spacing-sm: 8;
+  --spacing-md: 12;
+  --spacing-lg: 16;
+  --spacing-xl: 24;
+  --spacing-xxl: 32;
+  --spacing-xxxl: 48;
+
+  /* ── Typography ── */
+  --font-family-ui: "Inter", "SF Pro", system-ui, sans-serif;
+  --font-family-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
+  --font-size-xs: 10;
+  --font-size-sm: 12;
+  --font-size-md: 13;
+  --font-size-lg: 14;
+  --font-size-xl: 16;
+  --font-size-xxl: 20;
+  --font-size-title: 24;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+
+  /* ── Z-index layers ── */
+  --z-base: 0;
+  --z-dropdown: 1000;
+  --z-sticky: 1100;
+  --z-overlay: 2000;
+  --z-modal: 3000;
+  --z-popover: 4000;
+  --z-menu: 5000;
+  --z-tooltip: 6000;
+  --z-notification: 7000;
+  --z-devtools: 9900;
+  --z-maximum: 9999;
+
+  /* ── Transitions ── */
+  --transition-fast: 0.10s ease;
+  --transition-normal: 0.15s ease;
+  --transition-slow: 0.25s ease;
+
+  /* ── Glass / blur ── */
+  --blur-subtle: 5;
+  --blur-medium: 10;
+  --blur-strong: 20;
+  --blur-heavy: 40;
+
+  /* ── Shell dimensions ── */
+  --statusbar-height: 34;
+  --dock-height: 64;
+  --titlebar-height: 36;
+  --dock-item-size: 48;
+  --dock-icon-size: 32;
+
+  /* ── Menu dimensions ── */
+  --menu-min-width: 180;
+  --menu-max-width: 320;
+  --menu-item-height: 28;
+  --menu-padding: 4;
+  --menu-radius: 10;
+
+  /* ── Notification dimensions ── */
+  --notification-width: 320;
+  --notification-radius: 12;
+  --notification-padding: 12;
+
+  /* ── Launcher dimensions ── */
+  --launcher-width: 560;
+  --launcher-radius: 16;
+  --launcher-item-height: 40;
+  --launcher-search-height: 48;
+
+  /* ── Window dimensions ── */
+  --window-radius: 16;
+  --window-button-size: 14;
+  --window-button-radius: 7;
+
+  /* ── Scrollbar ── */
+  --scrollbar-width: 6;
+  --scrollbar-radius: 3;
+  --scrollbar-color: rgba(255, 255, 255, 0.15);
+  --scrollbar-hover-color: rgba(255, 255, 255, 0.25);
+
+  /* ── Selection ── */
+  --selection-bg: rgba(66, 133, 244, 0.30);
+  --selection-text: rgba(255, 255, 255, 1.0);
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --active-bg: rgba(255, 255, 255, 0.10);
+
+  /* ── Close button ── */
+  --close-button-bg: rgba(255, 69, 58, 0.70);
+  --close-button-hover-bg: rgba(255, 69, 58, 0.85);
+
+  /* ── Window control buttons ── */
+  --window-btn-bg: rgba(255, 255, 255, 0.06);
+  --window-btn-hover-bg: rgba(255, 255, 255, 0.10);
+}

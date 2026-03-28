@@ -1,18 +1,39 @@
-<!-- Notifications Component Template
+<!-- LiquiDE Notifications Component Template
      Notification toasts rendered in a stacked area.
-     Urgency classes: .urgency-low, .urgency-normal, .urgency-critical
-     Sub-elements: notification-icon, notification-content, notification-actions
+     Container is persistent; individual notifications are added/removed
+     by DesktopDocument::add_notification() / remove_notification().
+
+     Urgency classes on notification element:
+       .urgency-low      — low priority (subtle appearance)
+       .urgency-normal   — default priority
+       .urgency-critical — high priority (accent border)
+
+     Sub-elements:
+       notification-icon    — optional app/type icon
+       notification-content — wrapper for title + body
+       notification-title   — bold heading
+       notification-body    — message text
+       notification-actions — optional action buttons
+       notification-action  — individual action button
 -->
+
 <notification-area id="notification-area">
-  <notification class="urgency-normal" data-key="notif-1">
-    <notification-icon data-icon="mail" />
+  {{#each notifications}}
+  <notification id="{{id}}" class="{{urgency_class}}" data-key="{{id}}">
+    {{#if icon}}
+    <notification-icon data-icon="{{icon}}" />
+    {{/if}}
     <notification-content>
-      <notification-title>New Mail</notification-title>
-      <notification-body>You have 3 new messages</notification-body>
+      <notification-title>{{title}}</notification-title>
+      <notification-body>{{body}}</notification-body>
     </notification-content>
+    {{#if has_actions}}
     <notification-actions>
-      <notification-action data-action-id="read">Read</notification-action>
-      <notification-action data-action-id="dismiss">Dismiss</notification-action>
+      {{#each actions}}
+      <notification-action data-action-id="{{action_id}}">{{label}}</notification-action>
+      {{/each}}
     </notification-actions>
+    {{/if}}
   </notification>
+  {{/each}}
 </notification-area>

@@ -1,0 +1,15 @@
+<!-- LiquiDE Tooltip Component Template
+     Positioned floating tooltip with directional arrow.
+     Positioned via inline styles (left, top) by the shell.
+
+     Data attributes:
+       data-position — "top", "bottom", "left", "right"
+
+     The tooltip is pointer-events:none so it does not
+     interfere with mouse interactions underneath.
+-->
+
+<tooltip id="{{id}}" data-position="{{position}}">
+  <tooltip-arrow />
+  <tooltip-content>{{text}}</tooltip-content>
+</tooltip>

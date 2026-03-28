@@ -1,14 +1,24 @@
-<!-- Dock Component Template
-     Rendered by DockComponent — each dock-item is generated per-app.
-     Data attributes: data-app-id, data-icon, data-label, data-index
+<!-- LiquiDE Dock Component Template
+     Rendered by DockComponent -- each dock-item is generated per-app.
+     Instantiated as part of the desktop shell.
+     Items synced via DesktopDocument::sync_dock_items().
+
+     Data attributes:
+       data-app-id — application identifier for launch/focus
+       data-icon   — icon name for rendering
+       data-label  — display label (tooltip + accessibility)
+       data-index  — item index for keyboard navigation
+
      Classes: .active (running), .pinned (pinned to dock)
      Pseudo-states: :hover on hovered item
 -->
-<dock id="shell-dock">
-  <!-- Dock items are generated dynamically per application -->
-  <dock-item class="active pinned" data-app-id="files" data-icon="folder" data-label="Files">
-    <dock-item-icon data-icon="folder" />
-    <dock-item-label>Files</dock-item-label>
-    <dock-indicator class="running" />
-  </dock-item>
-</dock>
+
+{{#each dock_items}}
+<dock-item data-app-id="{{app_id}}" data-icon="{{icon}}" data-label="{{label}}" data-index="{{index}}" {{#if is_running}}class="active{{#if is_pinned}} pinned{{/if}}"{{/if}}{{#unless is_running}}{{#if is_pinned}}class="pinned"{{/if}}{{/unless}}>
+  <dock-item-icon data-icon="{{icon}}" />
+  <dock-item-label>{{label}}</dock-item-label>
+  {{#if is_running}}
+  <dock-indicator class="running" />
+  {{/if}}
+</dock-item>
+{{/each}}

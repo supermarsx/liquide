@@ -1,0 +1,45 @@
+<!-- LiquiDE Dialog Component Template
+     Modal dialog with overlay backdrop.
+     Maps to the Dialog model in liquide-app-components.
+
+     Dialog types (class on dialog element):
+       .confirm   — two-button confirmation
+       .alert     — single-button alert/info
+       .progress  — progress indicator with optional cancel
+
+     Data attributes:
+       data-action — "confirm", "cancel", "close" on buttons
+       data-value  — progress value (0.0-1.0) on progress-bar
+
+     The overlay catches clicks to dismiss (unless non-dismissable).
+-->
+
+<dialog-overlay id="{{id}}-overlay" data-action="dismiss">
+  <dialog id="{{id}}" class="{{type}}">
+    <dialog-header>
+      {{#if icon}}
+      <dialog-icon data-icon="{{icon}}" />
+      {{/if}}
+      <dialog-title>{{title}}</dialog-title>
+      <dialog-close data-action="close" />
+    </dialog-header>
+    <dialog-body>
+      {{#if message}}
+      <dialog-message>{{message}}</dialog-message>
+      {{/if}}
+      {{#if has_progress}}
+      <dialog-progress>
+        <dialog-progress-bar data-value="{{progress}}" />
+        <dialog-progress-text>{{progress_text}}</dialog-progress-text>
+      </dialog-progress>
+      {{/if}}
+    </dialog-body>
+    {{#if has_actions}}
+    <dialog-actions>
+      {{#each actions}}
+      <dialog-button class="{{type}}" data-action="{{action}}">{{label}}</dialog-button>
+      {{/each}}
+    </dialog-actions>
+    {{/if}}
+  </dialog>
+</dialog-overlay>

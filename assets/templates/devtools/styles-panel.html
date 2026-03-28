@@ -1,0 +1,34 @@
+<!-- LiquiDE DevTools Styles Side-Panel Template
+     CSS property inspector organized by category sections.
+     Used in the Elements tab right pane when "Styles" side-tab is active.
+
+     Structure:
+       devtools-style-section — collapsible category group
+         devtools-section-header — category label (click to collapse)
+         devtools-prop — individual CSS property row
+           devtools-prop-name  — property name (e.g. "display")
+           devtools-prop-value — property value (e.g. "flex")
+
+     Classes on devtools-prop:
+       .inherited — property inherited from parent (dimmed)
+       .editing   — property currently being edited
+       .editable  — property value can be clicked to edit
+-->
+
+{{#if has_selection}}
+{{#each sections}}
+<devtools-style-section data-key="sec-{{id}}">
+  <devtools-section-header>{{title}}</devtools-section-header>
+  {{#each properties}}
+  <devtools-prop data-key="prop-{{name}}" {{#if inherited}}class="inherited"{{/if}}>
+    <devtools-prop-name>{{name}}</devtools-prop-name>
+    <devtools-prop-value class="editable">{{value}}</devtools-prop-value>
+  </devtools-prop>
+  {{/each}}
+</devtools-style-section>
+{{/each}}
+{{else}}
+<devtools-row>
+  <devtools-value class="dim">No element selected</devtools-value>
+</devtools-row>
+{{/if}}

@@ -1,8 +1,15 @@
-<!-- Tooltip Component Template
+<!-- LiquiDE Tooltip Component Template
      Positioned tooltip with arrow indicator.
-     Data attributes: data-position (top|bottom|left|right)
+     Created dynamically on hover, destroyed on mouse leave.
+
+     Data attributes:
+       data-position — "top", "bottom", "left", "right"
+
+     Position is set via inline styles (left, top).
+     pointer-events: none prevents interference with underlying UI.
 -->
-<tooltip id="tooltip" data-position="top">
+
+<tooltip id="{{id}}" data-position="{{position}}" style="left: {{pos_left}}; top: {{pos_top}}">
   <tooltip-arrow />
-  <tooltip-content>Tooltip text</tooltip-content>
+  <tooltip-content>{{text}}</tooltip-content>
 </tooltip>

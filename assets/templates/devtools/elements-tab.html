@@ -1,0 +1,64 @@
+<!-- LiquiDE DevTools Elements Tab Template
+     Split-pane layout: DOM tree (left) + style inspector (right).
+     The DOM tree uses virtual scrolling: only visible rows are emitted.
+
+     Data attributes:
+       data-node       — DOM NodeId on tree rows and arrows
+       data-tree-arrow — marker for expand/collapse click target
+       data-sidetab    — side panel tab identifier
+
+     Classes:
+       .selected — selected tree row
+       .hovered  — hovered tree row
+       .active   — active side-tab
+
+     Side tabs: Styles, Layout, Computed, Fonts, Anim
+-->
+
+<devtools-split>
+  <!-- Left pane: DOM tree -->
+  <devtools-main-pane>
+    <devtools-tree>
+      {{#if has_nodes}}
+      {{#each visible_nodes}}
+      <devtools-tree-row data-node="{{node_id}}" data-key="n-{{node_id}}" {{#if selected}}class="selected"{{/if}}{{#if hovered}}class="hovered"{{/if}} style="padding-left: {{indent}}px">
+        {{#if is_text}}
+        <devtools-tree-text>"{{text}}"</devtools-tree-text>
+        {{else}}
+        {{#if has_children}}
+        <devtools-tree-arrow data-tree-arrow="" data-node="{{node_id}}">{{#if expanded}}&#x25BC;{{else}}&#x25B6;{{/if}}</devtools-tree-arrow>
+        {{/if}}
+        <devtools-tree-tag>&lt;{{tag}}</devtools-tree-tag>
+        {{#if element_id}}
+        <devtools-tree-attr> id="{{element_id}}"</devtools-tree-attr>
+        {{/if}}
+        {{#if classes}}
+        <devtools-tree-attr> class="{{classes}}"</devtools-tree-attr>
+        {{/if}}
+        {{#each attributes}}
+        <devtools-tree-attr> {{name}}="{{value}}"</devtools-tree-attr>
+        {{/each}}
+        <devtools-tree-tag>&gt;</devtools-tree-tag>
+        {{/if}}
+      </devtools-tree-row>
+      {{/each}}
+      {{else}}
+      <devtools-row>
+        <devtools-value class="dim">No elements -- run refresh_inspector(doc)</devtools-value>
+      </devtools-row>
+      {{/if}}
+    </devtools-tree>
+  </devtools-main-pane>
+
+  <!-- Right pane: style/layout inspector -->
+  <devtools-side-pane>
+    <devtools-side-tabs>
+      {{#each side_tabs}}
+      <devtools-side-tab data-sidetab="{{id}}" data-key="st-{{label}}" {{#if active}}class="active"{{/if}}>{{label}}</devtools-side-tab>
+      {{/each}}
+    </devtools-side-tabs>
+    <devtools-side-body>
+      {{side_content}}
+    </devtools-side-body>
+  </devtools-side-pane>
+</devtools-split>

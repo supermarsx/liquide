@@ -1,11 +1,23 @@
-<!-- Window Decorations Component Template
+<!-- LiquiDE Window Decorations Component Template
      CSD (client-side decoration) titlebar with controls.
-     Classes: .maximized, .focused, .unfocused
+     Used for app windows that need their own titlebar variant
+     (separate from the shell-level window template).
+
+     Classes on window-decoration:
+       .maximized  — window is maximized (no border radius)
+       .focused    — window has focus
+       .unfocused  — window lost focus (dimmed titlebar)
+
+     Titlebar buttons have data-action for event dispatch.
+     The titlebar itself is marked as draggable region.
 -->
-<window-decoration id="window-decoration">
+
+<window-decoration id="{{id}}" class="{{classes}}">
   <titlebar>
-    <titlebar-icon data-icon="app" />
-    <titlebar-title>Window Title</titlebar-title>
+    {{#if app_icon}}
+    <titlebar-icon data-icon="{{app_icon}}" />
+    {{/if}}
+    <titlebar-title>{{title}}</titlebar-title>
     <titlebar-spacer />
     <titlebar-controls>
       <titlebar-button data-action="minimize" class="minimize">

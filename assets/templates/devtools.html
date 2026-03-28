@@ -1,165 +1,176 @@
-<!-- DevTools Panel Template
-     Rendered by DevToolsPanel::render_template() — the complete developer tools UI.
-     
+<!-- LiquiDE DevTools Panel Template
+     Rendered by DevToolsPanel::render_template() -- the complete developer tools UI.
+
      Mount point: devtools-panel (created/destroyed based on visibility)
-     
+
      Structure:
-       devtools-panel          — outer container, positioned fixed
-         devtools-toolbar      — top bar with tab labels + action buttons
-           devtools-tabs       — tab label container
-             devtools-tab      — individual tab (.active for current)
-           devtools-actions    — toolbar button group (right side)
-             devtools-btn      — action buttons (close, dock-right, dock-bottom, picker)
-         devtools-content      — scrollable content area
-           devtools-tab-panel  — one per tab, only .active is visible
+       devtools-panel          -- outer container, positioned fixed
+         devtools-toolbar      -- top bar with tab labels + action buttons
+           devtools-tabs       -- tab label container
+             devtools-tab      -- individual tab (.active for current)
+           devtools-actions    -- toolbar button group (right side)
+             devtools-btn      -- action buttons (close, dock-right, dock-bottom, picker)
+         devtools-content      -- scrollable content area
+           devtools-tab-panel  -- one per tab, only .active is visible
              ...tab-specific content elements...
-         devtools-statusbar    — bottom status line
+         devtools-statusbar    -- bottom status line
+
+     Dock positions (class on devtools-panel):
+       .dock-bottom   -- anchored to bottom edge
+       .dock-right    -- anchored to right edge
+       .dock-left     -- anchored to left edge
+       .dock-float    -- floating window
+       .dock-detached -- separate window
+
+     Tabs: Elements, Console, Sources, Performance, Mutations, Scene
 
      Classes:
-       .active     — active tab label / visible tab panel
-       .selected   — selected element row in Elements tree
-       .hovered    — hovered element row
-       .expanded   — expanded tree node (has children visible)
-       .collapsed  — collapsed tree node
-       .section    — collapsible section header
-       .section-open — expanded section
-       .dim        — dimmed/inherited text
-       .mono       — monospace text
-       .tag        — HTML tag name color
-       .attr-name  — attribute name color
-       .attr-value — attribute value color
-       .comment    — comment color
-       .ok         — success/green color
-       .warn       — warning/yellow color
-       .error      — error/red color
-       .info       — info/blue color
+       .active     -- active tab label / visible tab panel
+       .selected   -- selected element row in Elements tree
+       .hovered    -- hovered element row
+       .dim        -- dimmed/inherited text
+       .ok         -- success/green color
+       .warn       -- warning/yellow color
+       .error      -- error/red color
 
      Data attributes:
-       data-tab    — tab identifier on devtools-tab and devtools-tab-panel
-       data-node   — DOM NodeId on element tree rows
-       data-action — action identifier on toolbar buttons
-       data-depth  — tree depth for indentation
-       data-key    — reconciliation key for keyed children
+       data-tab       -- tab identifier on devtools-tab and devtools-tab-panel
+       data-node      -- DOM NodeId on element tree rows
+       data-action    -- action identifier on toolbar buttons
+       data-sidetab   -- side panel tab identifier
+       data-tree-arrow -- marker for expand/collapse click target
+       data-key       -- reconciliation key for keyed children
 
      Theme integration:
-       All colors are set via CSS — themes can override devtools appearance
-       by targeting devtools-* custom elements.
+       All colors are set via CSS -- themes can override devtools appearance
+       by targeting devtools-* custom elements. See components/devtools.css.
 -->
-<devtools-panel id="devtools-panel">
+
+<devtools-panel id="devtools-panel" class="{{dock_class}}">
   <!-- Toolbar: tab bar + action buttons -->
   <devtools-toolbar>
     <devtools-tabs>
-      <devtools-tab class="active" data-tab="elements" data-key="tab-elements">Elements</devtools-tab>
-      <devtools-tab data-tab="styles" data-key="tab-styles">Styles</devtools-tab>
-      <devtools-tab data-tab="layout" data-key="tab-layout">Layout</devtools-tab>
-      <devtools-tab data-tab="console" data-key="tab-console">Console</devtools-tab>
-      <devtools-tab data-tab="scene" data-key="tab-scene">Scene</devtools-tab>
-      <devtools-tab data-tab="editor" data-key="tab-editor">Editor</devtools-tab>
-      <devtools-tab data-tab="fonts" data-key="tab-fonts">Fonts</devtools-tab>
-      <devtools-tab data-tab="anim" data-key="tab-anim">Anim</devtools-tab>
-      <devtools-tab data-tab="mutations" data-key="tab-mutations">Mutations</devtools-tab>
-      <devtools-tab data-tab="dom" data-key="tab-dom">DOM</devtools-tab>
-      <devtools-tab data-tab="files" data-key="tab-files">Files</devtools-tab>
-      <devtools-tab data-tab="debug" data-key="tab-debug">Debug</devtools-tab>
+      {{#each tabs}}
+      <devtools-tab data-tab="{{id}}" data-key="tab-{{id}}" {{#if active}}class="active"{{/if}}>{{label}}</devtools-tab>
+      {{/each}}
     </devtools-tabs>
     <devtools-actions>
-      <devtools-btn data-action="picker" data-key="btn-picker">⊕</devtools-btn>
-      <devtools-btn data-action="dock-bottom" data-key="btn-dock-bottom">⊥</devtools-btn>
-      <devtools-btn data-action="dock-right" data-key="btn-dock-right">⊢</devtools-btn>
-      <devtools-btn data-action="close" data-key="btn-close">×</devtools-btn>
+      <devtools-btn data-action="picker" data-key="btn-picker" {{#if picker_active}}class="active"{{/if}}>&#x2295;</devtools-btn>
+      <devtools-btn data-action="detach" data-key="btn-detach" {{#if detached}}class="active"{{/if}}>&#x25EB;</devtools-btn>
+      <devtools-btn data-action="dock-bottom" data-key="btn-dock-bottom" {{#if dock_bottom}}class="active"{{/if}}>&#x22A5;</devtools-btn>
+      <devtools-btn data-action="dock-right" data-key="btn-dock-right" {{#if dock_right}}class="active"{{/if}}>&#x22A2;</devtools-btn>
+      <devtools-btn data-action="close" data-key="btn-close">&#x00D7;</devtools-btn>
     </devtools-actions>
   </devtools-toolbar>
 
-  <!-- Content area: one panel per tab -->
+  <!-- Content area: one panel per tab, only .active is rendered -->
   <devtools-content>
-    <!-- Elements tab: DOM tree inspector -->
-    <devtools-tab-panel class="active" data-tab="elements">
-      <devtools-tree>
-        <devtools-tree-row class="expanded" data-node="1" data-depth="0" data-key="node-1">
-          <devtools-tree-arrow>▼</devtools-tree-arrow>
-          <devtools-tree-tag>&lt;html&gt;</devtools-tree-tag>
-        </devtools-tree-row>
-      </devtools-tree>
+    <!-- Elements tab: DOM tree + side panel -->
+    <devtools-tab-panel data-tab="elements" data-key="panel-elements" {{#if tab_elements_active}}class="active"{{/if}}>
+      {{#if tab_elements_active}}
+      <devtools-split>
+        <devtools-main-pane>
+          <devtools-tree>
+            {{#each tree_rows}}
+            <devtools-tree-row data-node="{{node_id}}" data-key="n-{{node_id}}" {{#if selected}}class="selected"{{/if}}{{#if hovered}}class="hovered"{{/if}} style="padding-left: {{indent}}px">
+              {{#if is_text}}
+              <devtools-tree-text>"{{text}}"</devtools-tree-text>
+              {{else}}
+              {{#if has_children}}
+              <devtools-tree-arrow data-tree-arrow="" data-node="{{node_id}}">{{arrow}}</devtools-tree-arrow>
+              {{/if}}
+              <devtools-tree-tag>&lt;{{tag}}</devtools-tree-tag>
+              {{#if element_id}}
+              <devtools-tree-attr> id="{{element_id}}"</devtools-tree-attr>
+              {{/if}}
+              {{#if classes}}
+              <devtools-tree-attr> class="{{classes}}"</devtools-tree-attr>
+              {{/if}}
+              {{#each attributes}}
+              <devtools-tree-attr> {{name}}="{{value}}"</devtools-tree-attr>
+              {{/each}}
+              <devtools-tree-tag>&gt;</devtools-tree-tag>
+              {{/if}}
+            </devtools-tree-row>
+            {{/each}}
+          </devtools-tree>
+        </devtools-main-pane>
+        <devtools-side-pane>
+          <devtools-side-tabs>
+            {{#each side_tabs}}
+            <devtools-side-tab data-sidetab="{{id}}" data-key="st-{{label}}" {{#if active}}class="active"{{/if}}>{{label}}</devtools-side-tab>
+            {{/each}}
+          </devtools-side-tabs>
+          <devtools-side-body>
+            {{side_content}}
+          </devtools-side-body>
+        </devtools-side-pane>
+      </devtools-split>
+      {{/if}}
     </devtools-tab-panel>
 
-    <!-- Styles tab: computed CSS properties by category -->
-    <devtools-tab-panel data-tab="styles">
-      <devtools-style-section class="section section-open" data-key="sec-box">
-        <devtools-section-header>Box Model</devtools-section-header>
-        <devtools-prop data-key="prop-display">
-          <devtools-prop-name>display</devtools-prop-name>
-          <devtools-prop-value>block</devtools-prop-value>
-        </devtools-prop>
-      </devtools-style-section>
-    </devtools-tab-panel>
-
-    <!-- Layout tab: box model visualization + layout properties -->
-    <devtools-tab-panel data-tab="layout">
-      <devtools-box-model>
-        <devtools-box-margin>
-          <devtools-box-border>
-            <devtools-box-padding>
-              <devtools-box-content></devtools-box-content>
-            </devtools-box-padding>
-          </devtools-box-border>
-        </devtools-box-margin>
-      </devtools-box-model>
-      <devtools-layout-props></devtools-layout-props>
-    </devtools-tab-panel>
-
-    <!-- Console tab: debug log + input -->
-    <devtools-tab-panel data-tab="console">
-      <devtools-console-log></devtools-console-log>
-      <devtools-console-input>
+    <!-- Console tab: log entries + input -->
+    <devtools-tab-panel data-tab="console" data-key="panel-console" {{#if tab_console_active}}class="active"{{/if}}>
+      {{#if tab_console_active}}
+      <devtools-console-log>
+        {{#each console_entries}}
+        <devtools-console-entry data-key="ce-{{index}}" class="{{kind}}">{{text}}</devtools-console-entry>
+        {{/each}}
+      </devtools-console-log>
+      <devtools-console-input {{#if console_focused}}class="focused"{{/if}}>
         <devtools-console-prompt>&gt;</devtools-console-prompt>
-        <devtools-console-field></devtools-console-field>
+        <devtools-console-field>{{console_input}}</devtools-console-field>
       </devtools-console-input>
+      {{/if}}
     </devtools-tab-panel>
 
-    <!-- Scene Graph tab -->
-    <devtools-tab-panel data-tab="scene">
-      <devtools-scene-list></devtools-scene-list>
+    <!-- Sources tab: document overview + DOM JSON -->
+    <devtools-tab-panel data-tab="sources" data-key="panel-sources" {{#if tab_sources_active}}class="active"{{/if}}>
+      {{#if tab_sources_active}}
+      {{sources_content}}
+      {{/if}}
     </devtools-tab-panel>
 
-    <!-- Style Editor tab -->
-    <devtools-tab-panel data-tab="editor">
-      <devtools-editor-list></devtools-editor-list>
-      <devtools-editor-input></devtools-editor-input>
+    <!-- Performance tab: pipeline metrics, frame timing -->
+    <devtools-tab-panel data-tab="perf" data-key="panel-perf" {{#if tab_perf_active}}class="active"{{/if}}>
+      {{#if tab_perf_active}}
+      {{perf_content}}
+      {{/if}}
     </devtools-tab-panel>
 
-    <!-- Fonts tab -->
-    <devtools-tab-panel data-tab="fonts">
-      <devtools-fonts-section></devtools-fonts-section>
+    <!-- Mutations tab: DOM mutation log -->
+    <devtools-tab-panel data-tab="mutations" data-key="panel-mutations" {{#if tab_mutations_active}}class="active"{{/if}}>
+      {{#if tab_mutations_active}}
+      <devtools-mutations-list>
+        {{#each mutation_entries}}
+        <devtools-mutation-entry data-key="mut-{{index}}" class="{{kind_class}}">{{text}}</devtools-mutation-entry>
+        {{/each}}
+      </devtools-mutations-list>
+      {{/if}}
     </devtools-tab-panel>
 
-    <!-- Animations tab -->
-    <devtools-tab-panel data-tab="anim">
-      <devtools-anim-section></devtools-anim-section>
-    </devtools-tab-panel>
-
-    <!-- Mutations tab -->
-    <devtools-tab-panel data-tab="mutations">
-      <devtools-mutations-list></devtools-mutations-list>
-    </devtools-tab-panel>
-
-    <!-- DOM Tree tab (JSON export) -->
-    <devtools-tab-panel data-tab="dom">
-      <devtools-dom-json></devtools-dom-json>
-    </devtools-tab-panel>
-
-    <!-- Files tab (Document Overview) -->
-    <devtools-tab-panel data-tab="files">
-      <devtools-files-section></devtools-files-section>
-    </devtools-tab-panel>
-
-    <!-- Debugger tab (Pipeline Metrics) -->
-    <devtools-tab-panel data-tab="debug">
-      <devtools-debug-section></devtools-debug-section>
+    <!-- Scene tab: scene graph + style editor -->
+    <devtools-tab-panel data-tab="scene" data-key="panel-scene" {{#if tab_scene_active}}class="active"{{/if}}>
+      {{#if tab_scene_active}}
+      <devtools-scene-list>
+        {{#each scene_entries}}
+        <devtools-scene-entry data-key="sg-{{index}}" {{#if selected}}class="selected"{{/if}} style="padding-left: {{indent}}px">{{kind}}</devtools-scene-entry>
+        {{/each}}
+      </devtools-scene-list>
+      <devtools-separator />
+      <devtools-heading>Live Style Editor</devtools-heading>
+      <devtools-editor-list>
+        {{#each editor_entries}}
+        <devtools-editor-entry data-key="ed-{{index}}" class="{{#if applied}}applied{{else}}pending{{/if}}">{{text}}</devtools-editor-entry>
+        {{/each}}
+      </devtools-editor-list>
+      <devtools-editor-input>&gt; {{editor_input}}</devtools-editor-input>
+      {{/if}}
     </devtools-tab-panel>
   </devtools-content>
 
   <!-- Status bar -->
   <devtools-statusbar>
-    <devtools-status-text></devtools-status-text>
+    <devtools-status-text>{{status_text}}</devtools-status-text>
   </devtools-statusbar>
 </devtools-panel>
