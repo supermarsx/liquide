@@ -13,6 +13,7 @@
 //! 3. **Paint** — `Painter::paint()` → `DisplayList`
 //! 4. **Bridge** — `DisplayList` → `Vec<SceneNode>` (this module)
 
+pub mod dirty_tracking;
 mod helpers;
 mod property_trees;
 mod scene_bridge;

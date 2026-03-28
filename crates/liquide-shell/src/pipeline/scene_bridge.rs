@@ -1,7 +1,8 @@
 //! Display list → SceneNode conversion (the "bridge" from paint output to compositor).
 
 use liquide_compositor::geometry::Rect as CRect;
-use liquide_compositor::scene::{NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::scene::{ClipPathKind, NodeProperties, SceneNode, SceneNodeKind};
+use liquide_paint::display_list::ClipPath as PaintClipPath;
 use liquide_paint::{DisplayItem, DisplayList};
 use liquide_style_engine::computed::BorderLineStyle;
 
@@ -33,6 +34,10 @@ impl DesktopPipeline {
             clip_radius: (f32, f32, f32, f32),
             opacity: f32,
             transform: Affine2D,
+            /// Pending clip-path from PushClipPath (absolute paint coords).
+            clip_path: Option<PaintClipPath>,
+            /// Bounds captured from the inner PushClip for the clip-path node.
+            clip_path_bounds: Option<CRect>,
         }
 
         impl Default for PipelineState {
@@ -42,6 +47,8 @@ impl DesktopPipeline {
                     clip_radius: (0.0, 0.0, 0.0, 0.0),
                     opacity: 1.0,
                     transform: Affine2D::identity(),
+                    clip_path: None,
+                    clip_path_bounds: None,
                 }
             }
         }
@@ -68,10 +75,39 @@ impl DesktopPipeline {
                     if has_r {
                         current.clip_radius = r;
                     }
+                    // If parent state has pending clip-path, record the clip rect as its bounds
+                    if let Some(parent) = stack.last_mut() {
+                        if parent.clip_path.is_some() && parent.clip_path_bounds.is_none() {
+                            parent.clip_path_bounds = Some(clip_rect);
+                        }
+                    }
+                    // Don't inherit clip-path into the overflow clip scope
+                    current.clip_path = None;
+                    current.clip_path_bounds = None;
                 }
                 DisplayItem::PopClip => {
+                    // Save clip-path info before restoring parent state
+                    let had_clip_path = current.clip_path.take();
+                    let clip_path_bounds = current.clip_path_bounds.take().or(current.clip);
                     if let Some(prev) = stack.pop() {
                         current = prev;
+                    }
+                    // If we just left a clip-path scope, emit the ClipPath scene node
+                    if let Some(paint_path) = had_clip_path {
+                        let bounds = clip_path_bounds
+                            .unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
+                        if let Some((clip_kind, node_bounds)) =
+                            convert_paint_clip_path(&paint_path, &bounds)
+                        {
+                            let id = self.alloc_id();
+                            let node = SceneNode::new(
+                                id,
+                                SceneNodeKind::ClipPath { clip_kind },
+                                NodeProperties::new(node_bounds).with_z_order(z),
+                            );
+                            nodes.push(node);
+                            z += 1;
+                        }
                     }
                 }
 
@@ -200,8 +236,10 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::PushClipPath { .. } => {
+                DisplayItem::PushClipPath { path } => {
                     stack.push(current.clone());
+                    current.clip_path = Some(path.clone());
+                    current.clip_path_bounds = None;
                 }
 
                 DisplayItem::SaveLayer { .. } => {
@@ -529,8 +567,9 @@ impl DesktopPipeline {
                 ))
             }
 
-            DisplayItem::StrokeRoundedRect { rect, color, width, .. } => {
+            DisplayItem::StrokeRoundedRect { rect, radius, color, width } => {
                 let bounds = to_compositor_rect(rect);
+                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
                 let side = liquide_compositor::scene::BorderSide {
                     width: *width,
                     style: liquide_compositor::scene::BorderSideStyle::Solid,
@@ -545,7 +584,7 @@ impl DesktopPipeline {
                             bottom: side.clone(),
                             left: side,
                         },
-                        radius: (0.0, 0.0, 0.0, 0.0),
+                        radius: r,
                     },
                     NodeProperties::new(bounds).with_z_order(z),
                 ))
@@ -664,6 +703,62 @@ impl DesktopPipeline {
                 );
                 Some(node)
             }
+        }
+    }
+}
+
+/// Convert a paint-layer `ClipPath` (absolute coordinates) to a compositor
+/// `ClipPathKind` (coordinates relative to `bounds`) and optionally adjusted bounds.
+fn convert_paint_clip_path(
+    path: &PaintClipPath,
+    bounds: &CRect,
+) -> Option<(ClipPathKind, CRect)> {
+    let w = bounds.width.max(1.0);
+    let h = bounds.height.max(1.0);
+
+    match path {
+        PaintClipPath::Circle { cx, cy, r } => Some((
+            ClipPathKind::Circle {
+                center_x: (cx - bounds.x) / w,
+                center_y: (cy - bounds.y) / h,
+                radius: r / w.min(h),
+            },
+            *bounds,
+        )),
+        PaintClipPath::Ellipse { cx, cy, rx, ry } => Some((
+            ClipPathKind::Ellipse {
+                center_x: (cx - bounds.x) / w,
+                center_y: (cy - bounds.y) / h,
+                rx: rx / w,
+                ry: ry / h,
+            },
+            *bounds,
+        )),
+        PaintClipPath::Polygon(pts) => Some((
+            ClipPathKind::Polygon {
+                points: pts
+                    .iter()
+                    .map(|(px, py)| ((px - bounds.x) / w, (py - bounds.y) / h))
+                    .collect(),
+            },
+            *bounds,
+        )),
+        PaintClipPath::RoundedRect { radii, .. } => {
+            let avg = (radii.top_left + radii.top_right + radii.bottom_right + radii.bottom_left)
+                / 4.0;
+            Some((ClipPathKind::RoundedRect { corner_radius: avg }, *bounds))
+        }
+        PaintClipPath::Inset { top, right, bottom, left, radius } => {
+            let avg = (radius.top_left + radius.top_right + radius.bottom_right + radius.bottom_left)
+                / 4.0;
+            // Compute the inset rect relative to the element bounds
+            let inset_bounds = CRect::new(
+                bounds.x + left,
+                bounds.y + top,
+                (bounds.width - left - right).max(0.0),
+                (bounds.height - top - bottom).max(0.0),
+            );
+            Some((ClipPathKind::RoundedRect { corner_radius: avg }, inset_bounds))
         }
     }
 }

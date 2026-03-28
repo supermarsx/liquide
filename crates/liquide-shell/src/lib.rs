@@ -116,6 +116,8 @@ pub use screen_time::{
     ScreenTimeAlert, ScreenTimeTracker, UsageLimit, WeeklySummary,
 };
 pub use shell::Shell;
+pub use shell::batch::{WindowBatch, WindowOp, ZOrderOp};
+pub use shell::hooks::{HookId, HookManager, HookPriority, HookResult, ShellHookEvent};
 pub use stats::{AppStats, StatsCollector, SystemStats, WindowStats};
 pub use window::{Window, WindowFlags, WindowId, WindowState};
 pub use workspace::{Workspace, WorkspaceId, WorkspaceManager};
@@ -134,7 +136,8 @@ pub use liquide_dock::{
     DockRenderConfig, DockThemeColors,
 };
 pub use notification::{
-    NotificationConfig, NotificationManager, NotificationPosition, ShellNotification,
+    DndSchedule, NotificationConfig, NotificationEvent, NotificationManager,
+    NotificationPosition, NotifyOptions, ShellNotification, TrayIcon, TrayIconId, TrayMenuItem,
 };
 pub use seamless::{
     SeamlessConfig, SeamlessManager, SeamlessMessage, SeamlessMode, SeamlessWindow,

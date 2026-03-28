@@ -180,6 +180,21 @@ impl DesktopPipeline {
                     }
                 }
 
+                DisplayItem::PushClipPath { .. } => {
+                    // Clip paths share PopClip with PushClip, so push a clip node
+                    // to keep the clip stack balanced.
+                    let parent = *clip_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let transform_id = *transform_stack.last().unwrap_or(&ROOT_NODE_ID);
+                    let node = ClipNode {
+                        parent,
+                        clip_rect: liquide_compositor::geometry::Rect::new(0.0, 0.0, 0.0, 0.0),
+                        transform_id,
+                        ..Default::default()
+                    };
+                    let id = trees.clip_tree.insert(node);
+                    clip_stack.push(id);
+                }
+
                 // Non-structural items don't affect the trees
                 _ => {}
             }

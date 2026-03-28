@@ -7,7 +7,9 @@ use crate::history::WindowEventKind;
 use crate::shortcuts::ShellAction;
 use crate::window::{WindowFlags, WindowId, WindowState};
 
+use super::hooks::ShellHookEvent;
 use super::Shell;
+use super::batch::WindowBatch;
 
 impl Shell {
     /// Periodic tick — update clock, expire notifications.
@@ -132,7 +134,7 @@ impl Shell {
         let has_maximized = self
             .windows
             .values()
-            .any(|w| w.state == WindowState::Maximized && w.state != WindowState::Minimized);
+            .any(|w| w.state == WindowState::Maximized && w.visible);
 
         if !has_maximized {
             // No maximized windows, always show bar
@@ -157,7 +159,13 @@ impl Shell {
     pub fn execute_action(&mut self, action: &ShellAction) -> bool {
         match action {
             ShellAction::OpenLauncher => {
+                let was_visible = self.launcher.is_visible();
                 self.launcher.toggle();
+                if was_visible {
+                    self.hook_manager.dispatch(&ShellHookEvent::LauncherClosed);
+                } else {
+                    self.hook_manager.dispatch(&ShellHookEvent::LauncherOpened);
+                }
                 true
             }
             ShellAction::CloseWindow => {
@@ -208,17 +216,21 @@ impl Shell {
             }
             ShellAction::TileLeft => {
                 if let Some(wid) = self.focus.focused() {
-                    let half_w = self.screen_rect.width / 2.0;
-                    let _ = self.move_window(wid, 0.0, 0.0);
-                    let _ = self.resize_window(wid, half_w, self.screen_rect.height);
+                    let work = self.work_area();
+                    let half_w = work.width / 2.0;
+                    let mut batch = WindowBatch::new();
+                    batch.move_resize(wid, work.x, work.y, half_w, work.height);
+                    self.apply_batch(batch);
                 }
                 true
             }
             ShellAction::TileRight => {
                 if let Some(wid) = self.focus.focused() {
-                    let half_w = self.screen_rect.width / 2.0;
-                    let _ = self.move_window(wid, half_w, 0.0);
-                    let _ = self.resize_window(wid, half_w, self.screen_rect.height);
+                    let work = self.work_area();
+                    let half_w = work.width / 2.0;
+                    let mut batch = WindowBatch::new();
+                    batch.move_resize(wid, work.x + half_w, work.y, half_w, work.height);
+                    self.apply_batch(batch);
                 }
                 true
             }
@@ -226,24 +238,36 @@ impl Shell {
                 let active = self.workspaces.active().id;
                 let count = self.workspaces.workspace_count();
                 if (active.0 as usize) < count - 1 {
+                    let from = active.0;
                     let next = crate::workspace::WorkspaceId(active.0 + 1);
                     let _ = self.workspaces.switch_to(next);
+                    self.hook_manager.dispatch(&ShellHookEvent::WorkspaceChanged {
+                        from,
+                        to: next.0,
+                    });
                 }
                 true
             }
             ShellAction::WorkspacePrev => {
                 let active = self.workspaces.active().id;
                 if active.0 > 0 {
+                    let from = active.0;
                     let prev = crate::workspace::WorkspaceId(active.0 - 1);
                     let _ = self.workspaces.switch_to(prev);
+                    self.hook_manager.dispatch(&ShellHookEvent::WorkspaceChanged {
+                        from,
+                        to: prev.0,
+                    });
                 }
                 true
             }
             ShellAction::ShowDesktop => {
                 let ids: Vec<_> = self.visible_windows().iter().map(|w| w.id).collect();
+                let mut batch = WindowBatch::with_capacity(ids.len());
                 for wid in ids {
-                    let _ = self.minimize(wid);
+                    batch.minimize(wid);
                 }
+                self.apply_batch(batch);
                 true
             }
             ShellAction::WorkspaceAdd => {

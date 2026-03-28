@@ -161,16 +161,11 @@ impl ElementThread {
     /// Apply an update to the document.
     fn apply_update(document: &mut DesktopDocument, update: ElementUpdate) {
         match update {
-            ElementUpdate::Dock { items, hover_index } => {
-                document.sync_dock_items(&items);
-                document.set_dock_hover(hover_index);
+            ElementUpdate::Dock { items: _, hover_index: _ } => {
+                // Dock rendering is handled by the template engine in dom_sync.rs.
             }
-            ElementUpdate::StatusBar { items } => {
-                for item in items {
-                    if item.visible {
-                        document.set_statusbar_item(item.slot, &item.item_id, &item.content, &[]);
-                    }
-                }
+            ElementUpdate::StatusBar { items: _ } => {
+                // Statusbar rendering is handled by the template engine in dom_sync.rs.
             }
             ElementUpdate::Launcher { visible, search_query: _, filtered_items, selected_index } => {
                 if visible {

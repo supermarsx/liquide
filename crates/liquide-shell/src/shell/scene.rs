@@ -23,6 +23,16 @@ impl Shell {
     pub fn build_scene(&mut self) -> SceneNode {
         use liquide_compositor::scene::GlassParams;
 
+        // Toggle cursor blink every 500ms
+        let now_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+        if now_us.saturating_sub(self.cursor_blink_time_us) >= 500_000 {
+            self.cursor_blink_on = !self.cursor_blink_on;
+            self.cursor_blink_time_us = now_us;
+        }
+
         let screen = self.screen_rect;
 
         // ── Synchronise DOM with current shell state ────────
@@ -66,16 +76,62 @@ impl Shell {
 
         let mut root = SceneNode::new(NODE_ROOT, SceneNodeKind::Root, NodeProperties::new(screen));
 
-        // ── Pipeline-generated nodes (background, statusbar, dock,
-        //    notifications, launcher, menus — everything except windows) ──
-        for node in pipeline_nodes {
-            root.add_child(node);
-        }
-        if pipeline_empty && !threaded_nodes.is_empty() {
+        // ── Split pipeline nodes into background layer and chrome overlay ──
+        //
+        // The CSS pipeline emits scene nodes with sequential z_orders
+        // (0, 1, 2, …).  The desktop-background fill comes first (low z),
+        // while shell chrome (statusbar, dock, notifications, menus, glass
+        // blurs) follows at higher z values.  Windows must render BETWEEN
+        // these two layers: above the desktop background but below the
+        // dock / statusbar / menus.
+        //
+        // Classify: a node is "background" if it is a solid fill whose
+        // bounds cover almost the entire screen (the desktop-background
+        // element).  Everything else is "chrome overlay".
+        //
+        // Z-order scheme for root's children:
+        //   [0 .. bg_count)                      — background layer
+        //   WORKSPACE_Z_ORDER                    — workspace (windows)
+        //   [CHROME_Z_BASE .. CHROME_Z_BASE+N)   — chrome overlay layer
+        const WORKSPACE_Z_ORDER: u32 = 100;
+        const CHROME_Z_BASE: u32 = 10_000;
+
+        let screen_area = screen.width * screen.height;
+        let mut bg_z = 0u32;
+        let mut chrome_z = CHROME_Z_BASE;
+        // Only the first full-screen fill is the desktop background.
+        // Subsequent full-screen fills (launcher-overlay, loading-overlay)
+        // are overlays that must render ABOVE windows, not below.
+        let mut found_desktop_bg = false;
+
+        let all_nodes = if pipeline_empty && !threaded_nodes.is_empty() {
             Self::normalize_threaded_scene_nodes(&mut threaded_nodes);
-            for node in threaded_nodes {
-                root.add_child(node);
+            threaded_nodes
+        } else {
+            pipeline_nodes
+        };
+
+        for mut node in all_nodes {
+            let nb = &node.properties.bounds;
+            let node_area = nb.width * nb.height;
+            let is_fullscreen_fill = matches!(
+                node.kind,
+                SceneNodeKind::Background { .. } | SceneNodeKind::GradientFill { .. }
+            ) && node_area >= screen_area * 0.9;
+
+            let is_bg = is_fullscreen_fill && !found_desktop_bg;
+            if is_bg {
+                found_desktop_bg = true;
             }
+
+            if is_bg {
+                node.properties.z_order = bg_z;
+                bg_z += 1;
+            } else {
+                node.properties.z_order = chrome_z;
+                chrome_z += 1;
+            }
+            root.add_child(node);
         }
 
         // ── Windows (manual — complex interactive decorations) ────
@@ -84,7 +140,7 @@ impl Shell {
         let mut ws_node = SceneNode::new(
             ws_id,
             SceneNodeKind::Workspace { index: ws.id.0 },
-            NodeProperties::new(screen).with_z_order(1),
+            NodeProperties::new(screen).with_z_order(WORKSPACE_Z_ORDER),
         );
 
         for window in &self.visible_windows() {
@@ -103,8 +159,9 @@ impl Shell {
                     spread: 4.0,
                     blur_radius: 12.0,
                     color: theme.window_shadow,
+                    corner_radius: self.decoration_style.corner_radius,
                 },
-                NodeProperties::new(shadow_bounds).with_z_order(window.z_order as u32 * 10),
+                NodeProperties::new(shadow_bounds).with_z_order(window.z_order.max(0) as u32 * 10),
             ));
 
             // Decoration with liquid glass title bar
@@ -127,7 +184,7 @@ impl Shell {
                         parallax: false,
                     }),
                     NodeProperties::new(title_bar_bounds)
-                        .with_z_order(window.z_order as u32 * 10 + 1),
+                        .with_z_order(window.z_order.max(0) as u32 * 10 + 1),
                 ));
 
                 let title_bg = if is_focused {
@@ -170,7 +227,7 @@ impl Shell {
                         button_colors: button_colors.clone(),
                         button_layout: button_layout.clone(),
                     },
-                    NodeProperties::new(window.bounds).with_z_order(window.z_order as u32 * 10 + 2),
+                    NodeProperties::new(window.bounds).with_z_order(window.z_order.max(0) as u32 * 10 + 2),
                 ));
             }
 
@@ -186,7 +243,7 @@ impl Shell {
                 window.bounds.width,
                 (window.bounds.height - title_h).max(0.0),
             );
-            let z_content = window.z_order as u32 * 10 + 3;
+            let z_content = window.z_order.max(0) as u32 * 10 + 3;
 
             let content_bg = theme.window_content_background;
             ws_node.add_child(solid_rect(
@@ -312,6 +369,18 @@ impl Shell {
                     z + 2,
                     1,
                 ));
+                // Blinking cursor block after the prompt
+                if self.cursor_blink_on {
+                    let prompt_width = 15.0 * 8.0; // ~15 chars * ~8px monospace
+                    let cursor_x = cx + 12.0 + prompt_width + 4.0;
+                    let cursor_color = theme.app_terminal_text;
+                    parent.add_child(solid_rect(
+                        win_base + 5,
+                        cursor_color,
+                        Rect::new(cursor_x, cy + 12.0, 8.0, 16.0),
+                        z + 3,
+                    ));
+                }
             }
             "com.liquide.files" => {
                 parent.add_child(icon_node(

@@ -184,6 +184,10 @@ pub fn resolve_decoration_layout(
 }
 
 /// Resolve decoration style from CSS (border, corner radius, title-bar height).
+///
+/// The button dimensions (`button_width`, `button_height`,
+/// `button_right_margin`) are kept in sync with `resolve_decoration_layout`
+/// so that hit-test regions match the visually rendered buttons exactly.
 pub fn resolve_decoration_style(
     resolver: &StyleResolver,
 ) -> crate::decoration::DecorationStyle {
@@ -196,6 +200,10 @@ pub fn resolve_decoration_style(
         .resolve("titlebar", &[], &[], None)
         .unwrap_or_else(|_| RenderStyle::new());
 
+    // Resolve the same button layout the renderer uses, so hit-testing
+    // matches the visual positions.
+    let btn_layout = resolve_decoration_layout(resolver);
+
     crate::decoration::DecorationStyle {
         title_bar_height: titlebar.height.unwrap_or(defaults.title_bar_height),
         border_width: if window.border.width > 0.0 {
@@ -206,6 +214,9 @@ pub fn resolve_decoration_style(
         corner_radius: if window.border_radius > 0.0 { window.border_radius } else { defaults.corner_radius },
         button_size: defaults.button_size,
         resize_tolerance: defaults.resize_tolerance,
+        button_width: btn_layout.button_width,
+        button_height: btn_layout.button_height,
+        button_right_margin: btn_layout.button_right_margin,
     }
 }
 

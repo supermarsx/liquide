@@ -6,6 +6,7 @@ use crate::history::WindowEventKind;
 use crate::window::{Window, WindowId, WindowState};
 use crate::{Result, ShellError};
 
+use super::hooks::ShellHookEvent;
 use super::Shell;
 
 impl Shell {
@@ -18,6 +19,7 @@ impl Shell {
         self.workspaces.active_mut().add_window(id);
         let ts = self.next_timestamp();
         self.window_history.record_at(id, WindowEventKind::Opened, ts);
+        self.hook_manager.dispatch(&ShellHookEvent::WindowCreated { window_id: id.0 });
         id
     }
 
@@ -44,6 +46,7 @@ impl Shell {
             self.app_history.record_open(&app_id_str, id, bounds, ts);
             self.screen_time.feed_open(&app_id_str, id, ts);
         }
+        self.hook_manager.dispatch(&ShellHookEvent::WindowCreated { window_id: id.0 });
         id
     }
 
@@ -63,6 +66,7 @@ impl Shell {
                 self.sandbox_manager.unregister_app(&window.app_id);
             }
         }
+        self.hook_manager.dispatch(&ShellHookEvent::WindowClosed { window_id: id.0 });
         Ok(window)
     }
 
@@ -85,6 +89,11 @@ impl Shell {
         let to = win.bounds;
         let ts = self.next_timestamp();
         self.window_history.record_at(id, WindowEventKind::Moved { from, to }, ts);
+        self.hook_manager.dispatch(&ShellHookEvent::WindowMoved {
+            window_id: id.0,
+            x: x.round() as i32,
+            y: y.round() as i32,
+        });
         Ok(())
     }
 
@@ -97,6 +106,11 @@ impl Shell {
         let to = win.bounds;
         let ts = self.next_timestamp();
         self.window_history.record_at(id, WindowEventKind::Resized { from, to }, ts);
+        self.hook_manager.dispatch(&ShellHookEvent::WindowResized {
+            window_id: id.0,
+            width: width.round() as u32,
+            height: height.round() as u32,
+        });
         Ok(())
     }
 
@@ -114,22 +128,24 @@ impl Shell {
             let ts2 = self.next_timestamp();
             self.window_history.record_at(id, WindowEventKind::VisibilityChanged { from: true, to: false }, ts2);
         }
+        self.hook_manager.dispatch(&ShellHookEvent::WindowMinimized { window_id: id.0 });
         Ok(())
     }
 
-    /// Maximize a window to fill the screen.
+    /// Maximize a window to fill the work area (screen minus statusbar and dock).
     pub fn maximize(&mut self, id: WindowId) -> Result<()> {
-        let screen = self.screen_rect;
+        let work = self.work_area();
         let win = self.windows.get_mut(&id).ok_or(ShellError::WindowNotFound { id })?;
         let from_state = win.state;
         let from_bounds = win.bounds;
         win.save_bounds();
         win.state = WindowState::Maximized;
-        win.bounds = screen;
+        win.bounds = work;
         let ts = self.next_timestamp();
         self.window_history.record_at(id, WindowEventKind::StateChanged { from: from_state, to: WindowState::Maximized }, ts);
         let ts2 = self.next_timestamp();
-        self.window_history.record_at(id, WindowEventKind::Resized { from: from_bounds, to: screen }, ts2);
+        self.window_history.record_at(id, WindowEventKind::Resized { from: from_bounds, to: work }, ts2);
+        self.hook_manager.dispatch(&ShellHookEvent::WindowMaximized { window_id: id.0 });
         Ok(())
     }
 
@@ -153,6 +169,7 @@ impl Shell {
             let ts3 = self.next_timestamp();
             self.window_history.record_at(id, WindowEventKind::Resized { from: from_bounds, to: to_bounds }, ts3);
         }
+        self.hook_manager.dispatch(&ShellHookEvent::WindowRestored { window_id: id.0 });
         Ok(())
     }
 
@@ -182,6 +199,14 @@ impl Shell {
     }
 
     /// Set focus to a window.
+    ///
+    /// NOTE: This updates the internal focus manager but does NOT sync the
+    /// `class="focused"` attribute in the DOM because windows are rendered
+    /// manually via `scene.rs` rather than through the CSS pipeline.  The
+    /// `DesktopDocument::set_focused_window()` helper exists for future use
+    /// when/if windows are migrated to DOM-based rendering.  The scene
+    /// builder already reads `self.focus.focused()` directly to determine
+    /// the focused-window visual state (title-bar colour, border colour).
     pub fn set_focus(&mut self, id: WindowId) -> Result<()> {
         if !self.windows.contains_key(&id) {
             return Err(ShellError::WindowNotFound { id });
@@ -193,6 +218,7 @@ impl Shell {
                 let ts = self.next_timestamp();
                 self.window_history.record_at(prev_id, WindowEventKind::Unfocused, ts);
                 self.screen_time.feed_unfocus(ts);
+                self.hook_manager.dispatch(&ShellHookEvent::WindowDeactivated { window_id: prev_id.0 });
             }
         }
         let ts2 = self.next_timestamp();
@@ -201,6 +227,7 @@ impl Shell {
         if !app_id.is_empty() {
             self.screen_time.feed_focus(&app_id, id, ts2);
         }
+        self.hook_manager.dispatch(&ShellHookEvent::WindowActivated { window_id: id.0 });
         Ok(())
     }
 
@@ -240,18 +267,39 @@ impl Shell {
         win.z_order = max_z + 1;
         let ts = self.next_timestamp();
         self.window_history.record_at(id, WindowEventKind::ZOrderChanged { from: from_z, to: max_z + 1 }, ts);
+        self.normalize_z_orders();
         Ok(())
     }
 
     /// Lower a window to the bottom (lowest z_order).
     pub fn lower_window(&mut self, id: WindowId) -> Result<()> {
-        let min_z = self.windows.values().map(|w| w.z_order).min().unwrap_or(0);
-        let win = self.windows.get_mut(&id).ok_or(ShellError::WindowNotFound { id })?;
-        let from_z = win.z_order;
-        win.z_order = min_z - 1;
+        if !self.windows.contains_key(&id) {
+            return Err(ShellError::WindowNotFound { id });
+        }
+        // Temporarily set to -1 so it sorts below everything, then normalize.
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.z_order = -1;
+        }
+        self.normalize_z_orders();
+        let new_z = self.windows.get(&id).map(|w| w.z_order).unwrap_or(0);
         let ts = self.next_timestamp();
-        self.window_history.record_at(id, WindowEventKind::ZOrderChanged { from: from_z, to: min_z - 1 }, ts);
+        self.window_history.record_at(id, WindowEventKind::ZOrderChanged { from: new_z, to: new_z }, ts);
         Ok(())
+    }
+
+    /// Compact z_order values to sequential non-negative integers,
+    /// preserving relative order. Prevents unbounded growth from
+    /// repeated raise/lower operations.
+    pub(crate) fn normalize_z_orders(&mut self) {
+        let mut sorted: Vec<(WindowId, i32)> = self.windows.iter()
+            .map(|(id, w)| (*id, w.z_order))
+            .collect();
+        sorted.sort_by_key(|(_, z)| *z);
+        for (i, (id, _)) in sorted.iter().enumerate() {
+            if let Some(w) = self.windows.get_mut(id) {
+                w.z_order = i as i32;
+            }
+        }
     }
 
     /// Open a new window for the given application, or focus an existing one.
@@ -267,7 +315,7 @@ impl Shell {
             let _ = self.raise_window(wid);
             return wid;
         }
-        let screen = self.screen_rect;
+        let work = self.work_area();
         let (title, w, h): (&str, f32, f32) = match app_id {
             "com.liquide.settings" => ("Settings", 700.0, 500.0),
             "com.liquide.terminal" => ("Terminal", 720.0, 480.0),
@@ -276,9 +324,17 @@ impl Shell {
             "com.liquide.calculator" => ("Calculator", 360.0, 420.0),
             _ => ("Application", 640.0, 480.0),
         };
-        let x = (screen.width - w) / 2.0;
-        let y = (screen.height - h) / 2.0;
+        let x = work.x + (work.width - w) / 2.0;
+        let y = work.y + (work.height - h) / 2.0;
         let id = self.open_window_with_app(title, Rect::new(x, y, w, h), app_id);
+        // Set sensible minimum sizes for known applications.
+        let min = match app_id {
+            "com.liquide.calculator" => Some((280.0, 320.0)),
+            _ => Some((200.0, 150.0)),
+        };
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.min_size = min;
+        }
         self.dock.add_running(app_id);
         let _ = self.set_focus(id);
         let _ = self.raise_window(id);

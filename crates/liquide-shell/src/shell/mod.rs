@@ -2,16 +2,29 @@
 //! dock, status bar, launcher, tiling, shortcuts, notifications, and
 //! seamless window mode.
 
+pub mod batch;
 mod accessors;
 mod devtools;
 mod dom_sync;
 mod events;
+pub mod hooks;
 mod scene;
 mod theme;
 mod tick;
 mod windows;
 
+pub use batch::*;
+pub use hooks::*;
+
 use std::collections::HashMap;
+
+// ── Menu layout constants (must match CSS) ──────────────────────────
+/// Height of a single `<menu-item>` — CSS `menu-item { height: 28; }`.
+const MENU_ITEM_HEIGHT: f32 = 28.0;
+/// Inner padding of `<context-menu>` / `<session-menu>` — CSS `padding: 4;`.
+const MENU_PADDING: f32 = 4.0;
+/// Rendered width of the context menu.
+const CONTEXT_MENU_WIDTH: f32 = 200.0;
 
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::scene::{CursorShape, ResizeDirection};
@@ -20,7 +33,7 @@ use liquide_renderer_css::StyleResolver;
 use crate::app_history::AppHistory;
 use crate::config::ShellConfig;
 use crate::decoration::{DecorationStyle, HitZone};
-use crate::desktop_dom::{DesktopDocument, DockItemInfo};
+use crate::desktop_dom::DesktopDocument;
 use crate::focus::{FocusManager, FocusPolicy};
 use crate::history::WindowHistory;
 use crate::launcher::{Launcher, LauncherApp};
@@ -37,6 +50,7 @@ use crate::tiling::TilingEngine;
 use crate::window::{Window, WindowId};
 use crate::workspace::WorkspaceManager;
 use liquide_dock::Dock;
+use liquide_dom::template_registry::TemplateRegistry;
 use liquide_hit_test::{EventDispatcher, HitTestEngine};
 
 /// A configurable item for the session / end-session dialog.
@@ -99,13 +113,24 @@ impl ContextMenuItem {
     #[must_use]
     pub fn defaults() -> Vec<Self> {
         vec![
+            Self::new("Open Terminal", "terminal", ShellAction::OpenTerminal),
             Self::new(
-                "Configure Desktop & Wallpaper",
-                "preferences-system",
+                "Open File Manager",
+                "folder",
+                ShellAction::OpenFileManager,
+            ),
+            Self::new(
+                "Change Wallpaper",
+                "preferences-desktop-wallpaper",
                 ShellAction::OpenSettings,
             ),
             Self::new(
                 "Display Settings",
+                "preferences-system",
+                ShellAction::OpenSettings,
+            ),
+            Self::new(
+                "System Settings",
                 "preferences-system",
                 ShellAction::OpenSettings,
             ),
@@ -164,6 +189,7 @@ pub struct Shell {
     pub(crate) session_menu_items: Vec<SessionMenuItem>,
     pub(crate) context_menu_hover_index: Option<usize>,
     pub(crate) session_menu_hover_index: Option<usize>,
+    pub(crate) app_menu_hover_index: Option<usize>,
     pub(crate) drag_state: Option<DragState>,
     pub(crate) hovered_button: Option<(WindowId, HitZone)>,
     pub(crate) cursor_shape: CursorShape,
@@ -178,6 +204,21 @@ pub struct Shell {
     pub(crate) hit_test_engine: Option<HitTestEngine>,
     pub(crate) thread_coordinator: Option<crate::threading::ShellThreadCoordinator>,
     pub(crate) sandbox_manager: crate::sandboxing::SandboxManager,
+    pub(crate) template_registry: TemplateRegistry,
+    /// Hook manager for the event hook chain.
+    pub(crate) hook_manager: HookManager,
+    /// Cache of last rendered HTML per template name to skip redundant DOM rebuilds.
+    pub(crate) template_cache: HashMap<String, String>,
+    /// Tooltip text to display (e.g. dock item label on hover).
+    pub(crate) tooltip_text: Option<String>,
+    /// Screen position for the tooltip (center-top of the hovered element).
+    pub(crate) tooltip_pos: Point,
+    /// Timestamp (microseconds since epoch) when the tooltip was triggered.
+    pub(crate) tooltip_timer_us: u64,
+    /// Whether the text cursor is currently visible (blinks on/off).
+    pub(crate) cursor_blink_on: bool,
+    /// Last cursor blink toggle time (microseconds since epoch).
+    pub(crate) cursor_blink_time_us: u64,
 }
 
 impl Shell {
@@ -206,20 +247,7 @@ impl Shell {
 
         let (theme, style_resolver) = Self::build_default_theme();
 
-        let mut desktop_dom = DesktopDocument::new();
-        desktop_dom.populate_default_statusbar();
-        let dock_infos: Vec<DockItemInfo> = dock
-            .items()
-            .iter()
-            .map(|item| DockItemInfo {
-                app_id: item.app_id.clone(),
-                label: item.label.clone(),
-                icon: item.icon.clone(),
-                is_running: item.running_window_count > 0,
-                is_pinned: item.pinned_position.is_some(),
-            })
-            .collect();
-        desktop_dom.sync_dock_items(&dock_infos);
+        let desktop_dom = DesktopDocument::load_or_default();
 
         let pipeline_cfg = PipelineConfig {
             width: screen_width,
@@ -268,6 +296,7 @@ impl Shell {
             session_menu_items: SessionMenuItem::defaults(),
             context_menu_hover_index: None,
             session_menu_hover_index: None,
+            app_menu_hover_index: None,
             drag_state: None,
             hovered_button: None,
             cursor_shape: CursorShape::Arrow,
@@ -282,6 +311,14 @@ impl Shell {
             hit_test_engine: None,
             thread_coordinator: Some(thread_coordinator),
             sandbox_manager,
+            hook_manager: HookManager::new(),
+            template_registry: Self::init_template_registry(),
+            template_cache: HashMap::new(),
+            tooltip_text: None,
+            tooltip_pos: Point::new(0.0, 0.0),
+            tooltip_timer_us: 0,
+            cursor_blink_on: true,
+            cursor_blink_time_us: 0,
         }
     }
 
@@ -307,20 +344,7 @@ impl Shell {
         Self::register_default_apps(&mut launcher);
         let (theme, style_resolver) = Self::build_default_theme();
 
-        let mut desktop_dom = DesktopDocument::new();
-        desktop_dom.populate_default_statusbar();
-        let dock_infos: Vec<DockItemInfo> = dock
-            .items()
-            .iter()
-            .map(|item| DockItemInfo {
-                app_id: item.app_id.clone(),
-                label: item.label.clone(),
-                icon: item.icon.clone(),
-                is_running: item.running_window_count > 0,
-                is_pinned: item.pinned_position.is_some(),
-            })
-            .collect();
-        desktop_dom.sync_dock_items(&dock_infos);
+        let desktop_dom = DesktopDocument::load_or_default();
 
         let pipeline_cfg = PipelineConfig {
             width: screen_width,
@@ -369,6 +393,7 @@ impl Shell {
             session_menu_items: SessionMenuItem::defaults(),
             context_menu_hover_index: None,
             session_menu_hover_index: None,
+            app_menu_hover_index: None,
             drag_state: None,
             hovered_button: None,
             cursor_shape: CursorShape::Arrow,
@@ -383,7 +408,26 @@ impl Shell {
             hit_test_engine: None,
             thread_coordinator: Some(thread_coordinator),
             sandbox_manager,
+            hook_manager: HookManager::new(),
+            template_registry: Self::init_template_registry(),
+            template_cache: HashMap::new(),
+            tooltip_text: None,
+            tooltip_pos: Point::new(0.0, 0.0),
+            tooltip_timer_us: 0,
+            cursor_blink_on: true,
+            cursor_blink_time_us: 0,
         }
+    }
+
+    /// Create and initialize the template registry with defaults and optional
+    /// disk templates.
+    fn init_template_registry() -> TemplateRegistry {
+        let mut registry = TemplateRegistry::new();
+        registry.register_defaults();
+        // Try loading from assets/templates on disk (overrides embedded defaults).
+        registry.add_search_path("assets/templates");
+        registry.load_from_disk();
+        registry
     }
 
     /// Get the next event timestamp and advance the counter.

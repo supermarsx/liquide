@@ -12,7 +12,8 @@ use crate::window::{WindowFlags, WindowState};
 use liquide_hit_test::event::{DomEventKind, MouseButton as DomMouseButton};
 use liquide_hit_test::EventDispatcher;
 
-use super::{ContextMenuItem, DragState, Shell};
+use super::hooks::ShellHookEvent;
+use super::{ContextMenuItem, DragState, Shell, CONTEXT_MENU_WIDTH, MENU_ITEM_HEIGHT, MENU_PADDING};
 
 impl Shell {
     /// Forward a mouse event to the DOM EventDispatcher.
@@ -117,17 +118,23 @@ impl Shell {
                 }
                 if self.launcher.is_visible() {
                     match ke.key {
-                        KeyCode::Escape => { self.launcher.close(); return Some(ShellAction::Redraw); }
+                        KeyCode::Escape => {
+                            self.launcher.close();
+                            self.hook_manager.dispatch(&ShellHookEvent::LauncherClosed);
+                            return Some(ShellAction::Redraw);
+                        }
                         KeyCode::ArrowUp => { self.launcher.select_prev(); return Some(ShellAction::Redraw); }
                         KeyCode::ArrowDown => { self.launcher.select_next(); return Some(ShellAction::Redraw); }
                         KeyCode::Enter => {
                             if let Some(kind) = self.launcher.activate_selected().cloned() {
                                 self.launcher.close();
+                                self.hook_manager.dispatch(&ShellHookEvent::LauncherClosed);
                                 if let SearchResultKind::Application { ref app_id } = kind {
                                     self.open_app_window(app_id);
                                 }
                             } else {
                                 self.launcher.close();
+                                self.hook_manager.dispatch(&ShellHookEvent::LauncherClosed);
                             }
                             return Some(ShellAction::Redraw);
                         }
@@ -156,6 +163,10 @@ impl Shell {
                 }
                 if self.session_menu_visible && ke.key == KeyCode::Escape {
                     self.session_menu_visible = false;
+                    return Some(ShellAction::Redraw);
+                }
+                if self.app_menu_open.is_some() && ke.key == KeyCode::Escape {
+                    self.app_menu_open = None;
                     return Some(ShellAction::Redraw);
                 }
                 self.shortcuts.handle_key_event(ke).cloned()
@@ -279,27 +290,50 @@ impl Shell {
                 if rect.contains(pt) { found = Some(i); break; }
             }
             let prev = self.dock.hover_index();
-            if let Some(idx) = found { self.dock.on_hover(idx); } else { self.dock.on_hover_leave(); }
+            if let Some(idx) = found {
+                self.dock.on_hover(idx);
+                // Set tooltip to the dock item's label, positioned at center-top.
+                let items = self.dock.items();
+                if idx < items.len() {
+                    let label = items[idx].label.clone();
+                    let (_, item_rect) = &item_rects[idx];
+                    // Approximate tooltip width to clamp position to screen
+                    let tip_w = (label.len() as f32 * 7.0 + 16.0).max(40.0).min(300.0);
+                    let tip_x = (x - tip_w / 2.0).max(4.0).min(self.screen_rect.width - tip_w - 4.0);
+                    let tip_y = (item_rect.y - 32.0).max(4.0); // above the dock item
+                    // Only update timer when tooltip text changes.
+                    if self.tooltip_text.as_deref() != Some(label.as_str()) {
+                        self.tooltip_timer_us = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_micros() as u64;
+                    }
+                    self.tooltip_text = Some(label);
+                    self.tooltip_pos = Point::new(tip_x, tip_y);
+                }
+            } else {
+                self.dock.on_hover_leave();
+                self.tooltip_text = None;
+            }
             if self.dock.hover_index() != prev { need_redraw = true; }
         } else {
             if self.dock.hover_index().is_some() { need_redraw = true; }
             self.dock.on_hover_leave();
+            self.tooltip_text = None;
         }
 
         // Context menu hover
         if self.context_menu_visible {
             let ctx_items = ContextMenuItem::defaults();
-            let ctx_item_h = 36.0_f32;
-            let ctx_w = 260.0_f32;
-            let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
-            let ctx_x = self.context_menu_pos.x.min(self.screen_rect.width - ctx_w - 4.0).max(0.0);
+            let ctx_h = MENU_PADDING * 2.0 + ctx_items.len() as f32 * MENU_ITEM_HEIGHT;
+            let ctx_x = self.context_menu_pos.x.min(self.screen_rect.width - CONTEXT_MENU_WIDTH - 4.0).max(0.0);
             let ctx_y = self.context_menu_pos.y.min(self.screen_rect.height - ctx_h - 4.0).max(0.0);
-            let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
+            let ctx_bounds = Rect::new(ctx_x, ctx_y, CONTEXT_MENU_WIDTH, ctx_h);
             let prev_hover = self.context_menu_hover_index;
             if ctx_bounds.contains(pt) {
-                let rel_y = y - ctx_y - 8.0;
+                let rel_y = y - ctx_y - MENU_PADDING;
                 if rel_y >= 0.0 {
-                    let idx = (rel_y / ctx_item_h) as usize;
+                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
                     self.context_menu_hover_index = if idx < ctx_items.len() { Some(idx) } else { None };
                 } else { self.context_menu_hover_index = None; }
             } else { self.context_menu_hover_index = None; }
@@ -308,22 +342,41 @@ impl Shell {
 
         // Session menu hover
         if self.session_menu_visible {
-            let item_h = 36.0_f32;
             let menu_w = 180.0_f32;
-            let menu_h = 16.0 + self.session_menu_items.len() as f32 * item_h;
+            let menu_h = MENU_PADDING * 2.0 + self.session_menu_items.len() as f32 * MENU_ITEM_HEIGHT;
             let bar_h = self.status_bar.config().height;
             let menu_x = self.screen_rect.width - menu_w - 8.0;
             let menu_y = bar_h + 4.0;
             let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
             let prev_hover = self.session_menu_hover_index;
             if menu_bounds.contains(pt) {
-                let rel_y = y - menu_y - 8.0;
+                let rel_y = y - menu_y - MENU_PADDING;
                 if rel_y >= 0.0 {
-                    let idx = (rel_y / item_h) as usize;
+                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
                     self.session_menu_hover_index = if idx < self.session_menu_items.len() { Some(idx) } else { None };
                 } else { self.session_menu_hover_index = None; }
             } else { self.session_menu_hover_index = None; }
             if self.session_menu_hover_index != prev_hover { need_redraw = true; }
+        }
+
+        // App menu hover
+        if self.app_menu_open.is_some() {
+            let menu_w = 180.0_f32;
+            let menu_item_count = 5usize; // Minimize, Maximize, Close, Settings, About
+            let menu_h = MENU_PADDING * 2.0 + menu_item_count as f32 * MENU_ITEM_HEIGHT;
+            let bar_h = self.status_bar.config().height;
+            let menu_x = 8.0_f32;
+            let menu_y = bar_h + 2.0;
+            let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
+            let prev_hover = self.app_menu_hover_index;
+            if menu_bounds.contains(pt) {
+                let rel_y = y - menu_y - MENU_PADDING;
+                if rel_y >= 0.0 {
+                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                    self.app_menu_hover_index = if idx < menu_item_count { Some(idx) } else { None };
+                } else { self.app_menu_hover_index = None; }
+            } else { self.app_menu_hover_index = None; }
+            if self.app_menu_hover_index != prev_hover { need_redraw = true; }
         }
 
         // Cursor shape determination
@@ -331,7 +384,7 @@ impl Shell {
         self.cursor_shape = CursorShape::Arrow;
         if self.dock.hover_index().is_some() {
             self.cursor_shape = CursorShape::Pointer;
-        } else if self.context_menu_hover_index.is_some() || self.session_menu_hover_index.is_some() {
+        } else if self.context_menu_hover_index.is_some() || self.session_menu_hover_index.is_some() || self.app_menu_hover_index.is_some() {
             self.cursor_shape = CursorShape::Pointer;
         } else if self.hovered_button.is_some() {
             self.cursor_shape = CursorShape::Pointer;
@@ -367,31 +420,34 @@ impl Shell {
         // Right-click
         if button == MouseButton::Right {
             self.session_menu_visible = false;
+            self.app_menu_open = None;
             let bar_bounds = self.status_bar.compute_bounds(self.screen_rect);
             let dock_bounds = self.dock.compute_bounds(self.screen_rect);
             if bar_bounds.contains(pt) {
-                self.context_menu_visible = !self.context_menu_visible;
+                self.context_menu_visible = true;
                 self.context_menu_pos = pt;
                 return Some(ShellAction::Redraw);
             }
             if dock_bounds.contains(pt) {
-                self.context_menu_visible = !self.context_menu_visible;
+                self.context_menu_visible = true;
                 self.context_menu_pos = pt;
                 return Some(ShellAction::Redraw);
             }
             let tbh = self.decoration_style.title_bar_height;
-            let on_titlebar = self.visible_windows().iter().rev().any(|w| {
+            let titlebar_window = self.visible_windows().into_iter().rev().find(|w| {
                 let title_rect = Rect::new(w.bounds.x, w.bounds.y, w.bounds.width, tbh);
                 title_rect.contains(pt) && w.flags.contains(WindowFlags::DECORATED)
-            });
-            if on_titlebar {
-                self.context_menu_visible = !self.context_menu_visible;
-                self.context_menu_pos = pt;
+            }).map(|w| w.id);
+            if let Some(wid) = titlebar_window {
+                // Show the app menu (Minimize/Maximize/Close) instead of generic context menu
+                let win_id_str = format!("window-{}", wid.0);
+                self.app_menu_open = Some(win_id_str);
+                self.context_menu_visible = false;
                 return Some(ShellAction::Redraw);
             }
             let on_window = self.visible_windows().iter().rev().any(|w| w.bounds.contains(pt));
             if !on_window {
-                self.context_menu_visible = !self.context_menu_visible;
+                self.context_menu_visible = true;
                 self.context_menu_pos = pt;
                 return Some(ShellAction::Redraw);
             }
@@ -403,62 +459,96 @@ impl Shell {
         // Context menu click
         if self.context_menu_visible {
             let ctx_items = ContextMenuItem::defaults();
-            let ctx_item_h = 36.0_f32;
-            let ctx_w = 260.0_f32;
-            let ctx_h = 16.0 + ctx_items.len() as f32 * ctx_item_h;
-            let ctx_x = self.context_menu_pos.x.min(self.screen_rect.width - ctx_w - 4.0).max(0.0);
+            let ctx_h = MENU_PADDING * 2.0 + ctx_items.len() as f32 * MENU_ITEM_HEIGHT;
+            let ctx_x = self.context_menu_pos.x.min(self.screen_rect.width - CONTEXT_MENU_WIDTH - 4.0).max(0.0);
             let ctx_y = self.context_menu_pos.y.min(self.screen_rect.height - ctx_h - 4.0).max(0.0);
-            let ctx_bounds = Rect::new(ctx_x, ctx_y, ctx_w, ctx_h);
+            let ctx_bounds = Rect::new(ctx_x, ctx_y, CONTEXT_MENU_WIDTH, ctx_h);
             if ctx_bounds.contains(pt) {
-                let rel_y = y - ctx_y - 8.0;
-                let idx = (rel_y / ctx_item_h) as usize;
+                let rel_y = y - ctx_y - MENU_PADDING;
                 self.context_menu_visible = false;
-                if idx < ctx_items.len() { return Some(ctx_items[idx].action.clone()); }
-                return None;
+                if rel_y >= 0.0 {
+                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                    if idx < ctx_items.len() { return Some(ctx_items[idx].action.clone()); }
+                }
+                return Some(ShellAction::Redraw);
             }
             self.context_menu_visible = false;
+            return Some(ShellAction::Redraw);
         }
 
         // Session menu click
         if self.session_menu_visible {
             let menu_w = 180.0_f32;
-            let item_h = 36.0_f32;
-            let menu_h = 16.0 + self.session_menu_items.len() as f32 * item_h;
+            let menu_h = MENU_PADDING * 2.0 + self.session_menu_items.len() as f32 * MENU_ITEM_HEIGHT;
             let bar_h = self.status_bar.config().height;
             let menu_x = self.screen_rect.width - menu_w - 8.0;
             let menu_y = bar_h + 4.0;
             let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
             if menu_bounds.contains(pt) {
-                let rel_y = y - menu_y - 8.0;
-                let idx = (rel_y / item_h) as usize;
+                let rel_y = y - menu_y - MENU_PADDING;
                 self.session_menu_visible = false;
-                if idx < self.session_menu_items.len() { return Some(self.session_menu_items[idx].action.clone()); }
-                return None;
+                if rel_y >= 0.0 {
+                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                    if idx < self.session_menu_items.len() { return Some(self.session_menu_items[idx].action.clone()); }
+                }
+                return Some(ShellAction::Redraw);
             }
             self.session_menu_visible = false;
+            return Some(ShellAction::Redraw);
+        }
+
+        // App menu click (window-specific: Minimize/Maximize/Close/Settings/About)
+        if self.app_menu_open.is_some() {
+            let menu_w = 180.0_f32;
+            let menu_items = [
+                ("Minimize", ShellAction::MinimizeWindow),
+                ("Maximize", ShellAction::MaximizeWindow),
+                ("Close", ShellAction::CloseWindow),
+                ("System Settings", ShellAction::OpenSettings),
+                ("About Liquide", ShellAction::Redraw),
+            ];
+            let menu_h = MENU_PADDING * 2.0 + menu_items.len() as f32 * MENU_ITEM_HEIGHT;
+            let bar_h = self.status_bar.config().height;
+            let menu_x = 8.0_f32;
+            let menu_y = bar_h + 2.0;
+            let menu_bounds = Rect::new(menu_x, menu_y, menu_w, menu_h);
+            if menu_bounds.contains(pt) {
+                let rel_y = y - menu_y - MENU_PADDING;
+                self.app_menu_open = None;
+                if rel_y >= 0.0 {
+                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                    if idx < menu_items.len() { return Some(menu_items[idx].1.clone()); }
+                }
+                return Some(ShellAction::Redraw);
+            }
+            self.app_menu_open = None;
+            return Some(ShellAction::Redraw);
         }
 
         // Launcher click
         if self.launcher.is_visible() {
             let screen = self.screen_rect;
-            let panel_w = screen.width * 0.6;
-            let panel_h = screen.height * 0.7;
+            let panel_w = 480.0_f32;    // matches CSS: launcher { width: 480 }
+            let panel_h = 600.0_f32;    // matches CSS: launcher { max-height: 600 }
             let panel_x = screen.x + (screen.width - panel_w) / 2.0;
             let panel_y = screen.y + (screen.height - panel_h) / 2.0;
             let panel_bounds = Rect::new(panel_x, panel_y, panel_w, panel_h);
             if !panel_bounds.contains(pt) {
                 self.launcher.close();
+                self.hook_manager.dispatch(&ShellHookEvent::LauncherClosed);
                 return Some(ShellAction::Redraw);
             }
-            let item_start_y = panel_y + 65.0;
+            // padding(16) + search height(36) + search margin-bottom(8) = 60
+            let item_start_y = panel_y + 60.0;
             let item_height = 40.0_f32;
-            let item_gap = 4.0_f32;
+            let item_gap = 2.0_f32;     // matches CSS: launcher-results { gap: 2 }
             if y >= item_start_y {
                 let rel_y = y - item_start_y;
                 let idx = (rel_y / (item_height + item_gap)) as usize;
                 self.launcher.select_index(idx);
                 if let Some(kind) = self.launcher.activate_selected().cloned() {
                     self.launcher.close();
+                    self.hook_manager.dispatch(&ShellHookEvent::LauncherClosed);
                     if let SearchResultKind::Application { ref app_id } = kind {
                         self.open_app_window(app_id);
                     }
@@ -471,10 +561,30 @@ impl Shell {
         // Status bar click
         let bar_bounds = self.status_bar.compute_bounds(self.screen_rect);
         if bar_bounds.contains(pt) {
+            // Logo click (left ~80px) — toggle app launcher
+            if x < self.screen_rect.x + 80.0 {
+                let was_visible = self.launcher.is_visible();
+                self.launcher.toggle();
+                if was_visible {
+                    self.hook_manager.dispatch(&ShellHookEvent::LauncherClosed);
+                } else {
+                    self.hook_manager.dispatch(&ShellHookEvent::LauncherOpened);
+                }
+                return Some(ShellAction::Redraw);
+            }
+            // Session button click (rightmost ~36px) — toggle session menu
             let session_x = self.screen_rect.width - 36.0;
             if x >= session_x {
                 self.session_menu_visible = !self.session_menu_visible;
                 return Some(ShellAction::OpenSessionMenu);
+            }
+            // Notification indicator click (approximate region before session button)
+            // The notification indicator sits in the right slot, roughly 36-80px from right edge.
+            let notif_x_start = self.screen_rect.width - 80.0;
+            let notif_x_end = self.screen_rect.width - 36.0;
+            if x >= notif_x_start && x < notif_x_end {
+                // TODO: toggle notification panel when implemented
+                return Some(ShellAction::Redraw);
             }
             return None;
         }
@@ -499,14 +609,16 @@ impl Shell {
             return None;
         }
 
-        // Window click with decoration hit-testing
+        // Window click with decoration hit-testing.
+        // Use resize_tolerance (not border_width) so the expanded rect covers
+        // the full area where hit_test_decoration can return resize zones.
         let mut clicked = None;
         let tbh = self.decoration_style.title_bar_height;
         for window in self.visible_windows().into_iter().rev() {
-            let bw = self.decoration_style.border_width;
+            let rt = self.decoration_style.resize_tolerance;
             let expanded = Rect::new(
-                window.bounds.x - bw, window.bounds.y - bw,
-                window.bounds.width + bw * 2.0, window.bounds.height + bw * 2.0,
+                window.bounds.x - rt, window.bounds.y - rt,
+                window.bounds.width + rt * 2.0, window.bounds.height + rt * 2.0,
             );
             if expanded.contains(pt) { clicked = Some(window.id); break; }
         }

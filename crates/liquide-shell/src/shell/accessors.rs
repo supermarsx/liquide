@@ -24,13 +24,30 @@ use liquide_dock::Dock;
 use liquide_renderer_css::StyleResolver;
 use liquide_statusbar::ShellStatusBar;
 
-use super::{DragState, Shell};
+use super::{DragState, HookManager, Shell};
 
 impl Shell {
     /// Get the screen rect.
     #[must_use]
     pub fn screen_rect(&self) -> Rect {
         self.screen_rect
+    }
+
+    /// Compute the work area (screen minus statusbar and dock).
+    ///
+    /// The work area is the usable rectangle where windows can be maximized
+    /// without overlapping the statusbar or dock.
+    #[must_use]
+    pub fn work_area(&self) -> Rect {
+        let bar_h = self.status_bar.config().height;
+        let dock_bounds = self.dock.compute_bounds(self.screen_rect);
+        let dock_h = dock_bounds.height;
+        Rect::new(
+            self.screen_rect.x,
+            self.screen_rect.y + bar_h,
+            self.screen_rect.width,
+            (self.screen_rect.height - bar_h - dock_h).max(0.0),
+        )
     }
 
     /// Get the current cursor shape.
@@ -243,5 +260,16 @@ impl Shell {
     /// Set the layout policy.
     pub fn set_layout(&mut self, layout: Box<dyn crate::layout::LayoutPolicy>) {
         self.layout = layout;
+    }
+
+    /// Get the hook manager.
+    #[must_use]
+    pub fn hook_manager(&self) -> &HookManager {
+        &self.hook_manager
+    }
+
+    /// Get the hook manager mutably.
+    pub fn hook_manager_mut(&mut self) -> &mut HookManager {
+        &mut self.hook_manager
     }
 }

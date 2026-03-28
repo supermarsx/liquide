@@ -1,5 +1,5 @@
 use super::*;
-use crate::desktop_dom::{DesktopDocument, DockItemInfo};
+use crate::desktop_dom::DesktopDocument;
 use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::SceneNodeKind;
 use liquide_paint::{DisplayItem, DisplayList};
@@ -11,15 +11,7 @@ fn pipeline_runs_on_desktop_document() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
-    desktop.sync_dock_items(&[DockItemInfo {
-        app_id: "files".into(),
-        label: "Files".into(),
-        icon: "folder".into(),
-        is_running: true,
-        is_pinned: true,
-    }]);
+    let desktop = DesktopDocument::new();
 
     let output = pipeline.run(&desktop.doc);
 
@@ -35,8 +27,7 @@ fn pipeline_produces_scene_nodes() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
 
     let nodes = pipeline.render_to_scene(&desktop.doc, 0);
     // The pipeline should produce at least some nodes from styled elements

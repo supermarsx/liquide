@@ -9,19 +9,30 @@ pub struct DecorationStyle {
     pub title_bar_height: f32,
     pub border_width: f32,
     pub corner_radius: f32,
+    /// Legacy square icon size (kept for API compat). Prefer `button_width`
+    /// / `button_height` which match the renderer's `DecorationLayout`.
     pub button_size: f32,
     /// Resize edge tolerance in pixels (larger = easier to grab).
     pub resize_tolerance: f32,
+    /// Rendered button width (matches `DecorationLayout::button_width`).
+    pub button_width: f32,
+    /// Rendered button height (matches `DecorationLayout::button_height`).
+    pub button_height: f32,
+    /// Right margin before first button (matches `DecorationLayout::button_right_margin`).
+    pub button_right_margin: f32,
 }
 
 impl Default for DecorationStyle {
     fn default() -> Self {
         Self {
-            title_bar_height: 30.0,
+            title_bar_height: 36.0,
             border_width: 1.0,
             corner_radius: 8.0,
             button_size: 16.0,
             resize_tolerance: 8.0, // 8px hit zone for edges
+            button_width: 32.0,
+            button_height: 22.0,
+            button_right_margin: 4.0,
         }
     }
 }
@@ -55,7 +66,11 @@ impl std::fmt::Display for HitZone {
 /// Hit-test a point against a decorated window.
 ///
 /// The window bounds represent the client area. The title bar sits above
-/// the client area, and resize borders extend `border_width` outside.
+/// the client area, and resize borders extend `resize_tolerance` outside.
+///
+/// Button positions use `button_width`, `button_height`, and
+/// `button_right_margin` which match the renderer's `DecorationLayout`
+/// so that hit-test regions align exactly with the visually drawn buttons.
 #[must_use]
 pub fn hit_test_decoration(
     window_bounds: Rect,
@@ -65,7 +80,9 @@ pub fn hit_test_decoration(
 ) -> HitZone {
     let bw = style.resize_tolerance; // Use larger tolerance for easier resizing
     let tbh = style.title_bar_height;
-    let btn = style.button_size;
+    let btn_w = style.button_width;
+    let btn_h = style.button_height;
+    let btn_margin = style.button_right_margin;
 
     // Expanded bounds (including resize borders)
     let outer = Rect::new(
@@ -84,24 +101,30 @@ pub fn hit_test_decoration(
     let top = window_bounds.y - tbh;
     let bottom = window_bounds.y + window_bounds.height;
 
-    // Title bar buttons (check first for priority over resize corners)
+    // Title bar buttons — positions match the renderer exactly:
+    //   close:    x = right - btn_w - btn_margin
+    //   maximize: x = right - btn_w * 2 - btn_margin
+    //   minimize: x = right - btn_w * 3 - btn_margin
+    //   aot:      x = right - btn_w * 4 - btn_margin
+    //   y:        top + (tbh - btn_h) / 2  ..  + btn_h
     if y >= top && y < window_bounds.y {
-        let close_x = right - btn - 4.0;
-        let max_x = close_x - btn - 4.0;
-        let min_x = max_x - btn - 4.0;
-        let aot_x = min_x - btn - 4.0;
-        let btn_y_center = top + tbh / 2.0;
+        let btn_y = top + (tbh - btn_h) / 2.0;
 
-        if x >= close_x && x < close_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
+        let close_x = right - btn_w - btn_margin;
+        let max_x   = right - btn_w * 2.0 - btn_margin;
+        let min_x   = right - btn_w * 3.0 - btn_margin;
+        let aot_x   = right - btn_w * 4.0 - btn_margin;
+
+        if x >= close_x && x < close_x + btn_w && y >= btn_y && y < btn_y + btn_h {
             return HitZone::CloseButton;
         }
-        if x >= max_x && x < max_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
+        if x >= max_x && x < max_x + btn_w && y >= btn_y && y < btn_y + btn_h {
             return HitZone::MaximizeButton;
         }
-        if x >= min_x && x < min_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
+        if x >= min_x && x < min_x + btn_w && y >= btn_y && y < btn_y + btn_h {
             return HitZone::MinimizeButton;
         }
-        if x >= aot_x && x < aot_x + btn && (y - btn_y_center).abs() < btn / 2.0 {
+        if x >= aot_x && x < aot_x + btn_w && y >= btn_y && y < btn_y + btn_h {
             return HitZone::AlwaysOnTopButton;
         }
     }
