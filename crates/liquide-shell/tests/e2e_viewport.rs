@@ -12,7 +12,7 @@
 use liquide_dom::Document;
 use liquide_layout::{LayoutEngine, Size};
 use liquide_shell::pipeline::{DesktopPipeline, PipelineConfig};
-use liquide_shell::desktop_dom::{DesktopDocument, DockItemInfo};
+use liquide_shell::desktop_dom::DesktopDocument;
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::engine::{StyleEngine, ViewportSize};
 
@@ -428,8 +428,8 @@ fn pipeline_viewport_resize_affects_layout() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     // Run at 1080p
     let output_1080 = pipeline.run(&desktop.doc);
@@ -453,8 +453,8 @@ fn statusbar_positioned_at_top() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     let output = pipeline.run(&desktop.doc);
 
@@ -480,17 +480,9 @@ fn dock_positioned_at_bottom() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
-    desktop.sync_dock_items(&[
-        DockItemInfo {
-            app_id: "files".into(),
-            label: "Files".into(),
-            icon: "folder".into(),
-            is_running: true,
-            is_pinned: true,
-        },
-    ]);
+    let desktop = DesktopDocument::new();
+
+
 
     let output = pipeline.run(&desktop.doc);
 
@@ -519,8 +511,8 @@ fn elements_respect_viewport_width() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     let output = pipeline.run(&desktop.doc);
 
@@ -547,8 +539,8 @@ fn elements_respect_viewport_height() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     let output = pipeline.run(&desktop.doc);
 
@@ -579,8 +571,8 @@ fn layout_at_720p() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     let output = pipeline.run(&desktop.doc);
 
@@ -597,8 +589,8 @@ fn layout_at_1440p() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     let output = pipeline.run(&desktop.doc);
 
@@ -615,8 +607,8 @@ fn layout_at_4k() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     let output = pipeline.run(&desktop.doc);
 
@@ -633,8 +625,8 @@ fn layout_at_ultrawide() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     let output = pipeline.run(&desktop.doc);
 
@@ -651,8 +643,8 @@ fn layout_at_portrait() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     let output = pipeline.run(&desktop.doc);
 
@@ -669,8 +661,8 @@ fn layout_at_small_viewport() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let mut desktop = DesktopDocument::new();
-    desktop.populate_default_statusbar();
+    let desktop = DesktopDocument::new();
+
 
     let output = pipeline.run(&desktop.doc);
 

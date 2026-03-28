@@ -21,22 +21,23 @@ fn tile_left_positions_window_on_left_half() {
     shell.execute_action(&ShellAction::TileLeft);
 
     let win = shell.window(wid).unwrap();
-    let screen = shell.screen_rect();
-    let half_w = screen.width / 2.0;
+    let work = shell.work_area();
+    let half_w = work.width / 2.0;
 
     assert!(
-        win.bounds.x.abs() < 2.0,
-        "tiled left window X should be near 0, got {}",
+        (win.bounds.x - work.x).abs() < 2.0,
+        "tiled left window X should be near work area left, got {}",
         win.bounds.x
     );
     assert!(
         (win.bounds.width - half_w).abs() < 2.0,
-        "tiled left window width should be half screen ({half_w}), got {}",
+        "tiled left window width should be half work area ({half_w}), got {}",
         win.bounds.width
     );
     assert!(
-        (win.bounds.height - screen.height).abs() < 2.0,
-        "tiled left window height should fill screen height"
+        (win.bounds.height - work.height).abs() < 2.0,
+        "tiled left window height should fill work area height ({}, got {})",
+        work.height, win.bounds.height
     );
 }
 
@@ -50,17 +51,17 @@ fn tile_right_positions_window_on_right_half() {
     shell.execute_action(&ShellAction::TileRight);
 
     let win = shell.window(wid).unwrap();
-    let screen = shell.screen_rect();
-    let half_w = screen.width / 2.0;
+    let work = shell.work_area();
+    let half_w = work.width / 2.0;
 
     assert!(
-        (win.bounds.x - half_w).abs() < 2.0,
-        "tiled right window X should be near {half_w}, got {}",
-        win.bounds.x
+        (win.bounds.x - (work.x + half_w)).abs() < 2.0,
+        "tiled right window X should be near {}, got {}",
+        work.x + half_w, win.bounds.x
     );
     assert!(
         (win.bounds.width - half_w).abs() < 2.0,
-        "tiled right window width should be half screen"
+        "tiled right window width should be half work area"
     );
 }
 

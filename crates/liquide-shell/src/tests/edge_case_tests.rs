@@ -319,9 +319,9 @@ fn decoration_exact_boundary_bottom_right() {
 
 #[test]
 fn decoration_resize_top() {
-    let bounds = Rect::new(100.0, 130.0, 400.0, 300.0);
+    let bounds = Rect::new(100.0, 136.0, 400.0, 300.0);
     let style = DecorationStyle::default();
-    // Above the title bar top edge
+    // Above the title bar top edge (top = 136 - 36 = 100)
     let zone = hit_test_decoration(bounds, &style, 300.0, 99.5);
     assert_eq!(zone, HitZone::ResizeTop);
 }
@@ -484,6 +484,9 @@ fn shell_set_decoration_style() {
         corner_radius: 12.0,
         button_size: 20.0,
         resize_tolerance: 8.0,
+        button_width: 32.0,
+        button_height: 22.0,
+        button_right_margin: 4.0,
     };
     shell.set_decoration_style(style);
     assert_eq!(shell.decoration_style().title_bar_height, 40.0);

@@ -247,36 +247,27 @@ fn test_dock_renders_with_items() {
     // Dock should have default pinned items from Shell::new()
     let scene = shell.build_scene();
 
-    // Find dock text nodes (Files, Terminal, Browser, Settings)
-    let mut dock_text_labels = Vec::new();
+    // dock-item-label has display:none, so count Icon nodes as proxy for dock items
+    let mut icon_count = 0;
 
-    fn find_dock_text(node: &liquide_compositor::scene::SceneNode, labels: &mut Vec<String>) {
-        if let SceneNodeKind::Text { text, .. } = &node.kind {
-            // Check for known dock item labels
-            let known = ["Files", "Terminal", "Browser", "Settings"];
-            if known.iter().any(|k| text.contains(k)) {
-                labels.push(text.clone());
-            }
+    fn count_icons(node: &liquide_compositor::scene::SceneNode, count: &mut usize) {
+        if matches!(node.kind, SceneNodeKind::Icon { .. }) {
+            *count += 1;
         }
         for child in &node.children {
-            find_dock_text(child, labels);
+            count_icons(child, count);
         }
     }
 
-    find_dock_text(&scene, &mut dock_text_labels);
+    count_icons(&scene, &mut icon_count);
 
-    println!(
-        "✅ Found {} dock item labels: {:?}",
-        dock_text_labels.len(),
-        dock_text_labels
-    );
+    println!("Found {} icon nodes in scene", icon_count);
 
-    // We should have 4 default dock items
+    // We should have at least 4 icons (one per default dock item)
     assert!(
-        dock_text_labels.len() >= 4,
-        "Dock should render with at least 4 items, got {}: {:?}",
-        dock_text_labels.len(),
-        dock_text_labels
+        icon_count >= 4,
+        "Dock should render with at least 4 icon items, got {}",
+        icon_count,
     );
 }
 

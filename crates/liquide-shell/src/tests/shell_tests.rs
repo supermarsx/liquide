@@ -71,10 +71,12 @@ fn shell_minimize_restore() {
 #[test]
 fn shell_maximize_restore() {
     let mut shell = Shell::new(1920.0, 1080.0);
+    let work = shell.work_area();
     let id = shell.open_window("Test", Rect::new(100.0, 100.0, 400.0, 300.0));
     shell.maximize(id).unwrap();
     assert_eq!(shell.window(id).unwrap().state, WindowState::Maximized);
-    assert_eq!(shell.window(id).unwrap().bounds.width, 1920.0);
+    assert_eq!(shell.window(id).unwrap().bounds.width, work.width);
+    assert_eq!(shell.window(id).unwrap().bounds.height, work.height);
 
     shell.restore(id).unwrap();
     assert_eq!(shell.window(id).unwrap().state, WindowState::Normal);

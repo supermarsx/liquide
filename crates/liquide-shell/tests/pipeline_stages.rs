@@ -241,11 +241,11 @@ fn element_text_exists_in_scene() {
 
     assert!(
         !inv.texts.is_empty(),
-        "Scene must have Text nodes (clock, dock labels, status indicators)"
+        "Scene must have Text nodes (clock, status indicators)"
     );
     assert!(
-        inv.texts.len() >= 4,
-        "Expected at least 4 text nodes (dock labels), got {}",
+        inv.texts.len() >= 1,
+        "Expected at least 1 text node (clock/logo), got {}",
         inv.texts.len()
     );
 }
@@ -259,19 +259,11 @@ fn element_text_has_valid_content() {
         assert!(t.font_size > 0.0, "Text node {} font_size must be > 0", t.id);
     }
 
-    // Check for dock labels
-    let dock_labels: Vec<_> = inv.texts.iter()
-        .filter(|t| ["Files", "Terminal", "Browser", "Settings"].contains(&t.text.as_str()))
-        .collect();
-    assert!(
-        dock_labels.len() >= 4,
-        "Should find dock labels (Files, Terminal, Browser, Settings), got {:?}",
-        dock_labels.iter().map(|t| &t.text).collect::<Vec<_>>()
-    );
-
-    // Check for clock text (either just minutes:seconds or full time)
+    // Check for statusbar text (clock, logo) — dock labels use display:none
     let has_clock = inv.texts.iter().any(|t| t.text.contains(':'));
     assert!(has_clock, "Should find clock text with ':' separator");
+    let has_logo = inv.texts.iter().any(|t| t.text == "LiquiDE");
+    assert!(has_logo, "Should find statusbar logo text");
 
     println!("✅ {} text nodes all have valid content", inv.texts.len());
 }
@@ -541,26 +533,18 @@ fn positioned_elements_have_children_laid_out() {
     // Dock (position:fixed, display:flex) should have child text nodes.
     let (_, _, inv) = build_shell_and_inventory();
 
-    // Dock labels should exist (proves positioned flex children are laid out)
-    let dock_labels: Vec<_> = inv.texts.iter()
-        .filter(|t| ["Files", "Terminal", "Browser", "Settings"].contains(&t.text.as_str()))
-        .collect();
-    assert!(
-        dock_labels.len() == 4,
-        "All 4 dock labels should be laid out inside position:fixed dock"
-    );
-
-    // Statusbar indicators should exist
+    // Statusbar text (clock, indicators) should exist — proves
+    // positioned (position:fixed) flex children are laid out.
+    // Note: dock labels use display:none so they won't appear as text nodes.
     let statusbar_texts: Vec<_> = inv.texts.iter()
-        .filter(|t| !["Files", "Terminal", "Browser", "Settings"].contains(&t.text.as_str()))
+        .filter(|t| t.text.contains(':') || t.text == "LiquiDE")
         .collect();
     assert!(
         !statusbar_texts.is_empty(),
-        "Statusbar text (clock, indicators) should be laid out inside position:fixed bar"
+        "Statusbar text (clock, logo) should be laid out inside position:fixed bar"
     );
 
     println!("✅ Positioned elements have laid-out children:");
-    println!("   - Dock: {} labels", dock_labels.len());
     println!("   - Statusbar: {} texts", statusbar_texts.len());
 }
 

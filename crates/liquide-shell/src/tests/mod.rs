@@ -17,3 +17,8 @@ mod notification_tests;
 mod tiling_tests;
 mod launcher_tests;
 mod seamless_tests;
+mod tooltip_tests;
+mod window_bounds_tests;
+mod context_menu_tests;
+mod batch_tests;
+mod hook_tests;
