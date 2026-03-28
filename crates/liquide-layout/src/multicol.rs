@@ -448,15 +448,16 @@ pub fn layout_multicol(
     }
 
     // ── Emit column rule boxes between adjacent columns ──
+    // Use local coordinates (matching children) — the container provides the offset.
     if rule_width > 0.0 && rule_style != BorderLineStyle::None && column_count > 1 {
         let used_cols = columns_used.max(1).min(column_count);
         for i in 1..used_cols {
-            let rule_x = content_x + i as f32 * (col_width + column_gap)
+            let rule_x = i as f32 * (col_width + column_gap)
                 - column_gap / 2.0
                 - rule_width / 2.0;
             let rule_box_id = tree.alloc(node_id, BoxType::Block);
             if let Some(rb) = tree.get_mut(rule_box_id) {
-                let rule_rect = Rect::new(rule_x, content_y, rule_width, max_col_height);
+                let rule_rect = Rect::new(rule_x, 0.0, rule_width, max_col_height);
                 rb.content_rect = rule_rect;
                 rb.padding_rect = rule_rect;
                 rb.border_rect = rule_rect;

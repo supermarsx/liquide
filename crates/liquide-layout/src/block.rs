@@ -846,25 +846,71 @@ pub fn layout_block(
             )
         } else if matches!(child_style.display, Display::Contents) {
             // display: contents — skip the element, layout its children
-            // directly into this block context
+            // directly into this block context, dispatching by each
+            // grandchild's display type (flex, grid, inline, etc.)
             let grandchildren = doc.children(child_id).to_vec();
             let mut contents_last_box: Option<LayoutBoxId> = None;
             for &gc_id in &grandchildren {
-                let gc_box = layout_block(
-                    doc,
-                    gc_id,
-                    styles,
-                    tree,
-                    text_measurer,
-                    image_measurer,
-                    child_avail_w,
-                    container_height,
-                    child_float_offset_x,
-                    child_y,
-                    viewport_w,
-                    viewport_h,
-                    base_font_size,
-                );
+                let gc_style = styles.get(gc_id).cloned().unwrap_or_default();
+                if gc_style.display == Display::None {
+                    continue;
+                }
+                if matches!(gc_style.position, Position::Absolute | Position::Fixed) {
+                    continue;
+                }
+                // Check for text nodes
+                let is_text = doc.get(gc_id).map_or(false, |n| n.is_text());
+                if is_text {
+                    if let Some(text) = doc.get(gc_id).and_then(|n| n.text_content()) {
+                        let text_props = crate::TextProperties::from_style(&gc_style);
+                        let metrics = text_measurer.measure(
+                            text,
+                            gc_style.font_size,
+                            &gc_style.font_family,
+                            gc_style.font_weight,
+                            Some(child_avail_w),
+                            &text_props,
+                        );
+                        let clamped_w = metrics.width.min(child_avail_w);
+                        let text_box = tree.alloc(gc_id, BoxType::Text { line_boxes: Vec::new() });
+                        if let Some(tb) = tree.get_mut(text_box) {
+                            tb.content_rect = Rect::new(child_float_offset_x, child_y, clamped_w, metrics.height);
+                            tb.padding_rect = tb.content_rect;
+                            tb.border_rect = tb.content_rect;
+                            tb.margin_rect = tb.content_rect;
+                            tb.baseline = Some(metrics.baseline);
+                        }
+                        tree.add_child(box_id, text_box);
+                        child_y += metrics.height;
+                        contents_last_box = Some(text_box);
+                        continue;
+                    }
+                }
+                // Dispatch by grandchild's display type
+                let gc_box = if gc_style.is_flex_container() {
+                    crate::flex::layout_flex(
+                        doc, gc_id, styles, tree, text_measurer, image_measurer,
+                        child_avail_w, container_height, child_float_offset_x, child_y,
+                        viewport_w, viewport_h, base_font_size,
+                    )
+                } else if gc_style.is_grid_container() {
+                    crate::grid::layout_grid(
+                        doc, gc_id, styles, tree, text_measurer, image_measurer,
+                        child_avail_w, container_height, child_float_offset_x, child_y,
+                        viewport_w, viewport_h, base_font_size,
+                    )
+                } else if matches!(gc_style.display, Display::Inline) {
+                    crate::inline::layout_inline(
+                        doc, gc_id, styles, tree, text_measurer,
+                        child_avail_w, child_float_offset_x, child_y,
+                    )
+                } else {
+                    layout_block(
+                        doc, gc_id, styles, tree, text_measurer, image_measurer,
+                        child_avail_w, container_height, child_float_offset_x, child_y,
+                        viewport_w, viewport_h, base_font_size,
+                    )
+                };
                 tree.add_child(box_id, gc_box);
                 if let Some(cb) = tree.get(gc_box) {
                     child_y += cb.margin_rect.height;
@@ -873,7 +919,7 @@ pub fn layout_block(
             }
             // Skip the normal add_child + height advancement below
             prev_margin_bottom = None;
-            if let Some(_) = contents_last_box {
+            if contents_last_box.is_some() {
                 continue;
             }
             // If no grandchildren, just create an empty box
@@ -1341,11 +1387,19 @@ fn list_marker_text(style_type: &ListStyleType, index: usize) -> String {
         ListStyleType::Square => "\u{25AA} ".to_string(),  // ▪
         ListStyleType::Decimal => format!("{}. ", index),
         ListStyleType::DecimalLeadingZero => format!("{:02}. ", index),
-        ListStyleType::LowerRoman | ListStyleType::LowerLatin => {
+        ListStyleType::LowerRoman => {
             format!("{}. ", to_lower_roman(index))
         }
-        ListStyleType::UpperRoman | ListStyleType::UpperLatin => {
+        ListStyleType::UpperRoman => {
             format!("{}. ", to_lower_roman(index).to_uppercase())
+        }
+        ListStyleType::LowerLatin => {
+            let ch = (b'a' + ((index - 1) % 26) as u8) as char;
+            format!("{}. ", ch)
+        }
+        ListStyleType::UpperLatin => {
+            let ch = (b'A' + ((index - 1) % 26) as u8) as char;
+            format!("{}. ", ch)
         }
         ListStyleType::LowerAlpha => {
             let ch = (b'a' + ((index - 1) % 26) as u8) as char;

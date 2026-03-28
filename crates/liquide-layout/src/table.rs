@@ -592,15 +592,20 @@ pub fn layout_table(
                 }
             }
         }
-        // Spanning cells in first row
+        // Spanning cells in first row — subtract border-spacing between spanned columns
         for (ci, cell) in first_row.cells.iter().enumerate() {
             if cell.colspan > 1 {
                 let gc = cell_grid_col[0][ci];
                 let end_col = (gc + cell.colspan).min(num_cols);
                 let span = end_col - gc;
                 if span == 0 { continue; }
+                let spanned_spacing = if span > 1 {
+                    (span - 1) as f32 * effective_spacing
+                } else {
+                    0.0
+                };
                 let current_sum: f32 = col_max_widths[gc..end_col].iter().sum();
-                let needed = cell.intrinsic_width;
+                let needed = cell.intrinsic_width - spanned_spacing;
                 if needed > current_sum {
                     let extra_per_col = (needed - current_sum) / span as f32;
                     for c in gc..end_col {
@@ -739,6 +744,10 @@ pub fn layout_table(
     for (ri, row) in rows.iter().enumerate() {
         for (ci, cell) in row.cells.iter().enumerate() {
             let gc = cell_grid_col[ri][ci];
+            // Cell couldn't be placed (all columns occupied by rowspans)
+            if gc >= num_cols {
+                continue;
+            }
             let end_col = (gc + cell.colspan).min(num_cols);
             let end_row = (ri + cell.rowspan).min(num_rows);
 

@@ -58,9 +58,10 @@ pub fn layout_replaced(
     let intrinsic_ratio = if intrinsic_h > 0.0 { intrinsic_w / intrinsic_h } else { 2.0 };
 
     // Check for CSS aspect-ratio override
+    // Clamp to a reasonable range to prevent degenerate dimensions
     let ratio = match style.aspect_ratio {
-        AspectRatio::Ratio(w, h) if w > 0.0 && h > 0.0 => w / h,
-        _ => intrinsic_ratio,
+        AspectRatio::Ratio(w, h) if w > 0.0 && h > 0.0 => (w / h).clamp(1.0 / 1000.0, 1000.0),
+        _ => intrinsic_ratio.clamp(1.0 / 1000.0, 1000.0),
     };
 
     // Resolve explicit dimensions

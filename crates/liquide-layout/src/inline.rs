@@ -888,7 +888,7 @@ fn layout_lines(
             }
         }
 
-        let line_content_width = cursor_x;
+        let mut line_content_width = cursor_x;
 
         // ── Apply text-align shift ──
         // On the last line, use text-align-last if specified
@@ -926,6 +926,8 @@ fn layout_lines(
                         accumulated += per_space;
                     }
                 }
+                // Content now fills the line — update so alignment won't double-shift
+                line_content_width = max_width;
             }
         }
 

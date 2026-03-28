@@ -47,7 +47,9 @@ pub fn min_content_width(
     }
 
     // Flex containers in row direction: sum of children's min-content widths
-    // (each item needs at least its min-content width on the main axis)
+    // (each item needs at least its min-content width on the main axis).
+    // Per CSS Intrinsic Sizing §4.1, each child's contribution includes
+    // its margin box (content + padding + border + margins).
     if style.is_flex_container() && style.is_flex_row() {
         let children = doc.children(node_id).to_vec();
         let mut total = 0.0f32;
@@ -60,7 +62,8 @@ pub fn min_content_width(
             if child_style.display == Display::None {
                 continue;
             }
-            total += min_content_width(doc, child_id, styles, text_measurer);
+            total += min_content_width(doc, child_id, styles, text_measurer)
+                + horizontal_margins(&child_style);
             count += 1;
         }
         if count > 1 {
@@ -118,6 +121,7 @@ pub fn max_content_width(
     }
 
     // Flex containers in row direction: sum of children's max-content widths
+    // (each child's contribution includes its margin box)
     if style.is_flex_container() && style.is_flex_row() {
         let children = doc.children(node_id).to_vec();
         let mut total = 0.0f32;
@@ -130,7 +134,8 @@ pub fn max_content_width(
             if child_style.display == Display::None {
                 continue;
             }
-            total += max_content_width(doc, child_id, styles, text_measurer);
+            total += max_content_width(doc, child_id, styles, text_measurer)
+                + horizontal_margins(&child_style);
             count += 1;
         }
         if count > 1 {
@@ -183,4 +188,12 @@ fn horizontal_box_edges(style: &liquide_style_engine::computed::ComputedStyle) -
     let pad_l = style.padding.left.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(0.0);
     let pad_r = style.padding.right.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(0.0);
     pad_l + pad_r + style.border_width.left + style.border_width.right
+}
+
+/// Compute the horizontal margins of an element (non-auto margins only).
+/// Used when computing intrinsic contributions of flex items (CSS §4.1).
+fn horizontal_margins(style: &liquide_style_engine::computed::ComputedStyle) -> f32 {
+    let ml = style.margin.left.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(0.0);
+    let mr = style.margin.right.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(0.0);
+    ml + mr
 }

@@ -211,7 +211,7 @@ pub fn layout_grid(
         let expanded_cols = expand_repeat_tracks(&style.grid_template_columns, content_width, gap_col);
         resolve_tracks(&expanded_cols, content_width, gap_col)
     };
-    let num_cols = col_tracks.len().max(1);
+    let mut num_cols = col_tracks.len().max(1);
     // Number of column lines = num_cols + 1 (lines are edges of tracks)
     let num_col_lines = num_cols + 1;
     
@@ -327,6 +327,13 @@ pub fn layout_grid(
                     auto_cursor_row = 0;
                     auto_cursor_col += 1;
                 }
+                // If all columns are exhausted, extend the grid with a new column
+                if auto_cursor_col >= num_cols {
+                    num_cols += 1;
+                    for row in &mut occupied {
+                        row.push(false);
+                    }
+                }
             } else if auto_cursor_row >= num_rows {
                 // Extend the grid
                 num_rows += 1;
@@ -422,7 +429,7 @@ pub fn layout_grid(
         } else {
             content_width / num_cols as f32
         };
-        for c in item.col_start..item.col_end.min(num_cols) {
+        for c in item.col_start..item.col_end {
             cell_width += if c < col_tracks.len() {
                 col_tracks[c]
             } else {
@@ -551,8 +558,10 @@ pub fn layout_grid(
             } else {
                 // Spread height evenly across spanned rows
                 let per_row = child_h / span_rows as f32;
-                for r in item.row_start..item.row_end.min(num_rows) {
-                    row_heights[r] = row_heights[r].max(per_row);
+                for r in item.row_start..item.row_end {
+                    if r < row_heights.len() {
+                        row_heights[r] = row_heights[r].max(per_row);
+                    }
                 }
             }
         }
@@ -593,7 +602,7 @@ pub fn layout_grid(
         } else {
             fallback_col_pos
         };
-        cumulative_x += cw + gap_col + if col < num_cols - 1 { jc_extra } else { 0.0 };
+        cumulative_x += cw + if col < num_cols - 1 { gap_col + jc_extra } else { 0.0 };
     }
 
     // ── align-content: distribute vertical free space between row tracks ──
@@ -610,7 +619,7 @@ pub fn layout_grid(
     let mut cumulative_y = ac_start;
     for row in 0..num_rows {
         y_offsets[row] = cumulative_y;
-        cumulative_y += row_heights[row] + gap_row + if row < num_rows - 1 { ac_extra } else { 0.0 };
+        cumulative_y += row_heights[row] + if row < num_rows - 1 { gap_row + ac_extra } else { 0.0 };
     }
 
     // Update child positions using placed_items (supports spanning)
@@ -627,7 +636,7 @@ pub fn layout_grid(
         // Width spans multiple columns + inter-column gaps
         let span_cols = item.col_end.saturating_sub(item.col_start).max(1);
         let mut cell_w = 0.0f32;
-        for c in item.col_start..item.col_end.min(num_cols) {
+        for c in item.col_start..item.col_end {
             cell_w += if c < col_tracks.len() {
                 col_tracks[c]
             } else {
@@ -641,8 +650,10 @@ pub fn layout_grid(
         // Height spans multiple rows + inter-row gaps
         let span_rows = item.row_end.saturating_sub(item.row_start).max(1);
         let mut cell_h = 0.0f32;
-        for r in item.row_start..item.row_end.min(num_rows) {
-            cell_h += row_heights[r];
+        for r in item.row_start..item.row_end {
+            if r < row_heights.len() {
+                cell_h += row_heights[r];
+            }
         }
         if span_rows > 1 {
             cell_h += (span_rows - 1) as f32 * gap_row;
@@ -794,33 +805,37 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
         }
     }
 
-    // Distribute remaining space among fr tracks
+    // Distribute remaining space among fr/auto tracks (NOT MinMax — those grow separately)
     let remaining = (available - fixed_total).max(0.0);
+    let mut distributed = 0.0f32;
     if fr_total > 0.0 {
         for (i, track) in tracks.iter().enumerate() {
-            match track {
-                TrackSize::Fr(v) => sizes[i] = remaining * (*v / fr_total),
-                TrackSize::MinContent => {
-                    sizes[i] = remaining * (0.5 / fr_total);
-                }
-                TrackSize::MaxContent => {
-                    sizes[i] = remaining * (1.5 / fr_total);
-                }
-                TrackSize::Auto => {
-                    sizes[i] = remaining * (1.0 / fr_total);
-                }
-                TrackSize::MinMax(_min, max) => {
-                    // Expand toward max if there's remaining space
+            let alloc = match track {
+                TrackSize::Fr(v) => remaining * (*v / fr_total),
+                TrackSize::MinContent => remaining * (0.5 / fr_total),
+                TrackSize::MaxContent => remaining * (1.5 / fr_total),
+                TrackSize::Auto => remaining * (1.0 / fr_total),
+                TrackSize::Subgrid | TrackSize::Repeat { .. } => remaining * (1.0 / fr_total),
+                _ => 0.0, // Px, Percent, FitContent, MinMax — already set or handled below
+            };
+            if alloc > 0.0 {
+                sizes[i] = alloc;
+                distributed += alloc;
+            }
+        }
+    }
+
+    // Grow MinMax tracks toward their max using leftover space (after fr distribution)
+    let leftover = (remaining - distributed).max(0.0);
+    if leftover > 0.0 {
+        let minmax_count = tracks.iter().filter(|t| matches!(t, TrackSize::MinMax(..))).count();
+        if minmax_count > 0 {
+            let share = leftover / minmax_count as f32;
+            for (i, track) in tracks.iter().enumerate() {
+                if let TrackSize::MinMax(_min, max) = track {
                     let max_px = resolve_track_px(max, available);
-                    let grow = (max_px - sizes[i])
-                        .max(0.0)
-                        .min(remaining * (1.0 / fr_total));
+                    let grow = (max_px - sizes[i]).max(0.0).min(share);
                     sizes[i] += grow;
-                }
-                TrackSize::Px(_) | TrackSize::Percent(_) | TrackSize::FitContent(_) => {} // already set
-                TrackSize::Subgrid | TrackSize::Repeat { .. } => {
-                    // Subgrid/Repeat: treat like auto for distribution
-                    sizes[i] = remaining * (1.0 / fr_total);
                 }
             }
         }

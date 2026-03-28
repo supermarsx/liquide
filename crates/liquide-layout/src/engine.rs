@@ -205,10 +205,10 @@ impl LayoutEngine {
         );
 
         // Third pass: apply relative positioning offsets
-        Self::apply_relative_offsets(&mut tree, styles);
+        Self::apply_relative_offsets(&mut tree, styles, self.base_font_size);
 
         // Fourth pass: adjust sticky-positioned elements based on scroll offsets
-        Self::apply_sticky_offsets(&mut tree, styles, doc);
+        Self::apply_sticky_offsets(&mut tree, styles, doc, self.base_font_size);
 
         tree
     }
@@ -275,7 +275,7 @@ impl LayoutEngine {
             input.text_measurer,
             input.image_measurer,
         );
-        Self::apply_relative_offsets(&mut relaid_subtree, input.styles);
+        Self::apply_relative_offsets(&mut relaid_subtree, input.styles, self.base_font_size);
 
         // Align the newly generated subtree to the original subtree origin.
         if let Some(new_root_box) = relaid_subtree.get(relaid_root) {
@@ -331,7 +331,7 @@ impl LayoutEngine {
             );
         }
 
-        Self::apply_sticky_offsets(&mut result, input.styles, input.doc);
+        Self::apply_sticky_offsets(&mut result, input.styles, input.doc, self.base_font_size);
         result
     }
 
@@ -656,7 +656,7 @@ impl LayoutEngine {
     /// by the resolved top/left (or bottom/right) offsets. This does NOT
     /// affect the layout of surrounding elements — only the element's own
     /// coordinates are shifted.
-    fn apply_relative_offsets(tree: &mut LayoutTree, styles: &StyleMap) {
+    fn apply_relative_offsets(tree: &mut LayoutTree, styles: &StyleMap, base_font_size: f32) {
         let all_ids: Vec<LayoutBoxId> = (0..tree.boxes.len()).collect();
 
         for box_id in all_ids {
@@ -673,7 +673,6 @@ impl LayoutEngine {
             }
 
             let font_size = style.font_size;
-            let base_font_size = 16.0f32; // TODO: propagate from engine
 
             // Use the containing block dimensions for percentage resolution.
             // For relative positioning, percentages resolve against the
@@ -734,7 +733,7 @@ impl LayoutEngine {
     ///
     /// For each element with `position: sticky`, we clamp its position so it
     /// stays within the visible scrollport of the nearest scroll ancestor.
-    fn apply_sticky_offsets(tree: &mut LayoutTree, styles: &StyleMap, _doc: &Document) {
+    fn apply_sticky_offsets(tree: &mut LayoutTree, styles: &StyleMap, _doc: &Document, base_font_size: f32) {
         // Collect all box IDs first to avoid borrow issues.
         let all_ids: Vec<LayoutBoxId> = (0..tree.boxes.len()).collect();
 
@@ -752,7 +751,6 @@ impl LayoutEngine {
             }
 
             let font_size = style.font_size;
-            let base_font_size = 16.0f32; // TODO: propagate from engine
 
             // Find the nearest scroll-container ancestor in the layout tree.
             let mut scroll_ancestor = tree.get(box_id).and_then(|b| b.parent);

@@ -2,7 +2,7 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{Display, Position};
+use liquide_style_engine::computed::{BoxSizing, Display, Position};
 
 use crate::geometry::Rect;
 use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
@@ -115,9 +115,50 @@ pub fn layout_positioned(
     // is used as the base for sticky clamping.
     let needs_intrinsic = width.is_none() && !(left.is_some() && right.is_some());
 
+    // For shrink-to-fit sizing, compute the available width based on which
+    // offsets are specified, then use fit-content (CSS 2.1 §10.3.7):
+    //   shrink-to-fit = min(max(min-content, available), max-content)
+    //
+    // Apply min-width / max-width constraints early so the intrinsic layout
+    // pass uses the correct constrained width (otherwise children are laid
+    // out at the unconstrained width and overflow after clamping).
+    let shrink_to_fit_w = if needs_intrinsic {
+        let available = match (left, right) {
+            (Some(l), _) => cb.width - l,
+            (_, Some(r)) => cb.width - r,
+            _ => cb.width,
+        };
+        let min_cw = crate::intrinsic::min_content_width(doc, node_id, styles, text_measurer);
+        let max_cw = crate::intrinsic::max_content_width(doc, node_id, styles, text_measurer);
+        let mut stf = min_cw.max(available.min(max_cw));
+
+        // Constrain by min-width / max-width (converted to border-box for
+        // content-box mode, since shrink_to_fit_w includes padding+border).
+        let horiz_extra = match style.box_sizing {
+            BoxSizing::ContentBox => pad_left + pad_right + border_left + border_right,
+            BoxSizing::BorderBox => 0.0,
+        };
+        if let Some(min_w) = style.min_width.resolve_px(
+            cb.width, base_font_size, font_size, viewport_w, viewport_h,
+        ) {
+            stf = stf.max(min_w + horiz_extra);
+        }
+        if let Some(max_w) = style.max_width.resolve_px(
+            cb.width, base_font_size, font_size, viewport_w, viewport_h,
+        ) {
+            stf = stf.min(max_w + horiz_extra);
+        }
+        Some(stf)
+    } else {
+        None
+    };
+
     // For intrinsic sizing (or sticky in-flow position), temporarily lay out
     // children to measure content and determine the normal-flow position.
+    // When shrink-to-fit applies, use the computed shrink-to-fit width instead
+    // of the full containing block width so the layout produces correctly sized boxes.
     let intrinsic_box = if needs_intrinsic || is_sticky {
+        let layout_w = shrink_to_fit_w.unwrap_or(cb.width);
         Some(crate::block::layout_block(
             doc,
             node_id,
@@ -125,7 +166,7 @@ pub fn layout_positioned(
             tree,
             text_measurer,
             image_measurer,
-            cb.width,
+            layout_w,
             cb.height,
             0.0,
             0.0,
@@ -137,18 +178,73 @@ pub fn layout_positioned(
         None
     };
 
-    let outer_w = width.unwrap_or_else(|| match (left, right) {
-        (Some(l), Some(r)) => cb.width - l - r,
-        _ => intrinsic_box
-            .and_then(|id| tree.get(id).map(|b| b.border_rect.width))
-            .unwrap_or(0.0),
-    });
-    let outer_h = height.unwrap_or_else(|| match (top, bottom) {
-        (Some(t), Some(b_val)) => cb.height - t - b_val,
-        _ => intrinsic_box
-            .and_then(|id| tree.get(id).map(|b| b.border_rect.height))
-            .unwrap_or(0.0),
-    });
+    // Compute border-box outer dimensions.
+    //
+    // When CSS width/height are explicit, they are content-box values in
+    // content-box mode — we must add padding+border to get the border-box
+    // outer_w/outer_h. For border-box mode, the CSS value IS the border-box
+    // width. For auto width (shrink-to-fit or left+right), the computed
+    // value already represents border-box dimensions.
+    let mut outer_w = match width {
+        Some(w) => match style.box_sizing {
+            BoxSizing::ContentBox => w + pad_left + pad_right + border_left + border_right,
+            BoxSizing::BorderBox => w,
+        },
+        None => match (left, right) {
+            (Some(l), Some(r)) => cb.width - l - r,
+            _ => shrink_to_fit_w.unwrap_or_else(|| {
+                intrinsic_box
+                    .and_then(|id| tree.get(id).map(|b| b.border_rect.width))
+                    .unwrap_or(0.0)
+            }),
+        },
+    };
+    let mut outer_h = match height {
+        Some(h) => match style.box_sizing {
+            BoxSizing::ContentBox => h + pad_top + pad_bottom + border_top + border_bottom,
+            BoxSizing::BorderBox => h,
+        },
+        None => match (top, bottom) {
+            (Some(t), Some(b_val)) => cb.height - t - b_val,
+            _ => intrinsic_box
+                .and_then(|id| tree.get(id).map(|b| b.border_rect.height))
+                .unwrap_or(0.0),
+        },
+    };
+
+    // Apply min-width / max-width constraints.
+    // CSS min/max-width are content-box values in content-box mode, so we
+    // must convert to border-box before comparing against outer_w.
+    let horiz_box_extra = match style.box_sizing {
+        BoxSizing::ContentBox => pad_left + pad_right + border_left + border_right,
+        BoxSizing::BorderBox => 0.0,
+    };
+    let vert_box_extra = match style.box_sizing {
+        BoxSizing::ContentBox => pad_top + pad_bottom + border_top + border_bottom,
+        BoxSizing::BorderBox => 0.0,
+    };
+    if let Some(min_w) = style.min_width.resolve_px(
+        cb.width, base_font_size, font_size, viewport_w, viewport_h,
+    ) {
+        outer_w = outer_w.max(min_w + horiz_box_extra);
+    }
+    if let Some(max_w) = style.max_width.resolve_px(
+        cb.width, base_font_size, font_size, viewport_w, viewport_h,
+    ) {
+        outer_w = outer_w.min(max_w + horiz_box_extra);
+    }
+
+    // Apply min-height / max-height constraints (same box-sizing adjustment).
+    if let Some(min_h) = style.min_height.resolve_px(
+        cb.height, base_font_size, font_size, viewport_w, viewport_h,
+    ) {
+        outer_h = outer_h.max(min_h + vert_box_extra);
+    }
+    if let Some(max_h) = style.max_height.resolve_px(
+        cb.height, base_font_size, font_size, viewport_w, viewport_h,
+    ) {
+        outer_h = outer_h.min(max_h + vert_box_extra);
+    }
 
     let content_w = (outer_w - pad_left - pad_right - border_left - border_right).max(0.0);
     let content_h = (outer_h - pad_top - pad_bottom - border_top - border_bottom).max(0.0);

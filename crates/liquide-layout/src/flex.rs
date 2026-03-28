@@ -343,9 +343,17 @@ pub fn layout_flex(
                 viewport_h,
             );
             explicit_w.unwrap_or_else(|| {
-                // Both flex-basis and width are auto → use max-content width
-                crate::intrinsic::max_content_width(doc, child_id, styles, text_measurer)
-                    .max(intrinsic.width)
+                // Both flex-basis and width are auto → use max-content width.
+                // Also consider the block-layout intrinsic width, but only when
+                // it's smaller than the available width — a block element with
+                // no explicit width stretches to fill content_width, which is
+                // NOT a content-based size.
+                let mcw = crate::intrinsic::max_content_width(doc, child_id, styles, text_measurer);
+                if intrinsic.width < content_width - 0.5 {
+                    mcw.max(intrinsic.width)
+                } else {
+                    mcw
+                }
             })
         } else {
             // Column direction: check height
@@ -633,11 +641,20 @@ pub fn layout_flex(
     // child at its resolved size so that text wrapping, nested flex, etc. use
     // the correct available width.
     for item in &mut items {
-        let initial_main = item.base_main_size;
         let resolved_main = item.main_size;
 
+        // Compare resolved size against the actual box dimension from
+        // the initial layout, not against base_main_size.  The initial
+        // layout_block uses the full parent width for block children
+        // with no explicit width, which can be much larger than the
+        // flex base size (e.g. flex-basis: auto on an empty element).
+        let initial_box_main = tree
+            .get(item.box_id)
+            .map(|b| if is_row { b.border_rect.width } else { b.border_rect.height })
+            .unwrap_or(0.0);
+
         // Tolerance: skip re-layout when the difference is negligible
-        if (resolved_main - initial_main).abs() < 0.5 {
+        if (resolved_main - initial_box_main).abs() < 0.5 {
             continue;
         }
 
@@ -953,13 +970,20 @@ pub fn layout_flex(
             )
             .unwrap_or(total_cross.max(0.0))
     } else {
-        let last_main: f32 = items.iter().map(|i| i.main_size).sum::<f32>()
-            + if items.len() > 1 {
-                (items.len() - 1) as f32 * gap
-            } else {
-                0.0
-            };
-        last_main
+        // Column direction: height = max per-line main size (not sum of all items).
+        // Each line is a physical column; the container height fits the tallest column.
+        let mut max_line_main = 0.0f32;
+        for line in &lines {
+            let line_items = &items[line.start..line.end];
+            let line_main: f32 = line_items.iter().map(|i| i.main_size).sum::<f32>()
+                + if line_items.len() > 1 {
+                    (line_items.len() - 1) as f32 * gap
+                } else {
+                    0.0
+                };
+            max_line_main = max_line_main.max(line_main);
+        }
+        max_line_main
     };
 
     if let Some(b) = tree.get_mut(box_id) {
