@@ -130,6 +130,9 @@ impl SoftwareRenderer {
                 }
             }
 
+            // Track how many wrapped lines for per-line decoration
+            let num_wrapped_lines: usize;
+
             // Render using the atlas
             {
                 let estimated_advance = glyph_height as f32 * 0.55;
@@ -184,6 +187,70 @@ impl SoftwareRenderer {
                             wrapped_lines.push(current_line.trim_end().to_string());
                         } else if hard_line.is_empty() {
                             wrapped_lines.push(String::new());
+                        }
+                    }
+                }
+
+                num_wrapped_lines = wrapped_lines.len().max(1);
+
+                // Render text shadows BEFORE the main text (CSS: shadows behind text)
+                if !text_shadows.is_empty() {
+                    for shadow in text_shadows {
+                        let mut shadow_c = shadow.color;
+                        if opacity < 1.0 {
+                            shadow_c.a = (shadow_c.a as f32 * opacity + 0.5) as u8;
+                        }
+                        if shadow_c.a == 0 {
+                            continue;
+                        }
+                        let sx = shadow.offset_x;
+                        let sy = shadow.offset_y;
+                        let mut s_pen_y = bounds.y + sy;
+                        let mut s_first = true;
+                        for s_line in &wrapped_lines {
+                            // Measure line for alignment
+                            let mut lw = 0.0f32;
+                            if s_first { lw += text_indent; }
+                            for ch in s_line.chars() {
+                                if ch == '\r' { continue; }
+                                let key = GlyphKey {
+                                    font_id, glyph_id: ch as u32, size_px, subpixel: false,
+                                };
+                                let base = if let Some(cached) = self.glyph_atlas.get(&key) {
+                                    cached.advance
+                                } else {
+                                    estimated_advance
+                                };
+                                let extra = if ch == ' ' { *word_spacing } else { 0.0 };
+                                lw += base + *letter_spacing + extra;
+                            }
+                            let ax = match text_align {
+                                1 => ((bounds.width - lw) / 2.0).max(0.0),
+                                2 => (bounds.width - lw).max(0.0),
+                                _ => 0.0,
+                            };
+                            let mut s_pen_x = bounds.x + ax + sx;
+                            if s_first { s_pen_x += text_indent; }
+                            for ch in s_line.chars() {
+                                if ch == '\r' { continue; }
+                                let key = GlyphKey {
+                                    font_id, glyph_id: ch as u32, size_px, subpixel: false,
+                                };
+                                if let Some(cached) = self.glyph_atlas.get(&key).cloned() {
+                                    let pos = liquide_compositor::geometry::Point::new(
+                                        s_pen_x,
+                                        s_pen_y + glyph_height as f32,
+                                    );
+                                    self.glyph_atlas.blit_glyph(fb, &cached, pos, shadow_c);
+                                    let extra = if ch == ' ' { *word_spacing } else { 0.0 };
+                                    s_pen_x += cached.advance + *letter_spacing + extra;
+                                } else {
+                                    let extra = if ch == ' ' { *word_spacing } else { 0.0 };
+                                    s_pen_x += estimated_advance + *letter_spacing + extra;
+                                }
+                            }
+                            s_pen_y += line_h;
+                            s_first = false;
                         }
                     }
                 }
@@ -277,27 +344,8 @@ impl SoftwareRenderer {
                 }
             }
 
-            // Text shadows
-            if !text_shadows.is_empty() {
-                for shadow in text_shadows {
-                    let mut shadow_color = shadow.color;
-                    if opacity < 1.0 {
-                        shadow_color.a = (shadow_color.a as f32 * opacity + 0.5) as u8;
-                    }
-                    if shadow.blur_radius <= 1.0 {
-                        let shadow_rect = Rect::new(
-                            bounds.x + shadow.offset_x,
-                            bounds.y + shadow.offset_y,
-                            bounds.width,
-                            bounds.height,
-                        );
-                        let _ = shadow_rect;
-                        let _ = shadow_color;
-                    }
-                }
-            }
-
             // Text decoration (underline, overline, line-through)
+            // Drawn per-line so multi-line text gets decorations on every line.
             if let Some(deco) = text_decoration {
                 use liquide_compositor::scene::{TextDecorationLine, TextDecorationStyle};
 
@@ -309,110 +357,120 @@ impl SoftwareRenderer {
                         (glyph_height as f32 / 14.0).max(1.0).round()
                     };
 
-                    let mut line_ys: Vec<f32> = Vec::with_capacity(3);
+                    // Offsets relative to each line's top
+                    let mut deco_offsets: Vec<f32> = Vec::with_capacity(3);
 
                     match deco.line {
                         TextDecorationLine::Underline => {
-                            line_ys.push(bounds.y + glyph_height as f32 * 0.9);
+                            deco_offsets.push(glyph_height as f32 * 0.9);
                         }
                         TextDecorationLine::Overline => {
-                            line_ys.push(bounds.y + glyph_height as f32 * 0.15);
+                            deco_offsets.push(glyph_height as f32 * 0.15);
                         }
                         TextDecorationLine::LineThrough => {
-                            line_ys.push(bounds.y + glyph_height as f32 * 0.55);
+                            deco_offsets.push(glyph_height as f32 * 0.55);
                         }
                         TextDecorationLine::UnderlineOverline => {
-                            line_ys.push(bounds.y + glyph_height as f32 * 0.9);
-                            line_ys.push(bounds.y + glyph_height as f32 * 0.15);
+                            deco_offsets.push(glyph_height as f32 * 0.9);
+                            deco_offsets.push(glyph_height as f32 * 0.15);
                         }
                         TextDecorationLine::None => {}
                     }
 
-                    for line_y in &line_ys {
-                        match deco.style {
-                            TextDecorationStyle::Solid => {
-                                let deco_rect =
-                                    Rect::new(bounds.x, *line_y, bounds.width, thickness);
-                                rasterizer::fill_rect(
-                                    fb,
-                                    deco_rect,
-                                    deco_color,
-                                    BlendMode::SrcOver,
-                                );
-                            }
-                            TextDecorationStyle::Double => {
-                                let deco_rect1 =
-                                    Rect::new(bounds.x, *line_y, bounds.width, thickness);
-                                let deco_rect2 = Rect::new(
-                                    bounds.x,
-                                    *line_y + thickness * 2.0,
-                                    bounds.width,
-                                    thickness,
-                                );
-                                rasterizer::fill_rect(
-                                    fb,
-                                    deco_rect1,
-                                    deco_color,
-                                    BlendMode::SrcOver,
-                                );
-                                rasterizer::fill_rect(
-                                    fb,
-                                    deco_rect2,
-                                    deco_color,
-                                    BlendMode::SrcOver,
-                                );
-                            }
-                            TextDecorationStyle::Dotted => {
-                                let dot_size = thickness.max(1.0);
-                                let step = dot_size * 3.0;
-                                let mut dx = bounds.x;
-                                while dx < bounds.x + bounds.width {
-                                    let dot_rect = Rect::new(dx, *line_y, dot_size, thickness);
+                    for line_idx in 0..num_wrapped_lines {
+                        let line_top = bounds.y + line_idx as f32 * line_h;
+                        for &offset_y in &deco_offsets {
+                            let line_y = line_top + offset_y;
+                            match deco.style {
+                                TextDecorationStyle::Solid => {
+                                    let deco_rect =
+                                        Rect::new(bounds.x, line_y, bounds.width, thickness);
                                     rasterizer::fill_rect(
                                         fb,
-                                        dot_rect,
+                                        deco_rect,
                                         deco_color,
                                         BlendMode::SrcOver,
                                     );
-                                    dx += step;
                                 }
-                            }
-                            TextDecorationStyle::Dashed => {
-                                let dash_len = thickness * 4.0;
-                                let gap_len = thickness * 2.0;
-                                let step = dash_len + gap_len;
-                                let mut dx = bounds.x;
-                                while dx < bounds.x + bounds.width {
-                                    let seg_w = dash_len.min(bounds.x + bounds.width - dx);
-                                    let dash_rect = Rect::new(dx, *line_y, seg_w, thickness);
+                                TextDecorationStyle::Double => {
+                                    let deco_rect1 =
+                                        Rect::new(bounds.x, line_y, bounds.width, thickness);
+                                    let deco_rect2 = Rect::new(
+                                        bounds.x,
+                                        line_y + thickness * 2.0,
+                                        bounds.width,
+                                        thickness,
+                                    );
                                     rasterizer::fill_rect(
                                         fb,
-                                        dash_rect,
+                                        deco_rect1,
                                         deco_color,
                                         BlendMode::SrcOver,
                                     );
-                                    dx += step;
+                                    rasterizer::fill_rect(
+                                        fb,
+                                        deco_rect2,
+                                        deco_color,
+                                        BlendMode::SrcOver,
+                                    );
                                 }
-                            }
-                            TextDecorationStyle::Wavy => {
-                                let wave_len = thickness * 4.0;
-                                let amplitude = thickness * 1.5;
-                                let half = wave_len / 2.0;
-                                let mut dx = bounds.x;
-                                let mut up = true;
-                                while dx < bounds.x + bounds.width {
-                                    let seg_w = half.min(bounds.x + bounds.width - dx);
-                                    let y_off = if up { -amplitude } else { amplitude };
-                                    let wave_rect =
-                                        Rect::new(dx, *line_y + y_off, seg_w, thickness);
-                                    rasterizer::fill_rect(
-                                        fb,
-                                        wave_rect,
-                                        deco_color,
-                                        BlendMode::SrcOver,
-                                    );
-                                    dx += half;
-                                    up = !up;
+                                TextDecorationStyle::Dotted => {
+                                    let dot_size = thickness.max(1.0);
+                                    let step = dot_size * 3.0;
+                                    let mut dx = bounds.x;
+                                    while dx < bounds.x + bounds.width {
+                                        let dot_rect =
+                                            Rect::new(dx, line_y, dot_size, thickness);
+                                        rasterizer::fill_rect(
+                                            fb,
+                                            dot_rect,
+                                            deco_color,
+                                            BlendMode::SrcOver,
+                                        );
+                                        dx += step;
+                                    }
+                                }
+                                TextDecorationStyle::Dashed => {
+                                    let dash_len = thickness * 4.0;
+                                    let gap_len = thickness * 2.0;
+                                    let step = dash_len + gap_len;
+                                    let mut dx = bounds.x;
+                                    while dx < bounds.x + bounds.width {
+                                        let seg_w =
+                                            dash_len.min(bounds.x + bounds.width - dx);
+                                        let dash_rect =
+                                            Rect::new(dx, line_y, seg_w, thickness);
+                                        rasterizer::fill_rect(
+                                            fb,
+                                            dash_rect,
+                                            deco_color,
+                                            BlendMode::SrcOver,
+                                        );
+                                        dx += step;
+                                    }
+                                }
+                                TextDecorationStyle::Wavy => {
+                                    let wave_len = thickness * 4.0;
+                                    let amplitude = thickness * 1.5;
+                                    let half = wave_len / 2.0;
+                                    let mut dx = bounds.x;
+                                    let mut up = true;
+                                    while dx < bounds.x + bounds.width {
+                                        let seg_w =
+                                            half.min(bounds.x + bounds.width - dx);
+                                        let y_off =
+                                            if up { -amplitude } else { amplitude };
+                                        let wave_rect =
+                                            Rect::new(dx, line_y + y_off, seg_w, thickness);
+                                        rasterizer::fill_rect(
+                                            fb,
+                                            wave_rect,
+                                            deco_color,
+                                            BlendMode::SrcOver,
+                                        );
+                                        dx += half;
+                                        up = !up;
+                                    }
                                 }
                             }
                         }

@@ -506,8 +506,6 @@ fn item_bounds(item: &DisplayItem) -> Option<Rect> {
         | DisplayItem::ConicGradient { rect, .. }
         | DisplayItem::Border { rect, .. }
         | DisplayItem::BorderImage { rect, .. }
-        | DisplayItem::BoxShadow { rect, .. }
-        | DisplayItem::Outline { rect, .. }
         | DisplayItem::Text { rect, .. }
         | DisplayItem::TextRun { rect, .. }
         | DisplayItem::Image { rect, .. }
@@ -526,11 +524,43 @@ fn item_bounds(item: &DisplayItem) -> Option<Rect> {
         | DisplayItem::SaveLayer { rect, .. }
         | DisplayItem::Annotate { rect, .. } => Some(*rect),
 
-        DisplayItem::Line { x1, y1, x2, y2, .. } => {
-            let min_x = x1.min(*x2);
-            let min_y = y1.min(*y2);
-            let max_x = x1.max(*x2);
-            let max_y = y1.max(*y2);
+        DisplayItem::BoxShadow { rect, offset_x, offset_y, blur_radius, spread_radius, inset, .. } => {
+            if *inset {
+                // Inset shadows are clipped to the element's border box
+                Some(*rect)
+            } else {
+                // Outer shadow extends by offset + blur + spread
+                let expand = *blur_radius + spread_radius.max(0.0);
+                let shadow_x = rect.x + offset_x - expand;
+                let shadow_y = rect.y + offset_y - expand;
+                let shadow_r = rect.x + rect.width + offset_x + expand;
+                let shadow_b = rect.y + rect.height + offset_y + expand;
+                // Union of element rect and shadow rect
+                let min_x = rect.x.min(shadow_x);
+                let min_y = rect.y.min(shadow_y);
+                let max_x = (rect.x + rect.width).max(shadow_r);
+                let max_y = (rect.y + rect.height).max(shadow_b);
+                Some(Rect { x: min_x, y: min_y, width: max_x - min_x, height: max_y - min_y })
+            }
+        }
+
+        DisplayItem::Outline { rect, width, offset, .. } => {
+            // Outline is drawn outside the border box, offset further by `offset`
+            let expand = *width + offset.max(0.0);
+            Some(Rect {
+                x: rect.x - expand,
+                y: rect.y - expand,
+                width: rect.width + expand * 2.0,
+                height: rect.height + expand * 2.0,
+            })
+        }
+
+        DisplayItem::Line { x1, y1, x2, y2, width, .. } => {
+            let half_w = width / 2.0;
+            let min_x = x1.min(*x2) - half_w;
+            let min_y = y1.min(*y2) - half_w;
+            let max_x = x1.max(*x2) + half_w;
+            let max_y = y1.max(*y2) + half_w;
             Some(Rect {
                 x: min_x,
                 y: min_y,

@@ -517,7 +517,21 @@ pub fn blit_opaque(
     dst_y: u32,
 ) {
     let bpp = 4usize;
-    let src_stride = src_width as usize * bpp;
+    // Default stride = width * bpp (no row padding)
+    blit_opaque_stride(fb, src, src_width, src_height, src_width as usize * bpp, dst_x, dst_y);
+}
+
+/// Blit an opaque BGRA image with explicit stride (bytes per row).
+pub fn blit_opaque_stride(
+    fb: &mut FrameBuffer,
+    src: &[u8],
+    src_width: u32,
+    src_height: u32,
+    src_stride: usize,
+    dst_x: u32,
+    dst_y: u32,
+) {
+    let bpp = 4usize;
 
     for row in 0..src_height {
         let dy = dst_y + row;
@@ -529,8 +543,14 @@ pub fn blit_opaque(
             continue;
         }
         let src_off = row as usize * src_stride;
-        let dst_off = fb.pixel_offset(dst_x, dy);
         let bytes = copy_width as usize * bpp;
+        if src_off + bytes > src.len() {
+            break;
+        }
+        let dst_off = fb.pixel_offset(dst_x, dy);
+        if dst_off + bytes > fb.pixels.len() {
+            break;
+        }
         fb.pixels[dst_off..dst_off + bytes].copy_from_slice(&src[src_off..src_off + bytes]);
     }
 }
@@ -546,6 +566,22 @@ pub fn blit_alpha(
     opacity: f32,
 ) {
     let bpp = 4usize;
+    let src_stride = src_width as usize * bpp;
+    blit_alpha_stride(fb, src, src_width, src_height, src_stride, dst_x, dst_y, opacity);
+}
+
+/// Blit a BGRA image with premultiplied alpha blending and explicit stride.
+pub fn blit_alpha_stride(
+    fb: &mut FrameBuffer,
+    src: &[u8],
+    src_width: u32,
+    src_height: u32,
+    src_stride: usize,
+    dst_x: u32,
+    dst_y: u32,
+    opacity: f32,
+) {
+    let bpp = 4usize;
 
     for row in 0..src_height {
         let dy = dst_y + row;
@@ -554,7 +590,10 @@ pub fn blit_alpha(
         }
         let max_x = src_width.min(fb.width.saturating_sub(dst_x));
         for col in 0..max_x {
-            let src_off = (row as usize * src_width as usize + col as usize) * bpp;
+            let src_off = row as usize * src_stride + col as usize * bpp;
+            if src_off + 3 >= src.len() {
+                break;
+            }
             let mut s = Color::from_bgra_bytes([
                 src[src_off],
                 src[src_off + 1],
@@ -583,6 +622,10 @@ pub fn blit_scaled(
     src_height: u32,
     dst_rect: Rect,
 ) {
+    if src_width == 0 || src_height == 0 || dst_rect.width <= 0.0 || dst_rect.height <= 0.0 {
+        return;
+    }
+
     let dx0 = (dst_rect.x.max(0.0) as u32).min(fb.width);
     let dy0 = (dst_rect.y.max(0.0) as u32).min(fb.height);
     let dx1 = (dst_rect.right().ceil() as u32).min(fb.width);
@@ -606,6 +649,9 @@ pub fn blit_scaled(
             // Sample 4 corners
             let sample = |x: u32, y: u32| -> [f32; 4] {
                 let off = (y as usize * src_width as usize + x as usize) * 4;
+                if off + 3 >= src.len() {
+                    return [0.0; 4];
+                }
                 [
                     src[off] as f32,
                     src[off + 1] as f32,
@@ -854,10 +900,6 @@ pub fn draw_line(
 
     let steps = (len * 2.0).ceil() as i32;
     let half_w = width * 0.5;
-
-    // Normal vector perpendicular to the line
-    let _nx = -dy / len;
-    let _ny = dx / len;
 
     for i in 0..=steps {
         let t = i as f32 / steps as f32;

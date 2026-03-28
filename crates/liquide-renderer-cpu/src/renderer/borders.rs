@@ -272,13 +272,14 @@ impl SoftwareRenderer {
                     true,
                 );
                 // Left border (between top and bottom)
+                let side_h = (bounds.height - sides.top.width - sides.bottom.width).max(0.0);
                 draw_border_side(
                     fb,
                     Rect::new(
                         bounds.x,
                         bounds.y + sides.top.width,
                         sides.left.width,
-                        bounds.height - sides.top.width - sides.bottom.width,
+                        side_h,
                     ),
                     &sides.left,
                     opacity,
@@ -291,7 +292,7 @@ impl SoftwareRenderer {
                         bounds.right() - sides.right.width,
                         bounds.y + sides.top.width,
                         sides.right.width,
-                        bounds.height - sides.top.width - sides.bottom.width,
+                        side_h,
                     ),
                     &sides.right,
                     opacity,

@@ -563,20 +563,22 @@ impl SoftwareRenderer {
                 if let Some(buf) = buffer {
                     if opacity >= 1.0 && buf.format == liquide_compositor::pixel::PixelFormat::Bgra8
                     {
-                        rasterizer::blit_opaque(
+                        rasterizer::blit_opaque_stride(
                             fb,
                             &buf.pixels,
                             buf.width,
                             buf.height,
+                            buf.stride as usize,
                             bounds.x.max(0.0) as u32,
                             bounds.y.max(0.0) as u32,
                         );
                     } else {
-                        rasterizer::blit_alpha(
+                        rasterizer::blit_alpha_stride(
                             fb,
                             &buf.pixels,
                             buf.width,
                             buf.height,
+                            buf.stride as usize,
                             bounds.x.max(0.0) as u32,
                             bounds.y.max(0.0) as u32,
                             opacity,

@@ -65,25 +65,23 @@ impl SoftwareRenderer {
                     let fy = y as f32 + 0.5;
                     for x in x0..x1 {
                         let fx = x as f32 + 0.5;
-                        // Apply rounded rect SDF mask
-                        if has_radius {
+                        // Apply rounded rect SDF mask (compute once, reuse)
+                        let coverage = if has_radius {
                             let d = rasterizer::sdf_rounded_rect_per_corner(
                                 fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
                             );
-                            if d > 0.5 { continue; }
-                        }
+                            let c = (-d + 0.5).clamp(0.0, 1.0);
+                            if c <= 0.0 { continue; }
+                            c
+                        } else {
+                            1.0
+                        };
                         // Project pixel onto gradient line
                         let t = ((fx - sx) * dx + (fy - sy) * dy) * inv_len2;
                         let t_clamped = t.clamp(0.0, 1.0);
                         let mut color = sample_gradient_stops(stops, t_clamped, opacity);
-                        if has_radius {
-                            let d = rasterizer::sdf_rounded_rect_per_corner(
-                                fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
-                            );
-                            let coverage = (-d + 0.5).clamp(0.0, 1.0);
-                            if coverage < 1.0 {
-                                color.a = (color.a as f32 * coverage + 0.5) as u8;
-                            }
+                        if coverage < 1.0 {
+                            color.a = (color.a as f32 * coverage + 0.5) as u8;
                         }
                         if color.a > 0 {
                             let dst = fb.get_pixel(x, y);
@@ -112,25 +110,23 @@ impl SoftwareRenderer {
                     let fy = y as f32 + 0.5;
                     for x in x0..x1 {
                         let fx = x as f32 + 0.5;
-                        if has_radius {
+                        let coverage = if has_radius {
                             let sd = rasterizer::sdf_rounded_rect_per_corner(
                                 fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
                             );
-                            if sd > 0.5 { continue; }
-                        }
+                            let c = (-sd + 0.5).clamp(0.0, 1.0);
+                            if c <= 0.0 { continue; }
+                            c
+                        } else {
+                            1.0
+                        };
                         let dx = fx - cx;
                         let dy = fy - cy;
                         let dist = (dx * dx + dy * dy).sqrt();
                         let t = (dist * inv_r).clamp(0.0, 1.0);
                         let mut color = sample_gradient_stops(stops, t, opacity);
-                        if has_radius {
-                            let sd = rasterizer::sdf_rounded_rect_per_corner(
-                                fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
-                            );
-                            let coverage = (-sd + 0.5).clamp(0.0, 1.0);
-                            if coverage < 1.0 {
-                                color.a = (color.a as f32 * coverage + 0.5) as u8;
-                            }
+                        if coverage < 1.0 {
+                            color.a = (color.a as f32 * coverage + 0.5) as u8;
                         }
                         if color.a > 0 {
                             let dst = fb.get_pixel(x, y);
@@ -158,26 +154,24 @@ impl SoftwareRenderer {
                     let fy = y as f32 + 0.5;
                     for x in x0..x1 {
                         let fx = x as f32 + 0.5;
-                        if has_radius {
+                        let coverage = if has_radius {
                             let sd = rasterizer::sdf_rounded_rect_per_corner(
                                 fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
                             );
-                            if sd > 0.5 { continue; }
-                        }
+                            let c = (-sd + 0.5).clamp(0.0, 1.0);
+                            if c <= 0.0 { continue; }
+                            c
+                        } else {
+                            1.0
+                        };
                         let mut angle = (fy - cy).atan2(fx - cx) - start_rad;
                         if angle < 0.0 {
                             angle += std::f32::consts::TAU;
                         }
                         let t = angle / std::f32::consts::TAU;
                         let mut color = sample_gradient_stops(stops, t.clamp(0.0, 1.0), opacity);
-                        if has_radius {
-                            let sd = rasterizer::sdf_rounded_rect_per_corner(
-                                fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
-                            );
-                            let coverage = (-sd + 0.5).clamp(0.0, 1.0);
-                            if coverage < 1.0 {
-                                color.a = (color.a as f32 * coverage + 0.5) as u8;
-                            }
+                        if coverage < 1.0 {
+                            color.a = (color.a as f32 * coverage + 0.5) as u8;
                         }
                         if color.a > 0 {
                             let dst = fb.get_pixel(x, y);

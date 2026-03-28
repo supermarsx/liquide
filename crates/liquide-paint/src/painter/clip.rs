@@ -35,11 +35,17 @@ pub(crate) fn parse_clip_path(value: &str, bounds: &liquide_layout::Rect) -> Opt
         Some(ClipPath::Ellipse { cx, cy, rx, ry })
     } else if trimmed.starts_with("inset(") {
         let inner = trimmed.trim_start_matches("inset(").trim_end_matches(')');
+        // Split on whitespace, but also handle "round <radii>" suffix
         let parts: Vec<&str> = inner.split_whitespace().collect();
-        let top = parse_length_or_percent(parts.first().copied().unwrap_or("0"), bounds.height);
-        let right = parse_length_or_percent(parts.get(1).copied().unwrap_or("0"), bounds.width);
-        let bottom = parse_length_or_percent(parts.get(2).copied().unwrap_or("0"), bounds.height);
-        let left = parse_length_or_percent(parts.get(3).copied().unwrap_or("0"), bounds.width);
+        // CSS shorthand: 1→all, 2→TB/LR, 3→T/LR/B, 4→T/R/B/L
+        let top_s = parts.first().copied().unwrap_or("0");
+        let right_s = parts.get(1).copied().unwrap_or(top_s);
+        let bottom_s = parts.get(2).copied().unwrap_or(top_s);
+        let left_s = parts.get(3).copied().unwrap_or(right_s);
+        let top = parse_length_or_percent(top_s, bounds.height);
+        let right = parse_length_or_percent(right_s, bounds.width);
+        let bottom = parse_length_or_percent(bottom_s, bounds.height);
+        let left = parse_length_or_percent(left_s, bounds.width);
         Some(ClipPath::Inset {
             top,
             right,

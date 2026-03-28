@@ -65,6 +65,7 @@ impl SoftwareRenderer {
             spread,
             blur_radius,
             color,
+            corner_radius,
         } = &node.kind
         {
             if lod_level == LodLevel::Low {
@@ -95,7 +96,7 @@ impl SoftwareRenderer {
                 let lod_blur_radius = (*blur_radius as f32 * quality_factor) as u32;
                 let params = ShadowParams {
                     surface_rect: bounds,
-                    corner_radius: 0.0,
+                    corner_radius: *corner_radius,
                     spread: *spread,
                     blur_radius: lod_blur_radius,
                     offset_x: 0.0,
@@ -268,11 +269,21 @@ impl SoftwareRenderer {
                     BackdropFilterSpec::Sepia(amount) => {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Sepia.apply(fb, bounds);
+                        } else if *amount > 0.001 {
+                            crate::filter::PixelFilter::ColorMatrix(
+                                partial_sepia_matrix(*amount),
+                            )
+                            .apply(fb, bounds);
                         }
                     }
                     BackdropFilterSpec::Invert(amount) => {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Invert.apply(fb, bounds);
+                        } else if *amount > 0.001 {
+                            crate::filter::PixelFilter::ColorMatrix(
+                                partial_invert_matrix(*amount),
+                            )
+                            .apply(fb, bounds);
                         }
                     }
                     BackdropFilterSpec::Opacity(o) => {
@@ -325,11 +336,21 @@ impl SoftwareRenderer {
                     FilterSpec::Sepia(amount) => {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Sepia.apply(fb, bounds);
+                        } else if *amount > 0.001 {
+                            crate::filter::PixelFilter::ColorMatrix(
+                                partial_sepia_matrix(*amount),
+                            )
+                            .apply(fb, bounds);
                         }
                     }
                     FilterSpec::Invert(amount) => {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Invert.apply(fb, bounds);
+                        } else if *amount > 0.001 {
+                            crate::filter::PixelFilter::ColorMatrix(
+                                partial_invert_matrix(*amount),
+                            )
+                            .apply(fb, bounds);
                         }
                     }
                     FilterSpec::Opacity(o) => {
@@ -390,20 +411,23 @@ impl SoftwareRenderer {
             return;
         }
 
-        let has_cache = self.blur_worker.get_cached(node_id, w, h).is_some();
-
         // Blit cached blur result if available.
-        if let Some(cached) = self.blur_worker.get_cached(node_id, w, h) {
+        let has_cache = if let Some(cached) = self.blur_worker.get_cached(node_id, w, h) {
             for row in 0..h {
                 let src_off = (row * w * 4) as usize;
                 let dst_off = fb.pixel_offset(x0, y0 + row);
                 let bytes = (w * 4) as usize;
-                if src_off + bytes <= cached.pixels.len() {
+                if src_off + bytes <= cached.pixels.len()
+                    && dst_off + bytes <= fb.pixels.len()
+                {
                     fb.pixels[dst_off..dst_off + bytes]
                         .copy_from_slice(&cached.pixels[src_off..src_off + bytes]);
                 }
             }
-        }
+            true
+        } else {
+            false
+        };
 
         // Submit new blur request if worker doesn't have one pending.
         if !has_cache || !self.blur_worker.has_pending(node_id) {
@@ -419,4 +443,35 @@ impl SoftwareRenderer {
                 .request_blur(node_id, snapshot, w, h, radius);
         }
     }
+}
+
+/// Build a 5×4 color matrix for partial sepia (amount 0..1).
+///
+/// Interpolates between the identity matrix and the full sepia matrix.
+fn partial_sepia_matrix(amount: f32) -> [f32; 20] {
+    let a = amount;
+    let b = 1.0 - amount;
+    #[rustfmt::skip]
+    let m = [
+        b + a * 0.393, a * 0.769, a * 0.189, 0.0, 0.0,
+        a * 0.349, b + a * 0.686, a * 0.168, 0.0, 0.0,
+        a * 0.272, a * 0.534, b + a * 0.131, 0.0, 0.0,
+        0.0, 0.0, 0.0, 1.0, 0.0,
+    ];
+    m
+}
+
+/// Build a 5×4 color matrix for partial invert (amount 0..1).
+///
+/// At amount=0 it's identity; at amount=1 it's full inversion.
+fn partial_invert_matrix(amount: f32) -> [f32; 20] {
+    let f = 1.0 - 2.0 * amount;
+    #[rustfmt::skip]
+    let m = [
+        f,   0.0, 0.0, 0.0, amount,
+        0.0, f,   0.0, 0.0, amount,
+        0.0, 0.0, f,   0.0, amount,
+        0.0, 0.0, 0.0, 1.0, 0.0,
+    ];
+    m
 }

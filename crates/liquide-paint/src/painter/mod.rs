@@ -209,8 +209,7 @@ impl Painter {
         }
 
         // Push CSS filter
-        let has_filter = !style.filter.is_empty();
-        if has_filter {
+        let has_filter = if !style.filter.is_empty() {
             let ops: Vec<FilterOp> = style
                 .filter
                 .iter()
@@ -218,12 +217,16 @@ impl Painter {
                 .collect();
             if !ops.is_empty() {
                 list.push(DisplayItem::PushFilter { filters: ops });
+                true
+            } else {
+                false
             }
-        }
+        } else {
+            false
+        };
 
         // Push CSS backdrop-filter
-        let has_backdrop = !style.backdrop_filter.is_empty();
-        if has_backdrop {
+        let has_backdrop = if !style.backdrop_filter.is_empty() {
             let ops: Vec<FilterOp> = style
                 .backdrop_filter
                 .iter()
@@ -234,8 +237,13 @@ impl Painter {
                     filters: ops,
                     bounds: abs_padding,
                 });
+                true
+            } else {
+                false
             }
-        }
+        } else {
+            false
+        };
 
         // Push CSS mask
         let has_mask = style.mask.is_some();
@@ -251,14 +259,17 @@ impl Painter {
         }
 
         // Push CSS clip-path
-        let has_clip_path = style.clip_path.is_some();
-        if let Some(ref clip_str) = style.clip_path {
+        let has_clip_path = if let Some(ref clip_str) = style.clip_path {
             // Parse common clip-path values into ClipPath shapes
-            let clip = parse_clip_path(clip_str, &abs_border);
-            if let Some(path) = clip {
+            if let Some(path) = parse_clip_path(clip_str, &abs_border) {
                 list.push(DisplayItem::PushClipPath { path });
+                true
+            } else {
+                false
             }
-        }
+        } else {
+            false
+        };
 
         // Push clipping for overflow (or contain:paint forces clip)
         let needs_clip = style.contain.paint || matches!(
@@ -348,18 +359,20 @@ impl Painter {
             });
         }
 
-        // Paint box shadows (outer, before background)
+        // Paint OUTER box shadows (before background, per CSS spec)
         for shadow in &style.box_shadow {
-            list.push(DisplayItem::BoxShadow {
-                rect: abs_border,
-                offset_x: shadow.offset_x,
-                offset_y: shadow.offset_y,
-                blur_radius: shadow.blur_radius,
-                spread_radius: shadow.spread_radius,
-                color: shadow.color,
-                inset: shadow.inset,
-                radius: style.border_radius.clone(),
-            });
+            if !shadow.inset {
+                list.push(DisplayItem::BoxShadow {
+                    rect: abs_border,
+                    offset_x: shadow.offset_x,
+                    offset_y: shadow.offset_y,
+                    blur_radius: shadow.blur_radius,
+                    spread_radius: shadow.spread_radius,
+                    color: shadow.color,
+                    inset: shadow.inset,
+                    radius: style.border_radius.clone(),
+                });
+            }
         }
 
         // ── Background clip / origin resolution ──
@@ -452,6 +465,22 @@ impl Painter {
                 },
                 radius: style.border_radius.clone(),
             });
+        }
+
+        // Paint INSET box shadows (after border, before content, per CSS spec)
+        for shadow in &style.box_shadow {
+            if shadow.inset {
+                list.push(DisplayItem::BoxShadow {
+                    rect: abs_border,
+                    offset_x: shadow.offset_x,
+                    offset_y: shadow.offset_y,
+                    blur_radius: shadow.blur_radius,
+                    spread_radius: shadow.spread_radius,
+                    color: shadow.color,
+                    inset: shadow.inset,
+                    radius: style.border_radius.clone(),
+                });
+            }
         }
 
         // Paint border-image (9-slice) — overrides regular border if source is set
@@ -943,7 +972,7 @@ mod tests {
     use super::*;
     use liquide_dom::Document;
     use liquide_layout::{DefaultTextMeasurer, DefaultImageMeasurer, LayoutEngine, Size};
-    use liquide_style_engine::engine::{StyleEngine, ViewportSize};
+    use liquide_style_engine::engine::StyleEngine;
 
     #[test]
     fn basic_paint() {

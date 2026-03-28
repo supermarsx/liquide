@@ -164,6 +164,7 @@ pub enum SceneNodeKind {
         spread: f32,
         blur_radius: f32,
         color: Color,
+        corner_radius: f32,
     },
     /// Server-side window decoration (title bar, borders).
     Decoration {
@@ -569,7 +570,7 @@ impl SceneNode {
                     kind: node.kind.clone(),
                     absolute_bounds: abs_bounds,
                     absolute_transform: *abs_transform,
-                    clip: node.properties.clip,
+                    clip: node.properties.clip.map(|c| abs_transform.transform_rect(c)),
                     opacity: effective_opacity,
                     z_order: node.properties.z_order,
                     corner_radius: node.properties.corner_radius,

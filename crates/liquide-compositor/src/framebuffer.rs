@@ -45,15 +45,23 @@ impl FrameBuffer {
     }
 
     /// Get a slice of the pixel row at `y`.
+    ///
+    /// # Panics
+    /// Panics if `y >= self.height`.
     #[must_use]
     pub fn row(&self, y: u32) -> &[u8] {
+        debug_assert!(y < self.height, "row({y}) out of bounds (height={})", self.height);
         let start = (y * self.stride) as usize;
         let end = start + (self.width * self.format.bytes_per_pixel()) as usize;
         &self.pixels[start..end]
     }
 
     /// Get a mutable slice of the pixel row at `y`.
+    ///
+    /// # Panics
+    /// Panics if `y >= self.height`.
     pub fn row_mut(&mut self, y: u32) -> &mut [u8] {
+        debug_assert!(y < self.height, "row_mut({y}) out of bounds (height={})", self.height);
         let start = (y * self.stride) as usize;
         let end = start + (self.width * self.format.bytes_per_pixel()) as usize;
         &mut self.pixels[start..end]
@@ -134,7 +142,7 @@ impl FrameBuffer {
             return Color::TRANSPARENT;
         }
         match self.format {
-            PixelFormat::Bgra8 | PixelFormat::Rgba8 => {
+            PixelFormat::Bgra8 => {
                 Color::from_bgra_bytes([
                     self.pixels[off],
                     self.pixels[off + 1],
@@ -142,13 +150,21 @@ impl FrameBuffer {
                     self.pixels[off + 3],
                 ])
             }
+            PixelFormat::Rgba8 => {
+                Color::new(
+                    self.pixels[off],
+                    self.pixels[off + 1],
+                    self.pixels[off + 2],
+                    self.pixels[off + 3],
+                )
+            }
             PixelFormat::Rgb8 => {
-                Color {
-                    b: self.pixels[off],
-                    g: self.pixels[off + 1],
-                    r: self.pixels[off + 2],
-                    a: 255,
-                }
+                Color::new(
+                    self.pixels[off],
+                    self.pixels[off + 1],
+                    self.pixels[off + 2],
+                    255,
+                )
             }
             _ => Color::TRANSPARENT,
         }
@@ -161,11 +177,28 @@ impl FrameBuffer {
             return;
         }
         let off = self.pixel_offset(x, y);
-        if off + 4 > self.pixels.len() {
+        let bpp = self.format.bytes_per_pixel() as usize;
+        if off + bpp > self.pixels.len() {
             return;
         }
-        let bgra = color.to_bgra_bytes();
-        self.pixels[off..off + 4].copy_from_slice(&bgra);
+        match self.format {
+            PixelFormat::Bgra8 => {
+                let bgra = color.to_bgra_bytes();
+                self.pixels[off..off + 4].copy_from_slice(&bgra);
+            }
+            PixelFormat::Rgba8 => {
+                self.pixels[off] = color.r;
+                self.pixels[off + 1] = color.g;
+                self.pixels[off + 2] = color.b;
+                self.pixels[off + 3] = color.a;
+            }
+            PixelFormat::Rgb8 => {
+                self.pixels[off] = color.r;
+                self.pixels[off + 1] = color.g;
+                self.pixels[off + 2] = color.b;
+            }
+            _ => {}
+        }
     }
 
     /// Width of the tile grid for a given tile size.

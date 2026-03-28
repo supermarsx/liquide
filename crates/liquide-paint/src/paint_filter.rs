@@ -480,12 +480,6 @@ impl PaintFilter {
         }
     }
 
-    #[cfg(test)]
-    fn apply_invert(input: &PixelBuffer, amount: f32) -> PixelBuffer {
-        let mut output = input.clone();
-        Self::apply_invert_in_place(&mut output, amount);
-        output
-    }
 
     fn apply_sepia(input: &PixelBuffer, amount: f32) -> PixelBuffer {
         let s = amount;
@@ -513,12 +507,6 @@ impl PaintFilter {
         }
     }
 
-    #[cfg(test)]
-    fn apply_opacity(input: &PixelBuffer, amount: f32) -> PixelBuffer {
-        let mut output = input.clone();
-        Self::apply_opacity_in_place(&mut output, amount);
-        output
-    }
 
     // ── Morphological filters ────────────────────────────────────
 

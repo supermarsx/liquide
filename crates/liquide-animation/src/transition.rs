@@ -124,6 +124,15 @@ impl TransitionEngine {
             .map_or(false, |t| t.state == TransitionState::Running)
     }
 
+    /// Get the target value of an active transition, if any.
+    pub fn get_target(&self, node_id: NodeId, property: &str) -> Option<f32> {
+        self.transitions
+            .get(&node_id)?
+            .get(property)
+            .filter(|t| t.state == TransitionState::Running)
+            .map(|t| t.to)
+    }
+
     /// Remove all finished transitions.
     pub fn prune_finished(&mut self) {
         for props in self.transitions.values_mut() {
@@ -139,6 +148,15 @@ impl TransitionEngine {
             .flat_map(|m| m.values())
             .filter(|t| t.state == TransitionState::Running)
             .count()
+    }
+
+    /// Iterate over all active transitions, yielding `(node_id, property, current_value)`.
+    pub fn active_overrides(&self) -> impl Iterator<Item = (NodeId, &str, f32)> {
+        self.transitions.iter().flat_map(|(node_id, props)| {
+            props.values()
+                .filter(|t| t.state == TransitionState::Running)
+                .map(move |t| (*node_id, t.property.as_str(), t.current()))
+        })
     }
 }
 

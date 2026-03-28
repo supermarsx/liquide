@@ -304,9 +304,13 @@ impl SoftwareRenderer {
         let dst_w = dst_x1 - dst_x0;
         let dst_h = dst_y1 - dst_y0;
 
+        if src_w <= 0.0 || src_h <= 0.0 || dst_w <= 0.0 || dst_h <= 0.0 {
+            return;
+        }
+
         // Nearest-neighbor scaling
-        for dst_y in (dst_y0 as u32)..(dst_y1 as u32) {
-            for dst_x in (dst_x0 as u32)..(dst_x1 as u32) {
+        for dst_y in (dst_y0 as u32)..(dst_y1.ceil() as u32) {
+            for dst_x in (dst_x0 as u32)..(dst_x1.ceil() as u32) {
                 let rel_x = (dst_x as f32 - dst_x0) / dst_w;
                 let rel_y = (dst_y as f32 - dst_y0) / dst_h;
                 let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
