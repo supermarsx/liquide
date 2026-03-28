@@ -17,6 +17,7 @@ mod debug;
 mod devtools;
 mod event_handling;
 mod event_loop;
+pub mod lockfree_queue;
 mod loading;
 mod render_thread;
 
@@ -110,7 +111,10 @@ impl DesktopCompositor {
         let font_count = font_db.load_default_fonts("assets");
         info!(fonts_loaded = font_count, "loaded TrueType font faces");
 
-        let shell = Shell::new(width as f32, height as f32);
+        let mut shell = Shell::new(width as f32, height as f32);
+
+        // Try loading external CSS themes from disk.
+        Self::load_external_css(&mut shell);
 
         // Load @font-face rules from CSS stylesheets into the font database.
         let mut css_font_count = 0usize;
@@ -259,5 +263,48 @@ impl DesktopCompositor {
     /// Mutable access to the shell.
     pub fn shell_mut(&mut self) -> &mut Shell {
         &mut self.shell
+    }
+
+    /// Try loading external CSS theme files and user overrides.
+    ///
+    /// Search order:
+    /// 1. `assets/themes/{theme_name}.css` — packaged themes
+    /// 2. `~/.config/liquide/custom.css` — user overrides
+    ///
+    /// Any CSS found is appended to the shell's stylesheet pipeline.
+    fn load_external_css(shell: &mut Shell) {
+        // Try theme CSS from assets directory
+        let theme_names = ["night", "liquid-glass", "sunset", "midday"];
+        for name in &theme_names {
+            let candidate = std::path::Path::new("assets")
+                .join("themes")
+                .join(format!("{}.css", name));
+            if candidate.exists() {
+                if let Ok(css) = std::fs::read_to_string(&candidate) {
+                    info!(theme = name, "loaded external CSS theme from {:?}", candidate);
+                    shell.add_stylesheet(&css);
+                }
+            }
+        }
+
+        // Try user custom CSS
+        let home = {
+            #[cfg(windows)]
+            { std::env::var_os("USERPROFILE").map(std::path::PathBuf::from) }
+            #[cfg(not(windows))]
+            { std::env::var_os("HOME").map(std::path::PathBuf::from) }
+        };
+        if let Some(home_dir) = home {
+            let custom_css = home_dir
+                .join(".config")
+                .join("liquide")
+                .join("custom.css");
+            if custom_css.exists() {
+                if let Ok(css) = std::fs::read_to_string(&custom_css) {
+                    info!("loaded user custom CSS from {:?}", custom_css);
+                    shell.add_stylesheet(&css);
+                }
+            }
+        }
     }
 }

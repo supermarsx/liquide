@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "liquide_telemetry_viewer"
+path = "src/lib.rs"
+
 [[bin]]
 name = "liquide-telemetry"
 path = "src/main.rs"

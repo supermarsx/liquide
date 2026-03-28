@@ -636,6 +636,12 @@ impl DesktopCompositor {
         }
         let framebuf = fb.as_mut().unwrap();
 
+        // 4b. Clear framebuffer to opaque black before rendering.
+        // Without this, any region not covered by a scene node retains stale
+        // data (or transparent black on the first frame), producing visible
+        // artifacts — most commonly a "black bar" below the statusbar.
+        framebuf.clear(liquide_compositor::pixel::Color::new(0, 0, 0, 255));
+
         // 5. Build damage set.
         let mut damage = DamageSet::new(latest_job.tile_size);
         let grid_w = latest_job.width.div_ceil(latest_job.tile_size);

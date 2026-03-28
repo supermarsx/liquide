@@ -1,0 +1,10 @@
+[package]
+name = "liquide-window-tree"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Hierarchical window tree with linked-list z-order, hit testing, and parent-child relationships"
+
+[dependencies]
+bitflags = { workspace = true }

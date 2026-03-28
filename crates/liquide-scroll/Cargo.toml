@@ -1,0 +1,12 @@
+[package]
+name = "liquide-scroll"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Scrolling system with smooth scrolling, momentum, overscroll, snap points, and scrollbar management"
+
+[dependencies]
+
+[dev-dependencies]

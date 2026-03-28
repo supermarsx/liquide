@@ -1,0 +1,10 @@
+[package]
+name = "liquide-layout-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Incremental layout caching — reuse layout results when parent constraints are unchanged"
+
+[dependencies]
+bitflags = { workspace = true }

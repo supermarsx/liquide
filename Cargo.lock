@@ -2166,6 +2166,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-a11y-bridge"
+version = "0.1.0"
+dependencies = [
+ "liquide-a11y",
+]
+
+[[package]]
+name = "liquide-a11y-prefs"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "liquide-accounts"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-animation"
 version = "0.1.0"
 dependencies = [
@@ -2296,6 +2319,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-authorization"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "liquide-autostart"
+version = "0.1.0"
+
+[[package]]
 name = "liquide-bench"
 version = "0.1.0"
 dependencies = [
@@ -2312,6 +2349,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "liquide-bluetooth"
+version = "0.1.0"
 
 [[package]]
 name = "liquide-bridge-gtk"
@@ -2380,6 +2421,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-clipboard-manager"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "liquide-common"
 version = "0.1.0"
 dependencies = [
@@ -2409,6 +2458,10 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
 ]
+
+[[package]]
+name = "liquide-compositor-anim"
+version = "0.1.0"
 
 [[package]]
 name = "liquide-conformance"
@@ -2488,6 +2541,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-cursor-theme"
+version = "0.1.0"
+
+[[package]]
 name = "liquide-cursor-vector"
 version = "0.1.0"
 dependencies = [
@@ -2505,6 +2562,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-datetime"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-desktop-model"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+]
+
+[[package]]
 name = "liquide-devtools"
 version = "0.1.0"
 dependencies = [
@@ -2517,6 +2585,19 @@ dependencies = [
  "liquide-style-engine",
  "liquide-theme-css",
  "notify",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "liquide-dialogs"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-display"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
  "tracing",
@@ -2552,6 +2633,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-dpi"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "liquide-encoder"
 version = "0.1.0"
 dependencies = [
@@ -2577,6 +2665,26 @@ dependencies = [
  "liquide-encoder",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "liquide-firewall"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-focus"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "liquide-font-manager"
+version = "0.1.0"
+dependencies = [
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -2626,6 +2734,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-gestures"
+version = "0.1.0"
+
+[[package]]
 name = "liquide-hit-test"
 version = "0.1.0"
 dependencies = [
@@ -2636,6 +2748,10 @@ dependencies = [
  "serde",
  "tracing",
 ]
+
+[[package]]
+name = "liquide-hotkeys"
+version = "0.1.0"
 
 [[package]]
 name = "liquide-icons"
@@ -2666,6 +2782,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-input-method"
+version = "0.1.0"
+
+[[package]]
 name = "liquide-interop"
 version = "0.1.0"
 dependencies = [
@@ -2678,6 +2798,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-keyboard"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+]
+
+[[package]]
+name = "liquide-layers"
+version = "0.1.0"
+
+[[package]]
 name = "liquide-layout"
 version = "0.1.0"
 dependencies = [
@@ -2686,6 +2817,21 @@ dependencies = [
  "serde",
  "tracing",
 ]
+
+[[package]]
+name = "liquide-layout-cache"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+]
+
+[[package]]
+name = "liquide-locale"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-lockscreen"
+version = "0.1.0"
 
 [[package]]
 name = "liquide-manager"
@@ -2715,6 +2861,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-message-queue"
+version = "0.1.0"
+
+[[package]]
 name = "liquide-mobile-core"
 version = "0.1.0"
 dependencies = [
@@ -2722,6 +2872,21 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
 ]
+
+[[package]]
+name = "liquide-network"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-notification-daemon"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "liquide-overview"
+version = "0.1.0"
 
 [[package]]
 name = "liquide-paint"
@@ -2779,6 +2944,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-plugins"
+version = "0.1.0"
+
+[[package]]
 name = "liquide-policy"
 version = "0.1.0"
 dependencies = [
@@ -2788,6 +2957,28 @@ dependencies = [
  "toml",
  "tracing",
 ]
+
+[[package]]
+name = "liquide-popups"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-power"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "liquide-print"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+]
+
+[[package]]
+name = "liquide-property-tree"
+version = "0.1.0"
 
 [[package]]
 name = "liquide-protocol"
@@ -2818,6 +3009,10 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
 ]
+
+[[package]]
+name = "liquide-region"
+version = "0.1.0"
 
 [[package]]
 name = "liquide-render-coordinator"
@@ -2896,6 +3091,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-scheduler"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-screenshot"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-scroll"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-search"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-service-manager"
+version = "0.1.0"
+
+[[package]]
 name = "liquide-session"
 version = "0.1.0"
 dependencies = [
@@ -2930,6 +3145,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-session-manager"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-session-state"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-settings"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "liquide-shell"
 version = "0.1.0"
 dependencies = [
@@ -2960,11 +3192,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-shm"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "liquide-shortcut-manager"
+version = "0.1.0"
+
+[[package]]
 name = "liquide-simd"
 version = "0.1.0"
 dependencies = [
  "criterion",
 ]
+
+[[package]]
+name = "liquide-sounds"
+version = "0.1.0"
 
 [[package]]
 name = "liquide-statusbar"
@@ -2976,6 +3223,14 @@ dependencies = [
  "liquide-ui-core",
  "serde",
  "tracing",
+]
+
+[[package]]
+name = "liquide-storage"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3059,6 +3314,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-theme-engine"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-tile-raster"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-layout",
+ "liquide-paint",
+]
+
+[[package]]
+name = "liquide-tiling"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+]
+
+[[package]]
 name = "liquide-tooltip"
 version = "0.1.0"
 dependencies = [
@@ -3089,6 +3364,13 @@ dependencies = [
  "tokio-rustls",
  "tokio-tungstenite",
  "tracing",
+]
+
+[[package]]
+name = "liquide-tray"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -3146,6 +3428,44 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
 ]
+
+[[package]]
+name = "liquide-wayland"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+]
+
+[[package]]
+name = "liquide-window-class"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-window-effects"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-window-groups"
+version = "0.1.0"
+
+[[package]]
+name = "liquide-window-tree"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+]
+
+[[package]]
+name = "liquide-workspaces"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "liquide-xdg"
+version = "0.1.0"
 
 [[package]]
 name = "litrs"

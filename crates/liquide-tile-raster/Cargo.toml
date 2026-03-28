@@ -1,0 +1,14 @@
+[package]
+name = "liquide-tile-raster"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tile-based incremental rasterization with damage tracking and LRU caching"
+
+[dependencies]
+liquide-paint = { path = "../liquide-paint" }
+liquide-layout = { path = "../liquide-layout" }
+liquide-compositor = { path = "../liquide-compositor" }
+
+[dev-dependencies]

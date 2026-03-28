@@ -1,0 +1,6 @@
+[package]
+name = "liquide-xdg"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

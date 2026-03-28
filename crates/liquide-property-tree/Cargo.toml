@@ -1,0 +1,12 @@
+[package]
+name = "liquide-property-tree"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Property trees for efficient compositing, hit testing, and damage tracking"
+
+[dependencies]
+
+[dev-dependencies]

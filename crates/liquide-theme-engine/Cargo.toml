@@ -1,0 +1,12 @@
+[package]
+name = "liquide-theme-engine"
+description = "Comprehensive theming framework with theme creation, variant support, and runtime switching"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]

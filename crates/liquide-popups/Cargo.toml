@@ -1,0 +1,14 @@
+[package]
+name = "liquide-popups"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Comprehensive popup and modal window management for the LiquiDE desktop shell"
+
+[lib]
+name = "liquide_popups"
+path = "src/lib.rs"
+
+[dependencies]

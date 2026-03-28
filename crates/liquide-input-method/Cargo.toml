@@ -1,0 +1,10 @@
+[package]
+name = "liquide-input-method"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Input method framework for international text input (CJK, emoji, compose sequences, dead keys)"
+
+[dependencies]

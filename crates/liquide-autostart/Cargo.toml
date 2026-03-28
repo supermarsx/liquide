@@ -1,0 +1,17 @@
+[package]
+name = "liquide-autostart"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+
+[target.'cfg(target_os = "windows")'.dependencies]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+
+[dev-dependencies]

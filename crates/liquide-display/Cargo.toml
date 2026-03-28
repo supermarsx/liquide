@@ -1,0 +1,15 @@
+[package]
+name = "liquide-display"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Display/output management — monitor enumeration, resolution control, arrangement, and display profiles"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]

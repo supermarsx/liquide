@@ -10,6 +10,7 @@ members = [
     # Authentication & policy
     "crates/liquide-auth",
     "crates/liquide-policy",
+    "crates/liquide-authorization",
 
     # Rendering & compositing
     "crates/liquide-simd",
@@ -36,9 +37,12 @@ members = [
     # Plugins & extensions
     "crates/liquide-plugin-host",
     "crates/liquide-plugin-abi",
+    "crates/liquide-plugins",
 
     # Session management (binaries)
     "crates/liquide-session",
+    "crates/liquide-session-manager",
+    "crates/liquide-session-state",
     "crates/liquide-supervisor",
 
     # Client components
@@ -54,10 +58,19 @@ members = [
     "crates/liquide-usb",
     "crates/liquide-input",
 
+    # Bluetooth
+    "crates/liquide-bluetooth",
+
     # Desktop integration
+    "crates/liquide-accounts",
+    "crates/liquide-desktop-model",
+    "crates/liquide-lockscreen",
     "crates/liquide-interop",
     "crates/liquide-a11y",
+    "crates/liquide-a11y-bridge",
+    "crates/liquide-a11y-prefs",
     "crates/liquide-platform",
+    "crates/liquide-power",
 
     # UI toolkit & apps
     "crates/liquide-ui",
@@ -65,7 +78,9 @@ members = [
     "crates/liquide-ui-widgets",
     "crates/liquide-ui-window",
     "crates/liquide-tooltip",
+    "crates/liquide-popups",
     "crates/liquide-statusbar",
+    "crates/liquide-tray",
     "crates/liquide-app-components",
     "crates/liquide-apps-terminal",
     "crates/liquide-apps-files",
@@ -86,6 +101,7 @@ members = [
 
     # IME & drag-drop
     "crates/liquide-ime",
+    "crates/liquide-input-method",
     "crates/liquide-dnd",
 
     # Platform bridges
@@ -112,6 +128,9 @@ members = [
     "crates/liquide-paint",
     "crates/liquide-hit-test",
 
+    # Region-based invalidation & clipping
+    "crates/liquide-region",
+
     # Shell components (templates)
     "crates/liquide-components",
 
@@ -120,6 +139,135 @@ members = [
 
     # Developer tools
     "crates/liquide-devtools",
+
+    # System dialogs
+    "crates/liquide-dialogs",
+
+    # Network management
+    "crates/liquide-network",
+
+    # Firewall & network security
+    "crates/liquide-firewall",
+
+    # Focus & activation protocol
+    "crates/liquide-focus",
+
+    # Hotkey management
+    "crates/liquide-hotkeys",
+
+    # Gesture recognition
+    "crates/liquide-gestures",
+
+    # Screenshot capture & annotation
+    "crates/liquide-screenshot",
+
+    # Shared memory (zero-copy compositing)
+    "crates/liquide-shm",
+
+    # Settings / preferences
+    "crates/liquide-settings",
+
+    # Window effects & transitions
+    "crates/liquide-window-effects",
+
+    # Compositor-driven animations (transform/opacity on render thread)
+    "crates/liquide-compositor-anim",
+
+    # Search / file indexing
+    "crates/liquide-search",
+
+    # Cursor themes
+    "crates/liquide-cursor-theme",
+
+    # Window class registration
+    "crates/liquide-window-class",
+
+    # Window tree (hierarchy & z-order)
+    "crates/liquide-window-tree",
+
+    # Window grouping & tab groups
+    "crates/liquide-window-groups",
+
+    # Overview & window switcher
+    "crates/liquide-overview",
+
+    # Virtual workspaces
+    "crates/liquide-workspaces",
+
+    # Window tiling manager
+    "crates/liquide-tiling",
+
+    # Clipboard manager (history, pinning, multi-format)
+    "crates/liquide-clipboard-manager",
+
+    # DPI / scaling support
+    "crates/liquide-dpi",
+
+    # Display / output management
+    "crates/liquide-display",
+
+    # Keyboard layout management
+    "crates/liquide-keyboard",
+
+    # Theme engine
+    "crates/liquide-theme-engine",
+
+    # Notification daemon
+    "crates/liquide-notification-daemon",
+
+    # Print system
+    "crates/liquide-print",
+
+    # Internationalization & locale management
+    "crates/liquide-locale",
+
+    # Disk & storage device management
+    "crates/liquide-storage",
+
+    # Scheduled task management
+    "crates/liquide-scheduler",
+
+    # Autostart management
+    "crates/liquide-autostart",
+
+    # XDG desktop standards
+    "crates/liquide-xdg",
+
+    # Desktop sound effects
+    "crates/liquide-sounds",
+
+    # Date, time, timezone & clock management
+    "crates/liquide-datetime",
+
+    # System font management & discovery
+    "crates/liquide-font-manager",
+
+    # Message queue (per-thread)
+    "crates/liquide-message-queue",
+
+    # Property trees (compositing, hit testing, damage tracking)
+    "crates/liquide-property-tree",
+
+    # Tile-based incremental rasterization
+    "crates/liquide-tile-raster",
+
+    # Layout constraint caching
+    "crates/liquide-layout-cache",
+
+    # Compositor layer system
+    "crates/liquide-layers",
+
+    # Scrolling system (smooth, momentum, snap)
+    "crates/liquide-scroll",
+
+    # Keyboard shortcut customization
+    "crates/liquide-shortcut-manager",
+
+    # Wayland protocol abstraction
+    "crates/liquide-wayland",
+
+    # Service lifecycle manager
+    "crates/liquide-service-manager",
 ]
 
 [workspace.package]
@@ -202,6 +350,7 @@ liquide-protocol = { path = "crates/liquide-protocol" }
 liquide-transport = { path = "crates/liquide-transport" }
 liquide-crypto = { path = "crates/liquide-crypto" }
 liquide-auth = { path = "crates/liquide-auth" }
+liquide-authorization = { path = "crates/liquide-authorization" }
 liquide-policy = { path = "crates/liquide-policy" }
 liquide-compositor = { path = "crates/liquide-compositor" }
 liquide-renderer-cpu = { path = "crates/liquide-renderer-cpu" }
@@ -231,6 +380,7 @@ liquide-input = { path = "crates/liquide-input" }
 liquide-interop = { path = "crates/liquide-interop" }
 liquide-platform = { path = "crates/liquide-platform" }
 liquide-a11y = { path = "crates/liquide-a11y" }
+liquide-a11y-bridge = { path = "crates/liquide-a11y-bridge" }
 liquide-ui = { path = "crates/liquide-ui" }
 liquide-gateway = { path = "crates/liquide-gateway" }
 liquide-manager = { path = "crates/liquide-manager" }
@@ -255,10 +405,28 @@ liquide-style-engine = { path = "crates/liquide-style-engine" }
 liquide-layout = { path = "crates/liquide-layout" }
 liquide-paint = { path = "crates/liquide-paint" }
 liquide-hit-test = { path = "crates/liquide-hit-test" }
+liquide-region = { path = "crates/liquide-region" }
 liquide-components = { path = "crates/liquide-components" }
 liquide-icons = { path = "crates/liquide-icons" }
 liquide-devtools = { path = "crates/liquide-devtools" }
 liquide-simd = { path = "crates/liquide-simd" }
+liquide-display = { path = "crates/liquide-display" }
+liquide-desktop-model = { path = "crates/liquide-desktop-model" }
+liquide-accounts = { path = "crates/liquide-accounts" }
+liquide-storage = { path = "crates/liquide-storage" }
+liquide-font-manager = { path = "crates/liquide-font-manager" }
+liquide-message-queue = { path = "crates/liquide-message-queue" }
+liquide-property-tree = { path = "crates/liquide-property-tree" }
+liquide-tile-raster = { path = "crates/liquide-tile-raster" }
+liquide-layout-cache = { path = "crates/liquide-layout-cache" }
+liquide-layers = { path = "crates/liquide-layers" }
+liquide-tiling = { path = "crates/liquide-tiling" }
+liquide-scroll = { path = "crates/liquide-scroll" }
+liquide-popups = { path = "crates/liquide-popups" }
+liquide-window-tree = { path = "crates/liquide-window-tree" }
+liquide-overview = { path = "crates/liquide-overview" }
+liquide-compositor-anim = { path = "crates/liquide-compositor-anim" }
+liquide-shortcut-manager = { path = "crates/liquide-shortcut-manager" }
 
 
 [profile.dev]

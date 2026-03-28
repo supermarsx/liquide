@@ -1,0 +1,15 @@
+[package]
+name = "liquide-desktop-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Desktop and window station isolation model for LiquiDE — security-critical separation between login sessions and secure desktops"
+
+[lib]
+name = "liquide_desktop_model"
+path = "src/lib.rs"
+
+[dependencies]
+bitflags.workspace = true

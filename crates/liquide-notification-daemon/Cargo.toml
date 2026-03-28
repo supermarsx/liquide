@@ -1,0 +1,15 @@
+[package]
+name = "liquide-notification-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Notification daemon — receives notifications via platform IPC and feeds them to the desktop shell"
+
+[lib]
+name = "liquide_notification_daemon"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true

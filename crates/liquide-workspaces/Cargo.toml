@@ -1,0 +1,16 @@
+[package]
+name = "liquide-workspaces"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Virtual desktop / workspace management for LiquiDE"
+
+[lib]
+name = "liquide_workspaces"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

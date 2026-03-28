@@ -1,0 +1,10 @@
+[package]
+name = "liquide-layers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Compositor layer system with surface caching, promotion heuristics, and async tree splitting"
+
+[dependencies]

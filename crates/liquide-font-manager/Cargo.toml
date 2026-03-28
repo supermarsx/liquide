@@ -1,0 +1,16 @@
+[package]
+name = "liquide-font-manager"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "System font discovery, Unicode coverage analysis, fallback chains, and preview text for the LiquiDE desktop"
+
+[lib]
+name = "liquide_font_manager"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true

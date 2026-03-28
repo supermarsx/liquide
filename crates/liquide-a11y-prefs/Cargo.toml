@@ -1,0 +1,18 @@
+[package]
+name = "liquide-a11y-prefs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Accessibility preference detection, high-contrast themes, reduced-motion support, and WCAG contrast utilities"
+
+[lib]
+name = "liquide_a11y_prefs"
+path = "src/lib.rs"
+
+[dependencies]
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

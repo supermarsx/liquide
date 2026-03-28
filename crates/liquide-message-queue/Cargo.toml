@@ -1,0 +1,10 @@
+[package]
+name = "liquide-message-queue"
+description = "Per-thread message queue for the LiquiDE desktop environment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
