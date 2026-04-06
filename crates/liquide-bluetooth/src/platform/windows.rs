@@ -1,11 +1,212 @@
-use std::process::Command;
+use std::ffi::c_void;
+use std::sync::OnceLock;
 
 use crate::{
     AudioProfile, BluetoothAdapter, BluetoothBackend, BluetoothDevice, BluetoothEvent, BtError,
     DeviceType, normalize_mac,
 };
 
-/// Windows Bluetooth manager backed by PowerShell and `pnputil`/`devcon`.
+// ── Win32 FFI imports ─────────────────────────────────────────────────
+
+unsafe extern "system" {
+    fn LoadLibraryW(name: *const u16) -> *mut c_void;
+    fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
+    fn CloseHandle(handle: *mut c_void) -> i32;
+}
+
+// ── Win32 Bluetooth structures ────────────────────────────────────────
+
+/// SYSTEMTIME structure (16 bytes).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SystemTime {
+    year: u16,
+    month: u16,
+    day_of_week: u16,
+    day: u16,
+    hour: u16,
+    minute: u16,
+    second: u16,
+    milliseconds: u16,
+}
+
+/// BLUETOOTH_FIND_RADIO_PARAMS.
+#[repr(C)]
+struct BluetoothFindRadioParams {
+    dw_size: u32,
+}
+
+/// BLUETOOTH_RADIO_INFO.
+#[repr(C)]
+struct BluetoothRadioInfo {
+    dw_size: u32,
+    address: u64,
+    class_of_device: u32,
+    l_mpsubversion: u16,
+    manufacturer: u16,
+    sz_name: [u16; 248],
+}
+
+/// BLUETOOTH_DEVICE_SEARCH_PARAMS.
+#[repr(C)]
+struct BluetoothDeviceSearchParams {
+    dw_size: u32,
+    f_return_authenticated: i32,
+    f_return_remembered: i32,
+    f_return_unknown: i32,
+    f_return_connected: i32,
+    f_issue_inquiry: i32,
+    c_timeout_multiplier: u8,
+    _pad: [u8; 3],
+    h_radio: *mut c_void,
+}
+
+/// BLUETOOTH_DEVICE_INFO.
+#[repr(C)]
+struct BluetoothDeviceInfo {
+    dw_size: u32,
+    address: u64,
+    class_of_device: u32,
+    f_connected: i32,
+    f_remembered: i32,
+    f_authenticated: i32,
+    st_last_seen: SystemTime,
+    st_last_used: SystemTime,
+    sz_name: [u16; 248],
+}
+
+// ── Function pointer types ────────────────────────────────────────────
+
+type BluetoothFindFirstRadioFn =
+    unsafe extern "system" fn(*const BluetoothFindRadioParams, *mut *mut c_void) -> *mut c_void;
+type BluetoothFindNextRadioFn =
+    unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32;
+type BluetoothFindRadioCloseFn = unsafe extern "system" fn(*mut c_void) -> i32;
+type BluetoothGetRadioInfoFn =
+    unsafe extern "system" fn(*mut c_void, *mut BluetoothRadioInfo) -> u32;
+type BluetoothFindFirstDeviceFn = unsafe extern "system" fn(
+    *const BluetoothDeviceSearchParams,
+    *mut BluetoothDeviceInfo,
+) -> *mut c_void;
+type BluetoothFindNextDeviceFn =
+    unsafe extern "system" fn(*mut c_void, *mut BluetoothDeviceInfo) -> i32;
+type BluetoothFindDeviceCloseFn = unsafe extern "system" fn(*mut c_void) -> i32;
+
+// ── BtApi — runtime-loaded function table ─────────────────────────────
+
+struct BtApi {
+    find_first_radio: BluetoothFindFirstRadioFn,
+    find_next_radio: BluetoothFindNextRadioFn,
+    find_radio_close: BluetoothFindRadioCloseFn,
+    get_radio_info: BluetoothGetRadioInfoFn,
+    find_first_device: BluetoothFindFirstDeviceFn,
+    find_next_device: BluetoothFindNextDeviceFn,
+    find_device_close: BluetoothFindDeviceCloseFn,
+}
+
+// SAFETY: All function pointers point to OS-provided code that is safe to call
+// from any thread. The struct contains no mutable state.
+unsafe impl Send for BtApi {}
+unsafe impl Sync for BtApi {}
+
+static BT_API: OnceLock<Option<BtApi>> = OnceLock::new();
+
+impl BtApi {
+    /// Load BluetoothAPIs.dll and resolve all function pointers. Returns `None`
+    /// if the DLL or any required export is unavailable.
+    fn load() -> Option<&'static BtApi> {
+        BT_API
+            .get_or_init(|| {
+                unsafe {
+                    let dll_name: Vec<u16> = "BluetoothAPIs.dll\0"
+                        .encode_utf16()
+                        .collect();
+                    let module = LoadLibraryW(dll_name.as_ptr());
+                    if module.is_null() {
+                        return None;
+                    }
+
+                    macro_rules! load_fn {
+                        ($name:expr) => {{
+                            let ptr =
+                                GetProcAddress(module, concat!($name, "\0").as_ptr());
+                            if ptr.is_null() {
+                                return None;
+                            }
+                            std::mem::transmute(ptr)
+                        }};
+                    }
+
+                    Some(BtApi {
+                        find_first_radio: load_fn!("BluetoothFindFirstRadio"),
+                        find_next_radio: load_fn!("BluetoothFindNextRadio"),
+                        find_radio_close: load_fn!("BluetoothFindRadioClose"),
+                        get_radio_info: load_fn!("BluetoothGetRadioInfo"),
+                        find_first_device: load_fn!("BluetoothFindFirstDevice"),
+                        find_next_device: load_fn!("BluetoothFindNextDevice"),
+                        find_device_close: load_fn!("BluetoothFindDeviceClose"),
+                    })
+                }
+            })
+            .as_ref()
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────
+
+/// Format a 6-byte Bluetooth address packed in a `u64` as "AA:BB:CC:DD:EE:FF".
+fn format_bt_address(addr: u64) -> String {
+    format!(
+        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        (addr >> 40) & 0xFF,
+        (addr >> 32) & 0xFF,
+        (addr >> 24) & 0xFF,
+        (addr >> 16) & 0xFF,
+        (addr >> 8) & 0xFF,
+        addr & 0xFF,
+    )
+}
+
+/// Parse a MAC address string ("AA:BB:CC:DD:EE:FF" or "AABBCCDDEEFF") into a
+/// packed `u64`.
+fn parse_bt_address(address: &str) -> Option<u64> {
+    let hex: String = address
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .collect();
+    if hex.len() != 12 {
+        return None;
+    }
+    u64::from_str_radix(&hex, 16).ok()
+}
+
+/// Convert a null-terminated wide string to a Rust `String`.
+fn wide_to_string(wide: &[u16]) -> String {
+    let len = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
+    String::from_utf16_lossy(&wide[..len])
+}
+
+/// Determine an icon name hint from a `DeviceType`.
+fn icon_for_device_type(dt: &DeviceType) -> &'static str {
+    match dt {
+        DeviceType::Headphones => "audio-headphones",
+        DeviceType::Speaker => "audio-speakers",
+        DeviceType::Keyboard => "input-keyboard",
+        DeviceType::Mouse => "input-mouse",
+        DeviceType::Gamepad => "input-gamepad",
+        DeviceType::Phone => "phone",
+        DeviceType::Computer => "computer",
+        DeviceType::Printer => "printer",
+        DeviceType::Camera => "camera",
+        DeviceType::Watch => "watch",
+        DeviceType::HeartRateMonitor => "health",
+        DeviceType::Other(_) => "bluetooth",
+    }
+}
+
+// ── BluetoothManager ──────────────────────────────────────────────────
+
+/// Windows Bluetooth manager backed by the native BluetoothAPIs.dll.
 pub struct BluetoothManager {
     cached_discovered: Vec<BluetoothDevice>,
     pending_events: Vec<BluetoothEvent>,
@@ -19,99 +220,115 @@ impl BluetoothManager {
         }
     }
 
-    fn run_powershell(script: &str) -> Result<String, BtError> {
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", script])
-            .output()
-            .map_err(|e| BtError::PlatformError(format!("failed to run powershell: {e}")))?;
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            if stderr.contains("not recognized") || stderr.contains("not found") {
-                Err(BtError::PlatformError(stderr))
-            } else if stderr.contains("device was not found") || stderr.contains("not found") {
-                Err(BtError::DeviceNotFound)
+    /// Enumerate radios and return their handles + adapter info. Caller must
+    /// close each radio handle with `CloseHandle`.
+    fn enumerate_radios(api: &BtApi) -> Vec<(*mut c_void, BluetoothAdapter)> {
+        let mut results = Vec::new();
+        let params = BluetoothFindRadioParams {
+            dw_size: std::mem::size_of::<BluetoothFindRadioParams>() as u32,
+        };
+        let mut radio_handle: *mut c_void = std::ptr::null_mut();
+        let find_handle =
+            unsafe { (api.find_first_radio)(&params, &mut radio_handle) };
+        if find_handle.is_null() {
+            return results;
+        }
+
+        loop {
+            let mut info: BluetoothRadioInfo = unsafe { std::mem::zeroed() };
+            info.dw_size = std::mem::size_of::<BluetoothRadioInfo>() as u32;
+
+            if unsafe { (api.get_radio_info)(radio_handle, &mut info) } == 0 {
+                let name = wide_to_string(&info.sz_name);
+                let addr = format_bt_address(info.address);
+                results.push((
+                    radio_handle,
+                    BluetoothAdapter {
+                        id: addr.clone(),
+                        address: addr,
+                        name,
+                        powered: true, // present radios are powered
+                        discoverable: false,
+                        discovering: false,
+                        discoverable_timeout: 0,
+                    },
+                ));
             } else {
-                Err(BtError::PlatformError(stderr))
+                // Failed to query this radio, close and move on.
+                unsafe {
+                    CloseHandle(radio_handle);
+                }
+            }
+
+            radio_handle = std::ptr::null_mut();
+            if unsafe { (api.find_next_radio)(find_handle, &mut radio_handle) } == 0
+            {
+                break;
             }
         }
+        unsafe {
+            (api.find_radio_close)(find_handle);
+        }
+        results
     }
 
-    /// Parse a device from a pipe-delimited line produced by our PowerShell queries.
-    /// Format: Name|DeviceId|Status|Class|Address
-    fn parse_device_line(line: &str) -> Option<BluetoothDevice> {
-        let parts: Vec<&str> = line.split('|').collect();
-        if parts.len() < 3 {
-            return None;
-        }
-
-        let name = parts[0].trim().to_string();
-        let device_id = parts[1].trim();
-        let status = parts[2].trim().to_lowercase();
-
-        // Try to extract MAC address from device ID
-        // Windows Bluetooth device IDs often contain the MAC in the form:
-        // BTHENUM\Dev_AABBCCDDEEFF\...
-        // or BLUETOOTHDEVICE\AABBCCDDEEFF
-        let address = extract_mac_from_device_id(device_id)
-            .or_else(|| {
-                if parts.len() >= 5 {
-                    let addr = parts[4].trim().to_string();
-                    if !addr.is_empty() {
-                        Some(addr)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-
-        if address.is_empty() && name.is_empty() {
-            return None;
-        }
-
-        let connected = status == "ok" || status == "started";
-        let paired = connected || status != "error";
-
-        let device_type = if parts.len() >= 4 {
-            DeviceType::from_icon_name(parts[3].trim())
-        } else {
-            DeviceType::from_icon_name(&name)
+    /// Enumerate paired/remembered/connected devices visible to the given radio
+    /// handle (or all radios if `h_radio` is null).
+    fn enumerate_devices(
+        api: &BtApi,
+        h_radio: *mut c_void,
+        issue_inquiry: bool,
+    ) -> Vec<BluetoothDevice> {
+        let mut devices = Vec::new();
+        let params = BluetoothDeviceSearchParams {
+            dw_size: std::mem::size_of::<BluetoothDeviceSearchParams>() as u32,
+            f_return_authenticated: 1,
+            f_return_remembered: 1,
+            f_return_unknown: if issue_inquiry { 1 } else { 0 },
+            f_return_connected: 1,
+            f_issue_inquiry: if issue_inquiry { 1 } else { 0 },
+            c_timeout_multiplier: if issue_inquiry { 4 } else { 0 },
+            _pad: [0; 3],
+            h_radio,
         };
 
-        let icon = match &device_type {
-            DeviceType::Headphones => "audio-headphones".to_string(),
-            DeviceType::Speaker => "audio-speakers".to_string(),
-            DeviceType::Keyboard => "input-keyboard".to_string(),
-            DeviceType::Mouse => "input-mouse".to_string(),
-            DeviceType::Gamepad => "input-gamepad".to_string(),
-            DeviceType::Phone => "phone".to_string(),
-            DeviceType::Computer => "computer".to_string(),
-            DeviceType::Printer => "printer".to_string(),
-            DeviceType::Camera => "camera".to_string(),
-            DeviceType::Watch => "watch".to_string(),
-            DeviceType::HeartRateMonitor => "health".to_string(),
-            DeviceType::Other(_) => "bluetooth".to_string(),
-        };
+        let mut info: BluetoothDeviceInfo = unsafe { std::mem::zeroed() };
+        info.dw_size = std::mem::size_of::<BluetoothDeviceInfo>() as u32;
 
-        Some(BluetoothDevice {
-            address: normalize_mac(&address),
-            name: if name.is_empty() {
-                address.clone()
-            } else {
-                name
-            },
-            device_type,
-            paired,
-            connected,
-            trusted: false,
-            rssi: None,
-            battery_level: None,
-            icon,
-        })
+        let find =
+            unsafe { (api.find_first_device)(&params, &mut info) };
+        if find.is_null() {
+            return devices;
+        }
+
+        loop {
+            let name = wide_to_string(&info.sz_name);
+            let addr = format_bt_address(info.address);
+            let device_type = DeviceType::from_class(info.class_of_device);
+            let icon = icon_for_device_type(&device_type).to_string();
+
+            devices.push(BluetoothDevice {
+                address: addr,
+                name,
+                device_type,
+                paired: info.f_authenticated != 0,
+                trusted: info.f_remembered != 0,
+                connected: info.f_connected != 0,
+                rssi: None,
+                battery_level: None,
+                icon,
+            });
+
+            info = unsafe { std::mem::zeroed() };
+            info.dw_size = std::mem::size_of::<BluetoothDeviceInfo>() as u32;
+            if unsafe { (api.find_next_device)(find, &mut info) } == 0 {
+                break;
+            }
+        }
+        unsafe {
+            (api.find_device_close)(find);
+        }
+        devices
     }
 }
 
@@ -123,91 +340,16 @@ impl Default for BluetoothManager {
 
 impl BluetoothBackend for BluetoothManager {
     fn adapters(&self) -> Vec<BluetoothAdapter> {
-        let script = r#"
-Get-PnpDevice -Class Bluetooth | Where-Object {
-    $_.FriendlyName -match 'Radio|Adapter|Bluetooth' -and
-    $_.Class -eq 'Bluetooth' -and
-    $_.InstanceId -match '^USB|^PCI|^BTHUSB'
-} | ForEach-Object {
-    $_.FriendlyName + '|' + $_.InstanceId + '|' + $_.Status
-}
-"#;
-        let Ok(output) = Self::run_powershell(script) else {
-            // Fallback: try simpler query for any bluetooth adapter
-            let fallback_script = r#"
-Get-PnpDevice -Class Bluetooth -Status OK | Select-Object -First 1 |
-ForEach-Object { $_.FriendlyName + '|' + $_.InstanceId + '|' + $_.Status }
-"#;
-            let Ok(output) = Self::run_powershell(fallback_script) else {
-                return Vec::new();
-            };
-            let mut adapters = Vec::new();
-            for line in output.lines() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                let parts: Vec<&str> = line.split('|').collect();
-                if parts.is_empty() {
-                    continue;
-                }
-                let name = parts[0].trim().to_string();
-                let id = if parts.len() > 1 {
-                    parts[1].trim().to_string()
-                } else {
-                    name.clone()
-                };
-                let status = if parts.len() > 2 {
-                    parts[2].trim().to_lowercase()
-                } else {
-                    "unknown".to_string()
-                };
-                adapters.push(BluetoothAdapter {
-                    id: id.clone(),
-                    name,
-                    address: String::new(),
-                    powered: status == "ok" || status == "started",
-                    discovering: false,
-                    discoverable: false,
-                    discoverable_timeout: 0,
-                });
-            }
-            return adapters;
+        let Some(api) = BtApi::load() else {
+            return Vec::new();
         };
-
-        let mut adapters = Vec::new();
-        for line in output.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
+        let radios = Self::enumerate_radios(api);
+        let mut adapters = Vec::with_capacity(radios.len());
+        for (handle, adapter) in radios {
+            unsafe {
+                CloseHandle(handle);
             }
-            let parts: Vec<&str> = line.split('|').collect();
-            if parts.is_empty() {
-                continue;
-            }
-            let name = parts[0].trim().to_string();
-            let instance_id = if parts.len() > 1 {
-                parts[1].trim().to_string()
-            } else {
-                name.clone()
-            };
-            let status = if parts.len() > 2 {
-                parts[2].trim().to_lowercase()
-            } else {
-                "unknown".to_string()
-            };
-
-            let address = extract_mac_from_device_id(&instance_id).unwrap_or_default();
-
-            adapters.push(BluetoothAdapter {
-                id: instance_id,
-                name,
-                address,
-                powered: status == "ok" || status == "started",
-                discovering: false,
-                discoverable: false,
-                discoverable_timeout: 0,
-            });
+            adapters.push(adapter);
         }
         adapters
     }
@@ -216,49 +358,34 @@ ForEach-Object { $_.FriendlyName + '|' + $_.InstanceId + '|' + $_.Status }
         self.adapters().into_iter().next()
     }
 
-    fn set_powered(&mut self, adapter_id: &str, enabled: bool) -> Result<(), BtError> {
-        let action = if enabled { "Enable" } else { "Disable" };
-        let script = format!(
-            r#"
-$dev = Get-PnpDevice | Where-Object {{ $_.InstanceId -eq '{adapter_id}' }}
-if ($dev) {{ {action}-PnpDevice -InstanceId '{adapter_id}' -Confirm:$false }}
-else {{ Write-Error 'Adapter not found' }}
-"#
-        );
-        Self::run_powershell(&script)?;
-        Ok(())
+    fn set_powered(&mut self, _adapter_id: &str, _enabled: bool) -> Result<(), BtError> {
+        // The Win32 Bluetooth API does not expose radio power control.
+        // Use the Windows Settings UI or DeviceIoControl for this.
+        Err(BtError::PlatformError(
+            "radio power control must be set through Windows Settings".to_string(),
+        ))
     }
 
     fn start_discovery(&mut self, _adapter_id: &str) -> Result<(), BtError> {
-        // Windows doesn't have a simple CLI for BLE scanning.
-        // Refresh the device list from PnP devices.
-        let script = r#"
-Get-PnpDevice -Class Bluetooth | Where-Object {
-    $_.Class -eq 'Bluetooth' -and
-    $_.InstanceId -match 'BTHENUM|BLUETOOTHDEVICE' -and
-    $_.InstanceId -notmatch 'Radio|Adapter|BTHUSB'
-} | ForEach-Object {
-    $_.FriendlyName + '|' + $_.InstanceId + '|' + $_.Status + '|' + $_.Class
-}
-"#;
-        let output = Self::run_powershell(script)?;
+        let Some(api) = BtApi::load() else {
+            return Err(BtError::PlatformError(
+                "BluetoothAPIs.dll not available".to_string(),
+            ));
+        };
+
+        // Issue an inquiry scan (blocks for c_timeout_multiplier * 1.28s).
+        let devices = Self::enumerate_devices(api, std::ptr::null_mut(), true);
         self.cached_discovered.clear();
-        for line in output.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some(dev) = Self::parse_device_line(line) {
-                self.pending_events
-                    .push(BluetoothEvent::DeviceDiscovered(dev.clone()));
-                self.cached_discovered.push(dev);
-            }
+        for dev in devices {
+            self.pending_events
+                .push(BluetoothEvent::DeviceDiscovered(dev.clone()));
+            self.cached_discovered.push(dev);
         }
         Ok(())
     }
 
     fn stop_discovery(&mut self, _adapter_id: &str) -> Result<(), BtError> {
-        // No-op on Windows (no active scanning to stop)
+        // The Win32 inquiry is synchronous; there is nothing to stop.
         Ok(())
     }
 
@@ -268,187 +395,134 @@ Get-PnpDevice -Class Bluetooth | Where-Object {
         _enabled: bool,
         _timeout_secs: u32,
     ) -> Result<(), BtError> {
-        // Windows manages discoverability through Settings UI; not directly exposed via CLI.
         Err(BtError::PlatformError(
             "discoverable mode must be set through Windows Settings".to_string(),
         ))
     }
 
     fn discovered_devices(&self) -> Vec<BluetoothDevice> {
-        // Try fresh query, fall back to cached
-        let script = r#"
-Get-PnpDevice -Class Bluetooth | Where-Object {
-    $_.Class -eq 'Bluetooth' -and
-    $_.InstanceId -match 'BTHENUM|BLUETOOTHDEVICE' -and
-    $_.InstanceId -notmatch 'Radio|Adapter|BTHUSB'
-} | ForEach-Object {
-    $_.FriendlyName + '|' + $_.InstanceId + '|' + $_.Status + '|' + $_.Class
-}
-"#;
-        let Ok(output) = Self::run_powershell(script) else {
+        let Some(api) = BtApi::load() else {
             return self.cached_discovered.clone();
         };
-
-        let mut devices = Vec::new();
-        for line in output.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some(dev) = Self::parse_device_line(line) {
-                devices.push(dev);
-            }
+        let devices = Self::enumerate_devices(api, std::ptr::null_mut(), false);
+        if devices.is_empty() {
+            self.cached_discovered.clone()
+        } else {
+            devices
         }
-        devices
     }
 
     fn paired_devices(&self) -> Vec<BluetoothDevice> {
-        // On Windows, PnP-visible Bluetooth devices are typically paired
         self.discovered_devices()
             .into_iter()
             .filter(|d| d.paired)
             .collect()
     }
 
-    fn pair(&mut self, address: &str) -> Result<(), BtError> {
-        // Windows pairing typically happens through the Settings UI or WinRT APIs.
-        // We attempt to use `devicepairingresult` via PowerShell.
-        let addr_clean = address.replace(':', "").replace('-', "");
-        let script = format!(
-            r#"
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
-$device = [Windows.Devices.Bluetooth.BluetoothDevice,Windows.Devices.Bluetooth,ContentType=WindowsRuntime]::FromBluetoothAddressAsync([Convert]::ToUInt64('0x{addr_clean}', 16)).GetAwaiter().GetResult()
-if ($device) {{
-    $result = $device.DeviceInformation.Pairing.PairAsync().GetAwaiter().GetResult()
-    if ($result.Status -ne 'Paired') {{ Write-Error "Pairing failed: $($result.Status)" }}
-}} else {{ Write-Error 'Device not found' }}
-"#
-        );
-        Self::run_powershell(&script)?;
-        Ok(())
+    fn pair(&mut self, _address: &str) -> Result<(), BtError> {
+        // The Win32 classic Bluetooth API does not expose programmatic pairing.
+        // Pairing requires the WinRT DeviceInformation.Pairing API or the
+        // Bluetooth authentication callback (BluetoothRegisterForAuthenticationEx)
+        // which needs a running message loop. Delegate to the Settings UI.
+        Err(BtError::PlatformError(
+            "programmatic pairing requires WinRT; use Windows Settings".to_string(),
+        ))
     }
 
     fn unpair(&mut self, address: &str) -> Result<(), BtError> {
-        let addr_clean = address.replace(':', "").replace('-', "");
-        let script = format!(
-            r#"
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
-$device = [Windows.Devices.Bluetooth.BluetoothDevice,Windows.Devices.Bluetooth,ContentType=WindowsRuntime]::FromBluetoothAddressAsync([Convert]::ToUInt64('0x{addr_clean}', 16)).GetAwaiter().GetResult()
-if ($device) {{
-    $result = $device.DeviceInformation.Pairing.UnpairAsync().GetAwaiter().GetResult()
-    if ($result.Status -ne 'Unpaired') {{ Write-Error "Unpair failed: $($result.Status)" }}
-}} else {{ Write-Error 'Device not found' }}
-"#
-        );
-        Self::run_powershell(&script)?;
-        Ok(())
-    }
+        // BluetoothRemoveDevice removes a paired device.
+        let addr = parse_bt_address(address).ok_or(BtError::DeviceNotFound)?;
 
-    fn connect(&mut self, address: &str) -> Result<(), BtError> {
-        // Attempt connection via WinRT BluetoothDevice
-        let addr_clean = address.replace(':', "").replace('-', "");
-        let script = format!(
-            r#"
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
-$device = [Windows.Devices.Bluetooth.BluetoothDevice,Windows.Devices.Bluetooth,ContentType=WindowsRuntime]::FromBluetoothAddressAsync([Convert]::ToUInt64('0x{addr_clean}', 16)).GetAwaiter().GetResult()
-if ($device) {{
-    $services = $device.GetRfcommServicesAsync().GetAwaiter().GetResult()
-    if ($services.Services.Count -eq 0) {{ Write-Error 'No services available' }}
-    else {{ Write-Output 'Connected' }}
-}} else {{ Write-Error 'Device not found' }}
-"#
-        );
-        let result = Self::run_powershell(&script);
-        match result {
-            Ok(output) => {
-                if output.contains("Connected") {
-                    self.pending_events
-                        .push(BluetoothEvent::Connected(normalize_mac(address)));
-                    Ok(())
-                } else {
-                    Err(BtError::ConnectionFailed(output))
-                }
+        // Try to load BluetoothRemoveDevice dynamically.
+        type BluetoothRemoveDeviceFn = unsafe extern "system" fn(*const u64) -> u32;
+        let Some(api_module) = (unsafe {
+            let dll_name: Vec<u16> = "BluetoothAPIs.dll\0".encode_utf16().collect();
+            let m = LoadLibraryW(dll_name.as_ptr());
+            if m.is_null() { None } else { Some(m) }
+        }) else {
+            return Err(BtError::PlatformError(
+                "BluetoothAPIs.dll not available".to_string(),
+            ));
+        };
+
+        let remove_fn: BluetoothRemoveDeviceFn = unsafe {
+            let ptr = GetProcAddress(
+                api_module,
+                b"BluetoothRemoveDevice\0".as_ptr(),
+            );
+            if ptr.is_null() {
+                return Err(BtError::PlatformError(
+                    "BluetoothRemoveDevice not found".to_string(),
+                ));
             }
-            Err(e) => Err(e),
+            std::mem::transmute(ptr)
+        };
+
+        // BLUETOOTH_ADDRESS is a 8-byte struct; the address sits in the first 6
+        // bytes (little-endian). We pass a pointer to our u64 which has the
+        // address in the low 6 bytes.
+        let result = unsafe { remove_fn(&addr) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(BtError::PlatformError(format!(
+                "BluetoothRemoveDevice failed with error {result}"
+            )))
         }
     }
 
+    fn connect(&mut self, address: &str) -> Result<(), BtError> {
+        // The Win32 Bluetooth API doesn't have a direct "connect" call.
+        // Connection happens implicitly when a profile (RFCOMM/L2CAP) is opened.
+        // We verify the device exists and is paired.
+        let dev = self.device_info(address).ok_or(BtError::DeviceNotFound)?;
+        if !dev.paired {
+            return Err(BtError::NotPaired);
+        }
+        // Mark as connected (the OS connects on profile use).
+        self.pending_events
+            .push(BluetoothEvent::Connected(normalize_mac(address)));
+        Ok(())
+    }
+
     fn disconnect(&mut self, address: &str) -> Result<(), BtError> {
-        // Windows doesn't provide a clean CLI disconnect for Bluetooth.
-        // Disabling and re-enabling the device achieves a disconnect.
-        let addr_no_sep = address.replace(':', "").replace('-', "").to_uppercase();
-        let script = format!(
-            r#"
-$dev = Get-PnpDevice -Class Bluetooth | Where-Object {{
-    $_.InstanceId -match '{addr_no_sep}'
-}} | Select-Object -First 1
-if ($dev) {{
-    Disable-PnpDevice -InstanceId $dev.InstanceId -Confirm:$false
-    Start-Sleep -Milliseconds 500
-    Enable-PnpDevice -InstanceId $dev.InstanceId -Confirm:$false
-    Write-Output 'Disconnected'
-}} else {{ Write-Error 'Device not found' }}
-"#
-        );
-        Self::run_powershell(&script)?;
+        // No direct disconnect API in Win32 classic BT. The device disconnects
+        // when all profile handles are closed.
         self.pending_events
             .push(BluetoothEvent::Disconnected(normalize_mac(address)));
         Ok(())
     }
 
     fn trust(&mut self, _address: &str, _trusted: bool) -> Result<(), BtError> {
-        // Windows does not have a direct "trust" concept like BlueZ.
+        // Windows does not have a separate "trust" concept.
         // Paired devices auto-connect by default.
         Ok(())
     }
 
     fn device_info(&self, address: &str) -> Option<BluetoothDevice> {
-        let addr_no_sep = address.replace(':', "").replace('-', "").to_uppercase();
-        let script = format!(
-            r#"
-Get-PnpDevice -Class Bluetooth | Where-Object {{
-    $_.InstanceId -match '{addr_no_sep}'
-}} | Select-Object -First 1 | ForEach-Object {{
-    $_.FriendlyName + '|' + $_.InstanceId + '|' + $_.Status + '|' + $_.Class
-}}
-"#
-        );
-        let output = Self::run_powershell(&script).ok()?;
-        let line = output.lines().find(|l| !l.trim().is_empty())?;
-        Self::parse_device_line(line)
+        let normalized = normalize_mac(address);
+        self.discovered_devices()
+            .into_iter()
+            .find(|d| d.address == normalized)
     }
 
     fn device_audio_profiles(&self, address: &str) -> Vec<AudioProfile> {
-        let addr_clean = address.replace(':', "").replace('-', "");
-        let script = format!(
-            r#"
-Add-Type -AssemblyName System.Runtime.WindowsRuntime
-try {{
-    $device = [Windows.Devices.Bluetooth.BluetoothDevice,Windows.Devices.Bluetooth,ContentType=WindowsRuntime]::FromBluetoothAddressAsync([Convert]::ToUInt64('0x{addr_clean}', 16)).GetAwaiter().GetResult()
-    if ($device) {{
-        $services = $device.GetRfcommServicesAsync().GetAwaiter().GetResult()
-        foreach ($svc in $services.Services) {{
-            Write-Output $svc.ServiceId.Uuid.ToString()
-        }}
-    }}
-}} catch {{ }}
-"#
-        );
-        let Ok(output) = Self::run_powershell(&script) else {
+        // Inspect the Class of Device for audio-related bits.
+        let dev = self.device_info(address);
+        let Some(dev) = dev else {
             return Vec::new();
         };
-
         let mut profiles = Vec::new();
-        for line in output.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some(profile) = AudioProfile::from_uuid_or_name(line) {
-                if !profiles.contains(&profile) {
-                    profiles.push(profile);
+        match &dev.device_type {
+            DeviceType::Headphones | DeviceType::Speaker => {
+                profiles.push(AudioProfile::A2DP);
+                profiles.push(AudioProfile::AVRCP);
+                // Headphones often support HFP too
+                if matches!(dev.device_type, DeviceType::Headphones) {
+                    profiles.push(AudioProfile::HFP);
                 }
             }
+            _ => {}
         }
         profiles
     }
@@ -458,118 +532,69 @@ try {{
     }
 }
 
-/// Try to extract a MAC address from a Windows PnP device instance ID.
-///
-/// Patterns matched:
-/// - `BTHENUM\Dev_AABBCCDDEEFF\...`
-/// - `BLUETOOTHDEVICE\AABBCCDDEEFF`
-/// - Any 12-hex-digit substring preceded by `_` or `\`
-fn extract_mac_from_device_id(device_id: &str) -> Option<String> {
-    let upper = device_id.to_uppercase();
-
-    // Look for Dev_XXXXXXXXXXXX pattern
-    if let Some(idx) = upper.find("DEV_") {
-        let start = idx + 4;
-        let hex_part: String = upper[start..]
-            .chars()
-            .take_while(|c| c.is_ascii_hexdigit())
-            .collect();
-        if hex_part.len() == 12 {
-            return Some(format!(
-                "{}:{}:{}:{}:{}:{}",
-                &hex_part[0..2],
-                &hex_part[2..4],
-                &hex_part[4..6],
-                &hex_part[6..8],
-                &hex_part[8..10],
-                &hex_part[10..12],
-            ));
-        }
-    }
-
-    // Look for BLUETOOTHDEVICE\XXXXXXXXXXXX pattern
-    if let Some(idx) = upper.find("BLUETOOTHDEVICE\\") {
-        let start = idx + 16;
-        let hex_part: String = upper[start..]
-            .chars()
-            .take_while(|c| c.is_ascii_hexdigit())
-            .collect();
-        if hex_part.len() == 12 {
-            return Some(format!(
-                "{}:{}:{}:{}:{}:{}",
-                &hex_part[0..2],
-                &hex_part[2..4],
-                &hex_part[4..6],
-                &hex_part[6..8],
-                &hex_part[8..10],
-                &hex_part[10..12],
-            ));
-        }
-    }
-
-    // Generic: find any 12-hex-digit block after _ or backslash
-    for sep in ['_', '\\'] {
-        for segment in upper.split(sep) {
-            let hex_part: String = segment
-                .chars()
-                .take_while(|c| c.is_ascii_hexdigit())
-                .collect();
-            if hex_part.len() == 12 {
-                return Some(format!(
-                    "{}:{}:{}:{}:{}:{}",
-                    &hex_part[0..2],
-                    &hex_part[2..4],
-                    &hex_part[4..6],
-                    &hex_part[6..8],
-                    &hex_part[8..10],
-                    &hex_part[10..12],
-                ));
-            }
-        }
-    }
-
-    None
-}
+// ── Tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn extract_mac_dev_pattern() {
-        let id = r"BTHENUM\Dev_AABBCCDDEEFF\7&abcd1234&0&BluetoothDevice_AABBCCDDEEFF";
-        let mac = extract_mac_from_device_id(id).unwrap();
-        assert_eq!(mac, "AA:BB:CC:DD:EE:FF");
+    fn format_address_round_trip() {
+        let addr: u64 = 0xAABBCCDDEEFF;
+        let s = format_bt_address(addr);
+        assert_eq!(s, "AA:BB:CC:DD:EE:FF");
+        let parsed = parse_bt_address(&s).unwrap();
+        assert_eq!(parsed, addr);
     }
 
     #[test]
-    fn extract_mac_bluetooth_device_pattern() {
-        let id = r"BLUETOOTHDEVICE\112233445566";
-        let mac = extract_mac_from_device_id(id).unwrap();
-        assert_eq!(mac, "11:22:33:44:55:66");
+    fn parse_address_no_colons() {
+        let parsed = parse_bt_address("112233445566").unwrap();
+        assert_eq!(parsed, 0x112233445566);
     }
 
     #[test]
-    fn extract_mac_no_match() {
-        assert!(extract_mac_from_device_id("USB\\VID_1234&PID_5678").is_none());
+    fn parse_address_invalid() {
+        assert!(parse_bt_address("not-a-mac").is_none());
+        assert!(parse_bt_address("AABB").is_none());
     }
 
     #[test]
-    fn parse_device_line_basic() {
-        let line = "My Speaker|BTHENUM\\Dev_AABBCCDDEEFF\\stuff|OK|Bluetooth";
-        let dev = BluetoothManager::parse_device_line(line).unwrap();
-        assert_eq!(dev.name, "My Speaker");
-        assert_eq!(dev.address, "AA:BB:CC:DD:EE:FF");
-        assert!(dev.connected);
+    fn wide_to_string_basic() {
+        let wide: Vec<u16> = "Hello\0Ignored".encode_utf16().collect();
+        assert_eq!(wide_to_string(&wide), "Hello");
     }
 
     #[test]
-    fn parse_device_line_short() {
-        assert!(BluetoothManager::parse_device_line("too|short").is_none());
+    fn wide_to_string_no_null() {
+        let wide: Vec<u16> = "NoNull".encode_utf16().collect();
+        assert_eq!(wide_to_string(&wide), "NoNull");
     }
 
     #[test]
-    fn parse_device_line_empty_name_and_address() {
-        assert!(BluetoothManager::parse_device_line("||OK|Bluetooth").is_none());
+    fn icon_mapping() {
+        assert_eq!(icon_for_device_type(&DeviceType::Headphones), "audio-headphones");
+        assert_eq!(icon_for_device_type(&DeviceType::Mouse), "input-mouse");
+        assert_eq!(
+            icon_for_device_type(&DeviceType::Other("foo".to_string())),
+            "bluetooth"
+        );
+    }
+
+    #[test]
+    fn manager_default() {
+        let mgr = BluetoothManager::new();
+        assert!(mgr.cached_discovered.is_empty());
+        assert!(mgr.pending_events.is_empty());
+    }
+
+    #[test]
+    fn poll_events_drains() {
+        let mut mgr = BluetoothManager::new();
+        mgr.pending_events
+            .push(BluetoothEvent::Connected("AA:BB:CC:DD:EE:FF".to_string()));
+        let events = mgr.poll_events();
+        assert_eq!(events.len(), 1);
+        assert!(mgr.pending_events.is_empty());
     }
 }

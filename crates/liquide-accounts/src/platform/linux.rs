@@ -1,8 +1,9 @@
 //! Linux account management backend.
 //!
-//! Reads `/etc/passwd` and `/etc/group` for enumeration, shells out to
-//! `useradd`, `userdel`, `usermod`, `passwd`, `chage`, `gpasswd`, and
-//! `last` for mutations and login history.
+//! Reads `/etc/passwd`, `/etc/group`, `/etc/shadow`, and `/var/log/wtmp`
+//! for enumeration and login history. Shells out to `useradd`, `userdel`,
+//! `usermod`, `chpasswd`, and `gpasswd` only for mutations (where PAM/SELinux
+//! integration requires system tools).
 
 use crate::error::AccountError;
 use crate::groups::Group;
@@ -16,6 +17,29 @@ use std::process::Command;
 const MIN_HUMAN_UID: u32 = 1000;
 /// UIDs at or above this are typically `nobody` / overflow accounts.
 const MAX_HUMAN_UID: u32 = 60_000;
+
+// ── utmp/wtmp binary record layout (x86_64 glibc) ───────────────────
+
+/// Size of a single `struct utmp` record (384 bytes on x86_64 Linux).
+const UTMP_SIZE: usize = 384;
+/// Offset of `ut_type` field (int32).
+const UT_TYPE_OFFSET: usize = 0;
+/// Offset of `ut_line` field (char[32]).
+const UT_LINE_OFFSET: usize = 8;
+/// Length of `ut_line`.
+const UT_LINE_LEN: usize = 32;
+/// Offset of `ut_user` field (char[32]).
+const UT_USER_OFFSET: usize = 44;
+/// Length of `ut_user`.
+const UT_USER_LEN: usize = 32;
+/// Offset of `ut_host` field (char[256]).
+const UT_HOST_OFFSET: usize = 76;
+/// Length of `ut_host`.
+const UT_HOST_LEN: usize = 256;
+/// Offset of `ut_tv.tv_sec` (int64 on x86_64).
+const UT_TV_OFFSET: usize = 340;
+/// `ut_type` value indicating a normal user login.
+const USER_PROCESS: i32 = 7;
 
 pub struct LinuxBackend {
     /// Path to avatars directory (default: /var/lib/AccountsService/icons).
@@ -59,8 +83,11 @@ impl LinuxBackend {
         Ok(entries)
     }
 
-    /// Parse `/etc/group` and return all entries.
-    fn parse_group_file() -> Result<Vec<Group>, AccountError> {
+    /// Parse `/etc/group` and return all entries, resolving member names
+    /// to UIDs using the supplied passwd entries.
+    fn parse_group_file_with(
+        passwd_entries: &[PasswdEntry],
+    ) -> Result<Vec<Group>, AccountError> {
         let content = fs::read_to_string("/etc/group")
             .map_err(|e| AccountError::PlatformError(format!("failed to read /etc/group: {e}")))?;
 
@@ -81,9 +108,6 @@ impl LinuxBackend {
                 fields[3].split(',').collect()
             };
 
-            // Resolve member names to UIDs. This is O(N*M) but the user
-            // count is small.
-            let passwd_entries = Self::parse_passwd().unwrap_or_default();
             let member_uids: Vec<u32> = member_names
                 .iter()
                 .filter_map(|name| {
@@ -103,60 +127,59 @@ impl LinuxBackend {
         Ok(groups)
     }
 
-    /// Check if a user is in the `sudo` or `wheel` group.
+    /// Parse `/etc/group` and return all entries.
+    fn parse_group_file() -> Result<Vec<Group>, AccountError> {
+        let passwd_entries = Self::parse_passwd().unwrap_or_default();
+        Self::parse_group_file_with(&passwd_entries)
+    }
+
+    /// Check if a user is in the `sudo` or `wheel` group by parsing
+    /// `/etc/group` directly.
     fn is_admin(username: &str) -> bool {
-        let groups = Self::parse_group_file().unwrap_or_default();
-        groups
-            .iter()
-            .any(|g| (g.name == "sudo" || g.name == "wheel") && {
-                // Re-check by username since we resolved UIDs above but
-                // also need the raw member list.
-                let content = fs::read_to_string("/etc/group").unwrap_or_default();
-                content.lines().any(|line| {
-                    let fields: Vec<&str> = line.split(':').collect();
-                    fields.len() >= 4
-                        && (fields[0] == "sudo" || fields[0] == "wheel")
-                        && fields[3].split(',').any(|m| m == username)
-                })
-            })
-    }
-
-    /// Check if the account is locked (password starts with `!` in /etc/shadow,
-    /// or `passwd -S` reports `L`).
-    fn is_account_locked(username: &str) -> bool {
-        let output = Command::new("passwd")
-            .args(["-S", username])
-            .output();
-        match output {
-            Ok(out) => {
-                let status = String::from_utf8_lossy(&out.stdout);
-                // Format: "username L ..." where L means locked
-                status
-                    .split_whitespace()
-                    .nth(1)
-                    .map(|s| s == "L" || s == "LK")
-                    .unwrap_or(false)
+        let content = fs::read_to_string("/etc/group").unwrap_or_default();
+        for line in content.lines() {
+            let fields: Vec<&str> = line.split(':').collect();
+            if fields.len() >= 4
+                && (fields[0] == "sudo" || fields[0] == "wheel")
+                && fields[3].split(',').any(|m| m == username)
+            {
+                return true;
             }
-            Err(_) => false,
         }
+        false
     }
 
-    /// Read password last-changed date from `chage -l`.
-    fn password_last_changed(username: &str) -> Option<u64> {
-        let output = Command::new("chage")
-            .args(["-l", username])
-            .output()
-            .ok()?;
-        let text = String::from_utf8_lossy(&output.stdout);
-        for line in text.lines() {
-            if line.starts_with("Last password change") {
-                // Format: "Last password change\t\t\t: Mon DD, YYYY"
-                let date_str = line.split(':').skip(1).collect::<Vec<_>>().join(":").trim().to_string();
-                if date_str == "never" || date_str.is_empty() {
-                    return None;
+    /// Check if the account is locked by inspecting `/etc/shadow`.
+    ///
+    /// A locked account has a password hash starting with `!` or `*`.
+    fn is_account_locked(username: &str) -> bool {
+        if let Ok(content) = fs::read_to_string("/etc/shadow") {
+            for line in content.lines() {
+                let fields: Vec<&str> = line.split(':').collect();
+                if fields.len() >= 2 && fields[0] == username {
+                    let hash = fields[1];
+                    return hash.starts_with('!') || hash.starts_with('*');
                 }
-                // Parse "Mon DD, YYYY" — rough parsing, return epoch.
-                return parse_date_to_epoch(&date_str);
+            }
+        }
+        // If we cannot read /etc/shadow (no root), assume unlocked.
+        false
+    }
+
+    /// Read password last-changed date from `/etc/shadow`.
+    ///
+    /// The third field in shadow is the number of days since epoch
+    /// (1970-01-01) when the password was last changed.
+    fn password_last_changed(username: &str) -> Option<u64> {
+        let content = fs::read_to_string("/etc/shadow").ok()?;
+        for line in content.lines() {
+            let fields: Vec<&str> = line.split(':').collect();
+            if fields.len() >= 3 && fields[0] == username {
+                let days: u64 = fields[2].parse().ok()?;
+                if days == 0 {
+                    return None; // 0 means "must change on next login"
+                }
+                return Some(days * 86400);
             }
         }
         None
@@ -196,6 +219,35 @@ impl LinuxBackend {
         false
     }
 
+    /// Check if a user is currently logged in by parsing `/var/run/utmp`.
+    ///
+    /// Same binary format as wtmp; we look for USER_PROCESS records
+    /// matching the username.
+    fn is_user_logged_in(username: &str) -> bool {
+        let data = fs::read("/var/run/utmp")
+            .or_else(|_| fs::read("/run/utmp"))
+            .unwrap_or_default();
+
+        let mut offset = 0;
+        while offset + UTMP_SIZE <= data.len() {
+            let record = &data[offset..offset + UTMP_SIZE];
+            let ut_type = i32::from_le_bytes(
+                record[UT_TYPE_OFFSET..UT_TYPE_OFFSET + 4]
+                    .try_into()
+                    .unwrap_or([0; 4]),
+            );
+
+            if ut_type == USER_PROCESS {
+                let user = extract_c_string(&record[UT_USER_OFFSET..UT_USER_OFFSET + UT_USER_LEN]);
+                if user == username {
+                    return true;
+                }
+            }
+            offset += UTMP_SIZE;
+        }
+        false
+    }
+
     /// Resolve a UID to a username via the passwd entries.
     fn uid_to_username(uid: u32) -> Result<String, AccountError> {
         let entries = Self::parse_passwd()?;
@@ -212,7 +264,12 @@ impl LinuxBackend {
             entry.username.clone()
         } else {
             // GECOS field: "Full Name,Room,Work Phone,Home Phone,Other"
-            entry.gecos.split(',').next().unwrap_or(&entry.username).to_string()
+            entry
+                .gecos
+                .split(',')
+                .next()
+                .unwrap_or(&entry.username)
+                .to_string()
         };
 
         let avatar_path = format!("{}/{}", self.avatar_dir, entry.username);
@@ -236,7 +293,7 @@ impl LinuxBackend {
             shell: entry.shell.clone(),
             account_type,
             avatar,
-            is_logged_in: is_user_logged_in(&entry.username),
+            is_logged_in: Self::is_user_logged_in(&entry.username),
             is_locked: Self::is_account_locked(&entry.username),
             password_last_changed: Self::password_last_changed(&entry.username),
             auto_login: Self::is_auto_login(&entry.username),
@@ -272,7 +329,11 @@ impl Default for LinuxBackend {
 
 impl PlatformBackend for LinuxBackend {
     fn current_user(&self) -> Result<UserAccount, AccountError> {
-        let uid = unsafe { libc::getuid() };
+        // Use getuid() syscall directly — no libc crate dependency needed.
+        extern "C" {
+            fn getuid() -> u32;
+        }
+        let uid = unsafe { getuid() };
         let entries = Self::parse_passwd()?;
         let entry = entries
             .iter()
@@ -510,32 +571,19 @@ impl PlatformBackend for LinuxBackend {
     }
 
     fn user_groups(&self, uid: u32) -> Result<Vec<Group>, AccountError> {
-        let username = Self::uid_to_username(uid)?;
-        let all_groups = Self::parse_group_file()?;
-
-        // Also check if the user's primary GID matches any group.
-        let entries = Self::parse_passwd()?;
-        let primary_gid = entries
+        let passwd_entries = Self::parse_passwd()?;
+        let entry = passwd_entries
             .iter()
             .find(|e| e.uid == uid)
-            .map(|e| e.gid)
-            .unwrap_or(0);
+            .ok_or(AccountError::NotFound)?;
+        let username = &entry.username;
+        let primary_gid = entry.gid;
+
+        let all_groups = Self::parse_group_file_with(&passwd_entries)?;
 
         Ok(all_groups
             .into_iter()
-            .filter(|g| {
-                g.gid == primary_gid
-                    || {
-                        // Check raw /etc/group for this user's membership.
-                        let content = fs::read_to_string("/etc/group").unwrap_or_default();
-                        content.lines().any(|line| {
-                            let fields: Vec<&str> = line.split(':').collect();
-                            fields.len() >= 4
-                                && fields[2].parse::<u32>().ok() == Some(g.gid)
-                                && fields[3].split(',').any(|m| m == username)
-                        })
-                    }
-            })
+            .filter(|g| g.gid == primary_gid || g.members.contains(&uid))
             .collect())
     }
 
@@ -561,48 +609,61 @@ impl PlatformBackend for LinuxBackend {
 
     fn recent_logins(&self, uid: u32, count: usize) -> Result<Vec<LoginEntry>, AccountError> {
         let username = Self::uid_to_username(uid)?;
-        let output = Command::new("last")
-            .args(["-n", &count.to_string(), &username])
-            .output()
-            .map_err(|e| AccountError::PlatformError(format!("last command failed: {e}")))?;
 
-        let text = String::from_utf8_lossy(&output.stdout);
+        // Read wtmp binary file directly.
+        let data = fs::read("/var/log/wtmp").unwrap_or_default();
+
         let mut entries = Vec::new();
+        let mut offset = 0;
+        while offset + UTMP_SIZE <= data.len() {
+            let record = &data[offset..offset + UTMP_SIZE];
+            let ut_type = i32::from_le_bytes(
+                record[UT_TYPE_OFFSET..UT_TYPE_OFFSET + 4]
+                    .try_into()
+                    .unwrap_or([0; 4]),
+            );
 
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with("wtmp") || line.starts_with("btmp") {
-                continue;
+            if ut_type == USER_PROCESS {
+                let user = extract_c_string(&record[UT_USER_OFFSET..UT_USER_OFFSET + UT_USER_LEN]);
+
+                if user == username {
+                    let line =
+                        extract_c_string(&record[UT_LINE_OFFSET..UT_LINE_OFFSET + UT_LINE_LEN]);
+                    let host =
+                        extract_c_string(&record[UT_HOST_OFFSET..UT_HOST_OFFSET + UT_HOST_LEN]);
+                    let tv_sec = i64::from_le_bytes(
+                        record[UT_TV_OFFSET..UT_TV_OFFSET + 8]
+                            .try_into()
+                            .unwrap_or([0; 8]),
+                    );
+
+                    let method = if host.contains('.') || host.contains(':') {
+                        // Contains an IP address (v4 or v6) — remote session.
+                        LoginMethod::RemoteDesktop
+                    } else if line.starts_with(":") {
+                        // X11 / Wayland local display.
+                        LoginMethod::Password
+                    } else {
+                        LoginMethod::Password
+                    };
+
+                    let ip = if host.is_empty() { None } else { Some(host) };
+
+                    entries.push(LoginEntry {
+                        uid,
+                        timestamp: tv_sec as u64,
+                        success: true,
+                        method,
+                        ip,
+                    });
+                }
             }
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.len() < 4 || fields[0] != username {
-                continue;
-            }
-
-            let terminal = fields[1];
-            let ip = if fields.len() > 2 && fields[2].contains('.') {
-                Some(fields[2].to_string())
-            } else {
-                None
-            };
-
-            let method = if ip.is_some() {
-                LoginMethod::RemoteDesktop
-            } else if terminal.starts_with("pts/") {
-                LoginMethod::Password
-            } else {
-                LoginMethod::Password
-            };
-
-            entries.push(LoginEntry {
-                uid,
-                timestamp: 0, // `last` doesn't give unix timestamps easily
-                success: true,
-                method,
-                ip,
-            });
+            offset += UTMP_SIZE;
         }
 
+        // Most recent first.
+        entries.reverse();
+        entries.truncate(count);
         Ok(entries)
     }
 }
@@ -618,61 +679,8 @@ struct PasswdEntry {
     shell: String,
 }
 
-/// Check if a user is currently logged in (has an active session).
-fn is_user_logged_in(username: &str) -> bool {
-    Command::new("who")
-        .output()
-        .map(|out| {
-            let text = String::from_utf8_lossy(&out.stdout);
-            text.lines().any(|l| {
-                l.split_whitespace()
-                    .next()
-                    .map(|u| u == username)
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false)
-}
-
-/// Rough date parser for "Mon DD, YYYY" format from `chage` output.
-fn parse_date_to_epoch(date_str: &str) -> Option<u64> {
-    // Format: "Jun 15, 2024" or similar.
-    let parts: Vec<&str> = date_str.split_whitespace().collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    let month = match parts[0].to_lowercase().as_str() {
-        "jan" => 0,
-        "feb" => 1,
-        "mar" => 2,
-        "apr" => 3,
-        "may" => 4,
-        "jun" => 5,
-        "jul" => 6,
-        "aug" => 7,
-        "sep" => 8,
-        "oct" => 9,
-        "nov" => 10,
-        "dec" => 11,
-        _ => return None,
-    };
-    let day: u64 = parts[1].trim_end_matches(',').parse().ok()?;
-    let year: u64 = parts[2].parse().ok()?;
-    if year < 1970 {
-        return None;
-    }
-    // Rough epoch calculation (not accounting for leap seconds etc.).
-    let years_since_epoch = year - 1970;
-    let leap_years = (year - 1969) / 4 - (year - 1901) / 100 + (year - 1601) / 400;
-    let days_per_month: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-    let mut day_of_year: u64 = day - 1;
-    for m in 0..month {
-        day_of_year += days_per_month[m as usize];
-        if m == 1 && is_leap {
-            day_of_year += 1;
-        }
-    }
-    let total_days = years_since_epoch * 365 + leap_years + day_of_year;
-    Some(total_days * 86400)
+/// Extract a NUL-terminated C string from a byte slice.
+fn extract_c_string(bytes: &[u8]) -> String {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).to_string()
 }

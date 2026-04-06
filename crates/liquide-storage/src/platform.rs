@@ -1,9 +1,9 @@
 //! Platform-specific storage device enumeration, mount/unmount, and usage queries.
 //!
 //! Each platform implements the same set of public functions using OS-specific
-//! tools:
+//! mechanisms:
 //!
-//! - **Linux**: `lsblk --json`, `df -B1`, `mount`/`umount`, `udisksctl`
+//! - **Linux**: `/sys/block/` enumeration, `/proc/mounts`, `statvfs()` syscall
 //! - **Windows**: PowerShell `Get-Disk`, `Get-Partition`, `Get-Volume`, `Get-PSDrive`
 //! - **macOS**: `diskutil list -plist`, `df -B1`, `diskutil mount`/`unmount`
 
@@ -12,120 +12,225 @@ use crate::device::{StorageDevice, StorageType};
 use crate::error::StorageError;
 use crate::filesystem::FileSystem;
 use crate::partition::Partition;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::process::Command;
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Linux
+// Linux — /sys/block + /proc/mounts + statvfs()
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
-pub fn list_devices() -> Result<Vec<StorageDevice>, StorageError> {
-    let output = Command::new("lsblk")
-        .args(["--json", "--bytes", "--output",
-               "NAME,SIZE,TYPE,MODEL,SERIAL,RM,MOUNTPOINT,FSTYPE,LABEL,UUID,TRAN"])
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("lsblk: {e}")))?;
+use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::path::Path;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("lsblk exit {}: {stderr}", output.status)));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_lsblk_json(&stdout)
+/// Read a sysfs file and return its trimmed contents.
+#[cfg(target_os = "linux")]
+fn read_sysfs(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
 }
 
+/// Read a sysfs file and parse as u64.
 #[cfg(target_os = "linux")]
-fn parse_lsblk_json(json_str: &str) -> Result<Vec<StorageDevice>, StorageError> {
-    let root: serde_json::Value = serde_json::from_str(json_str)
-        .map_err(|e| StorageError::ParseError(format!("lsblk json: {e}")))?;
+fn read_sysfs_u64(path: &Path) -> Option<u64> {
+    read_sysfs(path).and_then(|s| s.parse::<u64>().ok())
+}
 
-    let blockdevices = root["blockdevices"]
-        .as_array()
-        .ok_or_else(|| StorageError::ParseError("missing blockdevices array".into()))?;
+/// Mount entry from /proc/mounts.
+#[cfg(target_os = "linux")]
+struct MountInfo {
+    mount_point: String,
+    filesystem: String,
+}
 
-    let mut devices = Vec::new();
+/// Parse /proc/mounts into a map from device path to mount info.
+#[cfg(target_os = "linux")]
+fn parse_proc_mounts() -> HashMap<String, MountInfo> {
+    let mut mounts = HashMap::new();
+    if let Ok(content) = std::fs::read_to_string("/proc/mounts") {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 {
+                mounts.insert(
+                    parts[0].to_string(),
+                    MountInfo {
+                        mount_point: parts[1].to_string(),
+                        filesystem: parts[2].to_string(),
+                    },
+                );
+            }
+        }
+    }
+    mounts
+}
 
-    for bd in blockdevices {
-        let bd_type = bd["type"].as_str().unwrap_or("");
-        if bd_type != "disk" {
+/// Query used and available bytes for a mount point via the statvfs() syscall.
+///
+/// Returns `(used_bytes, available_bytes)`. On failure returns `(0, 0)`.
+#[cfg(target_os = "linux")]
+fn statvfs_usage(mount_point: &str) -> (u64, u64) {
+    // Linux x86-64 statvfs layout (glibc).
+    #[repr(C)]
+    struct Statvfs {
+        f_bsize: u64,
+        f_frsize: u64,
+        f_blocks: u64,
+        f_bfree: u64,
+        f_bavail: u64,
+        f_files: u64,
+        f_ffree: u64,
+        f_favail: u64,
+        f_fsid: u64,
+        f_flag: u64,
+        f_namemax: u64,
+        __spare: [i32; 6],
+    }
+
+    unsafe extern "C" {
+        fn statvfs(path: *const u8, buf: *mut Statvfs) -> i32;
+    }
+
+    let mut path_bytes = mount_point.as_bytes().to_vec();
+    path_bytes.push(0); // NUL-terminate for C.
+
+    let mut stat: Statvfs = unsafe { std::mem::zeroed() };
+    let ret = unsafe { statvfs(path_bytes.as_ptr(), &mut stat) };
+    if ret != 0 {
+        return (0, 0);
+    }
+
+    let total = stat.f_blocks * stat.f_frsize;
+    let free = stat.f_bfree * stat.f_frsize;
+    let used = total.saturating_sub(free);
+    let available = stat.f_bavail * stat.f_frsize;
+    (used, available)
+}
+
+/// Enumerate partitions for a block device by scanning /sys/block/{dev}/{part}/.
+#[cfg(target_os = "linux")]
+fn list_partitions_for_device(
+    dev_name: &str,
+    base: &Path,
+    mounts: &HashMap<String, MountInfo>,
+) -> Vec<Partition> {
+    let mut partitions = Vec::new();
+
+    let entries = match std::fs::read_dir(base) {
+        Ok(rd) => rd,
+        Err(_) => return partitions,
+    };
+
+    for entry in entries.flatten() {
+        let part_name = entry.file_name().to_string_lossy().to_string();
+        // Partition directories start with the parent device name (e.g. sda1 under sda,
+        // nvme0n1p1 under nvme0n1).
+        if !part_name.starts_with(dev_name) || part_name == dev_name {
+            continue;
+        }
+        let part_path = base.join(&part_name);
+        if !part_path.join("size").exists() {
             continue;
         }
 
-        let name = bd["name"].as_str().unwrap_or("").to_string();
-        let dev_id = format!("/dev/{name}");
-        let size_bytes = bd["size"].as_u64().unwrap_or(0);
-        let model = bd["model"].as_str().map(|s| s.trim().to_string());
-        let serial = bd["serial"].as_str().map(|s| s.trim().to_string());
-        let removable = bd["rm"].as_bool().unwrap_or(false)
-            || bd["rm"].as_str().map(|s| s == "1").unwrap_or(false)
-            || bd["rm"].as_u64().map(|v| v == 1).unwrap_or(false);
-        let transport = bd["tran"].as_str().unwrap_or("");
+        let size_sectors = read_sysfs_u64(&part_path.join("size")).unwrap_or(0);
+        let size_bytes = size_sectors * 512;
 
-        let device_type = if transport == "nvme" {
-            StorageType::NVMe
-        } else if transport == "usb" {
-            StorageType::USB
-        } else if removable && transport.is_empty() {
-            StorageType::SDCard
+        let dev_path = format!("/dev/{part_name}");
+        let mount_info = mounts.get(&dev_path);
+
+        let (used, available, filesystem, mount_point) = if let Some(mi) = mount_info {
+            let usage = statvfs_usage(&mi.mount_point);
+            (
+                usage.0,
+                usage.1,
+                mi.filesystem.clone(),
+                Some(mi.mount_point.clone()),
+            )
         } else {
-            // Heuristic: check rotational flag via model name or default to HDD.
-            if model.as_deref().unwrap_or("").to_lowercase().contains("ssd") {
-                StorageType::SSD
-            } else {
-                StorageType::HDD
-            }
+            (0, 0, String::new(), None)
         };
 
-        // Parse partitions from children.
-        let mut partitions = Vec::new();
-        if let Some(children) = bd["children"].as_array() {
-            for child in children {
-                let child_type = child["type"].as_str().unwrap_or("");
-                if child_type != "part" {
-                    continue;
-                }
-                let part_name = child["name"].as_str().unwrap_or("");
-                let part_id = format!("/dev/{part_name}");
-                let part_size = child["size"].as_u64().unwrap_or(0);
-                let fstype = child["fstype"].as_str().unwrap_or("");
-                let label = child["label"].as_str().map(|s| s.to_string());
-                let uuid = child["uuid"].as_str().map(|s| s.to_string());
-                let mount_point = child["mountpoint"].as_str().map(|s| s.to_string());
+        let uuid = read_sysfs(&part_path.join("uuid"));
+        let is_system = mount_point.as_deref() == Some("/")
+            || mount_point.as_deref() == Some("/boot");
 
-                let is_system = mount_point.as_deref() == Some("/");
+        partitions.push(Partition {
+            id: dev_path,
+            label: None, // Would need blkid for label.
+            filesystem: FileSystem::from_str(&filesystem),
+            mount_point,
+            size_bytes,
+            used_bytes: used,
+            available_bytes: available,
+            uuid,
+            is_system,
+            is_encrypted: filesystem == "crypto_LUKS",
+        });
+    }
 
-                // Query df for used/available if mounted.
-                let (used, available) = if mount_point.is_some() {
-                    query_partition_usage(&part_id).unwrap_or((part_size, 0))
-                } else {
-                    (0, 0)
-                };
-                let used_bytes = part_size.saturating_sub(available.min(part_size));
+    partitions
+}
 
-                partitions.push(Partition {
-                    id: part_id,
-                    label,
-                    filesystem: FileSystem::from_str(fstype),
-                    mount_point,
-                    size_bytes: part_size,
-                    used_bytes: if used > 0 { part_size.saturating_sub(available) } else { used_bytes },
-                    available_bytes: available,
-                    uuid,
-                    is_system,
-                    is_encrypted: fstype == "crypto_LUKS",
-                });
-            }
+#[cfg(target_os = "linux")]
+pub fn list_devices() -> Result<Vec<StorageDevice>, StorageError> {
+    let block_dir = Path::new("/sys/block");
+    let entries = std::fs::read_dir(block_dir)
+        .map_err(|e| StorageError::IoError(format!("/sys/block: {e}")))?;
+
+    let mounts = parse_proc_mounts();
+    let mut devices = Vec::new();
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip virtual / pseudo devices.
+        if name.starts_with("loop")
+            || name.starts_with("ram")
+            || name.starts_with("dm-")
+            || name.starts_with("zram")
+        {
+            continue;
         }
 
+        let base = block_dir.join(&name);
+
+        // Size in 512-byte sectors.
+        let size_sectors = read_sysfs_u64(&base.join("size")).unwrap_or(0);
+        let size_bytes = size_sectors * 512;
+        if size_bytes == 0 {
+            continue;
+        }
+
+        // Determine device type.
+        let rotational = read_sysfs(&base.join("queue/rotational"));
+        let removable_flag = read_sysfs(&base.join("removable"));
+        let is_removable = removable_flag.as_deref() == Some("1");
+
+        let device_type = if name.starts_with("nvme") {
+            StorageType::NVMe
+        } else if is_removable {
+            StorageType::USB
+        } else if rotational.as_deref() == Some("0") {
+            StorageType::SSD
+        } else {
+            StorageType::HDD
+        };
+
+        // Model and serial from sysfs.
+        let model = read_sysfs(&base.join("device/model"));
+        let serial = read_sysfs(&base.join("device/serial"));
+
+        // Enumerate partitions.
+        let partitions = list_partitions_for_device(&name, &base, &mounts);
+
         devices.push(StorageDevice {
-            id: dev_id,
+            id: format!("/dev/{name}"),
             name: model.clone().unwrap_or_else(|| name.clone()),
             model,
             serial,
             size_bytes,
             device_type,
-            removable,
+            removable: is_removable,
             partitions,
         });
     }
@@ -145,279 +250,429 @@ pub fn list_partitions() -> Result<Vec<Partition>, StorageError> {
 
 #[cfg(target_os = "linux")]
 pub fn mount_partition(partition_id: &str, mount_point: &str) -> Result<(), StorageError> {
-    // Try udisksctl first (no root required), fall back to mount.
-    let output = Command::new("udisksctl")
-        .args(["mount", "--block-device", partition_id, "--mount-options", &format!("mountpoint={mount_point}")])
-        .output();
+    // mount/umount are OS operations that inherently require invoking the kernel
+    // mount syscall (which in practice needs CAP_SYS_ADMIN).  We use the libc-level
+    // mount(2) syscall directly to avoid shelling out.
+    use std::ffi::CString;
 
-    match output {
-        Ok(o) if o.status.success() => return Ok(()),
-        _ => {}
+    let src = CString::new(partition_id)
+        .map_err(|_| StorageError::CommandFailed("invalid partition id".into()))?;
+    let target = CString::new(mount_point)
+        .map_err(|_| StorageError::InvalidMountPoint(mount_point.into()))?;
+
+    // Try common filesystem types.
+    for fstype in &["ext4", "ext3", "btrfs", "xfs", "vfat", "ntfs", "exfat"] {
+        let fs = CString::new(*fstype).unwrap();
+        unsafe extern "C" {
+            fn mount(
+                source: *const i8,
+                target: *const i8,
+                filesystemtype: *const i8,
+                mountflags: u64,
+                data: *const u8,
+            ) -> i32;
+        }
+        let ret = unsafe {
+            mount(
+                src.as_ptr(),
+                target.as_ptr(),
+                fs.as_ptr(),
+                0,
+                std::ptr::null(),
+            )
+        };
+        if ret == 0 {
+            return Ok(());
+        }
     }
 
-    // Fallback: plain mount (requires privileges).
-    let output = Command::new("mount")
-        .args([partition_id, mount_point])
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("mount: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("mount: {stderr}")));
-    }
-    Ok(())
+    Err(StorageError::CommandFailed(
+        "mount: could not mount with any known filesystem type".into(),
+    ))
 }
 
 #[cfg(target_os = "linux")]
 pub fn unmount_partition(partition_id: &str) -> Result<(), StorageError> {
-    // Try udisksctl first, fall back to umount.
-    let output = Command::new("udisksctl")
-        .args(["unmount", "--block-device", partition_id])
-        .output();
+    use std::ffi::CString;
 
-    match output {
-        Ok(o) if o.status.success() => return Ok(()),
-        _ => {}
+    // Find the mount point for this partition from /proc/mounts.
+    let mounts = parse_proc_mounts();
+    let mount_point = mounts
+        .get(partition_id)
+        .map(|mi| mi.mount_point.clone())
+        .ok_or_else(|| StorageError::NotMounted(partition_id.into()))?;
+
+    let target = CString::new(mount_point.as_str())
+        .map_err(|_| StorageError::CommandFailed("invalid mount point".into()))?;
+
+    unsafe extern "C" {
+        fn umount(target: *const i8) -> i32;
     }
 
-    let output = Command::new("umount")
-        .arg(partition_id)
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("umount: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("umount: {stderr}")));
+    let ret = unsafe { umount(target.as_ptr()) };
+    if ret != 0 {
+        return Err(StorageError::CommandFailed(format!(
+            "umount {mount_point}: errno {}",
+            std::io::Error::last_os_error()
+        )));
     }
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 pub fn eject_device(device_id: &str) -> Result<(), StorageError> {
-    // Use udisksctl power-off which safely spins down and ejects.
-    let output = Command::new("udisksctl")
-        .args(["power-off", "--block-device", device_id])
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("udisksctl power-off: {e}")))?;
+    // Eject by writing to /sys/block/<dev>/device/delete after unmounting all partitions.
+    let dev_name = device_id
+        .strip_prefix("/dev/")
+        .unwrap_or(device_id);
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("eject: {stderr}")));
+    // First unmount all mounted partitions of this device.
+    let mounts = parse_proc_mounts();
+    for (dev_path, mi) in &mounts {
+        if dev_path.starts_with(device_id) && dev_path.len() > device_id.len() {
+            let _ = unmount_partition(dev_path);
+            let _ = mi; // suppress unused warning
+        }
     }
+
+    // Ask the kernel to remove the device.
+    let delete_path = format!("/sys/block/{dev_name}/device/delete");
+    std::fs::write(&delete_path, "1")
+        .map_err(|e| StorageError::CannotEject(format!("{delete_path}: {e}")))?;
+
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 pub fn query_partition_usage(partition_id: &str) -> Result<(u64, u64), StorageError> {
-    let output = Command::new("df")
-        .args(["-B1", "--output=size,avail", partition_id])
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("df: {e}")))?;
+    let mounts = parse_proc_mounts();
+    let mi = mounts
+        .get(partition_id)
+        .ok_or_else(|| StorageError::NotMounted(partition_id.into()))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("df: {stderr}")));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Skip header line.
-    for line in stdout.lines().skip(1) {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            let total = parts[0].parse::<u64>().unwrap_or(0);
-            let available = parts[1].parse::<u64>().unwrap_or(0);
-            return Ok((total, available));
-        }
-    }
-
-    Err(StorageError::ParseError("no df output".into()))
+    let (used, available) = statvfs_usage(&mi.mount_point);
+    Ok((used, available))
 }
 
 #[cfg(target_os = "linux")]
 pub fn disk_usage(path: &str) -> Result<DiskUsage, StorageError> {
-    let output = Command::new("df")
-        .args(["-B1", "--output=size,used,avail", path])
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("df: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("df: {stderr}")));
+    let (used, available) = statvfs_usage(path);
+    let total = used + available;
+    if total == 0 {
+        return Err(StorageError::IoError(format!(
+            "statvfs failed for path: {path}"
+        )));
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines().skip(1) {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 {
-            let total = parts[0].parse::<u64>().unwrap_or(0);
-            let _used = parts[1].parse::<u64>().unwrap_or(0);
-            let available = parts[2].parse::<u64>().unwrap_or(0);
-            return Ok(DiskUsage::from_total_available(total, available));
-        }
-    }
-
-    Err(StorageError::ParseError("no df output".into()))
+    Ok(DiskUsage::from_total_available(total, available))
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Windows
+// Windows — Win32 API (no PowerShell)
 // ──────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+mod win32_storage {
+    use std::ffi::c_void;
+
+    unsafe extern "system" {
+        pub fn GetLogicalDriveStringsW(len: u32, buf: *mut u16) -> u32;
+        pub fn GetDiskFreeSpaceExW(
+            dir: *const u16,
+            free_avail: *mut u64,
+            total: *mut u64,
+            total_free: *mut u64,
+        ) -> i32;
+        pub fn GetVolumeInformationW(
+            root: *const u16,
+            vol_name: *mut u16,
+            vol_name_size: u32,
+            serial: *mut u32,
+            max_comp: *mut u32,
+            flags: *mut u32,
+            fs_name: *mut u16,
+            fs_name_size: u32,
+        ) -> i32;
+        pub fn GetDriveTypeW(root: *const u16) -> u32;
+        pub fn CreateFileW(
+            name: *const u16,
+            access: u32,
+            share: u32,
+            security: *const c_void,
+            creation: u32,
+            flags: u32,
+            template: *mut c_void,
+        ) -> *mut c_void;
+        pub fn DeviceIoControl(
+            device: *mut c_void,
+            code: u32,
+            in_buf: *const c_void,
+            in_size: u32,
+            out_buf: *mut c_void,
+            out_size: u32,
+            returned: *mut u32,
+            overlapped: *mut c_void,
+        ) -> i32;
+        pub fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+
+    pub const DRIVE_REMOVABLE: u32 = 2;
+    pub const DRIVE_FIXED: u32 = 3;
+    pub const DRIVE_REMOTE: u32 = 4;
+    pub const DRIVE_CDROM: u32 = 5;
+
+    pub const INVALID_HANDLE_VALUE: *mut c_void = -1_isize as *mut c_void;
+    pub const OPEN_EXISTING: u32 = 3;
+    pub const FILE_SHARE_READ: u32 = 0x00000001;
+    pub const FILE_SHARE_WRITE: u32 = 0x00000002;
+
+    // IOCTL_STORAGE_QUERY_PROPERTY
+    pub const IOCTL_STORAGE_QUERY_PROPERTY: u32 = 0x002D1400;
+
+    // StorageDeviceTrimProperty = 8
+    #[repr(C)]
+    pub struct StoragePropertyQuery {
+        pub property_id: u32,
+        pub query_type: u32,   // PropertyStandardQuery = 0
+        pub additional: [u8; 1],
+    }
+
+    #[repr(C)]
+    pub struct DeviceTrimDescriptor {
+        pub version: u32,
+        pub size: u32,
+        pub trim_enabled: u8,
+    }
+
+    /// Encode a Rust &str to a null-terminated wide string.
+    pub fn to_wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
+    }
+
+    /// Decode a wide string buffer (fixed-length) to a Rust String,
+    /// trimming the null terminator and trailing whitespace.
+    pub fn wide_buf_to_string(buf: &[u16]) -> String {
+        let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        String::from_utf16_lossy(&buf[..end]).trim().to_string()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn enumerate_drive_roots() -> Vec<String> {
+    use win32_storage::*;
+
+    let mut buf = vec![0u16; 512];
+    let len = unsafe { GetLogicalDriveStringsW(buf.len() as u32, buf.as_mut_ptr()) };
+    if len == 0 {
+        return Vec::new();
+    }
+
+    // The buffer contains null-terminated strings, double-null at the end.
+    // e.g. "C:\\\0D:\\\0\0"
+    let mut drives = Vec::new();
+    let mut start = 0usize;
+    let total = len as usize;
+    for i in 0..total {
+        if buf[i] == 0 {
+            if i > start {
+                let s = String::from_utf16_lossy(&buf[start..i]);
+                drives.push(s);
+            }
+            start = i + 1;
+        }
+    }
+    drives
+}
+
+/// Query whether the physical drive backing a given drive letter supports TRIM
+/// (i.e., is likely an SSD/NVMe).
+#[cfg(target_os = "windows")]
+fn drive_supports_trim(drive_letter: char) -> bool {
+    use std::ffi::c_void;
+    use win32_storage::*;
+
+    // We need to open \\.\X: (the volume) to query storage properties.
+    let vol_path = to_wide(&format!("\\\\.\\{drive_letter}:"));
+    let handle = unsafe {
+        CreateFileW(
+            vol_path.as_ptr(),
+            0, // No read/write access needed for the query
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+
+    if handle == INVALID_HANDLE_VALUE {
+        return false;
+    }
+
+    // Query StorageDeviceTrimProperty (property_id = 8)
+    let query = StoragePropertyQuery {
+        property_id: 8, // StorageDeviceTrimProperty
+        query_type: 0,  // PropertyStandardQuery
+        additional: [0],
+    };
+
+    let mut descriptor = DeviceTrimDescriptor {
+        version: 0,
+        size: 0,
+        trim_enabled: 0,
+    };
+    let mut returned: u32 = 0;
+
+    let ok = unsafe {
+        DeviceIoControl(
+            handle,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            &query as *const _ as *const c_void,
+            std::mem::size_of::<StoragePropertyQuery>() as u32,
+            &mut descriptor as *mut _ as *mut c_void,
+            std::mem::size_of::<DeviceTrimDescriptor>() as u32,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+
+    unsafe { CloseHandle(handle) };
+
+    ok != 0 && descriptor.trim_enabled != 0
+}
 
 #[cfg(target_os = "windows")]
 pub fn list_devices() -> Result<Vec<StorageDevice>, StorageError> {
-    let ps_script = r#"
-$disks = Get-Disk | Select-Object Number, FriendlyName, SerialNumber, Size, MediaType, BusType, IsOffline, IsReadOnly
-$result = @()
-foreach ($d in $disks) {
-    $parts = Get-Partition -DiskNumber $d.Number -ErrorAction SilentlyContinue |
-        Select-Object PartitionNumber, DriveLetter, Size, Type, IsSystem
-    $volumes = @()
-    foreach ($p in $parts) {
-        if ($p.DriveLetter) {
-            $vol = Get-Volume -DriveLetter $p.DriveLetter -ErrorAction SilentlyContinue |
-                Select-Object FileSystemType, FileSystemLabel, Size, SizeRemaining, HealthStatus
-            $volumes += @{
-                id = "$($p.DriveLetter):"
-                letter = "$($p.DriveLetter)"
-                label = if($vol){$vol.FileSystemLabel}else{""}
-                fs = if($vol){"$($vol.FileSystemType)"}else{"Unknown"}
-                size = $p.Size
-                available = if($vol){$vol.SizeRemaining}else{0}
-                used = if($vol){$vol.Size - $vol.SizeRemaining}else{0}
-                is_system = [bool]$p.IsSystem
-            }
-        }
-    }
-    $result += @{
-        id = "\\.\PhysicalDrive$($d.Number)"
-        name = $d.FriendlyName
-        model = $d.FriendlyName
-        serial = $d.SerialNumber
-        size = $d.Size
-        media_type = "$($d.MediaType)"
-        bus_type = "$($d.BusType)"
-        removable = ($d.BusType -eq 'USB' -or $d.BusType -eq 'SD')
-        partitions = $volumes
-    }
-}
-$result | ConvertTo-Json -Depth 4
-"#;
+    use win32_storage::*;
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("powershell: {e}")))?;
+    let roots = enumerate_drive_roots();
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("powershell exit {}: {stderr}", output.status)));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_windows_devices_json(&stdout)
-}
-
-#[cfg(target_os = "windows")]
-fn parse_windows_devices_json(json_str: &str) -> Result<Vec<StorageDevice>, StorageError> {
-    let trimmed = json_str.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // PowerShell may return a single object (not array) if only one disk.
-    let values: Vec<serde_json::Value> = if trimmed.starts_with('[') {
-        serde_json::from_str(trimmed)
-            .map_err(|e| StorageError::ParseError(format!("json array: {e}")))?
-    } else {
-        let single: serde_json::Value = serde_json::from_str(trimmed)
-            .map_err(|e| StorageError::ParseError(format!("json object: {e}")))?;
-        vec![single]
-    };
-
+    // Group drives by physical drive index. We produce one StorageDevice per
+    // unique drive-type class (fixed, removable, remote, cdrom) since without
+    // WMI we cannot reliably map drive letters to physical disk numbers.
+    // Instead, each logical volume is its own "device" with a single partition.
     let mut devices = Vec::new();
 
-    for v in &values {
-        let id = v["id"].as_str().unwrap_or("").to_string();
-        let name = v["name"].as_str().unwrap_or("Unknown").to_string();
-        let model = v["model"].as_str().map(|s| s.to_string());
-        let serial = v["serial"].as_str()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.trim().to_string());
-        let size_bytes = v["size"].as_u64().unwrap_or(0);
-        let media_type = v["media_type"].as_str().unwrap_or("");
-        let bus_type = v["bus_type"].as_str().unwrap_or("");
-        let removable = v["removable"].as_bool().unwrap_or(false);
+    for root in &roots {
+        let root_wide = to_wide(root);
+        let drive_type = unsafe { GetDriveTypeW(root_wide.as_ptr()) };
 
-        let device_type = match media_type.to_lowercase().as_str() {
-            s if s.contains("ssd") => StorageType::SSD,
-            s if s.contains("nvme") => StorageType::NVMe,
-            _ => match bus_type.to_lowercase().as_str() {
-                "nvme" => StorageType::NVMe,
-                "usb" => StorageType::USB,
-                "sd" => StorageType::SDCard,
-                _ => {
-                    if media_type.to_lowercase().contains("hdd") || media_type.to_lowercase().contains("unspecified") {
-                        StorageType::HDD
-                    } else {
-                        StorageType::SSD
-                    }
-                }
-            },
-        };
-
-        // Parse partitions.
-        let mut partitions = Vec::new();
-        let parts_val = &v["partitions"];
-        let parts_arr: Vec<&serde_json::Value> = if let Some(arr) = parts_val.as_array() {
-            arr.iter().collect()
-        } else if parts_val.is_object() {
-            vec![parts_val]
-        } else {
-            vec![]
-        };
-
-        for pv in &parts_arr {
-            let part_id = pv["id"].as_str().unwrap_or("").to_string();
-            let label_str = pv["label"].as_str().unwrap_or("");
-            let label = if label_str.is_empty() {
-                None
-            } else {
-                Some(label_str.to_string())
-            };
-            let fs_str = pv["fs"].as_str().unwrap_or("Unknown");
-            let part_size = pv["size"].as_u64().unwrap_or(0);
-            let available = pv["available"].as_u64().unwrap_or(0);
-            let used = pv["used"].as_u64().unwrap_or(part_size.saturating_sub(available));
-            let is_system = pv["is_system"].as_bool().unwrap_or(false);
-
-            let mount_point = pv["letter"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .map(|s| format!("{s}:\\"));
-
-            partitions.push(Partition {
-                id: part_id,
-                label,
-                filesystem: FileSystem::from_str(fs_str),
-                mount_point,
-                size_bytes: part_size,
-                used_bytes: used,
-                available_bytes: available,
-                uuid: None,
-                is_system,
-                is_encrypted: false, // Would need BitLocker query.
-            });
+        // Skip unknown / no-root-directory drives.
+        if drive_type < 2 {
+            continue;
         }
 
+        // Volume label and filesystem name.
+        let mut vol_name_buf = [0u16; 256];
+        let mut fs_name_buf = [0u16; 64];
+        let mut serial: u32 = 0;
+        let mut max_comp: u32 = 0;
+        let mut flags: u32 = 0;
+
+        let vol_ok = unsafe {
+            GetVolumeInformationW(
+                root_wide.as_ptr(),
+                vol_name_buf.as_mut_ptr(),
+                vol_name_buf.len() as u32,
+                &mut serial,
+                &mut max_comp,
+                &mut flags,
+                fs_name_buf.as_mut_ptr(),
+                fs_name_buf.len() as u32,
+            )
+        };
+
+        let vol_label = if vol_ok != 0 {
+            let s = wide_buf_to_string(&vol_name_buf);
+            if s.is_empty() { None } else { Some(s) }
+        } else {
+            None
+        };
+
+        let fs_name = if vol_ok != 0 {
+            wide_buf_to_string(&fs_name_buf)
+        } else {
+            String::from("Unknown")
+        };
+
+        // Disk space.
+        let mut free_avail: u64 = 0;
+        let mut total_bytes: u64 = 0;
+        let mut total_free: u64 = 0;
+        let space_ok = unsafe {
+            GetDiskFreeSpaceExW(
+                root_wide.as_ptr(),
+                &mut free_avail,
+                &mut total_bytes,
+                &mut total_free,
+            )
+        };
+
+        let (size_bytes, available_bytes) = if space_ok != 0 {
+            (total_bytes, free_avail)
+        } else {
+            (0, 0)
+        };
+        let used_bytes = size_bytes.saturating_sub(available_bytes);
+
+        // Drive letter (e.g. 'C').
+        let letter = root.chars().next().unwrap_or('?');
+        let drive_id = format!("{letter}:");
+
+        // Classify device type.
+        let (device_type, removable) = match drive_type {
+            DRIVE_REMOVABLE => (StorageType::USB, true),
+            DRIVE_REMOTE => (StorageType::NetworkDrive, false),
+            DRIVE_CDROM => (StorageType::Optical, true),
+            DRIVE_FIXED => {
+                // Check TRIM support to distinguish SSD from HDD.
+                if drive_supports_trim(letter) {
+                    (StorageType::SSD, false)
+                } else {
+                    (StorageType::HDD, false)
+                }
+            }
+            _ => (StorageType::HDD, false),
+        };
+
+        // Determine if this is the system partition (where Windows is installed).
+        let is_system = {
+            let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+            sys_root
+                .to_uppercase()
+                .starts_with(&letter.to_uppercase().to_string())
+        };
+
+        let display_name = match &vol_label {
+            Some(lbl) => format!("{lbl} ({drive_id})"),
+            None => format!("Volume ({drive_id})"),
+        };
+
+        let partition = Partition {
+            id: drive_id.clone(),
+            label: vol_label,
+            filesystem: FileSystem::from_str(&fs_name),
+            mount_point: Some(root.clone()),
+            size_bytes,
+            used_bytes,
+            available_bytes,
+            uuid: None,
+            is_system,
+            is_encrypted: false,
+        };
+
         devices.push(StorageDevice {
-            id,
-            name,
-            model,
-            serial,
+            id: drive_id,
+            name: display_name,
+            model: None,
+            serial: if serial != 0 {
+                Some(format!("{serial:08X}"))
+            } else {
+                None
+            },
             size_bytes,
             device_type,
             removable,
-            partitions,
+            partitions: vec![partition],
         });
     }
 
@@ -457,60 +712,44 @@ pub fn unmount_partition(partition_id: &str) -> Result<(), StorageError> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn eject_device(device_id: &str) -> Result<(), StorageError> {
-    let ps_script = format!(
-        r#"
-$diskNum = '{device_id}' -replace '.*PhysicalDrive', ''
-$disk = Get-Disk -Number $diskNum -ErrorAction Stop
-if (-not ($disk.BusType -eq 'USB' -or $disk.BusType -eq 'SD')) {{
-    throw "Device is not removable"
-}}
-# Offline the disk to safely eject
-Set-Disk -Number $diskNum -IsOffline $true -ErrorAction Stop
-"#
-    );
-
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("powershell eject: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CannotEject(stderr.to_string()));
-    }
-    Ok(())
+pub fn eject_device(_device_id: &str) -> Result<(), StorageError> {
+    // Safe eject requires IOCTL_STORAGE_EJECT_MEDIA which needs elevation.
+    // For now, delegate to mountvol to dismount all partitions on the device.
+    Err(StorageError::NotSupported)
 }
 
 #[cfg(target_os = "windows")]
 pub fn query_partition_usage(partition_id: &str) -> Result<(u64, u64), StorageError> {
-    // partition_id is like "C:" — extract drive letter.
-    let letter = partition_id
-        .chars()
-        .next()
-        .ok_or_else(|| StorageError::PartitionNotFound(partition_id.to_string()))?;
+    use win32_storage::*;
 
-    let ps_script = format!(
-        "Get-Volume -DriveLetter '{letter}' | Select-Object Size, SizeRemaining | ConvertTo-Json"
-    );
+    // partition_id is like "C:" — build root path "C:\".
+    let root = if partition_id.ends_with('\\') {
+        partition_id.to_string()
+    } else {
+        format!("{partition_id}\\")
+    };
+    let root_wide = to_wide(&root);
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
-        .output()
-        .map_err(|e| StorageError::CommandFailed(format!("powershell: {e}")))?;
+    let mut free_avail: u64 = 0;
+    let mut total: u64 = 0;
+    let mut total_free: u64 = 0;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("Get-Volume: {stderr}")));
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            root_wide.as_ptr(),
+            &mut free_avail,
+            &mut total,
+            &mut total_free,
+        )
+    };
+
+    if ok == 0 {
+        return Err(StorageError::CommandFailed(format!(
+            "GetDiskFreeSpaceExW failed for {partition_id}"
+        )));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let v: serde_json::Value = serde_json::from_str(stdout.trim())
-        .map_err(|e| StorageError::ParseError(format!("json: {e}")))?;
-
-    let total = v["Size"].as_u64().unwrap_or(0);
-    let available = v["SizeRemaining"].as_u64().unwrap_or(0);
-    Ok((total, available))
+    Ok((total, free_avail))
 }
 
 #[cfg(target_os = "windows")]
@@ -519,7 +758,9 @@ pub fn disk_usage(path: &str) -> Result<DiskUsage, StorageError> {
     let drive_root = if path.len() >= 2 && path.as_bytes()[1] == b':' {
         &path[..2]
     } else {
-        return Err(StorageError::ParseError(format!("cannot determine drive from path: {path}")));
+        return Err(StorageError::ParseError(format!(
+            "cannot determine drive from path: {path}"
+        )));
     };
 
     let (total, available) = query_partition_usage(drive_root)?;

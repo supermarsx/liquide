@@ -5,7 +5,7 @@
 //!
 //! # Platform support
 //!
-//! - **Linux**: `lsblk`, `df`, `mount`/`umount`, `udisksctl`
+//! - **Linux**: `/sys/block/` enumeration, `/proc/mounts`, `statvfs()` syscall
 //! - **Windows**: PowerShell `Get-Disk`, `Get-Partition`, `Get-Volume`
 //! - **macOS**: `diskutil`, `df`
 //!
