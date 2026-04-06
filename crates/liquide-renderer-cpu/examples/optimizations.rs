@@ -8,6 +8,7 @@ use liquide_compositor::geometry::Rect;
 use liquide_compositor::scene::FlatNode;
 use liquide_renderer_cpu::lod::PerformanceMode;
 use liquide_renderer_cpu::renderer::SoftwareRenderer;
+use liquide_renderer_cpu::Renderer as _;
 
 /// Example UI element with cached layout.
 struct UiElement {

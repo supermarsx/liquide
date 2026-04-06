@@ -35,6 +35,10 @@ pub struct TileEncoder {
     sequence: u64,
     /// Statistics from the most recently encoded frame.
     last_stats: Option<FrameStats>,
+    /// Reusable scratch buffer for current frame tiles (avoids per-frame allocation).
+    current_tiles_buf: Vec<Option<Vec<u8>>>,
+    /// Reusable damaged tile lookup set (avoids per-frame HashMap allocation).
+    damaged_set: HashMap<(u32, u32), DamageClass>,
 }
 
 impl TileEncoder {
@@ -52,6 +56,8 @@ impl TileEncoder {
             strategy_config: StrategyConfig::default(),
             sequence: 0,
             last_stats: None,
+            current_tiles_buf: vec![None; total],
+            damaged_set: HashMap::new(),
         }
     }
 
@@ -69,29 +75,103 @@ impl TileEncoder {
 
         let mut batch = TileBatch::new(self.sequence);
 
-        // Build set of damaged tile coordinates for quick lookup
-        let damaged: HashMap<(u32, u32), DamageClass> = damage_tiles
+        // Build set of damaged tile coordinates for quick lookup (reuse allocation)
+        self.damaged_set.clear();
+        for dt in damage_tiles {
+            self.damaged_set.insert((dt.x, dt.y), dt.class);
+        }
+
+        // Extract current tiles and compute CRCs for damaged tiles.
+        // This phase is embarrassingly parallel: extract_tile reads from a
+        // shared &[u8] pixel buffer and crc32c is a pure function.
+        // Use mem::take to avoid cloning prev_crcs (zero-copy swap).
+        let mut current_crcs: Vec<u32> = std::mem::take(&mut self.prev_crcs);
+        if current_crcs.is_empty() {
+            current_crcs = vec![0; self.grid.total_tiles() as usize];
+        }
+        // Reuse current_tiles buffer
+        self.current_tiles_buf.iter_mut().for_each(|s| *s = None);
+        let total_tiles = self.grid.total_tiles() as usize;
+        let mut current_tiles = std::mem::take(&mut self.current_tiles_buf);
+        if current_tiles.len() != total_tiles {
+            current_tiles = vec![None; total_tiles];
+        }
+
+        // Save previous CRCs for damaged tiles before they're overwritten.
+        // (current_crcs starts as the previous frame's CRCs; extract phase overwrites damaged entries)
+        let prev_crc_for_tile: HashMap<usize, u32> = damage_tiles
             .iter()
-            .map(|dt| ((dt.x, dt.y), dt.class))
+            .map(|dt| {
+                let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
+                (idx, current_crcs[idx])
+            })
             .collect();
 
-        // Extract current tiles and compute CRCs for damaged tiles
-        let mut current_crcs: Vec<u32> = self.prev_crcs.clone();
-        let mut current_tiles: Vec<Option<Vec<u8>>> = vec![None; self.grid.total_tiles() as usize];
+        if damage_tiles.len() <= 2 {
+            // Small number of tiles — not worth threading overhead.
+            for dt in damage_tiles {
+                let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
+                let tile_data = self.codec.extract_tile(
+                    &fb.pixels,
+                    fb.stride,
+                    fb.width,
+                    fb.height,
+                    dt.x,
+                    dt.y,
+                );
+                let crc = hash::crc32c(&tile_data);
+                current_crcs[idx] = crc;
+                current_tiles[idx] = Some(tile_data);
+            }
+        } else {
+            // Parallel tile extraction + CRC using scoped threads.
+            let num_workers = std::thread::available_parallelism()
+                .map(|n| n.get().min(8))
+                .unwrap_or(4);
+            let chunk_size = (damage_tiles.len() + num_workers - 1) / num_workers;
 
-        for dt in damage_tiles {
-            let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
-            let tile_data = self.codec.extract_tile(
-                &fb.pixels,
-                fb.stride,
-                fb.width,
-                fb.height,
-                dt.x,
-                dt.y,
-            );
-            let crc = hash::crc32c(&tile_data);
-            current_crcs[idx] = crc;
-            current_tiles[idx] = Some(tile_data);
+            // Pre-compute work items: (tile_index, tx, ty)
+            let work: Vec<(usize, u32, u32)> = damage_tiles
+                .iter()
+                .map(|dt| {
+                    let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
+                    (idx, dt.x, dt.y)
+                })
+                .collect();
+
+            // Shared read-only references for the thread pool.
+            let codec = &self.codec;
+            let pixels = &fb.pixels;
+            let stride = fb.stride;
+            let fb_width = fb.width;
+            let fb_height = fb.height;
+
+            std::thread::scope(|s| {
+                let handles: Vec<_> = work
+                    .chunks(chunk_size)
+                    .map(|chunk| {
+                        s.spawn(move || {
+                            let mut results: Vec<(usize, u32, Vec<u8>)> =
+                                Vec::with_capacity(chunk.len());
+                            for &(idx, tx, ty) in chunk {
+                                let tile_data =
+                                    codec.extract_tile(pixels, stride, fb_width, fb_height, tx, ty);
+                                let crc = hash::crc32c(&tile_data);
+                                results.push((idx, crc, tile_data));
+                            }
+                            results
+                        })
+                    })
+                    .collect();
+
+                // Collect results back into the single-owner vectors.
+                for handle in handles {
+                    for (idx, crc, tile_data) in handle.join().unwrap() {
+                        current_crcs[idx] = crc;
+                        current_tiles[idx] = Some(tile_data);
+                    }
+                }
+            });
         }
 
         // Build copy index from all current CRCs
@@ -109,7 +189,7 @@ impl TileEncoder {
             let prev_crc = if self.prev_tiles[idx].is_empty() {
                 None
             } else {
-                Some(self.prev_crcs[idx])
+                prev_crc_for_tile.get(&idx).copied()
             };
             let previous = if self.prev_tiles[idx].is_empty() {
                 None
@@ -117,7 +197,7 @@ impl TileEncoder {
                 Some(self.prev_tiles[idx].as_slice())
             };
 
-            let damage_class = damaged.get(&(dt.x, dt.y)).copied().unwrap_or(DamageClass::UiPrimitive);
+            let damage_class = self.damaged_set.get(&(dt.x, dt.y)).copied().unwrap_or(DamageClass::UiPrimitive);
 
             let strat = strategy::choose_strategy(
                 current,
@@ -162,14 +242,16 @@ impl TileEncoder {
             });
         }
 
-        // Update previous frame state
+        // Update previous frame state — move current_crcs back and update prev_tiles
         for dt in damage_tiles {
             let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
             if let Some(tile_data) = current_tiles[idx].take() {
-                self.prev_crcs[idx] = current_crcs[idx];
                 self.prev_tiles[idx] = tile_data;
             }
         }
+        // Restore buffers for next frame reuse
+        self.prev_crcs = current_crcs;
+        self.current_tiles_buf = current_tiles;
 
         // Fill in frame stats
         let encode_time = frame_start.elapsed();
@@ -222,6 +304,28 @@ impl TileEncoder {
     /// Update the strategy configuration.
     pub fn set_strategy_config(&mut self, config: StrategyConfig) {
         self.strategy_config = config;
+    }
+
+    /// Encode a frame from raw pixel bytes, avoiding `FrameBuffer` construction
+    /// when the caller only has a pixel slice (e.g. from a `RenderedFrame`).
+    ///
+    /// `pixels` must contain at least `stride * height` bytes in BGRA8 format.
+    pub fn encode_frame_raw(
+        &mut self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        damage_tiles: &[DamageTile],
+    ) -> crate::Result<TileBatch> {
+        let fb = FrameBuffer {
+            pixels: pixels.to_vec(),
+            width,
+            height,
+            stride,
+            format: liquide_compositor::pixel::PixelFormat::Bgra8,
+        };
+        self.encode_frame(&fb, damage_tiles)
     }
 
     /// Resize the encoder for new frame buffer dimensions.

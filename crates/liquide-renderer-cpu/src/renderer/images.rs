@@ -7,6 +7,8 @@ use liquide_compositor::scene::{FlatNode, SceneNodeKind};
 
 use crate::rasterizer;
 
+use crate::texture_cache::image_texture_key;
+
 use super::SoftwareRenderer;
 
 impl SoftwareRenderer {
@@ -26,9 +28,9 @@ impl SoftwareRenderer {
             fit,
         } = &node.kind
         {
-            let texture_id = format!("img_{}", image_id);
+            let texture_key = image_texture_key(*image_id);
 
-            if let Some(texture) = self.texture_cache.get(&texture_id) {
+            if let Some(texture) = self.texture_cache.get_by_key(texture_key) {
                 let src_w = texture.width as f32;
                 let src_h = texture.height as f32;
                 let dst_w = bounds.width;
@@ -176,8 +178,8 @@ impl SoftwareRenderer {
                         self.render_gradient(fb, img_rect, gradient, opacity, node.corner_radius);
                     }
                     BackgroundImage::ImageId(image_id) => {
-                        let texture_id = format!("img_{}", image_id);
-                        if let Some(texture) = self.texture_cache.get(&texture_id) {
+                        let texture_key = image_texture_key(*image_id);
+                        if let Some(texture) = self.texture_cache.get_by_key(texture_key) {
                             let tw = texture.width as f32;
                             let th = texture.height as f32;
                             let img_rect = compute_image_rect(tw, th);
@@ -261,8 +263,8 @@ impl SoftwareRenderer {
             use liquide_compositor::scene::BackgroundImage;
             match &spec.source {
                 BackgroundImage::ImageId(image_id) => {
-                    let texture_id = format!("img_{}", image_id);
-                    if let Some(texture) = self.texture_cache.get(&texture_id) {
+                    let texture_key = image_texture_key(*image_id);
+                    if let Some(texture) = self.texture_cache.get_by_key(texture_key) {
                         let src =
                             Rect::new(0.0, 0.0, texture.width as f32, texture.height as f32);
                         self.draw_scaled_texture(fb, &texture, src, bounds, opacity);

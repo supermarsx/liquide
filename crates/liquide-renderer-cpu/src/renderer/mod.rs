@@ -43,19 +43,9 @@ struct CachedShadow {
     bh: u32,
 }
 
-/// The renderer trait: processes a flattened scene into a frame buffer.
-pub trait Renderer {
-    /// Render the visible scene nodes into the frame buffer.
-    ///
-    /// Only tiles listed in `damage` need re-rendering. Returns
-    /// per-tile damage classifications for the encoder.
-    fn render(
-        &mut self,
-        nodes: &[FlatNode],
-        fb: &mut FrameBuffer,
-        damage: &DamageSet,
-    ) -> crate::Result<Vec<DamageTile>>;
-}
+// Re-export the Renderer trait from liquide-compositor so downstream crates
+// can import it from either location.
+pub use liquide_compositor::Renderer;
 
 /// The software (CPU) renderer.
 pub struct SoftwareRenderer {
@@ -174,7 +164,21 @@ impl SoftwareRenderer {
     ) {
         const PREWARM_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\
              0123456789 .,;:!?-\u{2013}\u{2014}'\"()[]{}/<>@#$%^&*+=_~`|\\\u{2026}\u{2022}\u{00b7}";
-        for ch in PREWARM_CHARS.chars() {
+        // Latin Extended-A accented characters, common symbols, and list markers.
+        const EXTENDED_PREWARM: &str = "\
+            \u{00e0}\u{00e1}\u{00e2}\u{00e3}\u{00e4}\u{00e5}\u{00e6}\u{00e7}\
+            \u{00e8}\u{00e9}\u{00ea}\u{00eb}\u{00ec}\u{00ed}\u{00ee}\u{00ef}\
+            \u{00f0}\u{00f1}\u{00f2}\u{00f3}\u{00f4}\u{00f5}\u{00f6}\u{00f9}\
+            \u{00fa}\u{00fb}\u{00fc}\u{00fd}\u{00fe}\u{00ff}\
+            \u{00c0}\u{00c1}\u{00c2}\u{00c3}\u{00c4}\u{00c5}\u{00c6}\u{00c7}\
+            \u{00c8}\u{00c9}\u{00ca}\u{00cb}\u{00cc}\u{00cd}\u{00ce}\u{00cf}\
+            \u{00d0}\u{00d1}\u{00d2}\u{00d3}\u{00d4}\u{00d5}\u{00d6}\u{00d9}\
+            \u{00da}\u{00db}\u{00dc}\u{00dd}\u{00de}\
+            \u{20ac}\u{00a3}\u{00a5}\u{00a9}\u{00ae}\u{2122}\u{00b0}\u{00b1}\
+            \u{00d7}\u{00f7}\u{2026}\u{2014}\u{2013}\u{2018}\u{2019}\u{201c}\
+            \u{201d}\u{00ab}\u{00bb}\u{00bf}\u{00a1}\
+            \u{2022}\u{25e6}\u{25aa}\u{25b8}\u{25b9}";
+        for ch in PREWARM_CHARS.chars().chain(EXTENDED_PREWARM.chars()) {
             let key = GlyphKey {
                 font_id,
                 glyph_id: ch as u32,
@@ -346,23 +350,23 @@ impl SoftwareRenderer {
         let decoded = crate::image_decode::decode_image(data)
             .map_err(|e| format!("Image decode error: {}", e))?;
 
-        let texture_id = format!("img_{}", image_id);
+        let key = crate::texture_cache::image_texture_key(image_id);
         self.texture_cache
-            .insert(texture_id, decoded.pixels, decoded.width, decoded.height);
+            .insert_by_key(key, decoded.pixels, decoded.width, decoded.height);
         Ok(())
     }
 
     /// Register a pre-decoded RGBA8 image.
     pub fn register_image_rgba(&mut self, image_id: u64, pixels: Vec<u8>, width: u32, height: u32) {
-        let texture_id = format!("img_{}", image_id);
-        self.texture_cache.insert(texture_id, pixels, width, height);
+        let key = crate::texture_cache::image_texture_key(image_id);
+        self.texture_cache.insert_by_key(key, pixels, width, height);
     }
 
     /// Check if an image is loaded.
     #[must_use]
     pub fn has_image(&mut self, image_id: u64) -> bool {
-        let texture_id = format!("img_{}", image_id);
-        self.texture_cache.get(&texture_id).is_some()
+        let key = crate::texture_cache::image_texture_key(image_id);
+        self.texture_cache.get_by_key(key).is_some()
     }
 
     // --- Dirty Rectangle Management ---
@@ -496,7 +500,7 @@ impl Renderer for SoftwareRenderer {
         nodes: &[FlatNode],
         fb: &mut FrameBuffer,
         damage: &DamageSet,
-    ) -> crate::Result<Vec<DamageTile>> {
+    ) -> liquide_compositor::RenderResult<Vec<DamageTile>> {
         // Reset pending-glyph tracker for this frame.
         self.has_pending_glyphs = false;
 
@@ -511,15 +515,87 @@ impl Renderer for SoftwareRenderer {
                 .insert(glyph.key, &glyph.bitmap, &glyph.metrics);
         }
 
+        // Compute damage bounding box in pixel coordinates for early culling.
+        // Nodes fully outside the damaged region are skipped since only damaged
+        // tiles will be blitted to the final output.
+        let damage_bbox = if damage.tiles.is_empty() {
+            None
+        } else {
+            let ts = damage.tile_size as f32;
+            // Padding accounts for effects (blur, shadow) that extend beyond
+            // the node's nominal bounds.
+            let padding = 32.0_f32;
+            let min_x = damage.tiles.iter().map(|t| t.x).min().unwrap_or(0) as f32 * ts - padding;
+            let min_y = damage.tiles.iter().map(|t| t.y).min().unwrap_or(0) as f32 * ts - padding;
+            let max_x =
+                (damage.tiles.iter().map(|t| t.x).max().unwrap_or(0) as f32 + 1.0) * ts + padding;
+            let max_y =
+                (damage.tiles.iter().map(|t| t.y).max().unwrap_or(0) as f32 + 1.0) * ts + padding;
+            Some((min_x, min_y, max_x, max_y))
+        };
+
         // Render each node exactly once in z-order.
         for node in nodes {
+            // Skip nodes completely outside the damage bounding box.
+            if let Some((dx0, dy0, dx1, dy1)) = damage_bbox {
+                let b = &node.absolute_bounds;
+                if b.x >= dx1 || b.y >= dy1 || b.x + b.width <= dx0 || b.y + b.height <= dy0 {
+                    continue;
+                }
+            }
+
             let distance = self.calculate_distance_from_center(&node.absolute_bounds);
             let lod_level = self.select_lod(node, distance);
 
             self.render_node_with_lod(node, fb, lod_level);
         }
 
-        Ok(damage.tiles.clone())
+        // Return value is unused by all call sites (`let _ = renderer.render(...)`)
+        // so we avoid cloning the entire damage tiles Vec.
+        Ok(Vec::new())
+    }
+
+    fn blur_enabled(&self) -> bool {
+        self.blur_enabled
+    }
+
+    fn set_blur_enabled(&mut self, enabled: bool) {
+        self.blur_enabled = enabled;
+    }
+
+    fn has_pending_glyphs(&self) -> bool {
+        self.has_pending_glyphs
+    }
+
+    fn report_render_time(&mut self, ms: f64) {
+        let alpha = 0.1;
+        self.avg_render_ms = self.avg_render_ms * (1.0 - alpha) + ms * alpha;
+        if self.blur_enabled && self.avg_render_ms > self.blur_budget_ms {
+            self.blur_enabled = false;
+        } else if !self.blur_enabled && self.avg_render_ms < self.blur_budget_ms * 0.5 {
+            self.blur_enabled = true;
+        }
+    }
+
+    fn set_skeleton_window(&mut self, window_id: Option<u64>) {
+        self.skeleton_window = window_id;
+    }
+
+    fn get_quality_mode(&self) -> liquide_compositor::RenderQuality {
+        match self.lod_manager.get_performance_mode() {
+            crate::lod::PerformanceMode::Quality => liquide_compositor::RenderQuality::Quality,
+            crate::lod::PerformanceMode::Balanced => liquide_compositor::RenderQuality::Balanced,
+            crate::lod::PerformanceMode::Performance => liquide_compositor::RenderQuality::Performance,
+        }
+    }
+
+    fn set_quality_mode(&mut self, mode: liquide_compositor::RenderQuality) {
+        let lod_mode = match mode {
+            liquide_compositor::RenderQuality::Quality => crate::lod::PerformanceMode::Quality,
+            liquide_compositor::RenderQuality::Balanced => crate::lod::PerformanceMode::Balanced,
+            liquide_compositor::RenderQuality::Performance => crate::lod::PerformanceMode::Performance,
+        };
+        self.lod_manager.set_performance_mode(lod_mode);
     }
 }
 
@@ -678,9 +754,8 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::SvgPath { d, fill, stroke, stroke_width } => {
-                use liquide_paint::svg_path::{parse_svg_path, flatten_path};
-                let commands = parse_svg_path(d);
-                let segments = flatten_path(&commands);
+                use liquide_paint::svg_path::flatten_path_cached;
+                let segments = flatten_path_cached(d);
                 if let Some(fill_color) = fill {
                     let mut fc = *fill_color;
                     if opacity < 1.0 {

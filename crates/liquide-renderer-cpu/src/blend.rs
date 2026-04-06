@@ -402,6 +402,11 @@ pub fn blend_scanline(dst: &mut [u8], src: &[u8], mode: BlendMode) {
         BlendMode::Darken => liquide_simd::blend::blend_scanline_darken(dst, src),
         BlendMode::Lighten => liquide_simd::blend::blend_scanline_lighten(dst, src),
         BlendMode::Difference => liquide_simd::blend::blend_scanline_difference(dst, src),
+        BlendMode::Overlay => liquide_simd::blend::blend_scanline_overlay(dst, src),
+        BlendMode::HardLight => liquide_simd::blend::blend_scanline_hard_light(dst, src),
+        BlendMode::Exclusion => liquide_simd::blend::blend_scanline_exclusion(dst, src),
+        BlendMode::ColorDodge => liquide_simd::blend::blend_scanline_color_dodge(dst, src),
+        BlendMode::ColorBurn => liquide_simd::blend::blend_scanline_color_burn(dst, src),
         _ => {
             // Fallback: per-pixel scalar blend for modes without SIMD paths
             let pixel_count = dst.len() / 4;

@@ -29,7 +29,8 @@ pub mod renderer;
 pub mod text_layout;
 pub mod texture_cache;
 
-pub use renderer::{Renderer, SoftwareRenderer};
+pub use liquide_compositor::Renderer;
+pub use renderer::SoftwareRenderer;
 pub use text_layout::TextLayoutEngine;
 
 use thiserror::Error;

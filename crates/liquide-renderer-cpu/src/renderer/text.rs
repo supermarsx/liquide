@@ -159,14 +159,14 @@ impl SoftwareRenderer {
                     base + *letter_spacing + extra
                 };
 
-                // Split into visual lines
-                let mut wrapped_lines: Vec<String> = Vec::new();
+                // Split into visual lines (pre-allocate for typical text)
+                let mut wrapped_lines: Vec<String> = Vec::with_capacity(8);
                 for hard_line in render_text.split('\n') {
                     if !allows_wrap || max_line_width <= 0.0 {
                         wrapped_lines.push(hard_line.to_string());
                     } else {
                         let indent = if wrapped_lines.is_empty() { *text_indent } else { 0.0 };
-                        let mut current_line = String::new();
+                        let mut current_line = String::with_capacity(hard_line.len());
                         let mut current_width = indent;
 
                         for word in WordSplitter::new(hard_line) {
@@ -175,8 +175,10 @@ impl SoftwareRenderer {
                             if !current_line.is_empty()
                                 && current_width + word_width > max_line_width
                             {
-                                wrapped_lines.push(current_line.trim_end().to_string());
-                                current_line = String::new();
+                                let trimmed = current_line.trim_end();
+                                wrapped_lines.push(trimmed.to_string());
+                                current_line.clear();
+                                current_line.reserve(hard_line.len());
                                 current_width = 0.0;
                             }
 
@@ -184,7 +186,8 @@ impl SoftwareRenderer {
                             current_width += word_width;
                         }
                         if !current_line.is_empty() {
-                            wrapped_lines.push(current_line.trim_end().to_string());
+                            let trimmed = current_line.trim_end();
+                            wrapped_lines.push(trimmed.to_string());
                         } else if hard_line.is_empty() {
                             wrapped_lines.push(String::new());
                         }
@@ -236,14 +239,15 @@ impl SoftwareRenderer {
                                 let key = GlyphKey {
                                     font_id, glyph_id: ch as u32, size_px, subpixel: false,
                                 };
-                                if let Some(cached) = self.glyph_atlas.get(&key).cloned() {
+                                if let Some(cached) = self.glyph_atlas.get(&key) {
                                     let pos = liquide_compositor::geometry::Point::new(
                                         s_pen_x,
                                         s_pen_y + glyph_height as f32,
                                     );
-                                    self.glyph_atlas.blit_glyph(fb, &cached, pos, shadow_c);
+                                    let advance = cached.advance;
+                                    self.glyph_atlas.blit_glyph(fb, cached, pos, shadow_c);
                                     let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                                    s_pen_x += cached.advance + *letter_spacing + extra;
+                                    s_pen_x += advance + *letter_spacing + extra;
                                 } else {
                                     let extra = if ch == ' ' { *word_spacing } else { 0.0 };
                                     s_pen_x += estimated_advance + *letter_spacing + extra;
@@ -310,12 +314,12 @@ impl SoftwareRenderer {
                                 size_px,
                                 subpixel: false,
                             };
-                            if let Some(cached) = self.glyph_atlas.get(&ellipsis_key).cloned() {
+                            if let Some(cached) = self.glyph_atlas.get(&ellipsis_key) {
                                 let pos = liquide_compositor::geometry::Point::new(
                                     pen_x,
                                     pen_y + glyph_height as f32,
                                 );
-                                self.glyph_atlas.blit_glyph(fb, &cached, pos, c);
+                                self.glyph_atlas.blit_glyph(fb, cached, pos, c);
                             }
                             break;
                         }
@@ -326,14 +330,15 @@ impl SoftwareRenderer {
                             size_px,
                             subpixel: false,
                         };
-                        if let Some(cached) = self.glyph_atlas.get(&key).cloned() {
+                        if let Some(cached) = self.glyph_atlas.get(&key) {
                             let pos = liquide_compositor::geometry::Point::new(
                                 pen_x,
                                 pen_y + glyph_height as f32,
                             );
-                            self.glyph_atlas.blit_glyph(fb, &cached, pos, c);
+                            let advance = cached.advance;
+                            self.glyph_atlas.blit_glyph(fb, cached, pos, c);
                             let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                            pen_x += cached.advance + *letter_spacing + extra;
+                            pen_x += advance + *letter_spacing + extra;
                         } else {
                             let extra = if ch == ' ' { *word_spacing } else { 0.0 };
                             pen_x += estimated_advance + *letter_spacing + extra;

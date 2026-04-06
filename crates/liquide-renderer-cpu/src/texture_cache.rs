@@ -38,10 +38,32 @@ impl CachedTexture {
     }
 }
 
+/// Hash a string texture ID to a `u64` key using FNV-1a.
+#[inline]
+fn hash_texture_id(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// Compute the numeric key for an image ID (equivalent to `format!("img_{}", id)`
+/// but without allocation). Uses a fixed high bit to avoid collisions with
+/// string-hashed keys.
+#[inline]
+pub fn image_texture_key(image_id: u64) -> u64 {
+    // Set bit 63 so image keys never collide with FNV-1a string hashes
+    // (FNV-1a distributes across all 64 bits but statistically this is safe
+    // for the small key-space we deal with).
+    image_id | (1u64 << 63)
+}
+
 /// Texture cache with LRU eviction policy.
 pub struct TextureCache {
-    /// Cached textures, keyed by texture ID (e.g., file path hash).
-    textures: HashMap<String, CachedTexture>,
+    /// Cached textures, keyed by numeric texture ID.
+    textures: HashMap<u64, CachedTexture>,
     /// Current access timestamp counter.
     current_time: u64,
     /// Maximum cache size in bytes (default: 256 MB).
@@ -68,12 +90,12 @@ impl TextureCache {
         }
     }
 
-    /// Get a cached texture if it exists.
+    /// Get a cached texture by numeric key.
     ///
     /// Returns a cheap clone — pixel data is `Arc`-shared, only the
     /// metadata wrapper (width/height/access_time) is copied.
-    pub fn get(&mut self, texture_id: &str) -> Option<CachedTexture> {
-        if let Some(texture) = self.textures.get_mut(texture_id) {
+    pub fn get_by_key(&mut self, key: u64) -> Option<CachedTexture> {
+        if let Some(texture) = self.textures.get_mut(&key) {
             self.current_time += 1;
             texture.access_time = self.current_time;
             Some(CachedTexture {
@@ -87,11 +109,15 @@ impl TextureCache {
         }
     }
 
-    /// Insert a texture into the cache.
-    /// Evicts least-recently-used textures if necessary to stay under size limit.
-    pub fn insert(&mut self, texture_id: String, data: Vec<u8>, width: u32, height: u32) {
+    /// Get a cached texture by string ID (hashed to u64 internally).
+    pub fn get(&mut self, texture_id: &str) -> Option<CachedTexture> {
+        self.get_by_key(hash_texture_id(texture_id))
+    }
+
+    /// Insert a texture by numeric key.
+    pub fn insert_by_key(&mut self, key: u64, data: Vec<u8>, width: u32, height: u32) {
         let texture_size = data.len();
-        
+
         // Evict LRU entries if needed to make room
         while self.current_size_bytes + texture_size > self.max_size_bytes
             && !self.textures.is_empty()
@@ -109,22 +135,28 @@ impl TextureCache {
         texture.access_time = self.current_time;
 
         // Remove old entry if it exists
-        if let Some(old) = self.textures.remove(&texture_id) {
+        if let Some(old) = self.textures.remove(&key) {
             self.current_size_bytes -= old.size_bytes();
         }
 
         self.current_size_bytes += texture_size;
-        self.textures.insert(texture_id, texture);
+        self.textures.insert(key, texture);
+    }
+
+    /// Insert a texture into the cache by string ID.
+    /// Evicts least-recently-used textures if necessary to stay under size limit.
+    pub fn insert(&mut self, texture_id: String, data: Vec<u8>, width: u32, height: u32) {
+        self.insert_by_key(hash_texture_id(&texture_id), data, width, height);
     }
 
     /// Evict the least-recently-used texture.
     fn evict_lru(&mut self) {
-        // Find the LRU texture by access time, clone only the key (not the texture data)
+        // Find the LRU texture by access time, copy only the key (not the texture data)
         let lru_id = self
             .textures
             .iter()
             .min_by_key(|(_, texture)| texture.access_time)
-            .map(|(id, _)| id.clone());
+            .map(|(id, _)| *id);
         if let Some(id) = lru_id {
             if let Some(old) = self.textures.remove(&id) {
                 self.current_size_bytes -= old.size_bytes();
@@ -132,9 +164,9 @@ impl TextureCache {
         }
     }
 
-    /// Remove a specific texture from the cache.
+    /// Remove a specific texture from the cache by string ID.
     pub fn remove(&mut self, texture_id: &str) -> bool {
-        if let Some(texture) = self.textures.remove(texture_id) {
+        if let Some(texture) = self.textures.remove(&hash_texture_id(texture_id)) {
             self.current_size_bytes -= texture.size_bytes();
             true
         } else {

@@ -116,23 +116,49 @@ pub fn fill_rect_gradient(
             let dx = end.x - start.x;
             let dy = end.y - start.y;
             let len_sq = dx * dx + dy * dy;
+            if len_sq <= 0.0 {
+                return;
+            }
+            let inv_len_sq = 1.0 / len_sq;
+
+            // Pre-compute per-pixel t increment along x axis (t is affine in x)
+            let dt_dx = dx * inv_len_sq;
 
             for y in y0..y1 {
-                for x in x0..x1 {
-                    // Project pixel onto the gradient line
-                    let px = x as f32 + 0.5 - start.x;
-                    let py = y as f32 + 0.5 - start.y;
-                    let t = if len_sq > 0.0 {
-                        ((px * dx + py * dy) / len_sq).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
+                // Compute t at the start of this scanline
+                let py = y as f32 + 0.5 - start.y;
+                let px0 = x0 as f32 + 0.5 - start.x;
+                let mut t = (px0 * dx + py * dy) * inv_len_sq;
 
-                    let color = sample_gradient(stops, t, lut);
+                let row_offset = (y * fb.stride) as usize;
+                for x in x0..x1 {
+                    let t_clamped = t.clamp(0.0, 1.0);
+                    let color = sample_gradient(stops, t_clamped, lut);
                     let pm = color.premultiply();
-                    let dst = fb.get_pixel(x, y);
-                    let result = blend::blend(dst, pm, mode);
-                    fb.set_pixel(x, y, result);
+
+                    // Inline SrcOver blend to avoid function-call + get_pixel/set_pixel overhead
+                    if mode == BlendMode::SrcOver {
+                        let off = row_offset + (x as usize) * 4;
+                        let sa = pm.a as u16;
+                        if sa == 255 {
+                            fb.pixels[off] = pm.b;
+                            fb.pixels[off + 1] = pm.g;
+                            fb.pixels[off + 2] = pm.r;
+                            fb.pixels[off + 3] = pm.a;
+                        } else if sa > 0 {
+                            let inv_a = 255 - sa;
+                            fb.pixels[off] = (pm.b as u16 + (fb.pixels[off] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels[off + 1] = (pm.g as u16 + (fb.pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels[off + 2] = (pm.r as u16 + (fb.pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels[off + 3] = (pm.a as u16 + (fb.pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
+                        }
+                    } else {
+                        let dst = fb.get_pixel(x, y);
+                        let result = blend::blend(dst, pm, mode);
+                        fb.set_pixel(x, y, result);
+                    }
+
+                    t += dt_dx;
                 }
             }
         }
@@ -152,17 +178,37 @@ pub fn fill_rect_gradient(
             let inv_radius = 1.0 / *radius;
 
             for y in y0..y1 {
+                let py = y as f32 + 0.5 - center.y;
+                let row_offset = (y * fb.stride) as usize;
                 for x in x0..x1 {
                     let px = x as f32 + 0.5 - center.x;
-                    let py = y as f32 + 0.5 - center.y;
                     let dist = (px * px + py * py).sqrt();
                     let t = (dist * inv_radius).clamp(0.0, 1.0);
 
                     let color = sample_gradient(stops, t, lut);
                     let pm = color.premultiply();
-                    let dst = fb.get_pixel(x, y);
-                    let result = blend::blend(dst, pm, mode);
-                    fb.set_pixel(x, y, result);
+
+                    // Inline SrcOver blend
+                    if mode == BlendMode::SrcOver {
+                        let off = row_offset + (x as usize) * 4;
+                        let sa = pm.a as u16;
+                        if sa == 255 {
+                            fb.pixels[off] = pm.b;
+                            fb.pixels[off + 1] = pm.g;
+                            fb.pixels[off + 2] = pm.r;
+                            fb.pixels[off + 3] = pm.a;
+                        } else if sa > 0 {
+                            let inv_a = 255 - sa;
+                            fb.pixels[off] = (pm.b as u16 + (fb.pixels[off] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels[off + 1] = (pm.g as u16 + (fb.pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels[off + 2] = (pm.r as u16 + (fb.pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels[off + 3] = (pm.a as u16 + (fb.pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
+                        }
+                    } else {
+                        let dst = fb.get_pixel(x, y);
+                        let result = blend::blend(dst, pm, mode);
+                        fb.set_pixel(x, y, result);
+                    }
                 }
             }
         }
@@ -170,26 +216,38 @@ pub fn fill_rect_gradient(
 }
 
 /// Sample a gradient at position `t` (0.0–1.0) by interpolating between stops.
+///
+/// Uses binary search for the stop interval — O(log N) instead of O(N).
+/// For the common 2-stop case this compiles to the same single comparison;
+/// for 5+ stops it avoids scanning every stop for every pixel.
 fn sample_gradient(stops: &[(f32, Color)], t: f32, lut: &SrgbLut) -> Color {
     if t <= stops[0].0 {
         return stops[0].1;
     }
-    if t >= stops[stops.len() - 1].0 {
-        return stops[stops.len() - 1].1;
+    let last = stops.len() - 1;
+    if t >= stops[last].0 {
+        return stops[last].1;
     }
 
-    for i in 1..stops.len() {
-        if t <= stops[i].0 {
-            let span = stops[i].0 - stops[i - 1].0;
-            let local_t = if span > 0.0 {
-                (t - stops[i - 1].0) / span
-            } else {
-                0.0
-            };
-            return crate::color::lerp_linear(lut, stops[i - 1].1, stops[i].1, local_t);
+    // Binary search: find the rightmost stop where stop.0 <= t
+    let mut lo = 0usize;
+    let mut hi = last;
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if t < stops[mid].0 {
+            hi = mid;
+        } else {
+            lo = mid;
         }
     }
-    stops[stops.len() - 1].1
+
+    let span = stops[hi].0 - stops[lo].0;
+    let local_t = if span > 0.0 {
+        (t - stops[lo].0) / span
+    } else {
+        0.0
+    };
+    crate::color::lerp_linear(lut, stops[lo].1, stops[hi].1, local_t)
 }
 
 /// Sample a gradient at an absolute pixel position (fx, fy).
