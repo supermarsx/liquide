@@ -73,7 +73,7 @@ fn render_glass_node() {
     let mut renderer = SoftwareRenderer::new();
     let mut fb = FrameBuffer::new(128, 128, PixelFormat::Bgra8);
     fb.clear(Color::new(100, 100, 100, 255));
-    let before = fb.pixels.clone();
+    let before = fb.pixels().to_vec();
 
     let mut damage = DamageSet::new(64);
     damage.add(DamageTile { x: 0, y: 0, class: DamageClass::UiPrimitive });
@@ -92,7 +92,7 @@ fn render_glass_node() {
 
     let result = renderer.render(&[node], &mut fb, &damage);
     assert!(result.is_ok(), "render Glass node should succeed");
-    assert_ne!(fb.pixels, before, "Glass tint should modify pixels");
+    assert_ne!(fb.pixels(), &before[..], "Glass tint should modify pixels");
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn render_lock_screen_node() {
             fb.set_pixel(x, y, Color::new((x * 2) as u8, (y * 2) as u8, 128, 255));
         }
     }
-    let before = fb.pixels.clone();
+    let before = fb.pixels().to_vec();
 
     let mut damage = DamageSet::new(64);
     damage.add(DamageTile { x: 0, y: 0, class: DamageClass::UiPrimitive });
@@ -165,5 +165,5 @@ fn render_lock_screen_node() {
 
     let result = renderer.render(&[node], &mut fb, &damage);
     assert!(result.is_ok(), "render LockScreen node should succeed");
-    assert_ne!(fb.pixels, before, "LockScreen should modify pixels (backdrop blur + dark tint)");
+    assert_ne!(fb.pixels(), &before[..], "LockScreen should modify pixels (backdrop blur + dark tint)");
 }

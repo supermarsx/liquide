@@ -42,6 +42,62 @@ pub const VA_ENC_PICTURE_PARAMETER_BUFFER_TYPE: u32 = 22;
 pub const VA_ENC_SLICE_PARAMETER_BUFFER_TYPE: u32 = 23;
 pub const VA_ENC_CODED_BUFFER_TYPE: u32 = 10;
 
+// ---------------------------------------------------------------------------
+// DMA-BUF import constants and structures
+// ---------------------------------------------------------------------------
+
+/// VASurfaceAttribType: memory type.
+pub const VA_SURFACE_ATTRIB_MEM_TYPE: u32 = 0x0000_0001;
+/// VASurfaceAttribType: external buffer descriptor.
+pub const VA_SURFACE_ATTRIB_EXTERNAL_BUFFERS: u32 = 0x0000_0004;
+/// Memory type: DRM PRIME (DMA-BUF fd).
+pub const VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME: u32 = 0x2000_0000;
+/// VA_SURFACE_ATTRIB_SETTABLE flag.
+pub const VA_SURFACE_ATTRIB_SETTABLE: u32 = 2;
+
+/// FOURCC for BGRX (BGRA without alpha channel), little-endian 'XRGB'.
+pub const VA_FOURCC_BGRX: u32 = 0x5852_4742;
+
+/// Surface attribute for `vaCreateSurfaces`.
+#[repr(C)]
+pub struct VASurfaceAttrib {
+    /// Attribute type (e.g. `VA_SURFACE_ATTRIB_MEM_TYPE`).
+    pub type_: u32,
+    /// Flags (e.g. `VA_SURFACE_ATTRIB_SETTABLE`).
+    pub flags: u32,
+    /// Value type: 0 = int, 1 = float, 3 = pointer.
+    pub value_type: u32,
+    /// The value — interpreted as int or pointer depending on `value_type`.
+    pub value: u64,
+}
+
+/// External buffer descriptor for DMA-BUF import via `vaCreateSurfaces`.
+#[repr(C)]
+pub struct VASurfaceAttribExternalBuffers {
+    /// Pixel format (VA_FOURCC).
+    pub pixel_format: u32,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Total data size in bytes.
+    pub data_size: u32,
+    /// Number of planes.
+    pub num_planes: u32,
+    /// Per-plane row pitches.
+    pub pitches: [u32; 4],
+    /// Per-plane byte offsets.
+    pub offsets: [u32; 4],
+    /// Pointer to array of DMA-BUF file descriptors (as `i64`).
+    pub buffers: *const i64,
+    /// Number of buffers.
+    pub num_buffers: u32,
+    /// Flags (reserved, set to 0).
+    pub flags: u32,
+    /// Private data (reserved, set to null).
+    pub private_data: *const c_void,
+}
+
 /// Coded-buffer segment returned by `vaMapBuffer` on an encoded-output buffer.
 #[repr(C)]
 pub struct VACodedBufferSegment {

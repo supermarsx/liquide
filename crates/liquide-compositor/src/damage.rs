@@ -136,7 +136,7 @@ pub fn crc32c(data: &[u8]) -> u32 {
 #[must_use]
 pub fn crc32c_tile(fb: &FrameBuffer, tile_x: u32, tile_y: u32, tile_size: u32) -> u32 {
     liquide_simd::crc::crc32c_tile(
-        &fb.pixels,
+        fb.pixels(),
         fb.stride,
         tile_x,
         tile_y,

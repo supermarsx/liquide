@@ -23,7 +23,7 @@ pub use damage::{DamageClass, DamageSet, DamageTile, DamageTracker};
 pub use effects::{
     DegradationController, DegradationLevel, EffectBudget, EffectParams, QualityProfile,
 };
-pub use framebuffer::{DoubleBuffer, FrameBuffer};
+pub use framebuffer::{DoubleBuffer, FrameBuffer, FrameMemory};
 pub use geometry::{Affine2D, Point, Rect, Size};
 pub use pixel::{BlendMode, Color, PixelFormat};
 pub use scene::{

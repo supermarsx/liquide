@@ -157,7 +157,7 @@ fn test_renderer_produces_non_black_pixels() {
     let mut fb = FrameBuffer::new(1920, 1080, PixelFormat::Bgra8);
 
     // Fill framebuffer with black initially
-    for pixel in fb.pixels.chunks_exact_mut(4) {
+    for pixel in fb.pixels_mut().chunks_exact_mut(4) {
         pixel[0] = 0; // B
         pixel[1] = 0; // G
         pixel[2] = 0; // R
@@ -189,7 +189,7 @@ fn test_renderer_produces_non_black_pixels() {
     let mut non_black_pixels = 0;
     let mut sample_colors = Vec::new();
 
-    for (i, pixel) in fb.pixels.chunks_exact(4).enumerate() {
+    for (i, pixel) in fb.pixels().chunks_exact(4).enumerate() {
         let b = pixel[0];
         let g = pixel[1];
         let r = pixel[2];

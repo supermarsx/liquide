@@ -628,7 +628,7 @@ mod tests {
 
         // At least some pixels should be non-zero.
         assert!(
-            fb.pixels.iter().any(|&b| b != 0),
+            fb.pixels().iter().any(|&b| b != 0),
             "icon should produce visible pixels"
         );
     }

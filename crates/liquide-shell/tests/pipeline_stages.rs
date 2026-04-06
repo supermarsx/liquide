@@ -215,7 +215,7 @@ fn element_background_renders_pixels() {
 
     // Dark backgrounds will produce near-black pixels with slight alpha blending.
     // Just verify rendering doesn't crash and produces at least some non-zero pixels.
-    let non_zero = fb.pixels.chunks_exact(4)
+    let non_zero = fb.pixels().chunks_exact(4)
         .filter(|p| p[0] > 5 || p[1] > 5 || p[2] > 5)
         .count();
 
@@ -294,8 +294,8 @@ fn element_text_renders_to_pixels() {
 
     // With dark theme and white text, text pixels should have higher RGB values
     // in the text regions. Just verify no crash during rendering.
-    let total = fb.pixels.len() / 4;
-    let non_black = fb.pixels.chunks_exact(4)
+    let total = fb.pixels().len() / 4;
+    let non_black = fb.pixels().chunks_exact(4)
         .filter(|p| p[0] > 10 || p[1] > 10 || p[2] > 10)
         .count();
 
@@ -489,9 +489,9 @@ fn full_pipeline_rendering_no_crash() {
 
     let fb = render_scene(&scene);
 
-    assert_eq!(fb.pixels.len(), 1920 * 1080 * 4, "Framebuffer size correct");
+    assert_eq!(fb.pixels().len(), 1920 * 1080 * 4, "Framebuffer size correct");
 
-    let non_black = fb.pixels.chunks_exact(4)
+    let non_black = fb.pixels().chunks_exact(4)
         .filter(|p| p[0] > 10 || p[1] > 10 || p[2] > 10)
         .count();
 

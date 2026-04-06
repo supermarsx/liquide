@@ -59,7 +59,7 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
 
         // Fill the first row in-place.
         let first_start = y0 as usize * stride + x0 as usize * 4;
-        for chunk in fb.pixels[first_start..first_start + row_bytes].chunks_exact_mut(4) {
+        for chunk in fb.pixels_mut()[first_start..first_start + row_bytes].chunks_exact_mut(4) {
             chunk.copy_from_slice(&bgra);
         }
 
@@ -68,7 +68,7 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
             let row_start = y as usize * stride + x0 as usize * 4;
             // Safety: source and destination don't overlap because they
             // are on different scanlines (y0 != y).
-            fb.pixels.copy_within(first_start..first_start + row_bytes, row_start);
+            fb.pixels_mut().copy_within(first_start..first_start + row_bytes, row_start);
         }
     } else if mode == BlendMode::SrcOver {
         // Semi-transparent fill: use SIMD-accelerated constant-color SrcOver.
@@ -80,7 +80,7 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
 
         for y in y0..y1 {
             let row_start = y as usize * stride + x0 as usize * 4;
-            let row = &mut fb.pixels[row_start..row_start + w * 4];
+            let row = &mut fb.pixels_mut()[row_start..row_start + w * 4];
             liquide_simd::convert::blend_constant_src_over(row, bgra);
         }
     } else {
@@ -141,16 +141,16 @@ pub fn fill_rect_gradient(
                         let off = row_offset + (x as usize) * 4;
                         let sa = pm.a as u16;
                         if sa == 255 {
-                            fb.pixels[off] = pm.b;
-                            fb.pixels[off + 1] = pm.g;
-                            fb.pixels[off + 2] = pm.r;
-                            fb.pixels[off + 3] = pm.a;
+                            fb.pixels_mut()[off] = pm.b;
+                            fb.pixels_mut()[off + 1] = pm.g;
+                            fb.pixels_mut()[off + 2] = pm.r;
+                            fb.pixels_mut()[off + 3] = pm.a;
                         } else if sa > 0 {
                             let inv_a = 255 - sa;
-                            fb.pixels[off] = (pm.b as u16 + (fb.pixels[off] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels[off + 1] = (pm.g as u16 + (fb.pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels[off + 2] = (pm.r as u16 + (fb.pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels[off + 3] = (pm.a as u16 + (fb.pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels_mut()[off] = (pm.b as u16 + (fb.pixels_mut()[off] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels_mut()[off + 1] = (pm.g as u16 + (fb.pixels_mut()[off + 1] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels_mut()[off + 2] = (pm.r as u16 + (fb.pixels_mut()[off + 2] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels_mut()[off + 3] = (pm.a as u16 + (fb.pixels_mut()[off + 3] as u16 * inv_a + 127) / 255) as u8;
                         }
                     } else {
                         let dst = fb.get_pixel(x, y);
@@ -193,16 +193,16 @@ pub fn fill_rect_gradient(
                         let off = row_offset + (x as usize) * 4;
                         let sa = pm.a as u16;
                         if sa == 255 {
-                            fb.pixels[off] = pm.b;
-                            fb.pixels[off + 1] = pm.g;
-                            fb.pixels[off + 2] = pm.r;
-                            fb.pixels[off + 3] = pm.a;
+                            fb.pixels_mut()[off] = pm.b;
+                            fb.pixels_mut()[off + 1] = pm.g;
+                            fb.pixels_mut()[off + 2] = pm.r;
+                            fb.pixels_mut()[off + 3] = pm.a;
                         } else if sa > 0 {
                             let inv_a = 255 - sa;
-                            fb.pixels[off] = (pm.b as u16 + (fb.pixels[off] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels[off + 1] = (pm.g as u16 + (fb.pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels[off + 2] = (pm.r as u16 + (fb.pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels[off + 3] = (pm.a as u16 + (fb.pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels_mut()[off] = (pm.b as u16 + (fb.pixels_mut()[off] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels_mut()[off + 1] = (pm.g as u16 + (fb.pixels_mut()[off + 1] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels_mut()[off + 2] = (pm.r as u16 + (fb.pixels_mut()[off + 2] as u16 * inv_a + 127) / 255) as u8;
+                            fb.pixels_mut()[off + 3] = (pm.a as u16 + (fb.pixels_mut()[off + 3] as u16 * inv_a + 127) / 255) as u8;
                         }
                     } else {
                         let dst = fb.get_pixel(x, y);
@@ -606,10 +606,10 @@ pub fn blit_opaque_stride(
             break;
         }
         let dst_off = fb.pixel_offset(dst_x, dy);
-        if dst_off + bytes > fb.pixels.len() {
+        if dst_off + bytes > fb.pixels_mut().len() {
             break;
         }
-        fb.pixels[dst_off..dst_off + bytes].copy_from_slice(&src[src_off..src_off + bytes]);
+        fb.pixels_mut()[dst_off..dst_off + bytes].copy_from_slice(&src[src_off..src_off + bytes]);
     }
 }
 
@@ -989,14 +989,14 @@ pub fn draw_line(
                     if alpha > 0 {
                         let c = Color { r: color.r, g: color.g, b: color.b, a: alpha };
                         let idx = py as usize * fb.stride as usize + px as usize * 4;
-                        if idx + 3 < fb.pixels.len() {
+                        if idx + 3 < fb.pixels_mut().len() {
                             let sa = c.a as f32 / 255.0;
                             let da = 1.0 - sa;
                             // BGRA layout in the framebuffer
-                            fb.pixels[idx]     = (c.b as f32 * sa + fb.pixels[idx]     as f32 * da) as u8;
-                            fb.pixels[idx + 1] = (c.g as f32 * sa + fb.pixels[idx + 1] as f32 * da) as u8;
-                            fb.pixels[idx + 2] = (c.r as f32 * sa + fb.pixels[idx + 2] as f32 * da) as u8;
-                            fb.pixels[idx + 3] = (c.a.max(fb.pixels[idx + 3])) as u8;
+                            fb.pixels_mut()[idx]     = (c.b as f32 * sa + fb.pixels_mut()[idx]     as f32 * da) as u8;
+                            fb.pixels_mut()[idx + 1] = (c.g as f32 * sa + fb.pixels_mut()[idx + 1] as f32 * da) as u8;
+                            fb.pixels_mut()[idx + 2] = (c.r as f32 * sa + fb.pixels_mut()[idx + 2] as f32 * da) as u8;
+                            fb.pixels_mut()[idx + 3] = (c.a.max(fb.pixels_mut()[idx + 3])) as u8;
                         }
                     }
                 }

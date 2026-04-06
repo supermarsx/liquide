@@ -33,6 +33,8 @@ struct VaSession {
     coded_buf: crate::vaapi_ffi::VABufferID,
     width: u32,
     height: u32,
+    /// Surface imported via DMA-BUF (set by `import_dmabuf`, consumed by `encode`).
+    imported_surface: Option<crate::vaapi_ffi::VASurfaceID>,
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +243,7 @@ impl VaapiEncoder {
             coded_buf,
             width: w,
             height: h,
+            imported_surface: None,
         })
     }
 
@@ -249,6 +252,11 @@ impl VaapiEncoder {
     fn close_va_session(session: &mut VaSession) {
         if let Some(va) = crate::vaapi_ffi::VaLib::load() {
             unsafe {
+                // Destroy any imported DMA-BUF surface.
+                if let Some(imported) = session.imported_surface.take() {
+                    let mut id = imported;
+                    (va.va_destroy_surfaces)(session.display, &mut id, 1);
+                }
                 (va.va_destroy_buffer)(session.display, session.coded_buf);
                 (va.va_destroy_context)(session.display, session.context_id);
                 (va.va_destroy_surfaces)(
@@ -276,15 +284,21 @@ impl VaapiEncoder {
             detail: "libva not loaded".into(),
         })?;
 
-        let ses = self.va_session.as_ref().ok_or_else(|| {
+        let ses = self.va_session.as_mut().ok_or_else(|| {
             crate::HwEncoderError::EncodeFailed {
                 api: "VAAPI".into(),
                 detail: "no active VA session".into(),
             }
         })?;
 
-        let surface_idx = (self.frame_count as usize) % ses.surfaces.len();
-        let surface = ses.surfaces[surface_idx];
+        // If a DMA-BUF surface was imported, use it directly (zero-copy path).
+        // Otherwise fall back to the pool surface (CPU upload path).
+        let (surface, imported) = if let Some(imported_id) = ses.imported_surface.take() {
+            (imported_id, true)
+        } else {
+            let surface_idx = (self.frame_count as usize) % ses.surfaces.len();
+            (ses.surfaces[surface_idx], false)
+        };
 
         // --- begin picture ---
         let st = unsafe {
@@ -349,6 +363,16 @@ impl VaapiEncoder {
 
         unsafe {
             (va.va_unmap_buffer)(ses.display, ses.coded_buf);
+        }
+
+        // Destroy the imported DMA-BUF surface — it was a one-shot import.
+        // The caller must call `import_dmabuf` again for the next frame.
+        if imported {
+            let ses = self.va_session.as_ref().unwrap();
+            let mut id = surface;
+            unsafe {
+                (va.va_destroy_surfaces)(ses.display, &mut id, 1);
+            }
         }
 
         Ok(encoded)
@@ -473,8 +497,100 @@ impl HwEncoderSession for VaapiEncoder {
 }
 
 impl ZeroCopyImport for VaapiEncoder {
-    fn import_dmabuf(&mut self, _handle: &DmaBufHandle) -> crate::Result<()> {
-        Ok(())
+    fn import_dmabuf(&mut self, handle: &DmaBufHandle) -> crate::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            use crate::vaapi_ffi;
+
+            let va = vaapi_ffi::VaLib::load().ok_or_else(|| {
+                crate::HwEncoderError::ApiNotAvailable {
+                    api: "VAAPI".into(),
+                }
+            })?;
+
+            let session = self.va_session.as_mut().ok_or_else(|| {
+                crate::HwEncoderError::InvalidConfig(
+                    "VA-API session not configured; call configure() first".into(),
+                )
+            })?;
+
+            // Destroy any previously imported surface that was never consumed.
+            if let Some(prev) = session.imported_surface.take() {
+                let mut id = prev;
+                unsafe {
+                    (va.va_destroy_surfaces)(session.display, &mut id, 1);
+                }
+            }
+
+            // Build the external buffer descriptor for the DMA-BUF.
+            let fd = handle.fd as i64;
+            let ext_buf = vaapi_ffi::VASurfaceAttribExternalBuffers {
+                pixel_format: vaapi_ffi::VA_FOURCC_BGRX,
+                width: session.width,
+                height: session.height,
+                data_size: handle.size as u32,
+                num_planes: 1,
+                pitches: [handle.stride, 0, 0, 0],
+                offsets: [handle.offset as u32, 0, 0, 0],
+                buffers: &fd as *const i64,
+                num_buffers: 1,
+                flags: 0,
+                private_data: std::ptr::null(),
+            };
+
+            // Two surface attributes: memory type = DRM PRIME, and the
+            // external buffer descriptor pointer.
+            let mut attribs = [
+                vaapi_ffi::VASurfaceAttrib {
+                    type_: vaapi_ffi::VA_SURFACE_ATTRIB_MEM_TYPE,
+                    flags: vaapi_ffi::VA_SURFACE_ATTRIB_SETTABLE,
+                    value_type: 0, // int
+                    value: vaapi_ffi::VA_SURFACE_ATTRIB_MEM_TYPE_DRM_PRIME as u64,
+                },
+                vaapi_ffi::VASurfaceAttrib {
+                    type_: vaapi_ffi::VA_SURFACE_ATTRIB_EXTERNAL_BUFFERS,
+                    flags: vaapi_ffi::VA_SURFACE_ATTRIB_SETTABLE,
+                    value_type: 3, // pointer
+                    value: &ext_buf as *const vaapi_ffi::VASurfaceAttribExternalBuffers
+                        as u64,
+                },
+            ];
+
+            // Ask VA-API to create a surface backed by the DMA-BUF.
+            let mut imported_surface: vaapi_ffi::VASurfaceID = 0;
+            let status = unsafe {
+                (va.va_create_surfaces)(
+                    session.display,
+                    vaapi_ffi::VA_RT_FORMAT_YUV420,
+                    session.width,
+                    session.height,
+                    &mut imported_surface,
+                    1,
+                    attribs.as_mut_ptr() as *mut std::ffi::c_void,
+                    attribs.len() as u32,
+                )
+            };
+
+            if status != vaapi_ffi::VA_STATUS_SUCCESS {
+                return Err(crate::HwEncoderError::FramebufferImportFailed(
+                    format!(
+                        "vaCreateSurfaces with DMA-BUF fd {} failed: VA status {}",
+                        handle.fd, status
+                    ),
+                ));
+            }
+
+            session.imported_surface = Some(imported_surface);
+            Ok(())
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = handle;
+            Err(crate::HwEncoderError::ApiNotAvailable {
+                api: "VAAPI".into(),
+            })
+        }
     }
 
     fn import_cuda(&mut self, _handle: &CudaHandle) -> crate::Result<()> {
@@ -487,7 +603,11 @@ impl ZeroCopyImport for VaapiEncoder {
         &mut self,
         _handle: &VulkanHandle,
     ) -> crate::Result<()> {
-        Ok(())
+        // Vulkan import could be done via VK_KHR_external_memory → DMA-BUF → VAAPI.
+        // For now, reject and let the caller use the DMA-BUF export path.
+        Err(crate::HwEncoderError::FramebufferImportFailed(
+            "use DMA-BUF export from Vulkan instead".into(),
+        ))
     }
 }
 

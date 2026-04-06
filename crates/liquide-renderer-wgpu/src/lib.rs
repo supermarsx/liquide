@@ -30,6 +30,7 @@ pub mod pipeline;
 pub mod renderer;
 pub mod shader;
 pub mod texture;
+pub mod vulkan_export;
 
 pub use device::{GpuBackend, WgpuDevice};
 pub use renderer::{GlyphKey, GlyphMetrics, WgpuRenderer};

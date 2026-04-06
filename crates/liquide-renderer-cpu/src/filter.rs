@@ -44,7 +44,7 @@ impl PixelFilter {
             Self::ColorMatrix(m) => {
                 for y in y0..y1 {
                     let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
                     liquide_simd::filter::color_matrix(row, m);
                 }
             }
@@ -52,7 +52,7 @@ impl PixelFilter {
                 let factor = *b;
                 for y in y0..y1 {
                     let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
                     liquide_simd::filter::brightness(row, factor);
                 }
             }
@@ -60,7 +60,7 @@ impl PixelFilter {
                 let f = *c_factor;
                 for y in y0..y1 {
                     let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
                     liquide_simd::filter::contrast(row, f);
                 }
             }
@@ -68,7 +68,7 @@ impl PixelFilter {
                 let sat = *s;
                 for y in y0..y1 {
                     let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
                     liquide_simd::filter::saturate(row, sat);
                 }
             }
@@ -95,28 +95,28 @@ impl PixelFilter {
                 ];
                 for y in y0..y1 {
                     let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
                     liquide_simd::filter::color_matrix(row, &m);
                 }
             }
             Self::Grayscale => {
                 for y in y0..y1 {
                     let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
                     liquide_simd::filter::grayscale(row);
                 }
             }
             Self::Sepia => {
                 for y in y0..y1 {
                     let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
                     liquide_simd::filter::sepia(row);
                 }
             }
             Self::Invert => {
                 for y in y0..y1 {
                     let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels[off..off + (x1 - x0) as usize * 4];
+                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
                     liquide_simd::blend::invert_scanline(row);
                 }
             }

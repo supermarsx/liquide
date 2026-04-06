@@ -238,8 +238,8 @@ fn test_text_renders_non_empty_with_font_db() {
     let mut fb = FrameBuffer::new(1920, 1080, PixelFormat::Bgra8);
 
     // Fill black
-    fb.pixels.fill(0);
-    for pixel in fb.pixels.chunks_exact_mut(4) {
+    fb.pixels_mut().fill(0);
+    for pixel in fb.pixels_mut().chunks_exact_mut(4) {
         pixel[3] = 255;
     }
 
@@ -267,7 +267,7 @@ fn test_text_renders_non_empty_with_font_db() {
     // Count non-black pixels across the full rendered frame.
     // The statusbar text or other shell chrome should produce bright pixels.
     let nonblack_pixels: usize = fb
-        .pixels
+        .pixels()
         .chunks_exact(4)
         .filter(|px| px[0] > 10 || px[1] > 10 || px[2] > 10)
         .count();

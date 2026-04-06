@@ -2,10 +2,27 @@
 
 use crate::pixel::{Color, PixelFormat};
 
+/// Backing memory for a frame buffer.
+#[derive(Debug)]
+pub enum FrameMemory {
+    /// CPU heap-allocated pixel buffer (default, always available).
+    Cpu(Vec<u8>),
+    /// GPU texture with optional DMA-BUF export for zero-copy paths.
+    Gpu {
+        /// Opaque GPU handle (VkImage handle or D3D12 resource pointer).
+        handle: u64,
+        /// DMA-BUF file descriptor for Linux zero-copy (-1 if unavailable).
+        dmabuf_fd: i32,
+        /// Width and height for re-creating CPU fallback if needed.
+        width: u32,
+        height: u32,
+    },
+}
+
 /// A raw pixel buffer for composited output.
 pub struct FrameBuffer {
-    /// Raw pixel data in the format specified by `format`.
-    pub pixels: Vec<u8>,
+    /// Backing pixel storage (CPU or GPU).
+    pub memory: FrameMemory,
     /// Width in pixels.
     pub width: u32,
     /// Height in pixels.
@@ -30,11 +47,47 @@ impl FrameBuffer {
     pub fn with_stride(width: u32, height: u32, stride: u32, format: PixelFormat) -> Self {
         let size = (stride * height) as usize;
         Self {
-            pixels: vec![0u8; size],
+            memory: FrameMemory::Cpu(vec![0u8; size]),
             width,
             height,
             stride,
             format,
+        }
+    }
+
+    /// Get read-only pixel slice (CPU path only).
+    /// Returns an empty slice for GPU-backed framebuffers.
+    #[must_use]
+    pub fn pixels(&self) -> &[u8] {
+        match &self.memory {
+            FrameMemory::Cpu(v) => v,
+            FrameMemory::Gpu { .. } => &[],
+        }
+    }
+
+    /// Get mutable pixel slice (CPU path only).
+    ///
+    /// # Panics
+    /// Panics if called on a GPU-backed framebuffer.
+    pub fn pixels_mut(&mut self) -> &mut Vec<u8> {
+        match &mut self.memory {
+            FrameMemory::Cpu(v) => v,
+            FrameMemory::Gpu { .. } => panic!("cannot get mutable pixel access on GPU framebuffer"),
+        }
+    }
+
+    /// Whether this framebuffer uses GPU memory.
+    #[must_use]
+    pub fn is_gpu(&self) -> bool {
+        matches!(self.memory, FrameMemory::Gpu { .. })
+    }
+
+    /// Get DMA-BUF fd if available (None if CPU or fd < 0).
+    #[must_use]
+    pub fn dmabuf_fd(&self) -> Option<i32> {
+        match &self.memory {
+            FrameMemory::Gpu { dmabuf_fd, .. } if *dmabuf_fd >= 0 => Some(*dmabuf_fd),
+            _ => None,
         }
     }
 
@@ -53,7 +106,7 @@ impl FrameBuffer {
         debug_assert!(y < self.height, "row({y}) out of bounds (height={})", self.height);
         let start = (y * self.stride) as usize;
         let end = start + (self.width * self.format.bytes_per_pixel()) as usize;
-        &self.pixels[start..end]
+        &self.pixels()[start..end]
     }
 
     /// Get a mutable slice of the pixel row at `y`.
@@ -64,7 +117,7 @@ impl FrameBuffer {
         debug_assert!(y < self.height, "row_mut({y}) out of bounds (height={})", self.height);
         let start = (y * self.stride) as usize;
         let end = start + (self.width * self.format.bytes_per_pixel()) as usize;
-        &mut self.pixels[start..end]
+        &mut self.pixels_mut()[start..end]
     }
 
     /// Extract raw pixel bytes for a tile region.
@@ -86,7 +139,7 @@ impl FrameBuffer {
             let src_offset = ((py + row) * self.stride + px * bpp) as usize;
             let dst_offset = (row as usize) * out_stride;
             out[dst_offset..dst_offset + row_bytes]
-                .copy_from_slice(&self.pixels[src_offset..src_offset + row_bytes]);
+                .copy_from_slice(&self.pixels()[src_offset..src_offset + row_bytes]);
         }
         out
     }
@@ -104,19 +157,24 @@ impl FrameBuffer {
             _ => [0; 4],
         };
 
+        // Copy dimensions before borrowing pixels mutably.
+        let width = self.width as usize;
+        let stride = self.stride as usize;
+        let height = self.height as usize;
+
         // Fill the first scanline pixel-by-pixel.
+        let pixels = self.pixels_mut();
         {
-            let first_row = &mut self.pixels[..row_bytes];
-            for x in 0..self.width as usize {
+            let first_row = &mut pixels[..row_bytes];
+            for x in 0..width {
                 let offset = x * bpp;
                 first_row[offset..offset + bpp].copy_from_slice(&pixel_bytes[..bpp]);
             }
         }
 
         // Copy the first scanline to all subsequent rows.
-        let stride = self.stride as usize;
-        for y in 1..self.height as usize {
-            let (src, dst) = self.pixels.split_at_mut(y * stride);
+        for y in 1..height {
+            let (src, dst) = pixels.split_at_mut(y * stride);
             dst[..row_bytes].copy_from_slice(&src[..row_bytes]);
         }
     }
@@ -124,7 +182,7 @@ impl FrameBuffer {
     /// Total size of the pixel data in bytes.
     #[must_use]
     pub fn byte_len(&self) -> usize {
-        self.pixels.len()
+        self.pixels().len()
     }
 
     /// Get the BGRA pixel at `(x, y)` as a [`Color`].
@@ -138,31 +196,32 @@ impl FrameBuffer {
         }
         let off = self.pixel_offset(x, y);
         let bpp = self.format.bytes_per_pixel() as usize;
-        if off + bpp > self.pixels.len() {
+        let px = self.pixels();
+        if off + bpp > px.len() {
             return Color::TRANSPARENT;
         }
         match self.format {
             PixelFormat::Bgra8 => {
                 Color::from_bgra_bytes([
-                    self.pixels[off],
-                    self.pixels[off + 1],
-                    self.pixels[off + 2],
-                    self.pixels[off + 3],
+                    px[off],
+                    px[off + 1],
+                    px[off + 2],
+                    px[off + 3],
                 ])
             }
             PixelFormat::Rgba8 => {
                 Color::new(
-                    self.pixels[off],
-                    self.pixels[off + 1],
-                    self.pixels[off + 2],
-                    self.pixels[off + 3],
+                    px[off],
+                    px[off + 1],
+                    px[off + 2],
+                    px[off + 3],
                 )
             }
             PixelFormat::Rgb8 => {
                 Color::new(
-                    self.pixels[off],
-                    self.pixels[off + 1],
-                    self.pixels[off + 2],
+                    px[off],
+                    px[off + 1],
+                    px[off + 2],
                     255,
                 )
             }
@@ -178,24 +237,26 @@ impl FrameBuffer {
         }
         let off = self.pixel_offset(x, y);
         let bpp = self.format.bytes_per_pixel() as usize;
-        if off + bpp > self.pixels.len() {
+        let fmt = self.format;
+        let px = self.pixels_mut();
+        if off + bpp > px.len() {
             return;
         }
-        match self.format {
+        match fmt {
             PixelFormat::Bgra8 => {
                 let bgra = color.to_bgra_bytes();
-                self.pixels[off..off + 4].copy_from_slice(&bgra);
+                px[off..off + 4].copy_from_slice(&bgra);
             }
             PixelFormat::Rgba8 => {
-                self.pixels[off] = color.r;
-                self.pixels[off + 1] = color.g;
-                self.pixels[off + 2] = color.b;
-                self.pixels[off + 3] = color.a;
+                px[off] = color.r;
+                px[off + 1] = color.g;
+                px[off + 2] = color.b;
+                px[off + 3] = color.a;
             }
             PixelFormat::Rgb8 => {
-                self.pixels[off] = color.r;
-                self.pixels[off + 1] = color.g;
-                self.pixels[off + 2] = color.b;
+                px[off] = color.r;
+                px[off + 1] = color.g;
+                px[off + 2] = color.b;
             }
             _ => {}
         }
@@ -221,7 +282,7 @@ impl std::fmt::Debug for FrameBuffer {
             .field("height", &self.height)
             .field("stride", &self.stride)
             .field("format", &self.format)
-            .field("pixel_bytes", &self.pixels.len())
+            .field("pixel_bytes", &self.pixels().len())
             .finish()
     }
 }

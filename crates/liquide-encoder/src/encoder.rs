@@ -112,7 +112,7 @@ impl TileEncoder {
             for dt in damage_tiles {
                 let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
                 let tile_data = self.codec.extract_tile(
-                    &fb.pixels,
+                    fb.pixels(),
                     fb.stride,
                     fb.width,
                     fb.height,
@@ -141,7 +141,7 @@ impl TileEncoder {
 
             // Shared read-only references for the thread pool.
             let codec = &self.codec;
-            let pixels = &fb.pixels;
+            let pixels = fb.pixels();
             let stride = fb.stride;
             let fb_width = fb.width;
             let fb_height = fb.height;
@@ -319,7 +319,7 @@ impl TileEncoder {
         damage_tiles: &[DamageTile],
     ) -> crate::Result<TileBatch> {
         let fb = FrameBuffer {
-            pixels: pixels.to_vec(),
+            memory: liquide_compositor::framebuffer::FrameMemory::Cpu(pixels.to_vec()),
             width,
             height,
             stride,

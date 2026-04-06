@@ -110,7 +110,7 @@ pub fn blur_region(fb: &mut FrameBuffer, region: Rect, radius: u32) {
         let src_off = fb.pixel_offset(x0, y0 + row);
         let dst_off = (row * w * 4) as usize;
         let bytes = (w * 4) as usize;
-        buf[dst_off..dst_off + bytes].copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+        buf[dst_off..dst_off + bytes].copy_from_slice(&fb.pixels_mut()[src_off..src_off + bytes]);
     }
 
     // Pass 1: horizontal
@@ -125,7 +125,7 @@ pub fn blur_region(fb: &mut FrameBuffer, region: Rect, radius: u32) {
         let src_off = (row * w * 4) as usize;
         let dst_off = fb.pixel_offset(x0, y0 + row);
         let bytes = (w * 4) as usize;
-        fb.pixels[dst_off..dst_off + bytes].copy_from_slice(&buf[src_off..src_off + bytes]);
+        fb.pixels_mut()[dst_off..dst_off + bytes].copy_from_slice(&buf[src_off..src_off + bytes]);
     }
 }
 
@@ -228,7 +228,7 @@ pub fn blur_fast(fb: &mut FrameBuffer, region: Rect, radius: u32) {
         let src_off = fb.pixel_offset(x0, y0 + row);
         let dst_off = (row * w * 4) as usize;
         let bytes = (w * 4) as usize;
-        buf[dst_off..dst_off + bytes].copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+        buf[dst_off..dst_off + bytes].copy_from_slice(&fb.pixels_mut()[src_off..src_off + bytes]);
     }
 
     // Downsample 2x
@@ -256,7 +256,7 @@ pub fn blur_fast(fb: &mut FrameBuffer, region: Rect, radius: u32) {
         let src_off = (row * w * 4) as usize;
         let dst_off = fb.pixel_offset(x0, y0 + row);
         let bytes = (w * 4) as usize;
-        fb.pixels[dst_off..dst_off + bytes].copy_from_slice(&upsampled[src_off..src_off + bytes]);
+        fb.pixels_mut()[dst_off..dst_off + bytes].copy_from_slice(&upsampled[src_off..src_off + bytes]);
     }
 }
 

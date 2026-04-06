@@ -62,7 +62,7 @@ fn framebuffer_with_stride() {
     let fb = FrameBuffer::with_stride(100, 100, 128 * 4, PixelFormat::Bgra8);
     assert_eq!(fb.stride, 128 * 4);
     assert_eq!(fb.width, 100);
-    assert_eq!(fb.pixels.len(), (128 * 4 * 100) as usize);
+    assert_eq!(fb.pixels().len(), (128 * 4 * 100) as usize);
 }
 
 #[test]

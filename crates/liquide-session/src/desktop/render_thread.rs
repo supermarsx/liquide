@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Instant;
 
 use liquide_compositor::damage::DamageSet;
-use liquide_compositor::framebuffer::FrameBuffer;
+use liquide_compositor::framebuffer::{FrameBuffer, FrameMemory};
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::PixelFormat;
 use liquide_compositor::scene::{CursorShape, FlatNode, NodeProperties, SceneNode, SceneNodeKind};
@@ -178,7 +178,7 @@ impl DesktopCompositor {
             if let Some(compositor) = self.compositor.as_ref() {
                 let fb = compositor.frame_buffer();
                 let _ = platform.present_frame(
-                    handle, &fb.pixels, fb.width, fb.height, fb.stride, fb.format,
+                    handle, fb.pixels(), fb.width, fb.height, fb.stride, fb.format,
                 );
             }
         }
@@ -584,7 +584,7 @@ impl DesktopCompositor {
                     renderer.report_render_time(total_ms);
                     compositor.report_frame_time(total_ms);
 
-                    let pixel_data = std::mem::take(&mut framebuf.pixels);
+                    let pixel_data = std::mem::take(framebuf.pixels_mut());
                     let result = RenderedFrame {
                         pixels: Arc::new(pixel_data),
                         width: framebuf.width,
@@ -596,7 +596,7 @@ impl DesktopCompositor {
                         has_pending_glyphs: renderer.has_pending_glyphs(),
                     };
                     // Re-allocate pixel buffer for next frame.
-                    framebuf.pixels = vec![0u8; (framebuf.stride * framebuf.height) as usize];
+                    framebuf.memory = FrameMemory::Cpu(vec![0u8; (framebuf.stride * framebuf.height) as usize]);
 
                     if tx.send(result).is_err() {
                         break;
@@ -760,7 +760,7 @@ impl DesktopCompositor {
         compositor.report_frame_time(total_ms);
 
         // Send completed frame back — move pixels into Arc (zero-copy).
-        let pixel_data = std::mem::take(&mut framebuf.pixels);
+        let pixel_data = std::mem::take(framebuf.pixels_mut());
         let result = RenderedFrame {
             pixels: Arc::new(pixel_data),
             width: framebuf.width,
@@ -772,7 +772,7 @@ impl DesktopCompositor {
             has_pending_glyphs: renderer.has_pending_glyphs(),
         };
         // Re-allocate pixel buffer for next frame.
-        framebuf.pixels = vec![0u8; (framebuf.stride * framebuf.height) as usize];
+        framebuf.memory = FrameMemory::Cpu(vec![0u8; (framebuf.stride * framebuf.height) as usize]);
 
         let _ = tx.send(result);
     }

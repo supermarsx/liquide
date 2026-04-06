@@ -418,9 +418,9 @@ impl SoftwareRenderer {
                 let dst_off = fb.pixel_offset(x0, y0 + row);
                 let bytes = (w * 4) as usize;
                 if src_off + bytes <= cached.pixels.len()
-                    && dst_off + bytes <= fb.pixels.len()
+                    && dst_off + bytes <= fb.pixels_mut().len()
                 {
-                    fb.pixels[dst_off..dst_off + bytes]
+                    fb.pixels_mut()[dst_off..dst_off + bytes]
                         .copy_from_slice(&cached.pixels[src_off..src_off + bytes]);
                 }
             }
@@ -437,7 +437,7 @@ impl SoftwareRenderer {
                 let dst_off = (row * w * 4) as usize;
                 let bytes = (w * 4) as usize;
                 snapshot[dst_off..dst_off + bytes]
-                    .copy_from_slice(&fb.pixels[src_off..src_off + bytes]);
+                    .copy_from_slice(&fb.pixels_mut()[src_off..src_off + bytes]);
             }
             self.blur_worker
                 .request_blur(node_id, snapshot, w, h, radius);

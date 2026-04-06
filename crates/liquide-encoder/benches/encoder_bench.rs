@@ -88,8 +88,8 @@ fn bench_encode_frame(c: &mut Criterion) {
 
     let mut fb = FrameBuffer::new(width, height, PixelFormat::Bgra8);
     // Fill the frame buffer with pseudo-random data so compression is realistic
-    let pixel_data = make_tile_buffer(fb.pixels.len(), 1337);
-    fb.pixels.copy_from_slice(&pixel_data);
+    let pixel_data = make_tile_buffer(fb.pixels().len(), 1337);
+    fb.pixels_mut().copy_from_slice(&pixel_data);
 
     // Mark all 64 tiles as damaged
     let cols = width / config.tile_size;

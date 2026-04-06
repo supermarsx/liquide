@@ -18,7 +18,7 @@ use liquide_renderer_cpu::rasterizer::{self, Fill};
 fn bench_blur_region(c: &mut Criterion) {
     let mut fb = FrameBuffer::new(256, 256, PixelFormat::Bgra8);
     // Fill with non-trivial data so the blur does real work
-    for px in fb.pixels.chunks_exact_mut(4) {
+    for px in fb.pixels_mut().chunks_exact_mut(4) {
         px[0] = 100; // B
         px[1] = 150; // G
         px[2] = 200; // R
@@ -35,7 +35,7 @@ fn bench_blur_region(c: &mut Criterion) {
 
 fn bench_blur_fast(c: &mut Criterion) {
     let mut fb = FrameBuffer::new(512, 512, PixelFormat::Bgra8);
-    for px in fb.pixels.chunks_exact_mut(4) {
+    for px in fb.pixels_mut().chunks_exact_mut(4) {
         px[0] = 80;
         px[1] = 120;
         px[2] = 180;

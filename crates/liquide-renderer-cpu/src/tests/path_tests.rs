@@ -228,7 +228,7 @@ fn path_flatten_produces_lines() {
 fn empty_path_noop() {
     let lut = SrgbLut::new();
     let mut fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
-    let before = fb.pixels.clone();
+    let before = fb.pixels().to_vec();
 
     let path = PathBuilder::new().build();
 
@@ -240,7 +240,7 @@ fn empty_path_noop() {
         BlendMode::SrcOver,
         &lut,
     );
-    assert_eq!(fb.pixels, before, "fill_path on empty path should be a no-op");
+    assert_eq!(fb.pixels(), &before[..], "fill_path on empty path should be a no-op");
 
     // stroke_path with empty path should do nothing
     stroke_path(
@@ -250,7 +250,7 @@ fn empty_path_noop() {
         Color::new(255, 0, 0, 255),
         BlendMode::SrcOver,
     );
-    assert_eq!(fb.pixels, before, "stroke_path on empty path should be a no-op");
+    assert_eq!(fb.pixels(), &before[..], "stroke_path on empty path should be a no-op");
 }
 
 #[test]

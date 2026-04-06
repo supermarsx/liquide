@@ -1033,8 +1033,9 @@ impl WgpuRenderer {
         let _draw_calls = self.render_frame_with_damage(nodes, damage)?;
 
         let pixels = self.read_back()?;
-        let copy_len = fb.pixels.len().min(pixels.len());
-        fb.pixels[..copy_len].copy_from_slice(&pixels[..copy_len]);
+        let fb_pixels = fb.pixels_mut();
+        let copy_len = fb_pixels.len().min(pixels.len());
+        fb_pixels[..copy_len].copy_from_slice(&pixels[..copy_len]);
 
         Ok(damage.tiles.clone())
     }

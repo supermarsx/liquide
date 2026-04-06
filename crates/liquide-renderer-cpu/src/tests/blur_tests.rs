@@ -41,9 +41,9 @@ fn blur_identity_radius_zero() {
             fb.set_pixel(x, y, c);
         }
     }
-    let before: Vec<u8> = fb.pixels.clone();
+    let before: Vec<u8> = fb.pixels().to_vec();
     blur_region(&mut fb, Rect::new(0.0, 0.0, 8.0, 8.0), 0);
-    assert_eq!(fb.pixels, before);
+    assert_eq!(fb.pixels(), &before[..]);
 }
 
 #[test]
@@ -51,12 +51,12 @@ fn blur_region_changes_pixels() {
     let mut fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
     // Set a bright spot in the center
     fb.set_pixel(16, 16, Color::WHITE);
-    let before = fb.pixels.clone();
+    let before = fb.pixels().to_vec();
 
     blur_region(&mut fb, Rect::new(0.0, 0.0, 32.0, 32.0), 5);
 
     // The center pixel should have changed (spread out)
-    assert_ne!(fb.pixels, before);
+    assert_ne!(fb.pixels(), &before[..]);
 
     // The bright spot should have been diffused, so the center pixel
     // should be dimmer than pure white
@@ -127,11 +127,11 @@ fn blur_fast_produces_result() {
             fb.set_pixel(x, y, Color::WHITE);
         }
     }
-    let before = fb.pixels.clone();
+    let before = fb.pixels().to_vec();
 
     blur_fast(&mut fb, Rect::new(0.0, 0.0, 64.0, 64.0), 12);
 
-    assert_ne!(fb.pixels, before, "blur_fast should modify pixels");
+    assert_ne!(fb.pixels(), &before[..], "blur_fast should modify pixels");
 
     // The bright area should have been diffused
     let center = fb.get_pixel(32, 32);
@@ -216,10 +216,10 @@ fn blur_fast_small_radius_fallback() {
     let mut fb = FrameBuffer::new(16, 16, PixelFormat::Bgra8);
     // Set a bright spot
     fb.set_pixel(8, 8, Color::WHITE);
-    let before = fb.pixels.clone();
+    let before = fb.pixels().to_vec();
     blur_fast(&mut fb, Rect::new(0.0, 0.0, 16.0, 16.0), 2);
     assert_ne!(
-        fb.pixels, before,
+        fb.pixels(), &before[..],
         "blur_fast with small radius should still modify pixels"
     );
 }
