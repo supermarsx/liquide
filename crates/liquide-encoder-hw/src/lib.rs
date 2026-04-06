@@ -19,6 +19,7 @@ pub mod rate_control;
 pub mod session;
 pub mod v4l2;
 pub mod vaapi;
+pub mod vaapi_ffi;
 
 use thiserror::Error;
 
