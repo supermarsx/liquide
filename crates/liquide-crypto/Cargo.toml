@@ -8,5 +8,6 @@ description = "TLS configuration, certificate management, and token generation f
 [dependencies]
 liquide-common.workspace = true
 rustls.workspace = true
+rustls-pemfile.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
