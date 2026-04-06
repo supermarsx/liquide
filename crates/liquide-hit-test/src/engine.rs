@@ -9,6 +9,8 @@
 //! - pointer-events: none
 //! - Z-index stacking order (CSS 2.1 §E)
 
+use std::sync::Arc;
+
 use liquide_compositor::geometry::Affine2D;
 use liquide_dom::NodeId;
 use liquide_layout::geometry::{Point, Rect};
@@ -53,20 +55,28 @@ impl HitTestResult {
 
 /// The hit test engine.
 pub struct HitTestEngine {
-    /// Cached layout tree reference.
-    layout: LayoutTree,
-    /// Cached style map.
-    styles: StyleMap,
+    /// Cached layout tree (shared via Arc to avoid deep clones from pipeline).
+    layout: Arc<LayoutTree>,
+    /// Cached style map (shared via Arc to avoid deep clones from pipeline).
+    styles: Arc<StyleMap>,
 }
 
 impl HitTestEngine {
-    /// Create a new hit test engine.
-    pub fn new(layout: LayoutTree, styles: StyleMap) -> Self {
+    /// Create a new hit test engine from Arc-wrapped pipeline output.
+    pub fn new(layout: Arc<LayoutTree>, styles: Arc<StyleMap>) -> Self {
         Self { layout, styles }
     }
 
+    /// Convenience constructor that wraps owned values in Arc.
+    pub fn from_owned(layout: LayoutTree, styles: StyleMap) -> Self {
+        Self {
+            layout: Arc::new(layout),
+            styles: Arc::new(styles),
+        }
+    }
+
     /// Update with new layout/styles (after relayout).
-    pub fn update(&mut self, layout: LayoutTree, styles: StyleMap) {
+    pub fn update(&mut self, layout: Arc<LayoutTree>, styles: Arc<StyleMap>) {
         self.layout = layout;
         self.styles = styles;
     }
@@ -77,8 +87,10 @@ impl HitTestEngine {
     }
 
     /// Get a mutable reference to the layout tree (for scroll offset updates).
+    ///
+    /// Uses `Arc::make_mut` which clones only if there are other Arc holders.
     pub fn layout_mut(&mut self) -> &mut LayoutTree {
-        &mut self.layout
+        Arc::make_mut(&mut self.layout)
     }
 
     /// Get a reference to the style map.
@@ -608,7 +620,7 @@ mod tests {
         let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
         let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
 
-        let engine = HitTestEngine::new(layout_tree, style_map);
+        let engine = HitTestEngine::from_owned(layout_tree, style_map);
         let result = engine.hit_test(Point::new(100.0, 50.0));
 
         assert!(result.is_some(), "Should hit something within the viewport");

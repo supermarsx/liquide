@@ -8,10 +8,25 @@
 //!
 //! Paths are flattened into line segments for painting via `DisplayItem::Line`.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+
 use liquide_compositor::pixel::Color;
 use liquide_layout::Rect;
 
 use crate::display_list::{DisplayItem, DisplayList};
+
+// Thread-local cache for flattened SVG paths, keyed by hash of the `d` attribute string.
+thread_local! {
+    static PATH_CACHE: RefCell<HashMap<u64, Vec<PathSegment>>> = RefCell::new(HashMap::new());
+}
+
+fn hash_path_string(d: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    d.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// A parsed SVG path command.
 #[derive(Debug, Clone, Copy)]
@@ -311,6 +326,36 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
     segments
 }
 
+/// Flatten SVG path commands with caching.
+///
+/// Looks up the path string in a thread-local cache to avoid re-parsing
+/// and re-flattening identical paths every frame. The cache is bounded
+/// at 1024 entries and cleared when full.
+pub fn flatten_path_cached(d: &str) -> Vec<PathSegment> {
+    let key = hash_path_string(d);
+
+    // Check cache first.
+    let cached = PATH_CACHE.with(|cache| cache.borrow().get(&key).cloned());
+
+    if let Some(segments) = cached {
+        return segments;
+    }
+
+    // Cache miss — parse and flatten.
+    let commands = parse_svg_path(d);
+    let segments = flatten_path(&commands);
+
+    PATH_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() > 1024 {
+            cache.clear();
+        }
+        cache.insert(key, segments.clone());
+    });
+
+    segments
+}
+
 /// Flatten a cubic bezier into line segments by recursive subdivision.
 fn flatten_cubic(
     out: &mut Vec<PathSegment>,
@@ -374,8 +419,7 @@ pub fn paint_svg_path(
     stroke_width: f32,
     fill_color: Option<Color>,
 ) {
-    let commands = parse_svg_path(d);
-    let segments = flatten_path(&commands);
+    let segments = flatten_path_cached(d);
 
     // Emit fill as a solid color behind the path bounds (approximate).
     if let Some(fill) = fill_color {
@@ -463,5 +507,28 @@ mod tests {
             None,
         );
         assert!(dl.len() >= 3);
+    }
+
+    #[test]
+    fn flatten_path_cached_returns_same_result() {
+        let d = "M 0 0 L 100 0 L 50 100 Z";
+        let cmds = parse_svg_path(d);
+        let expected = flatten_path(&cmds);
+        let cached = flatten_path_cached(d);
+        assert_eq!(expected.len(), cached.len());
+        for (a, b) in expected.iter().zip(cached.iter()) {
+            assert!((a.x1 - b.x1).abs() < 0.001);
+            assert!((a.y1 - b.y1).abs() < 0.001);
+            assert!((a.x2 - b.x2).abs() < 0.001);
+            assert!((a.y2 - b.y2).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn flatten_path_cached_hit() {
+        let d = "M 10 10 L 90 10 L 90 90 Z";
+        let first = flatten_path_cached(d);
+        let second = flatten_path_cached(d);
+        assert_eq!(first.len(), second.len());
     }
 }

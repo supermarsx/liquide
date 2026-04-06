@@ -2,11 +2,120 @@
 //!
 //! Implements CSS Intrinsic & Extrinsic Sizing Level 3 §4-5.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::Display;
 
 use crate::{TextMeasurer, TextProperties};
+
+/// Maximum entries in the per-layout-pass measure cache.
+const MEASURE_CACHE_LIMIT: usize = 8192;
+
+/// Cache for intrinsic width computations within a single layout pass.
+///
+/// Keyed by `(NodeId, is_min_content)`. Call [`MeasureCache::clear`] at the
+/// start of each layout pass to avoid stale results.
+pub struct MeasureCache {
+    map: HashMap<(NodeId, bool), f32>,
+}
+
+impl MeasureCache {
+    /// Create an empty measure cache.
+    pub fn new() -> Self {
+        Self { map: HashMap::with_capacity(256) }
+    }
+
+    /// Look up a cached intrinsic width.
+    pub fn get(&self, node_id: NodeId, is_min: bool) -> Option<f32> {
+        self.map.get(&(node_id, is_min)).copied()
+    }
+
+    /// Insert a computed intrinsic width into the cache.
+    pub fn insert(&mut self, node_id: NodeId, is_min: bool, value: f32) {
+        if self.map.len() >= MEASURE_CACHE_LIMIT {
+            self.map.clear();
+        }
+        self.map.insert((node_id, is_min), value);
+    }
+
+    /// Clear all cached entries (call at start of each layout pass).
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
+}
+
+/// Cache key for text measurement results.
+#[derive(Hash, Eq, PartialEq)]
+struct MeasureCacheKey {
+    /// Hash of the text content (avoids storing large strings).
+    text_hash: u64,
+    /// Font size quantized to 0.5px for cache friendliness.
+    font_size_half_px: i32,
+    /// Font weight.
+    font_weight: u16,
+    /// Hash of the first font family name.
+    font_family_hash: u64,
+    /// Whether there's a max_width constraint.
+    has_max_width: bool,
+}
+
+thread_local! {
+    static MEASURE_CACHE: RefCell<HashMap<MeasureCacheKey, f32>> = RefCell::new(HashMap::with_capacity(256));
+}
+
+fn hash_text(text: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn cached_measure_width(
+    text: &str,
+    font_size: f32,
+    font_family: &[String],
+    font_weight: u16,
+    max_width: Option<f32>,
+    text_props: &TextProperties,
+    text_measurer: &dyn TextMeasurer,
+) -> f32 {
+    let key = MeasureCacheKey {
+        text_hash: hash_text(text),
+        font_size_half_px: (font_size * 2.0).round() as i32,
+        font_weight,
+        font_family_hash: hash_text(font_family.first().map(|s| s.as_str()).unwrap_or("")),
+        has_max_width: max_width.is_some(),
+    };
+
+    let cached = MEASURE_CACHE.with(|c| c.borrow().get(&key).copied());
+    if let Some(width) = cached {
+        return width;
+    }
+
+    let m = text_measurer.measure(text, font_size, font_family, font_weight, max_width, text_props);
+    let width = m.width;
+
+    MEASURE_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        if cache.len() > 4096 {
+            cache.clear();
+        }
+        cache.insert(key, width);
+    });
+
+    width
+}
+
+/// Clear the thread-local text measurement cache.
+///
+/// Call at the start of each frame or when font/style configuration changes
+/// to avoid stale cached values.
+pub fn clear_measure_cache() {
+    MEASURE_CACHE.with(|c| c.borrow_mut().clear());
+}
 
 /// Calculate the min-content width for a node.
 ///
@@ -32,15 +141,16 @@ pub fn min_content_width(
             let text_props = TextProperties::from_style(&style);
             let mut max_word_width = 0.0f32;
             for word in text.split_whitespace() {
-                let m = text_measurer.measure(
+                let w = cached_measure_width(
                     word,
                     style.font_size,
                     &style.font_family,
                     style.font_weight,
                     None,
                     &text_props,
+                    text_measurer,
                 );
-                max_word_width = max_word_width.max(m.width);
+                max_word_width = max_word_width.max(w);
             }
             return max_word_width + horizontal_box_edges(&style);
         }
@@ -108,15 +218,16 @@ pub fn max_content_width(
     if let Some(node) = doc.get(node_id) {
         if let Some(text) = node.text_content() {
             let text_props = TextProperties::from_style(&style);
-            let m = text_measurer.measure(
+            let w = cached_measure_width(
                 text,
                 style.font_size,
                 &style.font_family,
                 style.font_weight,
                 None,
                 &text_props,
+                text_measurer,
             );
-            return m.width + horizontal_box_edges(&style);
+            return w + horizontal_box_edges(&style);
         }
     }
 

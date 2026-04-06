@@ -16,10 +16,10 @@ pub(crate) fn emit_gradient(
             let dx = end_x - start_x;
             let dy = end_y - start_y;
             let angle_deg = dy.atan2(dx).to_degrees();
-            let grad_stops: Vec<GradientStop> = stops
-                .iter()
-                .map(|(offset, color)| GradientStop { offset: *offset, color: *color })
-                .collect();
+            let mut grad_stops = Vec::with_capacity(stops.len());
+            for &(offset, color) in stops {
+                grad_stops.push(GradientStop { offset, color });
+            }
             list.push(DisplayItem::LinearGradient {
                 rect: *rect,
                 angle_deg,
@@ -28,10 +28,10 @@ pub(crate) fn emit_gradient(
             });
         }
         GradientSpec::Radial { center_x, center_y, radius: grad_radius, stops } => {
-            let grad_stops: Vec<GradientStop> = stops
-                .iter()
-                .map(|(offset, color)| GradientStop { offset: *offset, color: *color })
-                .collect();
+            let mut grad_stops = Vec::with_capacity(stops.len());
+            for &(offset, color) in stops {
+                grad_stops.push(GradientStop { offset, color });
+            }
             list.push(DisplayItem::RadialGradient {
                 rect: *rect,
                 center_x: *center_x,
@@ -42,10 +42,10 @@ pub(crate) fn emit_gradient(
             });
         }
         GradientSpec::Conic { center_x, center_y, start_angle, stops } => {
-            let grad_stops: Vec<GradientStop> = stops
-                .iter()
-                .map(|(offset, color)| GradientStop { offset: *offset, color: *color })
-                .collect();
+            let mut grad_stops = Vec::with_capacity(stops.len());
+            for &(offset, color) in stops {
+                grad_stops.push(GradientStop { offset, color });
+            }
             list.push(DisplayItem::ConicGradient {
                 rect: *rect,
                 center_x: *center_x,

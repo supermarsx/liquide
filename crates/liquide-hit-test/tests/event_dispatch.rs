@@ -48,7 +48,7 @@ fn simple_setup() -> (Document, HitTestEngine, NodeId, NodeId) {
     styles.insert(root, ComputedStyle::default());
     styles.insert(child, ComputedStyle::default());
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
     (doc, engine, root, child)
 }
 

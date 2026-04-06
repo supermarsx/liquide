@@ -6,6 +6,8 @@ mod filters;
 mod gradients;
 mod transforms;
 
+use std::sync::Arc;
+
 use liquide_compositor::pixel::BlendMode;
 use liquide_compositor::property_tree::FilterOp;
 use liquide_compositor::scene::MaskSpec;
@@ -38,7 +40,7 @@ impl Painter {
         layout: &LayoutTree,
         styles: &StyleMap,
     ) -> DisplayList {
-        let mut list = DisplayList::new();
+        let mut list = DisplayList::with_capacity(512);
         self.paint_box(doc, layout, styles, layout.root, (0.0, 0.0), &mut list);
         list
     }
@@ -570,7 +572,7 @@ impl Painter {
                     text: content.clone(),
                     color: pe_style.color,
                     font_size: pe_style.font_size,
-                    font_family: pe_style.font_family.clone(),
+                    font_family: Arc::clone(&pe_style.font_family),
                     font_weight: pe_style.font_weight,
                     font_style: pe_style.font_style.clone(),
                     letter_spacing: pe_style.letter_spacing,
@@ -615,7 +617,7 @@ impl Painter {
                         text: marker_text,
                         color: style.color,
                         font_size: style.font_size,
-                        font_family: style.font_family.clone(),
+                        font_family: Arc::clone(&style.font_family),
                         font_weight: style.font_weight,
                         font_style: style.font_style.clone(),
                         letter_spacing: 0.0,
@@ -648,7 +650,7 @@ impl Painter {
                         text: text.clone(),
                         color: style.color,
                         font_size: style.font_size,
-                        font_family: style.font_family.clone(),
+                        font_family: Arc::clone(&style.font_family),
                         font_weight: style.font_weight,
                         font_style: style.font_style.clone(),
                         letter_spacing: style.letter_spacing,
@@ -772,63 +774,44 @@ impl Painter {
                 self.paint_box(doc, layout, styles, child_id, child_offset, list);
             }
         } else if !skip_children {
-            // Full CSS 2.1 stacking order classification.
-            let mut negative_z: Vec<(LayoutBoxId, i32)> = Vec::new();
-            let mut in_flow_block: Vec<LayoutBoxId> = Vec::new();
-            let mut floats: Vec<LayoutBoxId> = Vec::new();
-            let mut in_flow_inline: Vec<LayoutBoxId> = Vec::new();
-            let mut z_auto_or_zero: Vec<LayoutBoxId> = Vec::new();
-            let mut positive_z: Vec<(LayoutBoxId, i32)> = Vec::new();
-
+            // Full CSS 2.1 stacking order — single Vec instead of 6 separate Vecs.
+            // Categories: 0=negative-z, 1=in-flow block, 2=floats,
+            //             3=in-flow inline, 4=z auto/0, 5=positive-z
+            let mut classified: Vec<(LayoutBoxId, u8, i32)> = Vec::with_capacity(children.len());
             for &child_id in &children {
                 let child_style = layout
                     .get(child_id)
-                    .and_then(|cb| styles.get(cb.node))
-                    .cloned();
-                let child_display = child_style.as_ref().map(|s| s.display).unwrap_or(Display::Block);
-                let child_position = child_style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
-                let child_z = child_style.as_ref().and_then(|s| s.z_index);
+                    .and_then(|cb| styles.get(cb.node));
+                let child_display = child_style.map(|s| s.display).unwrap_or(Display::Block);
+                let child_position = child_style.map(|s| s.position).unwrap_or(Position::Static);
+                let child_z = child_style.and_then(|s| s.z_index);
                 let is_positioned = matches!(
                     child_position,
                     Position::Relative | Position::Absolute | Position::Fixed | Position::Sticky
                 );
-                let is_float = child_style.as_ref().map(|s| s.float != Float::None).unwrap_or(false);
+                let is_float = child_style.map(|s| s.float != Float::None).unwrap_or(false);
 
-                if is_positioned {
+                let (category, z_val) = if is_positioned {
                     match child_z {
-                        Some(z) if z < 0 => negative_z.push((child_id, z)),
-                        Some(z) if z > 0 => positive_z.push((child_id, z)),
-                        _ => z_auto_or_zero.push(child_id),
+                        Some(z) if z < 0 => (0u8, z),
+                        Some(z) if z > 0 => (5u8, z),
+                        _ => (4u8, 0),
                     }
                 } else if is_float {
-                    floats.push(child_id);
+                    (2u8, 0)
                 } else if matches!(child_display, Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
-                    in_flow_inline.push(child_id);
+                    (3u8, 0)
                 } else {
-                    in_flow_block.push(child_id);
-                }
+                    (1u8, 0)
+                };
+                classified.push((child_id, category, z_val));
             }
 
-            negative_z.sort_by_key(|&(_, z)| z);
-            positive_z.sort_by_key(|&(_, z)| z);
+            // Stable sort by (category, z_value) preserves DOM order within each group.
+            classified.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
 
-            for (child_id, _) in &negative_z {
-                self.paint_box(doc, layout, styles, *child_id, child_offset, list);
-            }
-            for &child_id in &in_flow_block {
+            for &(child_id, _, _) in &classified {
                 self.paint_box(doc, layout, styles, child_id, child_offset, list);
-            }
-            for &child_id in &floats {
-                self.paint_box(doc, layout, styles, child_id, child_offset, list);
-            }
-            for &child_id in &in_flow_inline {
-                self.paint_box(doc, layout, styles, child_id, child_offset, list);
-            }
-            for &child_id in &z_auto_or_zero {
-                self.paint_box(doc, layout, styles, child_id, child_offset, list);
-            }
-            for (child_id, _) in &positive_z {
-                self.paint_box(doc, layout, styles, *child_id, child_offset, list);
             }
         }
 

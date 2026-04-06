@@ -214,25 +214,46 @@ impl CascadeMap {
 
     /// Resolve the cascade: for each property, pick the highest-priority
     /// declaration. Returns a map of property → value.
+    ///
+    /// Sorts by (property name, priority) so same-property declarations are
+    /// grouped, then takes the last (highest-priority) entry per group.
+    /// Moves strings and values out of the declarations vec instead of cloning.
     pub fn resolve(
         &mut self,
     ) -> Vec<(String, liquide_theme_css::value::PropertyValue)> {
-        // Sort all declarations by priority
-        self.declarations
-            .sort_by(|a, b| a.priority.cmp(&b.priority));
-
-        // For each property, last one wins (highest priority due to sort order)
-        let mut winners: std::collections::HashMap<String, &CascadeDeclaration> =
-            std::collections::HashMap::new();
-
-        for decl in &self.declarations {
-            winners.insert(decl.property.clone(), decl);
+        if self.declarations.is_empty() {
+            return Vec::new();
         }
 
-        winners
-            .into_iter()
-            .map(|(k, v)| (k, v.value.clone()))
-            .collect()
+        // Sort by property name first (grouping), then by priority within
+        // each group so the last entry in each run is the winner.
+        self.declarations.sort_by(|a, b| {
+            a.property
+                .cmp(&b.property)
+                .then(a.priority.cmp(&b.priority))
+        });
+
+        let len = self.declarations.len();
+        let mut result = Vec::with_capacity(len / 2);
+        let mut i = 0;
+        while i < len {
+            // Find end of run with the same property name
+            let mut j = i + 1;
+            while j < len && self.declarations[j].property == self.declarations[i].property {
+                j += 1;
+            }
+            // Last in run = highest priority = winner. Move out instead of cloning.
+            let best = j - 1;
+            let decl = &mut self.declarations[best];
+            let property = std::mem::take(&mut decl.property);
+            let value = std::mem::replace(
+                &mut decl.value,
+                liquide_theme_css::value::PropertyValue::Keyword(String::new()),
+            );
+            result.push((property, value));
+            i = j;
+        }
+        result
     }
 
     /// Number of raw declarations.
@@ -258,10 +279,13 @@ impl Default for CascadeMap {
 
 /// Strip `!important` annotation from a value if present.
 /// Returns (cleaned value, is_important).
+///
+/// Only allocates when the value actually contains `!important`;
+/// non-important values (the vast majority) are cloned once in the caller
+/// when pushed into `CascadeDeclaration`.
 fn strip_important(
     value: &liquide_theme_css::value::PropertyValue,
 ) -> (liquide_theme_css::value::PropertyValue, bool) {
-    // Check if the string representation ends with !important
     if let liquide_theme_css::value::PropertyValue::Keyword(kw) = value {
         if let Some(stripped) = kw.strip_suffix("!important") {
             let cleaned = stripped.trim();
@@ -274,6 +298,8 @@ fn strip_important(
             );
         }
     }
+    // Not important — return a clone. The caller needs an owned value for
+    // CascadeDeclaration anyway, so this clone is unavoidable.
     (value.clone(), false)
 }
 

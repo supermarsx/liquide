@@ -221,26 +221,40 @@ impl DesktopCompositor {
                 }
             }
 
-            // Efficient idle: sleep to avoid busy-spinning.
-            if self.render_in_flight {
-                // Render in progress — brief yield to check for completion
-                // and events frequently for responsive input.
-                thread::sleep(Duration::from_millis(1));
+            // Efficient idle with adaptive precision.
+            let target_sleep = if self.render_in_flight {
+                // Render in progress — brief yield to check for completion.
+                Duration::from_micros(100)
             } else if self.dirty && !self.frame_interval.is_zero() {
                 // Dirty but throttled — sleep until next frame is due.
                 let elapsed = self.last_render.elapsed();
                 if elapsed < self.frame_interval {
-                    let remaining = self.frame_interval - elapsed;
-                    thread::sleep(remaining.min(Duration::from_millis(4)));
+                    self.frame_interval - elapsed
+                } else {
+                    Duration::ZERO
                 }
             } else if !self.dirty {
                 // Nothing to render — sleep longer when no events arriving.
-                let sleep_ms = if had_event {
-                    1
+                if had_event {
+                    Duration::from_millis(1)
                 } else {
-                    self.frame_interval.as_millis().clamp(1, 16) as u64
-                };
-                thread::sleep(Duration::from_millis(sleep_ms));
+                    Duration::from_millis(self.frame_interval.as_millis().clamp(1, 16) as u64)
+                }
+            } else {
+                Duration::ZERO
+            };
+
+            // For sub-millisecond sleeps, use spin-wait instead of OS sleep
+            // (OS scheduler can't reliably sleep < 1ms on most platforms).
+            if target_sleep <= Duration::from_micros(500) {
+                if target_sleep > Duration::ZERO {
+                    let deadline = Instant::now() + target_sleep;
+                    while Instant::now() < deadline {
+                        std::hint::spin_loop();
+                    }
+                }
+            } else {
+                thread::sleep(target_sleep);
             }
         }
 

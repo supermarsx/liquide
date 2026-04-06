@@ -550,6 +550,16 @@ impl SceneNode {
     #[must_use]
     pub fn flatten(&self) -> Vec<FlatNode> {
         let mut result = Vec::new();
+        self.flatten_into(&mut result);
+        result
+    }
+
+    /// Flatten the tree into `output`, reusing its allocation.
+    ///
+    /// Equivalent to [`flatten()`](Self::flatten) but clears and fills the
+    /// caller-provided `Vec` instead of allocating a new one each frame.
+    pub fn flatten_into(&self, output: &mut Vec<FlatNode>) {
+        output.clear();
         self.walk(&mut |node, abs_transform, effective_opacity| {
             // Skip non-visual structural nodes (Root, Workspace containers)
             let is_visual = !matches!(
@@ -565,7 +575,7 @@ impl SceneNode {
                     node.properties.bounds.height,
                 ));
 
-                result.push(FlatNode {
+                output.push(FlatNode {
                     id: node.id,
                     kind: node.kind.clone(),
                     absolute_bounds: abs_bounds,
@@ -578,7 +588,6 @@ impl SceneNode {
                 });
             }
         });
-        result
     }
 }
 

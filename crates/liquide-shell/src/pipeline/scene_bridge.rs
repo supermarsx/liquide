@@ -4,6 +4,7 @@ use liquide_compositor::geometry::Rect as CRect;
 use liquide_compositor::scene::{ClipPathKind, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_paint::display_list::ClipPath as PaintClipPath;
 use liquide_paint::{DisplayItem, DisplayList};
+use std::sync::Arc;
 use liquide_style_engine::computed::BorderLineStyle;
 
 use super::helpers::{
@@ -35,7 +36,9 @@ impl DesktopPipeline {
             opacity: f32,
             transform: Affine2D,
             /// Pending clip-path from PushClipPath (absolute paint coords).
-            clip_path: Option<PaintClipPath>,
+            /// Wrapped in `Arc` so state clones are cheap (ref-count bump
+            /// instead of deep-cloning the polygon `Vec`).
+            clip_path: Option<Arc<PaintClipPath>>,
             /// Bounds captured from the inner PushClip for the clip-path node.
             clip_path_bounds: Option<CRect>,
         }
@@ -53,9 +56,9 @@ impl DesktopPipeline {
             }
         }
 
-        let mut stack: Vec<PipelineState> = Vec::new();
+        let mut stack: Vec<PipelineState> = Vec::with_capacity(32);
         let mut current = PipelineState::default();
-        let mut nodes = Vec::new();
+        let mut nodes: Vec<SceneNode> = Vec::with_capacity(list.items.len());
         let mut z = base_z;
 
         for item in &list.items {
@@ -238,7 +241,7 @@ impl DesktopPipeline {
 
                 DisplayItem::PushClipPath { path } => {
                     stack.push(current.clone());
-                    current.clip_path = Some(path.clone());
+                    current.clip_path = Some(Arc::new(path.clone()));
                     current.clip_path_bounds = None;
                 }
 

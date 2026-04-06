@@ -5,6 +5,8 @@
 //! - R-tree spatial index for efficient partial invalidation
 //! - Push/Pop state commands for clip, transform, opacity, filters
 
+use std::sync::Arc;
+
 use liquide_compositor::geometry::Affine2D;
 use liquide_compositor::pixel::{BlendMode, Color};
 use liquide_compositor::property_tree::FilterOp;
@@ -109,7 +111,7 @@ pub enum DisplayItem {
         text: String,
         color: Color,
         font_size: f32,
-        font_family: Vec<String>,
+        font_family: Arc<Vec<String>>,
         font_weight: u16,
         font_style: FontStyle,
         letter_spacing: f32,

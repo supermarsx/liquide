@@ -91,7 +91,7 @@ fn display_list_bridge() {
         text: "Hello".into(),
         color: Color::new(255, 255, 255, 255),
         font_size: 14.0,
-        font_family: vec!["Inter".into()],
+        font_family: std::sync::Arc::new(vec!["Inter".into()]),
         font_weight: 400,
         font_style: liquide_style_engine::computed::FontStyle::Normal,
         letter_spacing: 0.0,

@@ -292,13 +292,13 @@ pub fn layout_grid(
     let min_auto_rows = (auto_items.len() + num_cols - 1) / num_cols;
     let mut num_rows = max_explicit_row.max(min_auto_rows).max(1);
 
-    // Occupied cells tracker
-    let mut occupied = vec![vec![false; num_cols]; num_rows];
+    // Occupied cells tracker — flat row-major bitset (single allocation)
+    let mut occupied = vec![false; num_rows * num_cols];
     for item in &placed_items {
         for r in item.row_start..item.row_end.min(num_rows) {
             for c in item.col_start..item.col_end.min(num_cols) {
-                if r < occupied.len() && c < num_cols {
-                    occupied[r][c] = true;
+                if r < num_rows && c < num_cols {
+                    occupied[r * num_cols + c] = true;
                 }
             }
         }
@@ -329,22 +329,29 @@ pub fn layout_grid(
                 }
                 // If all columns are exhausted, extend the grid with a new column
                 if auto_cursor_col >= num_cols {
-                    num_cols += 1;
-                    for row in &mut occupied {
-                        row.push(false);
+                    let new_cols = num_cols + 1;
+                    let mut new_occupied = vec![false; num_rows * new_cols];
+                    for r in 0..num_rows {
+                        for c in 0..num_cols {
+                            new_occupied[r * new_cols + c] = occupied[r * num_cols + c];
+                        }
                     }
+                    occupied = new_occupied;
+                    num_cols = new_cols;
                 }
             } else if auto_cursor_row >= num_rows {
                 // Extend the grid
+                occupied.extend(std::iter::repeat(false).take(num_cols));
                 num_rows += 1;
-                occupied.push(vec![false; num_cols]);
             }
             // Ensure occupied grid is large enough
-            while auto_cursor_row >= occupied.len() {
+            while auto_cursor_row >= num_rows {
+                occupied.extend(std::iter::repeat(false).take(num_cols));
                 num_rows += 1;
-                occupied.push(vec![false; num_cols]);
             }
-            if auto_cursor_col < num_cols && !occupied[auto_cursor_row][auto_cursor_col] {
+            if auto_cursor_col < num_cols
+                && !occupied[auto_cursor_row * num_cols + auto_cursor_col]
+            {
                 break;
             }
             if column_flow {
@@ -357,7 +364,7 @@ pub fn layout_grid(
                 }
             }
         }
-        occupied[auto_cursor_row][auto_cursor_col] = true;
+        occupied[auto_cursor_row * num_cols + auto_cursor_col] = true;
         placed_items.push(GridItem {
             node_id: child_id,
             col_start: auto_cursor_col,

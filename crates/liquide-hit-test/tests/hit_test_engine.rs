@@ -63,7 +63,7 @@ fn default_styles_for(nodes: &[NodeId]) -> StyleMap {
 fn hit_test_basic_child_inside() {
     let (tree, root_node, child_node) = one_child_tree(100.0, 100.0, 200.0, 200.0);
     let styles = default_styles_for(&[root_node, child_node]);
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Click inside child box
     let result = engine.hit_test(Point::new(150.0, 150.0));
@@ -75,7 +75,7 @@ fn hit_test_basic_child_inside() {
 fn hit_test_basic_child_outside_hits_root() {
     let (tree, root_node, child_node) = one_child_tree(100.0, 100.0, 200.0, 200.0);
     let styles = default_styles_for(&[root_node, child_node]);
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Click outside child but inside root
     let result = engine.hit_test(Point::new(50.0, 50.0));
@@ -87,7 +87,7 @@ fn hit_test_basic_child_outside_hits_root() {
 fn hit_test_miss_everything() {
     let (tree, root_node, child_node) = one_child_tree(100.0, 100.0, 200.0, 200.0);
     let styles = default_styles_for(&[root_node, child_node]);
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Click outside root
     let result = engine.hit_test(Point::new(900.0, 700.0));
@@ -98,7 +98,7 @@ fn hit_test_miss_everything() {
 fn hit_test_edge_of_child() {
     let (tree, root_node, child_node) = one_child_tree(100.0, 100.0, 200.0, 200.0);
     let styles = default_styles_for(&[root_node, child_node]);
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Exact top-left corner of child
     let result = engine.hit_test(Point::new(100.0, 100.0));
@@ -123,7 +123,7 @@ fn hit_test_visibility_hidden_skips_element() {
     s.visibility = Visibility::Hidden;
     styles.insert(child_node, s);
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
     let result = engine.hit_test(Point::new(150.0, 150.0));
     assert!(result.is_some());
     assert_eq!(
@@ -142,7 +142,7 @@ fn hit_test_display_none_skips_element() {
     s.display = Display::None;
     styles.insert(child_node, s);
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
     let result = engine.hit_test(Point::new(150.0, 150.0));
     assert!(result.is_some());
     assert_eq!(result.unwrap().node, root_node);
@@ -157,7 +157,7 @@ fn hit_test_content_visibility_hidden_skips_element() {
     s.content_visibility = ContentVisibility::Hidden;
     styles.insert(child_node, s);
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
     let result = engine.hit_test(Point::new(150.0, 150.0));
     assert!(result.is_some());
     assert_eq!(
@@ -178,7 +178,7 @@ fn hit_test_pointer_events_none_skips_self() {
     s.pointer_events = PointerEvents::None;
     styles.insert(child_node, s);
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Should not hit the child (pointer-events: none)
     let result = engine.hit_test(Point::new(150.0, 150.0));
@@ -239,7 +239,7 @@ fn hit_test_pointer_events_none_parent_allows_child_hits() {
 
     styles.insert(child_node, ComputedStyle::default()); // auto
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Click inside child (absolute: 50+10=60, 50+10=60)
     let result = engine.hit_test(Point::new(70.0, 70.0));
@@ -289,7 +289,7 @@ fn hit_test_all_returns_multiple_overlapping() {
     tree.root = root_id;
 
     let styles = default_styles_for(&[root_node, child_a, child_b]);
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Point in the overlap region
     let results = engine.hit_test_all(Point::new(150.0, 150.0));
@@ -353,7 +353,7 @@ fn hit_test_all_pointer_events_none_still_recurses_children() {
     styles.insert(parent_node, ps);
     styles.insert(child_node, ComputedStyle::default());
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     let results = engine.hit_test_all(Point::new(15.0, 15.0));
     let nodes: Vec<NodeId> = results.iter().map(|r| r.node).collect();
@@ -381,7 +381,7 @@ fn hit_test_translate_moves_hit_region() {
     s.transform = vec![Transform::Translate(200.0, 200.0)];
     styles.insert(child_node, s);
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Origin of child (0, 0) should no longer hit child
     let result = engine.hit_test(Point::new(50.0, 50.0));
@@ -413,7 +413,7 @@ fn hit_test_scale_enlarges_hit_region() {
     s.transform = vec![Transform::Scale(2.0, 2.0)];
     styles.insert(child_node, s);
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Center of original bounds (125, 125) — should definitely hit
     let result = engine.hit_test(Point::new(125.0, 125.0));
@@ -441,7 +441,7 @@ fn hit_test_rotate_90_swaps_axes() {
     s.transform = vec![Transform::Rotate(90.0)]; // 90 degrees
     styles.insert(child_node, s);
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Center of original box (200, 125) — should always hit regardless of rotation
     let result = engine.hit_test(Point::new(200.0, 125.0));
@@ -462,7 +462,7 @@ fn hit_test_composed_translate_then_scale() {
     ];
     styles.insert(child_node, s);
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Original position (25, 25) — should not hit
     let result = engine.hit_test(Point::new(25.0, 25.0));
@@ -524,7 +524,7 @@ fn hit_test_overflow_hidden_clips_children() {
 
     styles.insert(child_node, ComputedStyle::default());
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Inside both parent clip and child: should hit child
     let result = engine.hit_test(Point::new(100.0, 100.0));
@@ -587,7 +587,7 @@ fn hit_test_scroll_offset_shifts_children() {
     styles.insert(parent_node, ps);
     styles.insert(child_node, ComputedStyle::default());
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // Without scroll, child at y=0..100 visible in viewport.
     // With scroll_offset=(0, 50), what was at y=0 is now at visual y=-50.
@@ -637,7 +637,7 @@ fn hit_test_deeply_nested_returns_deepest() {
     tree.root = root_id;
 
     let styles = default_styles_for(&[root_node, node_a, node_b, node_c]);
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     // abs: root(0,0) + A(10,10) + B(5,5) + C(5,5) = (20, 20)
     // C is 100×100 from (20,20) to (120,120)
@@ -684,7 +684,7 @@ fn hit_test_later_sibling_wins_over_earlier() {
     tree.root = root_id;
 
     let styles = default_styles_for(&[root_node, first, second]);
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     let result = engine.hit_test(Point::new(100.0, 100.0));
     assert!(result.is_some());
@@ -731,7 +731,7 @@ fn hit_test_absolute_positioned_child() {
     child_style.position = Position::Absolute;
     styles.insert(child_node, child_style);
 
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     let result = engine.hit_test(Point::new(250.0, 250.0));
     assert!(result.is_some());
@@ -744,7 +744,7 @@ fn hit_test_absolute_positioned_child() {
 fn hit_test_point_in_node_is_local_coordinates() {
     let (tree, root_node, child_node) = one_child_tree(100.0, 100.0, 200.0, 200.0);
     let styles = default_styles_for(&[root_node, child_node]);
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     let result = engine.hit_test(Point::new(150.0, 140.0)).unwrap();
     assert_eq!(result.node, child_node);
@@ -768,7 +768,7 @@ fn hit_test_point_in_node_is_local_coordinates() {
 fn hit_test_zero_size_element_is_not_hit() {
     let (tree, root_node, child_node) = one_child_tree(100.0, 100.0, 0.0, 0.0);
     let styles = default_styles_for(&[root_node, child_node]);
-    let engine = HitTestEngine::new(tree, styles);
+    let engine = HitTestEngine::from_owned(tree, styles);
 
     let result = engine.hit_test(Point::new(100.0, 100.0));
     assert!(result.is_some());

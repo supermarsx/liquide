@@ -1,5 +1,7 @@
 //! Extended property application — transition, animation, SVG, shorthands, and remaining CSS properties.
 
+use std::sync::Arc;
+
 use super::StyleEngine;
 use crate::computed::*;
 use crate::dimension::Dimension;
@@ -965,7 +967,7 @@ impl StyleEngine {
                 if !tokens.is_empty() {
                     match tokens[0] {
                         "caption" | "icon" | "menu" | "message-box" | "small-caption" | "status-bar" => {
-                            style.font_size = 14.0; style.font_family = vec!["sans-serif".to_string()];
+                            style.font_size = 14.0; style.font_family = Arc::new(vec!["sans-serif".to_string()]);
                         }
                         _ => {
                             let mut idx = 0;
@@ -996,7 +998,7 @@ impl StyleEngine {
                             }
                             if idx < tokens.len() {
                                 let family = tokens[idx..].join(" ");
-                                style.font_family = family.split(',').map(|f| f.trim().trim_matches(|c| c == '\'' || c == '"').to_string()).collect();
+                                style.font_family = Arc::new(family.split(',').map(|f| f.trim().trim_matches(|c| c == '\'' || c == '"').to_string()).collect());
                             }
                         }
                     }
@@ -1248,7 +1250,7 @@ impl StyleEngine {
             "background-color" | "background" => style.background_color = default.background_color,
             "font-size" => style.font_size = default.font_size,
             "font-weight" => style.font_weight = default.font_weight,
-            "font-family" => style.font_family = default.font_family.clone(),
+            "font-family" => style.font_family = Arc::clone(&default.font_family),
             "font-style" => style.font_style = default.font_style.clone(),
             "opacity" => style.opacity = default.opacity,
             "visibility" => style.visibility = default.visibility,

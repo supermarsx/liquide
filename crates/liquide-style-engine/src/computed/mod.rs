@@ -24,6 +24,8 @@ pub use svg::*;
 pub use typography::*;
 pub use visual::*;
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use liquide_compositor::pixel::{BlendMode, Color};
@@ -104,7 +106,7 @@ pub struct ComputedStyle {
 
     // ── Typography (inherited) ──
     pub color: Color,
-    pub font_family: Vec<String>,
+    pub font_family: Arc<Vec<String>>,
     pub font_size: f32,
     pub font_weight: u16,
     pub font_style: FontStyle,
@@ -563,7 +565,7 @@ impl Default for ComputedStyle {
                 b: 0,
                 a: 255,
             },
-            font_family: vec!["Inter".to_string(), "sans-serif".to_string()],
+            font_family: Arc::new(vec!["Inter".to_string(), "sans-serif".to_string()]),
             font_size: 16.0,
             font_weight: 400,
             font_style: FontStyle::default(),
@@ -994,7 +996,7 @@ impl ComputedStyle {
     pub fn inherit_from(&mut self, parent: &ComputedStyle) {
         // Typography (inherited)
         self.color = parent.color;
-        self.font_family = parent.font_family.clone();
+        self.font_family = Arc::clone(&parent.font_family);
         self.font_size = parent.font_size;
         self.font_weight = parent.font_weight;
         self.font_style = parent.font_style;

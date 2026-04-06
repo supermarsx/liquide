@@ -1,5 +1,7 @@
 //! Core CSS property application -- maps property values to ComputedStyle fields.
 
+use std::sync::Arc;
+
 use liquide_compositor::pixel::Color;
 
 use super::content::evaluate_content_value;
@@ -272,10 +274,10 @@ impl StyleEngine {
             }
             "font-family" => {
                 if let liquide_theme_css::value::PropertyValue::String(s) = val {
-                    style.font_family = s
+                    style.font_family = Arc::new(s
                         .split(',')
                         .map(|f| f.trim().trim_matches('"').to_string())
-                        .collect();
+                        .collect());
                 }
             }
             "font-size" => style.font_size = resolve_number(val),

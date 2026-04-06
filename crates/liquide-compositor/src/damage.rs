@@ -95,6 +95,15 @@ impl DamageSet {
         self.tiles.clear();
     }
 
+    /// Mark a single tile as damaged.
+    pub fn mark_tile(&mut self, tx: u32, ty: u32) {
+        self.tiles.push(DamageTile {
+            x: tx,
+            y: ty,
+            class: DamageClass::CursorOnly,
+        });
+    }
+
     /// Mark all tiles in the grid as damaged (full-screen refresh).
     pub fn mark_all(&mut self, grid_width: u32, grid_height: u32) {
         self.tiles.clear();

@@ -28,9 +28,9 @@ impl PartialEq for Dimension {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Dimension::Auto, Dimension::Auto) => true,
-            (Dimension::Fixed(a), Dimension::Fixed(b)) => float_bits(*a) == float_bits(*b),
+            (Dimension::Fixed(a), Dimension::Fixed(b)) => float_approx_eq(*a, *b),
             (Dimension::MinMax(a_min, a_max), Dimension::MinMax(b_min, b_max)) => {
-                float_bits(*a_min) == float_bits(*b_min) && float_bits(*a_max) == float_bits(*b_max)
+                float_approx_eq(*a_min, *b_min) && float_approx_eq(*a_max, *b_max)
             }
             _ => false,
         }
@@ -44,10 +44,10 @@ impl Hash for Dimension {
         core::mem::discriminant(self).hash(state);
         match self {
             Dimension::Auto => {}
-            Dimension::Fixed(v) => float_bits(*v).hash(state),
+            Dimension::Fixed(v) => float_quantized(*v).hash(state),
             Dimension::MinMax(lo, hi) => {
-                float_bits(*lo).hash(state);
-                float_bits(*hi).hash(state);
+                float_quantized(*lo).hash(state);
+                float_quantized(*hi).hash(state);
             }
         }
     }
@@ -190,18 +190,34 @@ impl LayoutConstraints {
     }
 }
 
-/// Convert an `f32` to a canonical bit pattern for hashing/comparison.
+/// Epsilon tolerance for float comparison (0.1 px).
 ///
-/// Maps all NaN representations to the same value so that
-/// `NaN == NaN` holds in the cache, and normalises negative zero.
-fn float_bits(v: f32) -> u32 {
+/// Sub-pixel differences caused by floating-point jitter between frames
+/// are irrelevant for layout — treating them as equal prevents cache
+/// thrashing when parent dimensions wobble by tiny amounts.
+const FLOAT_EQ_EPSILON: f32 = 0.1;
+
+/// Compare two `f32` values with epsilon tolerance for layout caching.
+///
+/// NaN is treated as equal to NaN (cache-key semantics), and values
+/// within [`FLOAT_EQ_EPSILON`] pixels of each other are considered equal.
+fn float_approx_eq(a: f32, b: f32) -> bool {
+    if a.is_nan() && b.is_nan() {
+        return true;
+    }
+    (a - b).abs() < FLOAT_EQ_EPSILON
+}
+
+/// Quantize an `f32` to the nearest 0.1 px grid for hashing.
+///
+/// This ensures that values considered equal by [`float_approx_eq`]
+/// produce the same hash.  NaN is mapped to a canonical value and
+/// negative zero is normalised to positive zero.
+fn float_quantized(v: f32) -> i32 {
     if v.is_nan() {
-        // Canonical NaN
-        0x7FC0_0000
-    } else if v == 0.0 {
-        // Normalise −0.0 to +0.0
-        0
+        i32::MIN // canonical NaN bucket
     } else {
-        v.to_bits()
+        // Round to nearest 0.1 px
+        (v * 10.0).round() as i32
     }
 }
