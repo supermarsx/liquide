@@ -83,6 +83,7 @@ async fn run(cli: Cli) -> Result<()> {
     info!(server = %cli.server, "Connecting to server...");
     runtime
         .connect(&cli.server)
+        .await
         .map_err(|e| anyhow::anyhow!("{e}"))
         .context("Failed to connect to server")?;
     info!("Connected successfully");
@@ -112,7 +113,7 @@ async fn run(cli: Cli) -> Result<()> {
                     && runtime.state() != ConnectionState::Disconnected
                 {
                     info!("Attempting reconnect...");
-                    if let Err(e) = runtime.connection_manager_mut().reconnect() {
+                    if let Err(e) = runtime.connection_manager_mut().reconnect().await {
                         info!(error = %e, "Reconnect attempt failed");
                     }
                 }
@@ -121,7 +122,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     // Graceful disconnect.
-    runtime.disconnect();
+    runtime.disconnect().await;
     for event in runtime.drain_audit_events() {
         info!(event = event.event_name(), "audit");
     }

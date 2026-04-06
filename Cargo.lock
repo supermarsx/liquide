@@ -2497,6 +2497,7 @@ version = "0.1.0"
 dependencies = [
  "liquide-common",
  "rustls",
+ "rustls-pemfile",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -2722,6 +2723,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "liquide-auth",
  "liquide-common",
  "liquide-crypto",
  "liquide-protocol",

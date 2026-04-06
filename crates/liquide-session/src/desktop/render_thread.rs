@@ -1,6 +1,7 @@
 //! Render thread types and background rendering logic.
 
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
@@ -8,10 +9,11 @@ use liquide_compositor::damage::DamageSet;
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::PixelFormat;
-use liquide_compositor::scene::{CursorShape, NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::scene::{CursorShape, FlatNode, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_compositor::{Compositor, CompositorContract};
 use liquide_devtools::FrameSnapshot;
-use liquide_renderer_cpu::{Renderer, SoftwareRenderer};
+use liquide_compositor::Renderer;
+use liquide_renderer_cpu::SoftwareRenderer;
 use tracing::{debug, info, warn};
 
 use super::DesktopCompositor;
@@ -37,7 +39,7 @@ pub(super) struct RenderJob {
 
 /// A completed rendered frame sent back from the render thread.
 pub(super) struct RenderedFrame {
-    pub(super) pixels: Vec<u8>,
+    pub(super) pixels: Arc<Vec<u8>>,
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) stride: u32,
@@ -54,6 +56,8 @@ pub(super) struct RenderedFrame {
 pub(super) struct CursorOnlyJob {
     pub(super) cursor_x: f32,
     pub(super) cursor_y: f32,
+    pub(super) prev_cursor_x: f32,
+    pub(super) prev_cursor_y: f32,
     pub(super) cursor_shape: CursorShape,
     pub(super) width: u32,
     pub(super) height: u32,
@@ -257,6 +261,10 @@ impl DesktopCompositor {
         if let Some(ref tx) = self.render_tx {
             if tx.send(RenderMsg::Job(job)).is_ok() {
                 self.render_in_flight = true;
+                // Update previous cursor position so subsequent cursor-only
+                // renders know where the cursor was in this full frame.
+                self.prev_cursor_x = self.cursor_x;
+                self.prev_cursor_y = self.cursor_y;
             }
         }
     }
@@ -273,11 +281,17 @@ impl DesktopCompositor {
         let job = CursorOnlyJob {
             cursor_x: self.cursor_x,
             cursor_y: self.cursor_y,
+            prev_cursor_x: self.prev_cursor_x,
+            prev_cursor_y: self.prev_cursor_y,
             cursor_shape: self.shell.cursor_shape(),
             width: self.width,
             height: self.height,
             tile_size: self.tile_size,
         };
+
+        // Update previous cursor position after capturing it.
+        self.prev_cursor_x = self.cursor_x;
+        self.prev_cursor_y = self.cursor_y;
 
         if let Some(ref tx) = self.render_tx {
             if tx.send(RenderMsg::CursorOnly(job)).is_ok() {
@@ -348,6 +362,29 @@ impl DesktopCompositor {
                     );
                 }
 
+                // Encode tiles for remote transmission.
+                if let Some(ref mut encoder) = self.tile_encoder {
+                    let grid_w = frame.width.div_ceil(self.tile_size);
+                    let grid_h = frame.height.div_ceil(self.tile_size);
+                    let mut damage = DamageSet::new(self.tile_size);
+                    damage.mark_all(grid_w, grid_h);
+
+                    match encoder.encode_frame_raw(
+                        &frame.pixels,
+                        frame.width,
+                        frame.height,
+                        frame.stride,
+                        &damage.tiles,
+                    ) {
+                        Ok(batch) => {
+                            self.pending_batches.push(batch);
+                        }
+                        Err(e) => {
+                            warn!("tile encode failed: {e}");
+                        }
+                    }
+                }
+
                 // If the renderer still has glyphs being rasterised,
                 // schedule an immediate follow-up render so the real
                 // TrueType glyphs appear without visible delay.
@@ -403,7 +440,7 @@ impl DesktopCompositor {
     /// The render thread's main loop.
     /// Handles scene flattening, skeleton filtering, and rendering.
     fn render_thread_fn(
-        mut renderer: SoftwareRenderer,
+        mut renderer: Box<dyn Renderer>,
         mut compositor: Compositor,
         rx: mpsc::Receiver<RenderMsg>,
         tx: mpsc::Sender<RenderedFrame>,
@@ -412,6 +449,8 @@ impl DesktopCompositor {
         let mut fb: Option<FrameBuffer> = None;
         // Cache the last scene (without cursor) for cursor-only updates.
         let mut cached_scene: Option<SceneNode> = None;
+        // Reusable buffer for flattened scene nodes (avoids allocation per frame).
+        let mut flat_nodes_buf: Vec<FlatNode> = Vec::with_capacity(512);
 
         while let Ok(msg) = rx.recv() {
             match msg {
@@ -449,10 +488,11 @@ impl DesktopCompositor {
                     if let Some(full_job) = upgrade_to_full {
                         Self::render_full_job(
                             full_job,
-                            &mut renderer,
+                            &mut *renderer,
                             &mut compositor,
                             &mut fb,
                             &mut cached_scene,
+                            &mut flat_nodes_buf,
                             &tx,
                         );
                         continue;
@@ -487,8 +527,12 @@ impl DesktopCompositor {
                     let _ = compositor.submit_scene(scene);
                     compositor.begin_frame();
 
-                    let flat_nodes =
-                        compositor.scene().map(|s| s.flatten()).unwrap_or_default();
+                    if let Some(s) = compositor.scene() {
+                        s.flatten_into(&mut flat_nodes_buf);
+                    } else {
+                        flat_nodes_buf.clear();
+                    }
+                    let flat_nodes = &flat_nodes_buf;
 
                     // Ensure framebuffer matches.
                     let needs_new = fb.as_ref().map_or(true, |f| {
@@ -503,11 +547,36 @@ impl DesktopCompositor {
                     }
                     let framebuf = fb.as_mut().unwrap();
 
-                    // Full-screen damage (cursor moved).
+                    // Targeted damage: only the old and new cursor tile regions.
+                    let cursor_size = 24.0_f32;
                     let mut damage = DamageSet::new(cursor_job.tile_size);
                     let grid_w = cursor_job.width.div_ceil(cursor_job.tile_size);
                     let grid_h = cursor_job.height.div_ceil(cursor_job.tile_size);
-                    damage.mark_all(grid_w, grid_h);
+                    let ts = cursor_job.tile_size as f32;
+
+                    // Damage old cursor region.
+                    let old_tx_start = (cursor_job.prev_cursor_x / ts) as u32;
+                    let old_ty_start = (cursor_job.prev_cursor_y / ts) as u32;
+                    let old_tx_end = ((cursor_job.prev_cursor_x + cursor_size) / ts) as u32;
+                    let old_ty_end = ((cursor_job.prev_cursor_y + cursor_size) / ts) as u32;
+
+                    for ty in old_ty_start..=old_ty_end.min(grid_h.saturating_sub(1)) {
+                        for tx in old_tx_start..=old_tx_end.min(grid_w.saturating_sub(1)) {
+                            damage.mark_tile(tx, ty);
+                        }
+                    }
+
+                    // Damage new cursor region.
+                    let new_tx_start = (cursor_job.cursor_x / ts) as u32;
+                    let new_ty_start = (cursor_job.cursor_y / ts) as u32;
+                    let new_tx_end = ((cursor_job.cursor_x + cursor_size) / ts) as u32;
+                    let new_ty_end = ((cursor_job.cursor_y + cursor_size) / ts) as u32;
+
+                    for ty in new_ty_start..=new_ty_end.min(grid_h.saturating_sub(1)) {
+                        for tx in new_tx_start..=new_tx_end.min(grid_w.saturating_sub(1)) {
+                            damage.mark_tile(tx, ty);
+                        }
+                    }
 
                     let _ = renderer.render(&flat_nodes, framebuf, &damage);
 
@@ -515,8 +584,9 @@ impl DesktopCompositor {
                     renderer.report_render_time(total_ms);
                     compositor.report_frame_time(total_ms);
 
+                    let pixel_data = std::mem::take(&mut framebuf.pixels);
                     let result = RenderedFrame {
-                        pixels: framebuf.pixels.clone(),
+                        pixels: Arc::new(pixel_data),
                         width: framebuf.width,
                         height: framebuf.height,
                         stride: framebuf.stride,
@@ -525,6 +595,8 @@ impl DesktopCompositor {
                         blur_enabled: renderer.blur_enabled(),
                         has_pending_glyphs: renderer.has_pending_glyphs(),
                     };
+                    // Re-allocate pixel buffer for next frame.
+                    framebuf.pixels = vec![0u8; (framebuf.stride * framebuf.height) as usize];
 
                     if tx.send(result).is_err() {
                         break;
@@ -551,10 +623,11 @@ impl DesktopCompositor {
 
                     Self::render_full_job(
                         latest_job,
-                        &mut renderer,
+                        &mut *renderer,
                         &mut compositor,
                         &mut fb,
                         &mut cached_scene,
+                        &mut flat_nodes_buf,
                         &tx,
                     );
                 }
@@ -565,10 +638,11 @@ impl DesktopCompositor {
     /// Render a full scene job (used by both Job and upgraded CursorOnly paths).
     fn render_full_job(
         latest_job: RenderJob,
-        renderer: &mut SoftwareRenderer,
+        renderer: &mut dyn Renderer,
         compositor: &mut Compositor,
         fb: &mut Option<FrameBuffer>,
         cached_scene: &mut Option<SceneNode>,
+        flat_nodes_buf: &mut Vec<FlatNode>,
         tx: &mpsc::Sender<RenderedFrame>,
     ) {
         let t_total = Instant::now();
@@ -599,8 +673,11 @@ impl DesktopCompositor {
         let _ = compositor.submit_scene(scene);
         compositor.begin_frame();
 
-        let mut flat_nodes =
-            compositor.scene().map(|s| s.flatten()).unwrap_or_default();
+        if let Some(s) = compositor.scene() {
+            s.flatten_into(flat_nodes_buf);
+        } else {
+            flat_nodes_buf.clear();
+        }
 
         // 3. Skeleton mode filtering during drag.
         if let Some(window_id) = latest_job.dragged_window {
@@ -609,7 +686,7 @@ impl DesktopCompositor {
             let win_base = NODE_WINDOW_BASE + window_id * NODE_WINDOW_STRIDE;
             let win_end = win_base + NODE_WINDOW_STRIDE;
 
-            flat_nodes.retain(|node| {
+            flat_nodes_buf.retain(|node| {
                 let node_id = node.id;
                 let is_dragged_window_node = node_id >= win_base && node_id < win_end;
 
@@ -652,19 +729,17 @@ impl DesktopCompositor {
         let t_render = Instant::now();
 
         let saved_blur = renderer.blur_enabled();
-        let saved_lod_mode = renderer.get_lod_performance_mode();
+        let saved_quality = renderer.get_quality_mode();
 
         if latest_job.dragged_window.is_some() && saved_blur {
             renderer.set_blur_enabled(false);
         }
         if latest_job.dragged_window.is_some() {
-            renderer.set_lod_performance_mode(
-                liquide_renderer_cpu::lod::PerformanceMode::Performance,
-            );
+            renderer.set_quality_mode(liquide_compositor::RenderQuality::Performance);
         }
         renderer.set_skeleton_window(latest_job.dragged_window);
 
-        let _ = renderer.render(&flat_nodes, framebuf, &damage);
+        let _ = renderer.render(flat_nodes_buf, framebuf, &damage);
 
         // Restore rendering quality.
         renderer.set_skeleton_window(None);
@@ -672,7 +747,7 @@ impl DesktopCompositor {
             renderer.set_blur_enabled(true);
         }
         if latest_job.dragged_window.is_some() {
-            renderer.set_lod_performance_mode(saved_lod_mode);
+            renderer.set_quality_mode(saved_quality);
         }
 
         let render_ms = t_render.elapsed().as_secs_f64() * 1000.0;
@@ -684,9 +759,10 @@ impl DesktopCompositor {
         // Report frame time to compositor.
         compositor.report_frame_time(total_ms);
 
-        // Send completed frame back.
+        // Send completed frame back — move pixels into Arc (zero-copy).
+        let pixel_data = std::mem::take(&mut framebuf.pixels);
         let result = RenderedFrame {
-            pixels: framebuf.pixels.clone(),
+            pixels: Arc::new(pixel_data),
             width: framebuf.width,
             height: framebuf.height,
             stride: framebuf.stride,
@@ -695,6 +771,8 @@ impl DesktopCompositor {
             blur_enabled: renderer.blur_enabled(),
             has_pending_glyphs: renderer.has_pending_glyphs(),
         };
+        // Re-allocate pixel buffer for next frame.
+        framebuf.pixels = vec![0u8; (framebuf.stride * framebuf.height) as usize];
 
         let _ = tx.send(result);
     }

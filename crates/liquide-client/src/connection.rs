@@ -1,6 +1,10 @@
 //! Connection state machine and connection manager.
 
 use std::fmt;
+use std::net::SocketAddr;
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 use crate::{ClientError, Result};
 
@@ -107,6 +111,8 @@ pub struct ConnectionManager {
     bandwidth_mbps: f64,
     reconnect_attempts: u32,
     max_reconnect_attempts: u32,
+    /// Active TCP connection to the server.
+    stream: Option<TcpStream>,
 }
 
 impl ConnectionManager {
@@ -123,29 +129,63 @@ impl ConnectionManager {
             bandwidth_mbps: 0.0,
             reconnect_attempts: 0,
             max_reconnect_attempts,
+            stream: None,
         }
     }
 
     /// Initiate a connection to the given server.
-    pub fn connect(&mut self, server: &str) -> Result<()> {
+    pub async fn connect(&mut self, server: &str) -> Result<()> {
         if self.state == ConnectionState::Connected {
-            self.disconnect();
+            self.disconnect().await;
         }
 
         self.server_addr = server.to_string();
         self.reconnect_attempts = 0;
-
-        // Transition: Disconnected -> Connecting -> Authenticating -> Negotiating -> Connected
         self.state = ConnectionState::Connecting;
-        self.state = ConnectionState::Authenticating;
-        self.state = ConnectionState::Negotiating;
-        self.state = ConnectionState::Connected;
 
+        // Parse address.
+        let addr: SocketAddr = server.parse().map_err(|e| {
+            ClientError::ServerUnreachable {
+                server: format!("{server}: {e}"),
+            }
+        })?;
+
+        // TCP connect with timeout.
+        let stream = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            TcpStream::connect(addr),
+        )
+        .await
+        .map_err(|_| ClientError::ConnectionTimeout { timeout_ms: 10_000 })?
+        .map_err(|e| ClientError::ServerUnreachable {
+            server: format!("{server}: {e}"),
+        })?;
+
+        // Disable Nagle's algorithm for lower latency.
+        let _ = stream.set_nodelay(true);
+
+        tracing::info!(server = %server, "TCP connected");
+        self.state = ConnectionState::Authenticating;
+
+        // TODO: TLS handshake
+        // TODO: Protocol handshake (send ClientHello, recv ServerHello)
+        // TODO: Authentication exchange
+
+        self.state = ConnectionState::Negotiating;
+        // TODO: Capability negotiation
+
+        self.state = ConnectionState::Connected;
+        self.stream = Some(stream);
+
+        tracing::info!(server = %server, "connection established");
         Ok(())
     }
 
     /// Disconnect from the current server.
-    pub fn disconnect(&mut self) {
+    pub async fn disconnect(&mut self) {
+        if let Some(mut stream) = self.stream.take() {
+            let _ = stream.shutdown().await;
+        }
         self.state = ConnectionState::Disconnected;
         self.rtt_ms = 0.0;
         self.packet_loss_percent = 0.0;
@@ -154,7 +194,7 @@ impl ConnectionManager {
     }
 
     /// Attempt to reconnect to the last server.
-    pub fn reconnect(&mut self) -> Result<()> {
+    pub async fn reconnect(&mut self) -> Result<()> {
         if self.server_addr.is_empty() {
             return Err(ClientError::ServerUnreachable {
                 server: "(none)".to_string(),
@@ -170,9 +210,93 @@ impl ConnectionManager {
         self.reconnect_attempts += 1;
         self.state = ConnectionState::Reconnecting;
 
-        // Simulate reconnection attempt succeeding.
-        self.state = ConnectionState::Connected;
+        // Exponential back-off delay.
+        let delay = self.next_reconnect_delay_ms();
+        tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
+
+        // Attempt reconnection.
+        let addr = self.server_addr.clone();
+        match self.connect(&addr).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.state = ConnectionState::Failed;
+                Err(e)
+            }
+        }
+    }
+
+    // -- Message framing (length-prefixed) ------------------------------------
+
+    /// Read a length-prefixed message from the server.
+    ///
+    /// Wire format: 4-byte little-endian length prefix followed by payload.
+    pub async fn recv_message(&mut self) -> Result<Vec<u8>> {
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or(ClientError::NotConnected)?;
+
+        // Read 4-byte length prefix (little-endian).
+        let mut len_buf = [0u8; 4];
+        stream
+            .read_exact(&mut len_buf)
+            .await
+            .map_err(|e| ClientError::ConnectionLost {
+                reason: format!("recv len: {e}"),
+            })?;
+        let msg_len = u32::from_le_bytes(len_buf) as usize;
+
+        if msg_len > 16 * 1024 * 1024 {
+            return Err(ClientError::ProtocolError {
+                detail: format!("message too large: {msg_len} bytes"),
+            });
+        }
+
+        // Read payload.
+        let mut payload = vec![0u8; msg_len];
+        stream
+            .read_exact(&mut payload)
+            .await
+            .map_err(|e| ClientError::ConnectionLost {
+                reason: format!("recv payload: {e}"),
+            })?;
+
+        Ok(payload)
+    }
+
+    /// Send a length-prefixed message to the server.
+    pub async fn send_message(&mut self, data: &[u8]) -> Result<()> {
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or(ClientError::NotConnected)?;
+
+        let len = (data.len() as u32).to_le_bytes();
+        stream
+            .write_all(&len)
+            .await
+            .map_err(|e| ClientError::ConnectionLost {
+                reason: format!("send len: {e}"),
+            })?;
+        stream
+            .write_all(data)
+            .await
+            .map_err(|e| ClientError::ConnectionLost {
+                reason: format!("send data: {e}"),
+            })?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| ClientError::ConnectionLost {
+                reason: format!("flush: {e}"),
+            })?;
+
         Ok(())
+    }
+
+    /// Take ownership of the TCP stream for use in a background task.
+    pub fn take_stream(&mut self) -> Option<TcpStream> {
+        self.stream.take()
     }
 
     /// Current connection state.

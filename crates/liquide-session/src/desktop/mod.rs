@@ -28,8 +28,11 @@ use std::time::{Duration, Instant};
 use liquide_compositor::effects::QualityProfile;
 use liquide_compositor::Compositor;
 use liquide_devtools::DevToolsPanel;
+use liquide_encoder::encoder::TileEncoder;
+use liquide_encoder::tile::{TileBatch, TileConfig};
 use liquide_input::InputState;
 use liquide_platform::NativeWindowHandle;
+use liquide_compositor::Renderer;
 use liquide_renderer_cpu::SoftwareRenderer;
 use liquide_shell::Shell;
 use tracing::info;
@@ -52,7 +55,7 @@ pub struct DesktopCompositor {
     compositor: Option<Compositor>,
     /// Synchronous renderer used only for the loading screen.
     /// Moved to the render thread after loading completes.
-    renderer: Option<SoftwareRenderer>,
+    renderer: Option<Box<dyn Renderer>>,
     input_state: InputState,
     width: u32,
     height: u32,
@@ -70,6 +73,9 @@ pub struct DesktopCompositor {
     last_render: Instant,
     cursor_x: f32,
     cursor_y: f32,
+    /// Previous cursor position (for cursor-only damage tracking).
+    prev_cursor_x: f32,
+    prev_cursor_y: f32,
     loading: bool,
     /// Minimum interval between frames. 0 = unlimited.
     frame_interval: Duration,
@@ -96,6 +102,10 @@ pub struct DesktopCompositor {
     last_hw_cursor_shape: liquide_compositor::scene::CursorShape,
     /// Whether the hardware cursor shape needs to be synced to the platform.
     hw_cursor_needs_sync: bool,
+    /// Tile encoder for remote frame transmission.
+    tile_encoder: Option<TileEncoder>,
+    /// Encoded tile batches ready for network transmission.
+    pending_batches: Vec<TileBatch>,
 }
 
 impl DesktopCompositor {
@@ -166,7 +176,7 @@ impl DesktopCompositor {
                 tile_size,
                 QualityProfile::Balanced,
             )),
-            renderer: Some(SoftwareRenderer::with_font_db(font_db)),
+            renderer: Some(Box::new(SoftwareRenderer::with_font_db(font_db))),
             input_state: InputState::new(),
             width,
             height,
@@ -180,6 +190,8 @@ impl DesktopCompositor {
             last_render: Instant::now(),
             cursor_x: width as f32 / 2.0,
             cursor_y: height as f32 / 2.0,
+            prev_cursor_x: width as f32 / 2.0,
+            prev_cursor_y: height as f32 / 2.0,
             loading: true,
             frame_interval: Duration::from_millis(16), // ~60fps default
             debug_perf: false,
@@ -193,7 +205,14 @@ impl DesktopCompositor {
             use_hardware_cursor: false,
             last_hw_cursor_shape: liquide_compositor::scene::CursorShape::Arrow,
             hw_cursor_needs_sync: false,
+            tile_encoder: Some(TileEncoder::new(width, height, TileConfig::default())),
+            pending_batches: Vec::new(),
         }
+    }
+
+    /// Drain encoded tile batches ready for network transmission.
+    pub fn drain_encoded_batches(&mut self) -> Vec<TileBatch> {
+        std::mem::take(&mut self.pending_batches)
     }
 
     /// Enable developer mode (windowed, resizable, devtools available).

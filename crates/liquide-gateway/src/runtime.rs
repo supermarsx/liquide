@@ -379,4 +379,52 @@ impl GatewayRuntime {
     pub fn hostname(&self) -> &str {
         &self.config.hostname
     }
+
+    /// Handle a newly accepted TCP connection through the full protocol
+    /// lifecycle: rate-limit check, connection tracking, authentication
+    /// placeholder, and audit logging.
+    ///
+    /// In a production build, TLS handshake, protocol negotiation
+    /// (ClientHello/ServerHello), and session routing would follow.
+    pub fn handle_tcp_connection(
+        &mut self,
+        _stream: &tokio::net::TcpStream,
+        peer_addr: std::net::SocketAddr,
+    ) {
+        let client_ip = peer_addr.ip().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // 1. Rate-limit check.
+        if let Err(e) = self.rate_limiter.check_rate(&client_ip, now) {
+            tracing::warn!(peer = %peer_addr, err = %e, "rate limited — dropping connection");
+            return;
+        }
+        self.rate_limiter.record_request(&client_ip, now);
+
+        // 2. Track connection.
+        let conn_id = self.connection_tracker.add(
+            client_ip.clone(),
+            "tcp".to_string(),
+            now,
+        );
+
+        self.audit_events.push(GatewayAuditEvent::ClientConnected {
+            addr: peer_addr.to_string(),
+            transport: "tcp".to_string(),
+        });
+
+        // TODO: TLS handshake would go here.
+        // TODO: Protocol handshake (ClientHello/ServerHello) would go here.
+        // TODO: Authentication exchange over the wire would go here.
+        // TODO: Route to session server.
+
+        tracing::info!(
+            peer = %peer_addr,
+            conn_id = %conn_id,
+            "TCP connection accepted and tracked"
+        );
+    }
 }

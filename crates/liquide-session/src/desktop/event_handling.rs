@@ -33,6 +33,9 @@ impl DesktopCompositor {
                 }
 
                 self.shell.resize_screen(*width as f32, *height as f32);
+                if let Some(ref mut encoder) = self.tile_encoder {
+                    encoder.resize(*width, *height);
+                }
                 if let Some(ref mut devtools) = self.devtools {
                     devtools.set_screen_size(*width as f32, *height as f32);
                 }

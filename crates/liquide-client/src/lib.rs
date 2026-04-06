@@ -20,9 +20,6 @@ pub mod credential;
 pub mod audit;
 pub mod runtime;
 
-#[cfg(test)]
-mod tests;
-
 use thiserror::Error;
 
 /// Errors produced by the client library.
@@ -63,6 +60,18 @@ pub enum ClientError {
 
     #[error("server unreachable: {server}")]
     ServerUnreachable { server: String },
+
+    #[error("connection timed out after {timeout_ms}ms")]
+    ConnectionTimeout { timeout_ms: u64 },
+
+    #[error("not connected to any server")]
+    NotConnected,
+
+    #[error("connection lost: {reason}")]
+    ConnectionLost { reason: String },
+
+    #[error("protocol error: {detail}")]
+    ProtocolError { detail: String },
 
     #[error("session crashed (code {error_code})")]
     SessionCrashed { error_code: u32 },

@@ -5,7 +5,7 @@ use tracing::info;
 use liquide_gateway::{
     GatewayConfig, RoutingConfig, RelayConfig, LimitsConfig,
     HealthCheckConfig, ManagementApiConfig, ClusterConfig,
-    ListenConfig, GatewayRuntime,
+    ListenConfig, GatewayRuntime, TransportListener,
 };
 
 /// Network gateway for the Liquide desktop environment.
@@ -72,17 +72,16 @@ async fn run(cli: Cli) -> Result<()> {
         cluster_config,
     );
 
-    // Set up client listener.
+    // Set up and bind the TCP listener (kept outside runtime to avoid
+    // borrow conflicts between accept() and handle_tcp_connection()).
     let listen_config = ListenConfig {
         address: cli.listen_addr.clone(),
         ..ListenConfig::default()
     };
-    let listener_id = runtime.listener_manager_mut().add_listener(listen_config);
-    if let Some(listener) = runtime.listener_manager_mut().get_mut(&listener_id) {
-        listener.resume();
-    }
+    let mut listener = TransportListener::new("listener-1".into(), listen_config);
+    listener.start().await.expect("failed to bind listener");
 
-    info!(addr = %cli.listen_addr, "Binding listener...");
+    info!(addr = %cli.listen_addr, "Listener bound");
     info!(
         management_addr = %cli.management_addr,
         "Management API endpoint configured"
@@ -105,6 +104,17 @@ async fn run(cli: Cli) -> Result<()> {
 
     loop {
         tokio::select! {
+            // Accept new TCP connections when the listener is active.
+            result = listener.accept(), if listener.is_listening() => {
+                match result {
+                    Ok((stream, peer_addr)) => {
+                        runtime.handle_tcp_connection(&stream, peer_addr);
+                    }
+                    Err(e) => {
+                        tracing::warn!(err = %e, "accept error");
+                    }
+                }
+            }
             _ = tokio::signal::ctrl_c() => {
                 info!("Received shutdown signal — draining connections");
                 break;

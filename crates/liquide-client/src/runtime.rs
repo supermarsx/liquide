@@ -81,12 +81,12 @@ impl ClientRuntime {
     // -- Connection lifecycle ------------------------------------------------
 
     /// Connect to a remote server.
-    pub fn connect(&mut self, server: &str) -> Result<()> {
+    pub async fn connect(&mut self, server: &str) -> Result<()> {
         self.audit_events.push(ClientAuditEvent::ConnectionAttempt {
             server: server.to_string(),
         });
 
-        self.connection_manager.connect(server).map_err(|e| {
+        self.connection_manager.connect(server).await.map_err(|e| {
             ClientError::ConnectionFailed {
                 server: server.to_string(),
                 reason: e.to_string(),
@@ -108,9 +108,9 @@ impl ClientRuntime {
     }
 
     /// Disconnect from the current server.
-    pub fn disconnect(&mut self) {
+    pub async fn disconnect(&mut self) {
         let server = "(current)".to_string();
-        self.connection_manager.disconnect();
+        self.connection_manager.disconnect().await;
         self.audio_manager.disable_playback();
         self.audio_manager.stop_microphone();
         self.frame_queue.clear();

@@ -18,6 +18,7 @@ liquide-common.workspace = true
 liquide-protocol.workspace = true
 liquide-transport.workspace = true
 liquide-crypto.workspace = true
+liquide-auth.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

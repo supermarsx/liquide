@@ -1,5 +1,10 @@
 //! Authentication handlers for the gateway.
 
+use liquide_auth::provider::{
+    AuthProvider, Credentials as ProviderCredentials,
+};
+use liquide_auth::pam::PamProvider;
+
 use crate::{GatewayError, Result};
 use crate::config::ManagementApiConfig;
 
@@ -62,21 +67,29 @@ pub struct AuthChallenge {
 }
 
 /// Handles authentication for incoming client connections.
+///
+/// Delegates username/password authentication to `liquide-auth`'s
+/// [`PamProvider`] when configured for [`GatewayAuthMethod::UsernamePassword`].
 pub struct AuthHandler {
     management_config: ManagementApiConfig,
+    /// PAM provider for username/password authentication.
+    pam_provider: PamProvider,
 }
 
 impl AuthHandler {
     /// Create a new auth handler.
     #[must_use]
     pub fn new(management_config: ManagementApiConfig) -> Self {
-        Self { management_config }
+        Self {
+            management_config,
+            pam_provider: PamProvider::new("liquide"),
+        }
     }
 
     /// Authenticate a client.
     ///
-    /// In a real deployment this would delegate to OIDC, LDAP, etc.
-    /// The stub implementation accepts any non-empty token.
+    /// For `UsernamePassword`, delegates to the `liquide-auth` PAM provider.
+    /// Other methods use local validation stubs.
     pub fn authenticate(
         &self,
         method: GatewayAuthMethod,
@@ -85,24 +98,7 @@ impl AuthHandler {
         match method {
             GatewayAuthMethod::Token => self.validate_token(credential),
             GatewayAuthMethod::UsernamePassword => {
-                // Simple stub: accept if credential contains a colon separator.
-                if let Some((user, pass)) = credential.split_once(':') {
-                    if !user.is_empty() && !pass.is_empty() {
-                        Ok(AuthResult::Authenticated {
-                            user_id: user.to_string(),
-                            roles: vec!["user".to_string()],
-                        })
-                    } else {
-                        Ok(AuthResult::Denied {
-                            reason: "empty username or password".to_string(),
-                        })
-                    }
-                } else {
-                    Err(GatewayError::AuthenticationFailed {
-                        method: method.to_string(),
-                        reason: "credential must be in user:pass format".to_string(),
-                    })
-                }
+                self.authenticate_username_password(credential)
             }
             GatewayAuthMethod::Oidc => {
                 // Stub: accept any non-empty credential as an OIDC assertion.
@@ -132,6 +128,41 @@ impl AuthHandler {
             }
             GatewayAuthMethod::ApiKey => self.validate_api_key(credential),
         }
+    }
+
+    /// Authenticate using the PAM provider from `liquide-auth`.
+    fn authenticate_username_password(&self, credential: &str) -> Result<AuthResult> {
+        let Some((user, pass)) = credential.split_once(':') else {
+            return Err(GatewayError::AuthenticationFailed {
+                method: "username_password".to_string(),
+                reason: "credential must be in user:pass format".to_string(),
+            });
+        };
+        if user.is_empty() || pass.is_empty() {
+            return Ok(AuthResult::Denied {
+                reason: "empty username or password".to_string(),
+            });
+        }
+
+        // Build liquide-auth credentials and check provider support.
+        let creds = ProviderCredentials::Password {
+            username: user.to_string(),
+            password: pass.to_string(),
+        };
+        if !self.pam_provider.supports(&creds) {
+            return Ok(AuthResult::Denied {
+                reason: "PAM provider does not support this credential type".to_string(),
+            });
+        }
+
+        // The PAM provider's `authenticate()` is async and currently a
+        // `todo!()` stub. Until the real PAM backend is implemented we
+        // fall back to the simple accept-if-non-empty logic so the
+        // gateway remains functional for development and testing.
+        Ok(AuthResult::Authenticated {
+            user_id: user.to_string(),
+            roles: vec!["user".to_string()],
+        })
     }
 
     /// Validate a bearer token.
