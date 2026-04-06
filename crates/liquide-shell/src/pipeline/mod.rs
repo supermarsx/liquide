@@ -40,11 +40,11 @@ pub struct DesktopPipeline {
     /// Monotonic id counter for scene nodes generated from the pipeline.
     next_scene_id: u64,
     /// Last computed styles (cached for hit-testing).
-    pub last_styles: Option<StyleMap>,
+    pub last_styles: Option<Arc<StyleMap>>,
     /// Last computed layout tree (cached for hit-testing).
-    pub last_layout: Option<LayoutTree>,
+    pub last_layout: Option<Arc<LayoutTree>>,
     /// Last computed display list for paint reuse.
-    pub last_display_list: Option<DisplayList>,
+    pub last_display_list: Option<Arc<DisplayList>>,
     /// Image URLs referenced during the last scene build, mapped to their hashed image_id.
     /// The host should load these and register them with the renderer.
     pending_images: Vec<(u64, String)>,
@@ -74,11 +74,15 @@ impl Default for PipelineConfig {
 }
 
 /// Output of a full pipeline run.
+///
+/// All fields are wrapped in `Arc` so that returning cached output from the
+/// fast path (nothing dirty) is an O(1) pointer clone instead of a deep copy
+/// of the entire StyleMap / LayoutTree / DisplayList.
 pub struct PipelineOutput {
     /// Computed styles per node.
-    pub styles: StyleMap,
+    pub styles: Arc<StyleMap>,
     /// Computed layout boxes.
-    pub layout: LayoutTree,
+    pub layout: Arc<LayoutTree>,
     /// Flat paint commands.
-    pub display_list: DisplayList,
+    pub display_list: Arc<DisplayList>,
 }

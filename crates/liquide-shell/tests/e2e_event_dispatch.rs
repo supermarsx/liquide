@@ -78,7 +78,7 @@ fn build_test_layout(root: NodeId, a: NodeId, b: NodeId) -> LayoutTree {
 fn build_test_engine(root: NodeId, a: NodeId, b: NodeId) -> HitTestEngine {
     let layout = build_test_layout(root, a, b);
     let styles = StyleMap::new(); // empty styles → default pointer-events
-    HitTestEngine::new(layout, styles)
+    HitTestEngine::from_owned(layout, styles)
 }
 
 // ---------------------------------------------------------------------------

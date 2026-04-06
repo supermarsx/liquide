@@ -1,5 +1,7 @@
 //! `build_scene()` method and scene graph assembly.
 
+use std::sync::Arc;
+
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::scene::{
     DecorationButtons, NodeProperties, SceneNode, SceneNodeKind,
@@ -55,8 +57,8 @@ impl Shell {
 
         // ── Update hit-test engine with latest layout + styles ──
         self.hit_test_engine = Some(liquide_hit_test::HitTestEngine::new(
-            pipeline_output.layout,
-            pipeline_output.styles,
+            Arc::clone(&pipeline_output.layout),
+            Arc::clone(&pipeline_output.styles),
         ));
         self.desktop_dom.doc.dirty.clear_all();
 
