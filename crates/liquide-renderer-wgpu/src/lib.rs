@@ -32,7 +32,7 @@ pub mod shader;
 pub mod texture;
 
 pub use device::{GpuBackend, WgpuDevice};
-pub use renderer::WgpuRenderer;
+pub use renderer::{GlyphKey, GlyphMetrics, WgpuRenderer};
 
 use thiserror::Error;
 

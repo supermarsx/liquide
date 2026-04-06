@@ -218,6 +218,97 @@ fn fs_gradient(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Textured quad vertex shader — transforms a unit quad to screen-space pixel rect.
+///
+/// Uses `dst_rect` (x, y, w, h in pixels) and `viewport` (width, height) uniforms
+/// to position a quad. Outputs UV coordinates for texture sampling.
+pub const TEXTURED_QUAD_VERT: &str = r#"
+struct QuadUniforms {
+    dst_rect: vec4<f32>,   // x, y, w, h in pixels
+    viewport: vec2<f32>,   // viewport width, height
+    _pad: vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@group(0) @binding(0) var<uniform> qu: QuadUniforms;
+
+@vertex
+fn vs_quad(@builtin(vertex_index) vi: u32) -> VertexOutput {
+    // Two-triangle quad: 0,1,2, 2,1,3
+    var positions = array<vec2<f32>, 4>(
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(1.0, 1.0),
+    );
+    let indices = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u);
+    let idx = indices[vi];
+    let pos = positions[idx];
+
+    // Convert pixel rect to NDC
+    let px = qu.dst_rect.x + pos.x * qu.dst_rect.z;
+    let py = qu.dst_rect.y + pos.y * qu.dst_rect.w;
+    let ndc_x = (px / qu.viewport.x) * 2.0 - 1.0;
+    let ndc_y = 1.0 - (py / qu.viewport.y) * 2.0;
+
+    var out: VertexOutput;
+    out.position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
+    out.uv = pos;
+    return out;
+}
+"#;
+
+/// Text glyph fragment shader — samples alpha from glyph atlas, applies text color.
+///
+/// The atlas is an R8 texture (alpha-only). The shader multiplies the sampled
+/// alpha by the text color and opacity to produce the final premultiplied output.
+pub const TEXT_FRAG: &str = r#"
+@group(1) @binding(0) var t_atlas: texture_2d<f32>;
+@group(1) @binding(1) var s_atlas: sampler;
+@group(1) @binding(2) var<uniform> tu: TextUniforms;
+
+struct TextUniforms {
+    color: vec4<f32>,
+    src_rect: vec4<f32>,  // uv_min.x, uv_min.y, uv_max.x, uv_max.y
+    opacity: f32,
+    _pad: vec3<f32>,
+};
+
+@fragment
+fn fs_text(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+    let atlas_uv = mix(tu.src_rect.xy, tu.src_rect.zw, uv);
+    let alpha = textureSample(t_atlas, s_atlas, atlas_uv).r;
+    return vec4<f32>(tu.color.rgb * alpha * tu.opacity, alpha * tu.opacity * tu.color.a);
+}
+"#;
+
+/// Image blit fragment shader — samples from an image texture with UV mapping.
+///
+/// Supports image fitting via `src_rect` which defines the UV sub-region
+/// of the source texture to sample from (computed on CPU based on ImageFit).
+pub const IMAGE_FRAG: &str = r#"
+@group(1) @binding(0) var t_image: texture_2d<f32>;
+@group(1) @binding(1) var s_image: sampler;
+@group(1) @binding(2) var<uniform> iu: ImageUniforms;
+
+struct ImageUniforms {
+    src_rect: vec4<f32>,  // uv_min.x, uv_min.y, uv_max.x, uv_max.y
+    opacity: f32,
+    _pad: vec3<f32>,
+};
+
+@fragment
+fn fs_image(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+    let tex_uv = mix(iu.src_rect.xy, iu.src_rect.zw, uv);
+    let color = textureSample(t_image, s_image, tex_uv);
+    return vec4<f32>(color.rgb * iu.opacity, color.a * iu.opacity);
+}
+"#;
+
 /// Box-shadow fragment shader using SDF.
 pub const BOX_SHADOW_FRAG: &str = r#"
 struct ShadowUniforms {
