@@ -59,8 +59,17 @@ pub enum EditorError {
     #[error("no search matches")]
     NoMatches,
 
+    #[error("no file path set for this document")]
+    NoPath,
+
     #[error("I/O error: {0}")]
     Io(String),
+}
+
+impl From<std::io::Error> for EditorError {
+    fn from(e: std::io::Error) -> Self {
+        EditorError::Io(e.to_string())
+    }
 }
 
 /// Convenience result alias for this crate.
@@ -68,4 +77,6 @@ pub type Result<T> = std::result::Result<T, EditorError>;
 
 // Re-exports for convenience.
 pub use config::EditorConfig;
-pub use runtime::EditorRuntime;
+pub use document::LineEnding;
+pub use runtime::{EditorLine, EditorRuntime};
+pub use syntax::TokenKind;

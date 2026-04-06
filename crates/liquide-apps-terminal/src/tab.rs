@@ -21,12 +21,15 @@ impl Tab {
     #[must_use]
     pub fn new(id: u32, shell: &str, rows: u32, cols: u32, scrollback_lines: u32) -> Self {
         let size = PtySize::new(rows, cols);
+        let mut pty = PtyBackend::new(shell.to_string(), size);
+        // Auto-spawn the PTY so it's immediately ready for I/O.
+        let _ = pty.spawn();
         Self {
             id,
             title: format!("Tab {id}"),
             grid: Grid::new(rows, cols),
             scrollback: ScrollbackBuffer::new(scrollback_lines as usize),
-            pty: PtyBackend::new(shell.to_string(), size),
+            pty,
             shell_integration: ShellIntegration::new(),
             closed: false,
         }

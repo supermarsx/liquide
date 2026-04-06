@@ -114,7 +114,7 @@ impl TerminalRuntime {
             }
             Action::Execute(byte) => match byte {
                 0x08 => grid.cursor_back(1),      // BS
-                0x09 => grid.cursor_forward(8),    // HT (simplified)
+                0x09 => grid.cursor_tab(),            // HT
                 0x0a | 0x0b | 0x0c => grid.line_feed(), // LF/VT/FF
                 0x0d => grid.carriage_return(),    // CR
                 _ => {}
@@ -160,11 +160,11 @@ impl TerminalRuntime {
             }
             CsiAction::ScrollDown(n) => grid.scroll_down(n),
             CsiAction::SetScrollRegion { top, bottom } => grid.set_scroll_region(top, bottom),
-            CsiAction::InsertLines(_)
-            | CsiAction::DeleteLines(_)
-            | CsiAction::InsertChars(_)
-            | CsiAction::DeleteChars(_)
-            | CsiAction::DeviceStatusReport
+            CsiAction::InsertLines(n) => grid.insert_lines(n),
+            CsiAction::DeleteLines(n) => grid.delete_lines(n),
+            CsiAction::InsertChars(n) => grid.insert_chars(n),
+            CsiAction::DeleteChars(n) => grid.delete_chars(n),
+            CsiAction::DeviceStatusReport
             | CsiAction::Unknown(_) => {}
         }
     }
@@ -186,6 +186,180 @@ impl TerminalRuntime {
             }
             OscAction::Hyperlink { .. } | OscAction::Unknown(_) => {}
         }
+    }
+}
+
+/// A rendered terminal line with attributed text spans.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderedLine {
+    /// The text content of the line.
+    pub text: String,
+    /// Styled spans within the line.
+    pub spans: Vec<TextSpan>,
+}
+
+/// A styled span within a rendered line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextSpan {
+    /// Start column (inclusive).
+    pub start: u32,
+    /// End column (exclusive).
+    pub end: u32,
+    /// Foreground color: palette index.
+    pub fg: Option<u8>,
+    /// Background color: palette index.
+    pub bg: Option<u8>,
+    /// Foreground RGB override.
+    pub fg_rgb: Option<(u8, u8, u8)>,
+    /// Background RGB override.
+    pub bg_rgb: Option<(u8, u8, u8)>,
+    /// Bold attribute.
+    pub bold: bool,
+    /// Italic attribute.
+    pub italic: bool,
+    /// Underline attribute.
+    pub underline: bool,
+    /// Dim attribute.
+    pub dim: bool,
+    /// Strikethrough attribute.
+    pub strikethrough: bool,
+    /// Reverse video attribute.
+    pub reverse: bool,
+}
+
+impl TextSpan {
+    fn from_attrs(start: u32, end: u32, attrs: &CellAttrs) -> Self {
+        Self {
+            start,
+            end,
+            fg: attrs.fg,
+            bg: attrs.bg,
+            fg_rgb: attrs.fg_rgb,
+            bg_rgb: attrs.bg_rgb,
+            bold: attrs.bold,
+            italic: attrs.italic,
+            underline: attrs.underline,
+            dim: attrs.dim,
+            strikethrough: attrs.strikethrough,
+            reverse: attrs.reverse,
+        }
+    }
+}
+
+impl TerminalRuntime {
+    /// Process one iteration of the terminal event loop.
+    ///
+    /// Reads available output from the active tab's PTY, feeds it through
+    /// the VT parser, and applies the resulting actions to the grid.
+    /// Returns `true` if the grid was updated (i.e., needs a redraw).
+    pub fn tick(&mut self) -> bool {
+        let data = {
+            let Some(tab) = self.tabs.active_tab_mut() else {
+                return false;
+            };
+            let output = tab.pty_mut().read();
+            if output.is_empty() {
+                return false;
+            }
+            output
+        };
+        self.process_output(&data);
+        true
+    }
+
+    /// Send a named key to the active tab's PTY, mapping key names
+    /// to the appropriate terminal escape sequences.
+    pub fn send_key(&mut self, key: &str) -> crate::Result<()> {
+        let bytes: &[u8] = match key {
+            "Enter" => b"\r",
+            "Backspace" => b"\x7f",
+            "Tab" => b"\t",
+            "Escape" => b"\x1b",
+            "ArrowUp" => b"\x1b[A",
+            "ArrowDown" => b"\x1b[B",
+            "ArrowRight" => b"\x1b[C",
+            "ArrowLeft" => b"\x1b[D",
+            "Home" => b"\x1b[H",
+            "End" => b"\x1b[F",
+            "PageUp" => b"\x1b[5~",
+            "PageDown" => b"\x1b[6~",
+            "Delete" => b"\x1b[3~",
+            "Insert" => b"\x1b[2~",
+            "F1" => b"\x1bOP",
+            "F2" => b"\x1bOQ",
+            "F3" => b"\x1bOR",
+            "F4" => b"\x1bOS",
+            "F5" => b"\x1b[15~",
+            "F6" => b"\x1b[17~",
+            "F7" => b"\x1b[18~",
+            "F8" => b"\x1b[19~",
+            "F9" => b"\x1b[20~",
+            "F10" => b"\x1b[21~",
+            "F11" => b"\x1b[23~",
+            "F12" => b"\x1b[24~",
+            other => other.as_bytes(),
+        };
+        self.send_input(bytes)
+    }
+
+    /// Send a single character to the active tab's PTY.
+    pub fn send_char(&mut self, ch: char) -> crate::Result<()> {
+        let mut buf = [0u8; 4];
+        let encoded = ch.encode_utf8(&mut buf);
+        self.send_input(encoded.as_bytes())
+    }
+
+    /// Get the visible lines for rendering.
+    ///
+    /// Returns a `RenderedLine` per grid row, containing the text content
+    /// and a list of styled spans with attribute changes.
+    #[must_use]
+    pub fn visible_lines(&self) -> Vec<RenderedLine> {
+        let Some(tab) = self.tabs.active_tab() else {
+            return Vec::new();
+        };
+        let grid = tab.grid();
+        let rows = grid.rows();
+        let cols = grid.cols();
+        let mut lines = Vec::with_capacity(rows as usize);
+
+        for row in 0..rows {
+            let mut text = String::with_capacity(cols as usize);
+            let mut spans = Vec::new();
+            let mut current_attrs = CellAttrs::default();
+            let mut span_start = 0u32;
+
+            for col in 0..cols {
+                let cell = match grid.cell(row, col) {
+                    Some(c) => c,
+                    None => break,
+                };
+                if cell.attrs != current_attrs && col > span_start {
+                    spans.push(TextSpan::from_attrs(span_start, col, &current_attrs));
+                    current_attrs = cell.attrs;
+                    span_start = col;
+                } else if cell.attrs != current_attrs {
+                    current_attrs = cell.attrs;
+                    span_start = col;
+                }
+                text.push(cell.ch);
+            }
+            // Final span for the remainder of the row.
+            if cols > span_start {
+                spans.push(TextSpan::from_attrs(span_start, cols, &current_attrs));
+            }
+
+            lines.push(RenderedLine { text, spans });
+        }
+        lines
+    }
+
+    /// Current cursor position (row, col) for cursor rendering.
+    #[must_use]
+    pub fn cursor_position(&self) -> (u32, u32) {
+        self.tabs.active_tab()
+            .map(|t| t.grid().cursor())
+            .unwrap_or((0, 0))
     }
 }
 

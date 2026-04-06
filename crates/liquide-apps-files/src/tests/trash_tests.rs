@@ -27,7 +27,9 @@ fn test_trash_manager_trash_file() {
     let entry = tm.trash("/home/user/file.txt", 1024).unwrap();
     assert_eq!(entry.original_path, "/home/user/file.txt");
     assert_eq!(entry.size, 1024);
-    assert!(entry.trash_path.starts_with("/tmp/trash/files/"));
+    // Path separator varies by platform (\\ on Windows, / on Unix).
+    let normalized = entry.trash_path.replace('\\', "/");
+    assert!(normalized.starts_with("/tmp/trash/files/"), "trash_path was: {}", entry.trash_path);
     assert_eq!(tm.count(), 1);
     assert_eq!(tm.total_size(), 1024);
 }

@@ -237,13 +237,26 @@ fn test_shell_integration_command() {
 
 #[test]
 fn test_pty_lifecycle() {
-    let mut pty = PtyBackend::new("/bin/bash".into(), PtySize::default());
+    // Use a platform-appropriate shell.
+    #[cfg(unix)]
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    #[cfg(windows)]
+    let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+
+    let mut pty = PtyBackend::new(shell, PtySize::default());
     assert_eq!(pty.state(), PtyState::Idle);
     pty.spawn().unwrap();
     assert_eq!(pty.state(), PtyState::Running);
-    pty.write(b"test").unwrap();
-    let output = pty.read();
-    assert_eq!(output, b"test");
+
+    // With a real PTY, writing goes to the child process and we may get
+    // output back asynchronously. Just verify write succeeds.
+    pty.write(b"echo hello\n").unwrap();
+
+    // Give the child a moment to produce output, then read whatever is available.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let _output = pty.read();
+    // Output contents depend on shell prompt and echo; just verify no panic.
+
     pty.kill();
     assert_eq!(pty.state(), PtyState::Killed);
 }
@@ -291,4 +304,297 @@ fn test_tab_display_title() {
     let tab = tm.get_mut(id).unwrap();
     tab.shell_integration_mut().set_cwd("/home/user/projects".into());
     assert_eq!(tab.display_title(), "projects");
+}
+
+// ===========================================================================
+// Event loop (tick)
+// ===========================================================================
+
+#[test]
+fn test_tick_no_tab() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    assert!(!rt.tick());
+}
+
+#[test]
+fn test_tick_no_data() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    // No data in PTY buffer -> tick returns false.
+    assert!(!rt.tick());
+}
+
+#[test]
+fn test_tick_with_data() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    // Put data into the PTY (stub echoes writes to output_buffer).
+    rt.send_input(b"Hello").unwrap();
+    // Now tick should read it and update the grid.
+    assert!(rt.tick());
+    assert_eq!(rt.active_grid().row_text(0), "Hello");
+}
+
+#[test]
+fn test_tick_multiple_rounds() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    rt.send_input(b"AB").unwrap();
+    assert!(rt.tick());
+    rt.send_input(b"CD").unwrap();
+    assert!(rt.tick());
+    assert_eq!(rt.active_grid().row_text(0), "ABCD");
+}
+
+// ===========================================================================
+// Keyboard input
+// ===========================================================================
+
+#[test]
+fn test_send_key_enter() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    rt.send_key("Enter").unwrap();
+    // Enter sends \r which the PTY echoes; tick processes it as CR.
+    assert!(rt.tick());
+}
+
+#[test]
+fn test_send_key_arrow() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    // Write some text first so cursor is not at 0.
+    rt.send_input(b"ABC").unwrap();
+    rt.tick();
+    assert_eq!(rt.cursor_position(), (0, 3));
+    // ArrowLeft sends \x1b[D which is CUB(1).
+    rt.send_key("ArrowLeft").unwrap();
+    rt.tick();
+    assert_eq!(rt.cursor_position(), (0, 2));
+}
+
+#[test]
+fn test_send_char() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    rt.send_char('Z').unwrap();
+    rt.tick();
+    assert_eq!(rt.active_grid().row_text(0), "Z");
+}
+
+#[test]
+fn test_send_key_no_tab() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    assert!(rt.send_key("Enter").is_err());
+}
+
+#[test]
+fn test_send_char_no_tab() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    assert!(rt.send_char('A').is_err());
+}
+
+// ===========================================================================
+// Visible lines (rendering)
+// ===========================================================================
+
+#[test]
+fn test_visible_lines_empty() {
+    let rt = TerminalRuntime::new(TerminalConfig::default());
+    assert!(rt.visible_lines().is_empty());
+}
+
+#[test]
+fn test_visible_lines_text() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    rt.process_output(b"Hello");
+    let lines = rt.visible_lines();
+    assert_eq!(lines.len(), 24); // 24 rows default
+    assert!(lines[0].text.starts_with("Hello"));
+    // First row should have at least one span.
+    assert!(!lines[0].spans.is_empty());
+}
+
+#[test]
+fn test_visible_lines_bold_spans() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    rt.process_output(b"AB\x1b[1mCD\x1b[0mEF");
+    let lines = rt.visible_lines();
+    // Should have multiple spans due to attribute changes.
+    let spans = &lines[0].spans;
+    assert!(spans.len() >= 3, "Expected at least 3 spans, got {}", spans.len());
+    // First span (A,B) should not be bold.
+    assert!(!spans[0].bold);
+    assert_eq!(spans[0].start, 0);
+    assert_eq!(spans[0].end, 2);
+    // Second span (C,D) should be bold.
+    assert!(spans[1].bold);
+    assert_eq!(spans[1].start, 2);
+    assert_eq!(spans[1].end, 4);
+    // Third span (E,F,...) should not be bold.
+    assert!(!spans[2].bold);
+}
+
+#[test]
+fn test_visible_lines_color_spans() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    // Red foreground (31) then reset.
+    rt.process_output(b"\x1b[31mRed\x1b[0mNormal");
+    let lines = rt.visible_lines();
+    let spans = &lines[0].spans;
+    assert!(spans.len() >= 2);
+    assert_eq!(spans[0].fg, Some(1)); // color index 1 = red
+    assert_eq!(spans[1].fg, None);    // reset
+}
+
+// ===========================================================================
+// Cursor position
+// ===========================================================================
+
+#[test]
+fn test_cursor_position_no_tab() {
+    let rt = TerminalRuntime::new(TerminalConfig::default());
+    assert_eq!(rt.cursor_position(), (0, 0));
+}
+
+#[test]
+fn test_cursor_position_after_text() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    rt.process_output(b"ABC");
+    assert_eq!(rt.cursor_position(), (0, 3));
+}
+
+#[test]
+fn test_cursor_position_after_newline() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    rt.process_output(b"line1\r\nline2");
+    assert_eq!(rt.cursor_position(), (1, 5));
+}
+
+// ===========================================================================
+// Grid: insert/delete lines/chars, cursor_tab
+// ===========================================================================
+
+#[test]
+fn test_grid_cursor_tab() {
+    let mut g = crate::grid::Grid::new(5, 80);
+    g.set_cursor(0, 3);
+    g.cursor_tab();
+    assert_eq!(g.cursor(), (0, 8));
+    g.cursor_tab();
+    assert_eq!(g.cursor(), (0, 16));
+}
+
+#[test]
+fn test_grid_cursor_tab_at_stop() {
+    let mut g = crate::grid::Grid::new(5, 80);
+    g.set_cursor(0, 8);
+    g.cursor_tab();
+    assert_eq!(g.cursor(), (0, 16));
+}
+
+#[test]
+fn test_grid_insert_lines() {
+    let mut g = crate::grid::Grid::new(5, 5);
+    g.set_cursor(0, 0); g.put_char('A');
+    g.set_cursor(1, 0); g.put_char('B');
+    g.set_cursor(2, 0); g.put_char('C');
+    g.set_cursor(1, 0);
+    g.insert_lines(1);
+    assert_eq!(g.row_text(0), "A");
+    assert_eq!(g.row_text(1), "");    // inserted blank
+    assert_eq!(g.row_text(2), "B");
+    assert_eq!(g.row_text(3), "C");
+}
+
+#[test]
+fn test_grid_delete_lines() {
+    let mut g = crate::grid::Grid::new(5, 5);
+    g.set_cursor(0, 0); g.put_char('A');
+    g.set_cursor(1, 0); g.put_char('B');
+    g.set_cursor(2, 0); g.put_char('C');
+    g.set_cursor(1, 0);
+    g.delete_lines(1);
+    assert_eq!(g.row_text(0), "A");
+    assert_eq!(g.row_text(1), "C");
+    assert_eq!(g.row_text(2), "");    // blank inserted at bottom
+}
+
+#[test]
+fn test_grid_insert_chars() {
+    let mut g = crate::grid::Grid::new(3, 5);
+    for ch in "ABCDE".chars() { g.put_char(ch); }
+    g.set_cursor(0, 2);
+    g.insert_chars(1);
+    // Row should now be "AB CDE" truncated to 5: "AB CD"
+    assert_eq!(g.row_text(0), "AB CD");
+}
+
+#[test]
+fn test_grid_delete_chars() {
+    let mut g = crate::grid::Grid::new(3, 5);
+    for ch in "ABCDE".chars() { g.put_char(ch); }
+    g.set_cursor(0, 2);
+    g.delete_chars(1);
+    // C removed, shift left, blank at end: "ABDE "
+    assert_eq!(g.row_text(0), "ABDE");
+}
+
+// ===========================================================================
+// CSI InsertLines/DeleteLines/InsertChars/DeleteChars via runtime
+// ===========================================================================
+
+#[test]
+fn test_runtime_csi_insert_lines() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    rt.process_output(b"Line0\r\nLine1\r\nLine2");
+    // Move to row 1, insert 1 line: \x1b[2;1H\x1b[1L
+    rt.process_output(b"\x1b[2;1H\x1b[1L");
+    assert_eq!(rt.active_grid().row_text(0), "Line0");
+    assert_eq!(rt.active_grid().row_text(1), "");     // inserted
+    assert_eq!(rt.active_grid().row_text(2), "Line1");
+}
+
+#[test]
+fn test_runtime_csi_delete_chars() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+    rt.process_output(b"ABCDE");
+    // Move to col 1, delete 2 chars: \x1b[1;2H\x1b[2P
+    rt.process_output(b"\x1b[1;2H\x1b[2P");
+    assert_eq!(rt.active_grid().row_text(0), "ADE");
+}
+
+// ===========================================================================
+// Full event loop round-trip
+// ===========================================================================
+
+#[test]
+fn test_full_roundtrip() {
+    let mut rt = TerminalRuntime::new(TerminalConfig::default());
+    rt.new_tab(None);
+
+    // Simulate: type "ls", press Enter, get output.
+    // The stub PTY echoes writes, so send_input -> tick processes it.
+    rt.send_input(b"ls\r").unwrap();
+    let dirty = rt.tick();
+    assert!(dirty);
+
+    // Grid should show "ls" on first row (CR moves cursor to col 0 same row).
+    let text = rt.active_grid().row_text(0);
+    assert!(text.starts_with("ls"), "Expected 'ls' but got '{}'", text);
+
+    // visible_lines should be renderable.
+    let lines = rt.visible_lines();
+    assert_eq!(lines.len(), 24);
+
+    // cursor should be at (0, 2) after "ls" then CR moves to col 0.
+    // Actually: 'l' prints at (0,0), 's' at (0,1), CR sets col=0.
+    assert_eq!(rt.cursor_position(), (0, 0));
 }

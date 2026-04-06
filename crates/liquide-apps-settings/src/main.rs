@@ -14,7 +14,10 @@ fn main() -> Result<()> {
     let config = SettingsConfig::default();
     info!(category = %config.default_category, "Starting liquid-settings");
 
-    let rt = SettingsRuntime::new(config);
+    let mut rt = SettingsRuntime::new(config);
+    if let Err(e) = rt.load_from_disk() {
+        tracing::warn!("failed to load settings from disk: {e}");
+    }
     info!(entries = rt.total_entries(), "Loaded settings");
 
     let infos = rt.category_infos();

@@ -14,3 +14,4 @@ mod recent_tests;
 mod favorites_tests;
 mod places_tests;
 mod search_folder_tests;
+mod fs_integration_tests;

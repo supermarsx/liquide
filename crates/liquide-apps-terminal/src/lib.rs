@@ -60,4 +60,4 @@ pub type Result<T> = std::result::Result<T, TerminalError>;
 
 // Re-exports for convenience.
 pub use config::TerminalConfig;
-pub use runtime::TerminalRuntime;
+pub use runtime::{TerminalRuntime, RenderedLine, TextSpan};

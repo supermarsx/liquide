@@ -1,6 +1,7 @@
 //! Top-level settings coordinator.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::apply::{ChangeTracker, SettingChange};
 use crate::category::{Category, CategoryInfo};
@@ -10,6 +11,85 @@ use crate::notify::NotificationQueue;
 use crate::page::{self, SettingsPage};
 use crate::policy::PolicyEngine;
 use crate::search::SettingsSearch;
+
+/// Cross-platform directory for LiquiDE configuration files.
+pub fn settings_dir() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            return PathBuf::from(xdg).join("liquide");
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".config/liquide");
+        }
+        return "/tmp/liquide".into();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return PathBuf::from(appdata).join("liquide");
+        }
+        return "C:\\ProgramData\\liquide".into();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join("Library/Application Support/liquide");
+        }
+        return "/tmp/liquide".into();
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        "/tmp/liquide".into()
+    }
+}
+
+/// Path to the settings JSON file.
+pub fn settings_file() -> PathBuf {
+    settings_dir().join("settings.json")
+}
+
+/// A display-ready representation of a setting for UI rendering.
+#[derive(Debug, Clone)]
+pub struct SettingDisplay {
+    /// Unique key.
+    pub key: String,
+    /// Human-readable label.
+    pub label: String,
+    /// Description / tooltip.
+    pub description: String,
+    /// Current value.
+    pub value: SettingValue,
+    /// Whether the setting is locked by policy.
+    pub locked: bool,
+    /// Category this setting belongs to.
+    pub category: Category,
+}
+
+/// Convert a `serde_json::Value` into a `SettingValue`.
+fn json_to_setting_value(v: &serde_json::Value) -> SettingValue {
+    match v {
+        serde_json::Value::Bool(b) => SettingValue::Bool(*b),
+        serde_json::Value::Number(n) => {
+            SettingValue::Number(n.as_f64().unwrap_or(0.0))
+        }
+        serde_json::Value::String(s) => SettingValue::Text(s.clone()),
+        other => SettingValue::Text(other.to_string()),
+    }
+}
+
+/// Convert a `SettingValue` into a `serde_json::Value`.
+fn setting_value_to_json(v: &SettingValue) -> serde_json::Value {
+    match v {
+        SettingValue::Bool(b) => serde_json::Value::Bool(*b),
+        SettingValue::Number(n) => {
+            serde_json::Number::from_f64(*n)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        }
+        SettingValue::Text(s) => serde_json::Value::String(s.clone()),
+    }
+}
 
 /// The settings runtime that coordinates all subsystems.
 pub struct SettingsRuntime {
@@ -224,4 +304,149 @@ impl SettingsRuntime {
     /// Get the current config.
     #[must_use]
     pub fn config(&self) -> &SettingsConfig { &self.config }
+
+    // ---- Persistence ----
+
+    /// Load settings from the JSON file on disk.
+    ///
+    /// Only values whose keys match a registered entry are applied; unknown
+    /// keys are silently ignored. If the file does not exist yet, this is a
+    /// no-op and returns `Ok(())`.
+    pub fn load_from_disk(&mut self) -> crate::Result<()> {
+        let path = settings_file();
+        if !path.exists() {
+            tracing::info!("no settings file found, using defaults");
+            return Ok(());
+        }
+        let content = std::fs::read_to_string(&path)?;
+        let map: HashMap<String, serde_json::Value> = serde_json::from_str(&content)?;
+
+        for (key, json_val) in &map {
+            if let Some(entry) = self.entries.get_mut(key.as_str()) {
+                let value = json_to_setting_value(json_val);
+                if entry.validate(&value).is_ok() {
+                    entry.value = value;
+                } else {
+                    tracing::warn!(key = %key, "skipping invalid persisted value");
+                }
+            }
+        }
+        tracing::info!(path = %path.display(), entries = self.entries.len(), "settings loaded from disk");
+        Ok(())
+    }
+
+    /// Save all current setting values to disk as pretty-printed JSON.
+    pub fn save_to_disk(&self) -> crate::Result<()> {
+        let path = settings_file();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let mut map = serde_json::Map::new();
+        for (key, entry) in &self.entries {
+            map.insert(key.clone(), setting_value_to_json(&entry.value));
+        }
+        let content = serde_json::to_string_pretty(&serde_json::Value::Object(map))?;
+        std::fs::write(&path, content)?;
+        tracing::info!(path = %path.display(), "settings saved to disk");
+        Ok(())
+    }
+
+    /// Load settings from a specific path (useful for testing or import).
+    pub fn load_from_path(&mut self, path: &std::path::Path) -> crate::Result<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+        let content = std::fs::read_to_string(path)?;
+        let map: HashMap<String, serde_json::Value> = serde_json::from_str(&content)?;
+        for (key, json_val) in &map {
+            if let Some(entry) = self.entries.get_mut(key.as_str()) {
+                let value = json_to_setting_value(json_val);
+                if entry.validate(&value).is_ok() {
+                    entry.value = value;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Save settings to a specific path (useful for testing or export).
+    pub fn save_to_path(&self, path: &std::path::Path) -> crate::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut map = serde_json::Map::new();
+        for (key, entry) in &self.entries {
+            map.insert(key.clone(), setting_value_to_json(&entry.value));
+        }
+        let content = serde_json::to_string_pretty(&serde_json::Value::Object(map))?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+
+    // ---- Event handling ----
+
+    /// Handle a setting change from the UI.
+    ///
+    /// Validates against policy and type constraints, records for undo,
+    /// applies immediately, and queues a notification.
+    pub fn handle_change(&mut self, key: &str, value: SettingValue) -> crate::Result<bool> {
+        // Delegates to set_value which already checks policy, validates,
+        // records undo, and sends notification.
+        self.set_value(key, value)?;
+        Ok(true)
+    }
+
+    /// Commit all pending changes and persist to disk.
+    pub fn apply_changes(&mut self) -> crate::Result<()> {
+        self.save_to_disk()
+    }
+
+    /// Revert all uncommitted changes by undoing everything in the undo stack.
+    pub fn revert_changes(&mut self) {
+        while self.changes.can_undo() {
+            if let Ok(reversed) = self.changes.undo() {
+                if let Some(entry) = self.entries.get_mut(&reversed.key) {
+                    entry.value = reversed.new_value.clone();
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    // ---- Display helpers ----
+
+    /// Get renderable settings for a specific category.
+    #[must_use]
+    pub fn category_settings(&self, category: Category) -> Vec<SettingDisplay> {
+        self.entries.values()
+            .filter(|e| e.category == category)
+            .filter(|e| self.policy.is_visible(&e.key))
+            .map(|entry| SettingDisplay {
+                key: entry.key.clone(),
+                label: entry.label.clone(),
+                description: entry.description.clone(),
+                value: entry.value.clone(),
+                locked: !self.policy.is_editable(&entry.key),
+                category,
+            })
+            .collect()
+    }
+
+    /// Get renderable settings for the active category.
+    #[must_use]
+    pub fn active_category_settings(&self) -> Vec<SettingDisplay> {
+        self.category_settings(self.active_category)
+    }
+
+    /// Collect all entries as a JSON-serializable map (key -> value).
+    #[must_use]
+    pub fn all_entries_as_json(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        for (key, entry) in &self.entries {
+            map.insert(key.clone(), setting_value_to_json(&entry.value));
+        }
+        serde_json::Value::Object(map)
+    }
 }

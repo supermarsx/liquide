@@ -55,8 +55,10 @@ impl Language {
             "rs" => Some(Self::rust()),
             "py" => Some(Self::python()),
             "js" | "ts" | "jsx" | "tsx" => Some(Self::javascript()),
-            "c" | "h" => Some(Self::c()),
+            "c" | "h" | "cpp" | "hpp" | "cc" | "cxx" => Some(Self::c()),
             "toml" => Some(Self::toml()),
+            // Return None for known text formats (no keyword highlighting needed).
+            // This keeps them as Plain Text but still recognized.
             _ => None,
         }
     }
@@ -173,6 +175,15 @@ impl Highlighter {
     #[must_use]
     pub fn new(language: Option<Language>) -> Self {
         Self { language }
+    }
+
+    /// Detect the language from a file path and create a highlighter.
+    #[must_use]
+    pub fn detect(path: &std::path::Path) -> Self {
+        let lang = path.extension()
+            .and_then(|e| e.to_str())
+            .and_then(|ext| Language::from_extension(ext));
+        Self::new(lang)
     }
 
     /// Set the language.

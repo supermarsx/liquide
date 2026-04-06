@@ -187,6 +187,81 @@ impl Grid {
             .unwrap_or_default()
     }
 
+    /// Move cursor to the next tab stop (every 8 columns).
+    pub fn cursor_tab(&mut self) {
+        let next = ((self.cursor_col / 8) + 1) * 8;
+        self.cursor_col = next.min(self.cols.saturating_sub(1));
+    }
+
+    /// Insert `n` blank lines at the cursor row, pushing lines down.
+    /// Lines that fall below the scroll region are discarded.
+    pub fn insert_lines(&mut self, n: u32) {
+        let top = self.cursor_row.max(self.scroll_top) as usize;
+        let bot = self.scroll_bottom as usize;
+        if top > bot || top >= self.cells.len() {
+            return;
+        }
+        for _ in 0..n {
+            if bot < self.cells.len() {
+                self.cells.remove(bot);
+            }
+            let blank: Vec<Cell> = (0..self.cols).map(|_| Cell::default()).collect();
+            self.cells.insert(top, blank);
+        }
+    }
+
+    /// Delete `n` lines at the cursor row, pulling lines up.
+    /// Blank lines are inserted at the bottom of the scroll region.
+    pub fn delete_lines(&mut self, n: u32) {
+        let top = self.cursor_row.max(self.scroll_top) as usize;
+        let bot = self.scroll_bottom as usize;
+        if top > bot || top >= self.cells.len() {
+            return;
+        }
+        for _ in 0..n {
+            if top < self.cells.len() {
+                self.cells.remove(top);
+            }
+            let blank: Vec<Cell> = (0..self.cols).map(|_| Cell::default()).collect();
+            let insert_at = bot.min(self.cells.len());
+            self.cells.insert(insert_at, blank);
+        }
+    }
+
+    /// Insert `n` blank characters at the cursor position, shifting cells right.
+    /// Characters that fall off the right edge are discarded.
+    pub fn insert_chars(&mut self, n: u32) {
+        let r = self.cursor_row as usize;
+        let c = self.cursor_col as usize;
+        if r >= self.cells.len() {
+            return;
+        }
+        let row = &mut self.cells[r];
+        for _ in 0..n {
+            if c < row.len() {
+                row.pop(); // discard rightmost
+                row.insert(c, Cell::default());
+            }
+        }
+    }
+
+    /// Delete `n` characters at the cursor position, shifting cells left.
+    /// Blank characters are inserted at the right edge.
+    pub fn delete_chars(&mut self, n: u32) {
+        let r = self.cursor_row as usize;
+        let c = self.cursor_col as usize;
+        if r >= self.cells.len() {
+            return;
+        }
+        let row = &mut self.cells[r];
+        for _ in 0..n {
+            if c < row.len() {
+                row.remove(c);
+                row.push(Cell::default());
+            }
+        }
+    }
+
     pub fn resize(&mut self, new_rows: u32, new_cols: u32) {
         while (self.cells.len() as u32) < new_rows { self.cells.push((0..new_cols).map(|_| Cell::default()).collect()); }
         self.cells.truncate(new_rows as usize);

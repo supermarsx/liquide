@@ -158,4 +158,83 @@ impl FilesRuntime {
     /// Navigation history.
     #[must_use]
     pub fn history(&self) -> &[String] { &self.navigation_history }
+
+    // =========================================================================
+    // Real filesystem navigation
+    // =========================================================================
+
+    /// Navigate to a real directory on disk, reading its contents with
+    /// [`DirectoryListing::load_directory`].
+    pub fn navigate_to(&mut self, path: &std::path::Path) -> crate::Result<()> {
+        self.current_listing.load_directory(path)?;
+
+        let path_str = self.current_listing.path.clone();
+        // Push to history (same logic as `navigate`).
+        if self.navigation_history.is_empty()
+            || self.navigation_history.last().map(|s| s.as_str()) != Some(&path_str)
+        {
+            self.navigation_history.truncate(self.history_index + 1);
+            self.navigation_history.push(path_str);
+            self.history_index = self.navigation_history.len() - 1;
+        }
+        self.selection.clear();
+        Ok(())
+    }
+
+    /// Navigate back in history, loading the directory from disk.
+    pub fn navigate_back(&mut self) -> crate::Result<bool> {
+        if !self.can_go_back() {
+            return Ok(false);
+        }
+        self.history_index -= 1;
+        let path = self.navigation_history[self.history_index].clone();
+        self.current_listing.load_directory(std::path::Path::new(&path))?;
+        self.selection.clear();
+        Ok(true)
+    }
+
+    /// Navigate forward in history, loading the directory from disk.
+    pub fn navigate_forward_disk(&mut self) -> crate::Result<bool> {
+        if !self.can_go_forward() {
+            return Ok(false);
+        }
+        self.history_index += 1;
+        let path = self.navigation_history[self.history_index].clone();
+        self.current_listing.load_directory(std::path::Path::new(&path))?;
+        self.selection.clear();
+        Ok(true)
+    }
+
+    /// Navigate up to the parent directory on disk.
+    pub fn navigate_up_disk(&mut self) -> crate::Result<bool> {
+        let parent = match self.current_listing.parent() {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+        self.navigate_to(std::path::Path::new(&parent))?;
+        Ok(true)
+    }
+
+    /// Open entry by index: if it's a directory, navigate into it.
+    /// Returns `true` if navigation occurred.
+    pub fn open_entry(&mut self, index: usize) -> crate::Result<bool> {
+        let entry = match self.current_listing.get(index) {
+            Some(e) => e,
+            None => return Ok(false),
+        };
+        if !entry.is_dir() {
+            return Ok(false);
+        }
+        let path = entry.path.clone();
+        self.navigate_to(std::path::Path::new(&path))?;
+        Ok(true)
+    }
+
+    /// Reload the current directory from disk.
+    pub fn refresh(&mut self) -> crate::Result<()> {
+        let path = self.current_listing.path.clone();
+        self.current_listing.load_directory(std::path::Path::new(&path))?;
+        self.selection.clear();
+        Ok(())
+    }
 }

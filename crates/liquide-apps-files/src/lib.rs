@@ -78,7 +78,7 @@ pub use config::FilesConfig;
 pub use favorites::{Favorite, FavoriteStore};
 pub use filter::FileFilter;
 pub use namespace::{NamespaceNode, NamespaceRoot, NodeType, StaticNode, resolve_uri};
-pub use operations::{ArchiveFormat, FileOp, OperationProgress};
+pub use operations::{ArchiveFormat, FileOp, OperationProgress, execute_operation};
 pub use places::{PlaceItem, PlaceType, PlacesModel};
 pub use properties::{FileProperties, detect_mime_type, format_size};
 pub use recent::{RecentEntry, RecentStore};

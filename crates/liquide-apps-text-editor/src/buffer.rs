@@ -14,6 +14,15 @@ impl TextBuffer {
         Self { lines: vec![String::new()], modified: false }
     }
 
+    /// Create a buffer from a vector of lines.
+    #[must_use]
+    pub fn from_lines(mut lines: Vec<String>) -> Self {
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        Self { lines, modified: false }
+    }
+
     /// Create a buffer from text content.
     #[must_use]
     pub fn from_text(text: &str) -> Self {

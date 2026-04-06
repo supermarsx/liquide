@@ -59,9 +59,21 @@ pub enum SettingsError {
     Io(String),
 }
 
+impl From<std::io::Error> for SettingsError {
+    fn from(e: std::io::Error) -> Self {
+        SettingsError::Io(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for SettingsError {
+    fn from(e: serde_json::Error) -> Self {
+        SettingsError::Serialization(e.to_string())
+    }
+}
+
 /// Convenience result alias for this crate.
 pub type Result<T> = std::result::Result<T, SettingsError>;
 
 // Re-exports for convenience.
 pub use config::SettingsConfig;
-pub use runtime::SettingsRuntime;
+pub use runtime::{SettingsRuntime, SettingDisplay};

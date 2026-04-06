@@ -456,3 +456,118 @@ impl OperationQueue {
 impl Default for OperationQueue {
     fn default() -> Self { Self::new() }
 }
+
+// ===========================================================================
+// Real filesystem execution
+// ===========================================================================
+
+/// Execute a [`FileOp`] against the real filesystem.
+///
+/// For `Delete` with `trash: true`, use [`TrashManager`](crate::trash::TrashManager) instead.
+/// Compress/Extract are not yet implemented and will return an error.
+pub fn execute_operation(op: &FileOp) -> crate::Result<()> {
+    match op {
+        FileOp::Copy { sources, destination } => {
+            let dest = std::path::Path::new(destination);
+            std::fs::create_dir_all(dest).map_err(|e| crate::FilesError::Io(e.to_string()))?;
+            for src in sources {
+                let src_path = std::path::Path::new(src);
+                let file_name = src_path.file_name().unwrap_or_default();
+                let dst = dest.join(file_name);
+                if src_path.is_dir() {
+                    copy_dir_recursive(src_path, &dst)?;
+                } else {
+                    std::fs::copy(src_path, &dst)
+                        .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+                }
+            }
+            Ok(())
+        }
+        FileOp::Move { sources, destination } => {
+            let dest = std::path::Path::new(destination);
+            std::fs::create_dir_all(dest).map_err(|e| crate::FilesError::Io(e.to_string()))?;
+            for src in sources {
+                let src_path = std::path::Path::new(src);
+                let file_name = src_path.file_name().unwrap_or_default();
+                let dst = dest.join(file_name);
+                // Try rename first (fast, same-filesystem). Fall back to copy+delete.
+                if std::fs::rename(src_path, &dst).is_err() {
+                    if src_path.is_dir() {
+                        copy_dir_recursive(src_path, &dst)?;
+                        std::fs::remove_dir_all(src_path)
+                            .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+                    } else {
+                        std::fs::copy(src_path, &dst)
+                            .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+                        std::fs::remove_file(src_path)
+                            .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        FileOp::Delete { paths, trash: _ } => {
+            // Permanent delete. For trash, use TrashManager.
+            for p in paths {
+                let path = std::path::Path::new(p);
+                if path.is_dir() {
+                    std::fs::remove_dir_all(path)
+                        .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+                } else if path.exists() {
+                    std::fs::remove_file(path)
+                        .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+                } else {
+                    return Err(crate::FilesError::FileNotFound { path: p.clone() });
+                }
+            }
+            Ok(())
+        }
+        FileOp::Rename { path, new_name } => {
+            let src = std::path::Path::new(path);
+            let new_path = src.parent().unwrap_or(src).join(new_name);
+            std::fs::rename(src, &new_path)
+                .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+            Ok(())
+        }
+        FileOp::CreateFolder { parent, name } => {
+            let dir = std::path::Path::new(parent).join(name);
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+            Ok(())
+        }
+        FileOp::CreateFile { parent, name } => {
+            let file = std::path::Path::new(parent).join(name);
+            // Create parent dirs if needed, then create empty file.
+            if let Some(p) = file.parent() {
+                std::fs::create_dir_all(p)
+                    .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+            }
+            std::fs::File::create(&file)
+                .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+            Ok(())
+        }
+        FileOp::Compress { .. } => {
+            Err(crate::FilesError::Io("compress not yet implemented".into()))
+        }
+        FileOp::Extract { .. } => {
+            Err(crate::FilesError::Io("extract not yet implemented".into()))
+        }
+    }
+}
+
+/// Recursively copy a directory tree.
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> crate::Result<()> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+    for entry in std::fs::read_dir(src).map_err(|e| crate::FilesError::Io(e.to_string()))? {
+        let entry = entry.map_err(|e| crate::FilesError::Io(e.to_string()))?;
+        let dest_path = dst.join(entry.file_name());
+        if entry.file_type().map_err(|e| crate::FilesError::Io(e.to_string()))?.is_dir() {
+            copy_dir_recursive(&entry.path(), &dest_path)?;
+        } else {
+            std::fs::copy(entry.path(), &dest_path)
+                .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+        }
+    }
+    Ok(())
+}

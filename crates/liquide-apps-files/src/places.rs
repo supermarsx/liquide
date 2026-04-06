@@ -167,28 +167,41 @@ impl PlacesModel {
     }
 
     /// Rebuild the aggregated item list from all sources.
+    ///
+    /// Also probes the real filesystem for the existence of standard user
+    /// directories and, on Windows, for available drive letters.
     pub fn refresh(&mut self) {
         self.items.clear();
 
-        // Bookmarks section.
+        // Bookmarks section — only add directories that actually exist.
         let home = home_dir();
         let bookmarks = [
-            ("Home", "folder-home", format!("file://{home}")),
-            ("Documents", "folder-documents", format!("file://{home}/Documents")),
-            ("Downloads", "folder-download", format!("file://{home}/Downloads")),
-            ("Music", "folder-music", format!("file://{home}/Music")),
-            ("Pictures", "folder-pictures", format!("file://{home}/Pictures")),
-            ("Videos", "folder-videos", format!("file://{home}/Videos")),
+            ("Home", "folder-home", home.clone()),
+            ("Documents", "folder-documents", format!("{home}/Documents")),
+            ("Downloads", "folder-download", format!("{home}/Downloads")),
+            ("Music", "folder-music", format!("{home}/Music")),
+            ("Pictures", "folder-pictures", format!("{home}/Pictures")),
+            ("Videos", "folder-videos", format!("{home}/Videos")),
         ];
-        for (label, icon, uri) in &bookmarks {
-            self.items.push(PlaceItem::bookmark(label, icon, uri));
+        for (label, icon, path) in &bookmarks {
+            // Home always shown; others only if they exist on disk.
+            if *label == "Home" || std::path::Path::new(path).is_dir() {
+                self.items.push(PlaceItem::bookmark(label, icon, &format!("file://{path}")));
+            }
         }
 
-        // Separator before devices (only if there are devices).
-        if !self.devices.is_empty() {
+        // Auto-detect drives / root filesystem.
+        let detected_devices = detect_system_devices();
+        if !detected_devices.is_empty() || !self.devices.is_empty() {
             self.items.push(PlaceItem::separator());
-            for dev in &self.devices {
+            for dev in &detected_devices {
                 self.items.push(dev.clone());
+            }
+            for dev in &self.devices {
+                // Skip duplicates from auto-detection.
+                if !detected_devices.iter().any(|d| d.uri == dev.uri) {
+                    self.items.push(dev.clone());
+                }
             }
         }
 
@@ -337,4 +350,70 @@ fn home_dir() -> String {
         return profile.replace('\\', "/");
     }
     "/home/user".to_string()
+}
+
+/// Detect system devices (drives on Windows, root on Unix).
+fn detect_system_devices() -> Vec<PlaceItem> {
+    let mut devices = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        // Probe A-Z drive letters.
+        for letter in b'A'..=b'Z' {
+            let drive = format!("{}:\\", letter as char);
+            if std::path::Path::new(&drive).exists() {
+                let label = format!("{}: Drive", letter as char);
+                let uri = format!("file:///{}", drive.replace('\\', "/"));
+                devices.push(PlaceItem::device(&label, "drive-harddisk", &uri, false, None));
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Root filesystem.
+        devices.push(PlaceItem::device("Filesystem", "drive-harddisk", "file:///", false, None));
+        // Scan /media/$USER and /mnt for mounted volumes.
+        if let Ok(user) = std::env::var("USER") {
+            let media = format!("/media/{user}");
+            if let Ok(rd) = std::fs::read_dir(&media) {
+                for entry in rd.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let path = entry.path().to_string_lossy().to_string();
+                    devices.push(PlaceItem::device(
+                        &name,
+                        "drive-removable-media",
+                        &format!("file://{path}"),
+                        true,
+                        None,
+                    ));
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Root filesystem.
+        devices.push(PlaceItem::device("Macintosh HD", "drive-harddisk", "file:///", false, None));
+        // Scan /Volumes for mounted volumes.
+        if let Ok(rd) = std::fs::read_dir("/Volumes") {
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name == "Macintosh HD" {
+                    continue; // already added above
+                }
+                let path = entry.path().to_string_lossy().to_string();
+                devices.push(PlaceItem::device(
+                    &name,
+                    "drive-removable-media",
+                    &format!("file://{path}"),
+                    true,
+                    None,
+                ));
+            }
+        }
+    }
+
+    devices
 }

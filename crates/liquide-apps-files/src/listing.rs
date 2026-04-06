@@ -91,9 +91,155 @@ impl DirectoryListing {
     /// Parent path, if any.
     #[must_use]
     pub fn parent(&self) -> Option<String> {
+        // Try std::path::Path first (handles both / and \ on Windows).
+        let p = std::path::Path::new(&self.path);
+        if let Some(parent) = p.parent() {
+            let s = parent.to_string_lossy().to_string();
+            if s.is_empty() || s == self.path {
+                return None;
+            }
+            return Some(s);
+        }
+        // Fallback: string-based for virtual paths.
         let path = self.path.trim_end_matches('/');
         path.rsplit_once('/').map(|(parent, _)| {
             if parent.is_empty() { "/".to_string() } else { parent.to_string() }
         })
+    }
+
+    /// Load entries from the real filesystem at the given path.
+    ///
+    /// Reads the directory with `std::fs::read_dir`, constructs [`FileEntry`]
+    /// items from metadata, and applies the current sort/filter settings.
+    pub fn load_directory(&mut self, path: &std::path::Path) -> crate::Result<()> {
+        use crate::entry::{EntryKind, guess_mime};
+
+        if !path.is_dir() {
+            return Err(crate::FilesError::DirectoryNotFound {
+                path: path.display().to_string(),
+            });
+        }
+
+        let read_dir = std::fs::read_dir(path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                crate::FilesError::PermissionDenied { path: path.display().to_string() }
+            } else {
+                crate::FilesError::Io(e.to_string())
+            }
+        })?;
+
+        let mut entries = Vec::new();
+        for item in read_dir {
+            let item = match item {
+                Ok(i) => i,
+                Err(_) => continue, // skip unreadable entries
+            };
+            let metadata = match item.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let name = item.file_name().to_string_lossy().to_string();
+            let full_path = item.path().to_string_lossy().to_string();
+
+            let kind = if metadata.is_dir() {
+                EntryKind::Directory
+            } else if metadata.is_symlink() {
+                EntryKind::Symlink
+            } else {
+                EntryKind::File
+            };
+
+            let size = metadata.len();
+            let modified = metadata.modified().ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            let hidden = is_hidden(&item, &name);
+
+            let extension = if kind == EntryKind::Directory {
+                String::new()
+            } else {
+                name.rsplit('.')
+                    .next()
+                    .filter(|e| *e != name.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+
+            let mime_type = if kind == EntryKind::Directory {
+                "inode/directory".to_string()
+            } else {
+                guess_mime(&extension)
+            };
+
+            let permissions = format_permissions(&metadata);
+
+            let symlink_target = if kind == EntryKind::Symlink {
+                std::fs::read_link(item.path())
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            } else {
+                None
+            };
+
+            entries.push(FileEntry {
+                name,
+                path: full_path,
+                kind,
+                size,
+                modified,
+                extension,
+                hidden,
+                permissions,
+                symlink_target,
+                mime_type,
+            });
+        }
+
+        self.path = path.to_string_lossy().to_string();
+        self.set_entries(entries);
+        Ok(())
+    }
+}
+
+/// Check whether a directory entry is hidden (platform-specific).
+fn is_hidden(_entry: &std::fs::DirEntry, name: &str) -> bool {
+    #[cfg(unix)]
+    {
+        let _ = _entry;
+        name.starts_with('.')
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_HIDDEN = 0x02
+        _entry.metadata()
+            .map(|m| m.file_attributes() & 0x02 != 0)
+            .unwrap_or_else(|_| name.starts_with('.'))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = _entry;
+        name.starts_with('.')
+    }
+}
+
+/// Format filesystem permissions into a [`Permissions`] struct.
+fn format_permissions(meta: &std::fs::Metadata) -> crate::entry::Permissions {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        crate::entry::Permissions::from_mode(meta.permissions().mode())
+    }
+    #[cfg(not(unix))]
+    {
+        let readonly = meta.permissions().readonly();
+        crate::entry::Permissions {
+            readable: true,
+            writable: !readonly,
+            executable: false,
+            mode: if readonly { 0o444 } else { 0o644 },
+        }
     }
 }
