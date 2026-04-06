@@ -532,7 +532,7 @@ mod tests {
         // might interleave — within each batch, FIFO is guaranteed).
         let mut sorted = collected;
         sorted.sort();
-        let expected: Vec<i32> = (0..total_items as i32).collect();
+        let expected: Vec<usize> = (0..total_items).collect();
         assert_eq!(sorted, expected);
     }
 

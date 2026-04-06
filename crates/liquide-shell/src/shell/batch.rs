@@ -250,26 +250,6 @@ impl WindowBatch {
         }
     }
 
-    // -- Introspection ------------------------------------------------------
-
-    /// Number of operations in this batch.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.ops.len()
-    }
-
-    /// Whether the batch contains no operations.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.ops.is_empty()
-    }
-
-    /// Borrow the operations slice.
-    #[must_use]
-    pub fn ops(&self) -> &[WindowOp] {
-        &self.ops
-    }
-
     /// Clear all operations, retaining the underlying allocation.
     pub fn clear(&mut self) {
         self.ops.clear();
