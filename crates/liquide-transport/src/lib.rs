@@ -77,6 +77,12 @@ pub enum TransportError {
 /// Convenience result alias.
 pub type Result<T> = std::result::Result<T, TransportError>;
 
+impl From<TransportError> for liquide_common::LiquideError {
+    fn from(e: TransportError) -> Self {
+        Self::Transport(e.to_string())
+    }
+}
+
 /// Maximum size of a single transport message (16 MiB).
 pub const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 

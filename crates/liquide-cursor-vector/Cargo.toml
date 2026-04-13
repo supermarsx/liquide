@@ -7,6 +7,9 @@ description = "High-definition vector cursor rendering for Liquide"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+# Internal
+liquide-common = { path = "../liquide-common" }
+
 # SVG parsing and rendering
 resvg = "0.44"
 usvg = "0.44"

@@ -27,7 +27,7 @@ pub(crate) fn emit_gradient(
                 radius: radius.clone(),
             });
         }
-        GradientSpec::Radial { center_x, center_y, radius: grad_radius, stops } => {
+        GradientSpec::Radial { center_x, center_y, radius: grad_radius, radius_y: grad_radius_y, stops } => {
             let mut grad_stops = Vec::with_capacity(stops.len());
             for &(offset, color) in stops {
                 grad_stops.push(GradientStop { offset, color });
@@ -37,7 +37,7 @@ pub(crate) fn emit_gradient(
                 center_x: *center_x,
                 center_y: *center_y,
                 radius_x: *grad_radius,
-                radius_y: *grad_radius,
+                radius_y: *grad_radius_y,
                 stops: grad_stops,
             });
         }
@@ -55,7 +55,12 @@ pub(crate) fn emit_gradient(
             });
         }
         GradientSpec::Mesh { .. } => {
-            // Mesh gradients not yet supported as a display item
+            // Mesh gradients not yet supported — emit a fallback solid color
+            list.push(DisplayItem::SolidColor {
+                rect: *rect,
+                color: liquide_compositor::pixel::Color { r: 200, g: 200, b: 200, a: 255 },
+                radius: radius.clone(),
+            });
         }
     }
 }

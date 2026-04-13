@@ -6,7 +6,7 @@
 ///
 /// Uses SSE2/AVX2 to broadcast the pattern across 16/32 bytes per store.
 pub fn fill_pattern(buf: &mut [u8], pattern: [u8; 4]) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -202,7 +202,7 @@ pub fn copy_rows(
 ///
 /// `channel = channel * alpha / 255` for B, G, R. Alpha unchanged.
 pub fn premultiply_alpha(buf: &mut [u8]) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {

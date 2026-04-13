@@ -264,15 +264,27 @@ fn set_lum(r: f32, g: f32, b: f32, lum: f32) -> (f32, f32, f32) {
     let max = r.max(g).max(b);
     if min < 0.0 {
         let l = lum;
-        r = l + (r - l) * l / (l - min);
-        g = l + (g - l) * l / (l - min);
-        b = l + (b - l) * l / (l - min);
+        if (l - min).abs() > f32::EPSILON {
+            r = l + (r - l) * l / (l - min);
+            g = l + (g - l) * l / (l - min);
+            b = l + (b - l) * l / (l - min);
+        } else {
+            r = r.clamp(0.0, 1.0);
+            g = g.clamp(0.0, 1.0);
+            b = b.clamp(0.0, 1.0);
+        }
     }
     if max > 1.0 {
         let l = lum;
-        r = l + (r - l) * (1.0 - l) / (max - l);
-        g = l + (g - l) * (1.0 - l) / (max - l);
-        b = l + (b - l) * (1.0 - l) / (max - l);
+        if (max - l).abs() > f32::EPSILON {
+            r = l + (r - l) * (1.0 - l) / (max - l);
+            g = l + (g - l) * (1.0 - l) / (max - l);
+            b = l + (b - l) * (1.0 - l) / (max - l);
+        } else {
+            r = r.clamp(0.0, 1.0);
+            g = g.clamp(0.0, 1.0);
+            b = b.clamp(0.0, 1.0);
+        }
     }
     (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
 }

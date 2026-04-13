@@ -16,8 +16,8 @@ pub fn blur_horizontal(
     half_width: usize,
     weights: &[f32],
 ) {
-    debug_assert_eq!(src.len(), dst.len());
-    debug_assert_eq!(weights.len(), half_width * 2 + 1);
+    assert_eq!(src.len(), dst.len());
+    assert_eq!(weights.len(), half_width * 2 + 1);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -42,8 +42,8 @@ pub fn blur_vertical(
     half_width: usize,
     weights: &[f32],
 ) {
-    debug_assert_eq!(src.len(), dst.len());
-    debug_assert_eq!(weights.len(), half_width * 2 + 1);
+    assert_eq!(src.len(), dst.len());
+    assert_eq!(weights.len(), half_width * 2 + 1);
 
     #[cfg(target_arch = "x86_64")]
     {

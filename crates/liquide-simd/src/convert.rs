@@ -9,7 +9,7 @@
 
 /// Swap B and R channels in a BGRA8 buffer (converts BGRA↔RGBA in-place).
 pub fn swap_rb(buf: &mut [u8]) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -125,7 +125,7 @@ unsafe fn swap_rb_avx512(buf: &mut [u8]) {
 /// Unpremultiply alpha for a BGRA8 scanline in-place.
 /// `channel = channel * 255 / alpha` for B, G, R. Alpha unchanged.
 pub fn unpremultiply_alpha(buf: &mut [u8]) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -200,7 +200,7 @@ unsafe fn unpremultiply_alpha_sse2(buf: &mut [u8]) {
 /// Bilinear 2× upsample: each pixel in src maps to a 2×2 block in the output.
 /// Returns `(buffer, dst_width, dst_height)`.
 pub fn upsample_2x_bilinear(src: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, u32) {
-    debug_assert_eq!(src.len(), (width * height * 4) as usize);
+    assert_eq!(src.len(), (width * height * 4) as usize);
 
     let dst_w = width * 2;
     let dst_h = height * 2;
@@ -435,7 +435,7 @@ unsafe fn upsample_2x_bilinear_fma(
 /// source is a constant color, because the source and inv_alpha values can
 /// be computed once and reused for every pixel.
 pub fn blend_constant_src_over(dst: &mut [u8], color: [u8; 4]) {
-    debug_assert_eq!(dst.len() % 4, 0);
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {

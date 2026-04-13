@@ -96,15 +96,18 @@ impl SoftwareRenderer {
                 center_x,
                 center_y,
                 radius,
+                radius_y,
                 stops,
             } => {
-                if stops.is_empty() || *radius <= 0.0 {
+                if stops.is_empty() || *radius <= 0.0 || *radius_y <= 0.0 {
                     return;
                 }
                 let cx = bounds.x + center_x * bounds.width;
                 let cy = bounds.y + center_y * bounds.height;
-                let r = radius * bounds.width.min(bounds.height);
-                let inv_r = 1.0 / r;
+                let rx = radius * bounds.width.min(bounds.height);
+                let ry = radius_y * bounds.width.min(bounds.height);
+                let inv_rx_sq = 1.0 / (rx * rx);
+                let inv_ry_sq = 1.0 / (ry * ry);
 
                 for y in y0..y1 {
                     let fy = y as f32 + 0.5;
@@ -122,8 +125,8 @@ impl SoftwareRenderer {
                         };
                         let dx = fx - cx;
                         let dy = fy - cy;
-                        let dist = (dx * dx + dy * dy).sqrt();
-                        let t = (dist * inv_r).clamp(0.0, 1.0);
+                        let dist = (dx * dx * inv_rx_sq + dy * dy * inv_ry_sq).sqrt();
+                        let t = dist.clamp(0.0, 1.0);
                         let mut color = sample_gradient_stops(stops, t, opacity);
                         if coverage < 1.0 {
                             color.a = (color.a as f32 * coverage + 0.5) as u8;

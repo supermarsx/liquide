@@ -15,6 +15,10 @@ name = "liquide-telemetry"
 path = "src/main.rs"
 
 [dependencies]
+# Internal
+liquide-common = { workspace = true }
+liquide-render-coordinator = { workspace = true }
+
 # Async runtime
 tokio = { workspace = true }
 

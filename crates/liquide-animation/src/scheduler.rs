@@ -158,6 +158,11 @@ impl AnimationScheduler {
         self.keyframes.insert(rule.name.clone(), rule);
     }
 
+    /// Check if a `@keyframes` rule with this name already exists.
+    pub fn has_keyframes(&self, name: &str) -> bool {
+        self.keyframes.contains_key(name)
+    }
+
     /// Start a new animation on a node.
     pub fn start(&mut self, anim: RunningAnimation) {
         self.animations.push(anim);
@@ -230,14 +235,26 @@ impl AnimationScheduler {
                 .map(|(_, v)| v.clone())
         });
 
-        // For now, snap to nearest (TODO: full interpolation per type)
+        let from_offset = before
+            .and_then(|kf| kf.selectors.first().copied())
+            .unwrap_or(0.0);
+        let to_offset = after
+            .and_then(|kf| kf.selectors.first().copied())
+            .unwrap_or(1.0);
+        let local_t = if (to_offset - from_offset).abs() > f32::EPSILON {
+            ((progress - from_offset) / (to_offset - from_offset)).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+
         match (from_val, to_val) {
-            (Some(a), Some(_b)) => {
-                // If in first half, use from; in second half, use to
-                if progress < 0.5 {
-                    Some(a)
+            (Some(a), Some(b)) => {
+                // Try linear interpolation for numeric property values
+                if let Some(result) = interpolate_property_values(&a, &b, local_t) {
+                    Some(result)
                 } else {
-                    Some(_b)
+                    // Non-numeric: snap at 50%
+                    if progress < 0.5 { Some(a) } else { Some(b) }
                 }
             }
             (Some(v), None) | (None, Some(v)) => Some(v),
@@ -251,6 +268,44 @@ impl AnimationScheduler {
             .iter()
             .filter(|a| a.state == AnimationState::Running || a.state == AnimationState::Pending)
             .count()
+    }
+}
+
+/// Linearly interpolate two PropertyValues if both are numeric.
+fn interpolate_property_values(
+    a: &PropertyValue,
+    b: &PropertyValue,
+    t: f32,
+) -> Option<PropertyValue> {
+    use liquide_theme_css::value::LengthUnit;
+    match (a, b) {
+        (PropertyValue::Number(va), PropertyValue::Number(vb)) => {
+            Some(PropertyValue::Number(va + (vb - va) * t))
+        }
+        (PropertyValue::Length(la), PropertyValue::Length(lb)) => {
+            match (la, lb) {
+                (LengthUnit::Px(va), LengthUnit::Px(vb)) => {
+                    Some(PropertyValue::Length(LengthUnit::Px(va + (vb - va) * t)))
+                }
+                (LengthUnit::Percent(va), LengthUnit::Percent(vb)) => {
+                    Some(PropertyValue::Length(LengthUnit::Percent(va + (vb - va) * t)))
+                }
+                (LengthUnit::Em(va), LengthUnit::Em(vb)) => {
+                    Some(PropertyValue::Length(LengthUnit::Em(va + (vb - va) * t)))
+                }
+                (LengthUnit::Rem(va), LengthUnit::Rem(vb)) => {
+                    Some(PropertyValue::Length(LengthUnit::Rem(va + (vb - va) * t)))
+                }
+                (LengthUnit::Vw(va), LengthUnit::Vw(vb)) => {
+                    Some(PropertyValue::Length(LengthUnit::Vw(va + (vb - va) * t)))
+                }
+                (LengthUnit::Vh(va), LengthUnit::Vh(vb)) => {
+                    Some(PropertyValue::Length(LengthUnit::Vh(va + (vb - va) * t)))
+                }
+                _ => None, // mismatched units: snap
+            }
+        }
+        _ => None,
     }
 }
 

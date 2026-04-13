@@ -192,10 +192,12 @@ impl HitTestEngine {
             let origin_x = abs_border.x + resolve_origin_dimension(
                 &style.transform_origin.x,
                 abs_border.width,
+                style.font_size,
             );
             let origin_y = abs_border.y + resolve_origin_dimension(
                 &style.transform_origin.y,
                 abs_border.height,
+                style.font_size,
             );
             match inverse_transform_point(point, &style.transform, origin_x, origin_y) {
                 Some(p) => p,
@@ -389,10 +391,12 @@ impl HitTestEngine {
             let origin_x = abs_border.x + resolve_origin_dimension(
                 &style.transform_origin.x,
                 abs_border.width,
+                style.font_size,
             );
             let origin_y = abs_border.y + resolve_origin_dimension(
                 &style.transform_origin.y,
                 abs_border.height,
+                style.font_size,
             );
             match inverse_transform_point(point, &style.transform, origin_x, origin_y) {
                 Some(p) => p,
@@ -471,12 +475,12 @@ fn intersect_rects(a: &Rect, b: &Rect) -> Rect {
 /// For transform-origin, percentages are relative to the box size.
 /// This matches the painter's resolve_origin_dimension to ensure
 /// paint and hit-test use identical transform origins.
-fn resolve_origin_dimension(dim: &Dimension, box_size: f32) -> f32 {
+fn resolve_origin_dimension(dim: &Dimension, box_size: f32, font_size: f32) -> f32 {
     match dim {
         Dimension::Px(v) => *v,
         Dimension::Percent(p) => box_size * p / 100.0,
-        Dimension::Em(v) => v * 16.0, // Approximate with base font size
-        Dimension::Rem(v) => v * 16.0,
+        Dimension::Em(v) => v * font_size,
+        Dimension::Rem(v) => v * font_size, // Use element font size as best approximation
         Dimension::Zero => 0.0,
         // For other dimensions, default to center (50%)
         _ => box_size * 0.5,

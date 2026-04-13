@@ -9,8 +9,8 @@
 ///
 /// All three slices must have equal length. `dst[i] = current[i] ^ previous[i]`.
 pub fn xor_delta(dst: &mut [u8], current: &[u8], previous: &[u8]) {
-    debug_assert_eq!(dst.len(), current.len());
-    debug_assert_eq!(dst.len(), previous.len());
+    assert_eq!(dst.len(), current.len());
+    assert_eq!(dst.len(), previous.len());
 
     #[cfg(target_arch = "x86_64")]
     {

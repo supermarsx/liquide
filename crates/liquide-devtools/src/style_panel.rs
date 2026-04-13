@@ -451,6 +451,7 @@ fn format_align_content(a: AlignContent) -> String {
         AlignContent::Center => "center".into(),
         AlignContent::SpaceBetween => "space-between".into(),
         AlignContent::SpaceAround => "space-around".into(),
+        AlignContent::SpaceEvenly => "space-evenly".into(),
         AlignContent::Stretch => "stretch".into(),
     }
 }

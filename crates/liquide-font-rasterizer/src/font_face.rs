@@ -129,7 +129,7 @@ impl FontFaceLoader {
     /// Register a @font-face rule for loading.
     pub fn register(&self, rule: FontFaceRule) {
         let family = rule.family.to_lowercase();
-        let mut loading = self.loading.lock().unwrap();
+        let mut loading = liquide_common::sync::lock_or_recover(&self.loading);
         loading.entry(family).or_default().push(LoadingFontFace {
             rule,
             state: FontLoadState::Unloaded,
@@ -145,7 +145,7 @@ impl FontFaceLoader {
     /// For `url()` sources, this starts async loading.
     /// For `data:` URIs, this decodes and loads synchronously.
     pub fn begin_loading(&self, db: &mut FontDatabase) {
-        let mut loading = self.loading.lock().unwrap();
+        let mut loading = liquide_common::sync::lock_or_recover(&self.loading);
         for faces in loading.values_mut() {
             for face in faces.iter_mut() {
                 if face.state != FontLoadState::Unloaded {
@@ -226,7 +226,7 @@ impl FontFaceLoader {
     /// Supply font data that was fetched asynchronously (e.g., from a network request).
     pub fn complete_load(&self, db: &mut FontDatabase, family: &str, weight: u16, italic: bool, data: Vec<u8>) -> Option<FontFaceId> {
         let key = family.to_lowercase();
-        let mut loading = self.loading.lock().unwrap();
+        let mut loading = liquide_common::sync::lock_or_recover(&self.loading);
         if let Some(faces) = loading.get_mut(&key) {
             for face in faces.iter_mut() {
                 if face.state == FontLoadState::Loading {
@@ -255,7 +255,7 @@ impl FontFaceLoader {
     #[must_use]
     pub fn resolve(&self, family: &str, weight: u16, italic: bool) -> FontFaceResolveResult {
         let key = family.to_lowercase();
-        let loading = self.loading.lock().unwrap();
+        let loading = liquide_common::sync::lock_or_recover(&self.loading);
 
         if let Some(faces) = loading.get(&key) {
             for face in faces {
@@ -312,7 +312,7 @@ impl FontFaceLoader {
     #[must_use]
     pub fn state(&self, family: &str) -> FontLoadState {
         let key = family.to_lowercase();
-        let loading = self.loading.lock().unwrap();
+        let loading = liquide_common::sync::lock_or_recover(&self.loading);
         if let Some(faces) = loading.get(&key) {
             if faces.iter().any(|f| f.state == FontLoadState::Loaded) {
                 return FontLoadState::Loaded;

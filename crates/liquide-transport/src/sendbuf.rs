@@ -5,7 +5,7 @@
 //! first, preventing bulk traffic from starving real-time flows.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::priority::Priority;
 
@@ -98,9 +98,9 @@ impl PoolStats {
 pub struct SendBufferPool {
     config: PoolConfig,
     /// Total bytes in use (general + reserved).
-    used: AtomicU64,
+    used: Arc<AtomicU64>,
     /// Bytes allocated from the reserved pool.
-    reserved_used: AtomicU64,
+    reserved_used: Arc<AtomicU64>,
     /// Per-size-class free lists.
     slabs: [Mutex<Vec<Vec<u8>>>; 4],
 }
@@ -111,8 +111,8 @@ impl SendBufferPool {
     pub fn new(config: PoolConfig) -> Self {
         Self {
             config,
-            used: AtomicU64::new(0),
-            reserved_used: AtomicU64::new(0),
+            used: Arc::new(AtomicU64::new(0)),
+            reserved_used: Arc::new(AtomicU64::new(0)),
             slabs: [
                 Mutex::new(Vec::new()),
                 Mutex::new(Vec::new()),
@@ -136,8 +136,6 @@ impl SendBufferPool {
         let slab_idx = Self::slab_index(size)?;
         let alloc_size = SIZE_CLASSES[slab_idx] as u64;
 
-        // Check priority-based admission
-        let current_used = self.used.load(Ordering::Relaxed);
         let capacity = self.config.capacity;
 
         match priority {
@@ -146,71 +144,143 @@ impl SendBufferPool {
             | Priority::P2Cursor
             | Priority::P3Audio
             | Priority::P4Control => {
-                // Try reserved pool first
-                let reserved_used = self.reserved_used.load(Ordering::Relaxed);
-                if reserved_used + alloc_size <= self.config.reserved {
-                    self.reserved_used.fetch_add(alloc_size, Ordering::Relaxed);
-                    self.used.fetch_add(alloc_size, Ordering::Relaxed);
+                // Try reserved pool first with CAS loop
+                let reserved_ok = loop {
+                    let current_reserved = self.reserved_used.load(Ordering::Acquire);
+                    if current_reserved + alloc_size > self.config.reserved {
+                        break false;
+                    }
+                    if self.reserved_used.compare_exchange_weak(
+                        current_reserved,
+                        current_reserved + alloc_size,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ).is_ok() {
+                        break true;
+                    }
+                };
+
+                if reserved_ok {
+                    // Also atomically claim from used
+                    loop {
+                        let current = self.used.load(Ordering::Acquire);
+                        if self.used.compare_exchange_weak(
+                            current,
+                            current + alloc_size,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        ).is_ok() {
+                            break;
+                        }
+                    }
                     let buf = self.take_from_slab(slab_idx, SIZE_CLASSES[slab_idx]);
                     return Some(PoolBuffer {
                         data: buf,
                         size: alloc_size,
                         from_reserved: true,
+                        pool_used: Arc::clone(&self.used),
+                        pool_reserved_used: Arc::clone(&self.reserved_used),
                     });
                 }
-                // Fall through to general pool (never rejected for P0-P4)
-                if current_used + alloc_size > capacity {
-                    // Even for high priority, don't exceed total capacity
-                    return None;
+
+                // Fall through to general pool with CAS loop
+                loop {
+                    let current = self.used.load(Ordering::Acquire);
+                    if current + alloc_size > capacity {
+                        // Even for high priority, don't exceed total capacity
+                        return None;
+                    }
+                    if self.used.compare_exchange_weak(
+                        current,
+                        current + alloc_size,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ).is_ok() {
+                        break;
+                    }
                 }
-                self.used.fetch_add(alloc_size, Ordering::Relaxed);
                 let buf = self.take_from_slab(slab_idx, SIZE_CLASSES[slab_idx]);
                 Some(PoolBuffer {
                     data: buf,
                     size: alloc_size,
                     from_reserved: false,
+                    pool_used: Arc::clone(&self.used),
+                    pool_reserved_used: Arc::clone(&self.reserved_used),
                 })
             }
             Priority::P5Graphics => {
                 let threshold = (capacity as f64 * self.config.backpressure_threshold) as u64;
-                if current_used + alloc_size > threshold {
-                    return None; // Backpressure
+                loop {
+                    let current = self.used.load(Ordering::Acquire);
+                    if current + alloc_size > threshold {
+                        return None; // Backpressure
+                    }
+                    if self.used.compare_exchange_weak(
+                        current,
+                        current + alloc_size,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ).is_ok() {
+                        break;
+                    }
                 }
-                self.used.fetch_add(alloc_size, Ordering::Relaxed);
                 let buf = self.take_from_slab(slab_idx, SIZE_CLASSES[slab_idx]);
                 Some(PoolBuffer {
                     data: buf,
                     size: alloc_size,
                     from_reserved: false,
+                    pool_used: Arc::clone(&self.used),
+                    pool_reserved_used: Arc::clone(&self.reserved_used),
                 })
             }
             Priority::P6Bulk => {
                 let threshold = (capacity as f64 * self.config.suspend_threshold) as u64;
-                if current_used + alloc_size > threshold {
-                    return None; // Suspended
+                loop {
+                    let current = self.used.load(Ordering::Acquire);
+                    if current + alloc_size > threshold {
+                        return None; // Suspended
+                    }
+                    if self.used.compare_exchange_weak(
+                        current,
+                        current + alloc_size,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ).is_ok() {
+                        break;
+                    }
                 }
-                self.used.fetch_add(alloc_size, Ordering::Relaxed);
                 let buf = self.take_from_slab(slab_idx, SIZE_CLASSES[slab_idx]);
                 Some(PoolBuffer {
                     data: buf,
                     size: alloc_size,
                     from_reserved: false,
+                    pool_used: Arc::clone(&self.used),
+                    pool_reserved_used: Arc::clone(&self.reserved_used),
                 })
             }
         }
     }
 
     /// Return a buffer to the pool.
-    pub fn dealloc(&self, buffer: PoolBuffer) {
-        self.used.fetch_sub(buffer.size, Ordering::Relaxed);
+    ///
+    /// This consumes the buffer, returning it to the slab free list.
+    /// The Drop impl on PoolBuffer also decrements counters, so we
+    /// must prevent double-accounting by zeroing the size before
+    /// dropping.
+    pub fn dealloc(&self, mut buffer: PoolBuffer) {
+        // Decrement counters ourselves (same as Drop would do)
+        self.used.fetch_sub(buffer.size, Ordering::AcqRel);
         if buffer.from_reserved {
-            self.reserved_used.fetch_sub(buffer.size, Ordering::Relaxed);
+            self.reserved_used.fetch_sub(buffer.size, Ordering::AcqRel);
         }
+        // Prevent Drop from decrementing again
+        let data = std::mem::take(&mut buffer.data);
+        buffer.size = 0;
         // Return to slab free list
-        if let Some(idx) = Self::slab_index(buffer.data.capacity()) {
-            if SIZE_CLASSES[idx] == buffer.data.capacity() {
-                let mut slab = self.slabs[idx].lock().unwrap();
-                slab.push(buffer.data);
+        if let Some(idx) = Self::slab_index(data.capacity()) {
+            if SIZE_CLASSES[idx] == data.capacity() {
+                let mut slab = liquide_common::sync::lock_or_recover(&self.slabs[idx]);
+                slab.push(data);
             }
         }
     }
@@ -249,7 +319,7 @@ impl SendBufferPool {
 
     /// Try to reuse a buffer from the slab free list, or allocate new.
     fn take_from_slab(&self, slab_idx: usize, capacity: usize) -> Vec<u8> {
-        let mut slab = self.slabs[slab_idx].lock().unwrap();
+        let mut slab = liquide_common::sync::lock_or_recover(&self.slabs[slab_idx]);
         slab.pop().unwrap_or_else(|| Vec::with_capacity(capacity))
     }
 }
@@ -260,8 +330,9 @@ impl SendBufferPool {
 
 /// An RAII buffer handle from the pool.
 ///
-/// When dropped without being returned via `SendBufferPool::dealloc`,
-/// the allocated bytes are still freed from the accounting.
+/// When dropped, the allocated bytes are automatically freed from the
+/// pool accounting.  If you want to return the buffer to the slab free
+/// list (for reuse), call `SendBufferPool::dealloc` instead.
 #[derive(Debug)]
 pub struct PoolBuffer {
     /// The underlying buffer.
@@ -270,6 +341,21 @@ pub struct PoolBuffer {
     size: u64,
     /// Whether this was allocated from the reserved pool.
     from_reserved: bool,
+    /// Pool's `used` counter (for Drop accounting).
+    pool_used: Arc<AtomicU64>,
+    /// Pool's `reserved_used` counter (for Drop accounting).
+    pool_reserved_used: Arc<AtomicU64>,
+}
+
+impl Drop for PoolBuffer {
+    fn drop(&mut self) {
+        if self.size > 0 {
+            self.pool_used.fetch_sub(self.size, Ordering::AcqRel);
+            if self.from_reserved {
+                self.pool_reserved_used.fetch_sub(self.size, Ordering::AcqRel);
+            }
+        }
+    }
 }
 
 impl PoolBuffer {

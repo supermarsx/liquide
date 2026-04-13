@@ -295,6 +295,8 @@ mod inner {
             const RTLD_NOW: i32 = 0x0002;
             const RTLD_LOCAL: i32 = 0;
 
+            // SAFETY: The library name is a valid null-terminated C string.
+            // dlopen returns null on failure, which we check below.
             let handle = unsafe {
                 dlopen(b"libvulkan.so.1\0".as_ptr(), RTLD_NOW | RTLD_LOCAL)
             };
@@ -302,6 +304,10 @@ mod inner {
                 return None;
             }
 
+            // SAFETY: `handle` is a valid library handle from dlopen above.
+            // The symbol name is null-terminated. We check for null before
+            // transmuting. The transmute is sound because the Vulkan loader
+            // guarantees this symbol has the PFN_vkGetInstanceProcAddr ABI.
             let get_instance_proc_addr: PFN_vkGetInstanceProcAddr = unsafe {
                 let p = dlsym(handle, b"vkGetInstanceProcAddr\0".as_ptr());
                 if p.is_null() {
@@ -317,8 +323,15 @@ mod inner {
         }
 
         /// Resolve an instance-level (or global) Vulkan function.
+        ///
+        /// # Safety
+        ///
+        /// `name` must be a valid null-terminated byte string. `instance` must
+        /// be a valid `VkInstance` handle or `VK_NULL_HANDLE` for global fns.
         unsafe fn get_proc(&self, instance: VkInstance, name: &[u8]) -> *mut c_void {
-            // name must be null-terminated.
+            // SAFETY: Caller guarantees `name` is null-terminated and
+            // `instance` is valid. `get_instance_proc_addr` was validated
+            // non-null during VkLib::try_load().
             unsafe { (self.get_instance_proc_addr)(instance, name.as_ptr()) }
         }
     }
@@ -383,6 +396,10 @@ mod inner {
             let lib = VkLib::load()?;
 
             // --- resolve global functions ---
+            // SAFETY: `get_proc` with VK_NULL_HANDLE resolves global Vulkan
+            // functions. The symbol name is null-terminated. We null-check the
+            // result below. The transmute is sound because the Vulkan spec
+            // guarantees this symbol's ABI matches PFN_vkCreateInstance.
             let vk_create_instance: PFN_vkCreateInstance = unsafe {
                 std::mem::transmute(lib.get_proc(VK_NULL_HANDLE, b"vkCreateInstance\0"))
             };
@@ -418,6 +435,9 @@ mod inner {
             };
 
             let mut instance: VkInstance = VK_NULL_HANDLE;
+            // SAFETY: `vk_create_instance` was resolved and null-checked
+            // above. `create_info` is a valid repr(C) struct with all
+            // pointers referencing stack-local data that outlives this call.
             let res = unsafe { vk_create_instance(&create_info, std::ptr::null(), &mut instance) };
             if res != VK_SUCCESS || instance == VK_NULL_HANDLE {
                 return None;
@@ -446,6 +466,10 @@ mod inner {
 
             // We need a cleaner approach for function resolution. Let's load
             // each function with proper null-terminated byte strings.
+            // SAFETY: `instance` is a valid VkInstance created above.
+            // All symbol names are null-terminated. Each resolved pointer is
+            // null-checked before transmuting. The transmutes are sound
+            // because the Vulkan spec guarantees these symbols' ABI.
             let fn_enumerate_physical_devices: PFN_vkEnumeratePhysicalDevices = unsafe {
                 let p = lib.get_proc(instance, b"vkEnumeratePhysicalDevices\0");
                 if p.is_null() {
@@ -682,12 +706,16 @@ mod inner {
         /// the required property flags.
         fn find_memory_type(&self, type_bits: u32, required_flags: u32) -> Option<u32> {
             let mut props = std::mem::MaybeUninit::<VkPhysicalDeviceMemoryProperties>::uninit();
+            // SAFETY: `fn_get_physical_device_memory_properties` is a valid
+            // function pointer resolved during VulkanExporter::new().
+            // `props` is written to (out-param) before being read.
             unsafe {
                 (self.fn_get_physical_device_memory_properties)(
                     self.physical_device,
                     props.as_mut_ptr(),
                 );
             }
+            // SAFETY: The Vulkan call above fully initialises the struct.
             let props = unsafe { props.assume_init() };
 
             for i in 0..props.memory_type_count {
@@ -742,6 +770,11 @@ mod inner {
             };
 
             let mut image: VkImage = VK_NULL_HANDLE;
+            // SAFETY: All function pointers (fn_create_image, etc.) were
+            // resolved and validated non-null in VulkanExporter::new().
+            // The repr(C) structs above are laid out per the Vulkan spec.
+            // Vulkan API calls are externally synchronised by design —
+            // we only access the device from one thread at a time.
             let res = unsafe {
                 (self.fn_create_image)(self.device, &image_ci, std::ptr::null(), &mut image)
             };
@@ -750,10 +783,12 @@ mod inner {
             }
 
             // -- query memory requirements --
+            // SAFETY: `image` is a valid VkImage created above.
             let mut mem_reqs = std::mem::MaybeUninit::<VkMemoryRequirements>::uninit();
             unsafe {
                 (self.fn_get_image_memory_requirements)(self.device, image, mem_reqs.as_mut_ptr());
             }
+            // SAFETY: The Vulkan call above fully initialises the struct.
             let mem_reqs = unsafe { mem_reqs.assume_init() };
 
             // Find a host-visible memory type (needed for linear tiling).
@@ -783,6 +818,8 @@ mod inner {
             };
 
             let mut memory: VkDeviceMemory = VK_NULL_HANDLE;
+            // SAFETY: All pointers in alloc_info reference local stack data
+            // that outlives the call. export_info is chained via p_next.
             let res = unsafe {
                 (self.fn_allocate_memory)(self.device, &alloc_info, std::ptr::null(), &mut memory)
             };
@@ -792,6 +829,7 @@ mod inner {
             }
 
             // -- bind memory to image --
+            // SAFETY: `image` and `memory` are valid Vulkan handles.
             let res = unsafe {
                 (self.fn_bind_image_memory)(self.device, image, memory, 0)
             };
@@ -829,6 +867,7 @@ mod inner {
                 mip_level: 0,
                 array_layer: 0,
             };
+            // SAFETY: `subresource` is a valid repr(C) struct.
             let mut layout = std::mem::MaybeUninit::<VkSubresourceLayout>::uninit();
             unsafe {
                 (self.fn_get_image_subresource_layout)(
@@ -838,6 +877,7 @@ mod inner {
                     layout.as_mut_ptr(),
                 );
             }
+            // SAFETY: The Vulkan call above fully initialises the struct.
             let layout = unsafe { layout.assume_init() };
 
             Some(ExportableImage {
@@ -857,6 +897,9 @@ mod inner {
         /// (it remains valid after Vulkan resources are freed until explicitly
         /// closed).
         pub fn destroy_image(&self, img: &ExportableImage) {
+            // SAFETY: `img.memory` and `img.image` are valid Vulkan handles
+            // created by `create_exportable_image`. Caller ensures the image
+            // is no longer in use by any GPU command.
             unsafe {
                 (self.fn_free_memory)(self.device, img.memory, std::ptr::null());
                 (self.fn_destroy_image)(self.device, img.image, std::ptr::null());
@@ -866,6 +909,9 @@ mod inner {
 
     impl Drop for VulkanExporter {
         fn drop(&mut self) {
+            // SAFETY: These handles were created in `new()` and are being
+            // destroyed in reverse creation order (device before instance)
+            // as required by the Vulkan spec. Drop runs at most once.
             unsafe {
                 (self.fn_destroy_device)(self.device, std::ptr::null());
                 (self.fn_destroy_instance)(self.instance, std::ptr::null());

@@ -79,7 +79,7 @@ impl VectorCursorCache<'_> {
         
         // Try to get from cache
         {
-            let cache = self.cache.read().unwrap();
+            let cache = liquide_common::sync::read_or_recover(&self.cache);
             if let Some(cached) = cache.get(&key) {
                 return Ok(cached.clone());
             }
@@ -100,7 +100,7 @@ impl VectorCursorCache<'_> {
         
         // Store in cache
         {
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = liquide_common::sync::write_or_recover(&self.cache);
             
             // Evict if necessary (simple LRU: clear oldest half)
             if cache.len() >= self.max_entries {
@@ -135,13 +135,13 @@ impl VectorCursorCache<'_> {
     
     /// Clear the cache
     pub fn clear(&self) {
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = liquide_common::sync::write_or_recover(&self.cache);
         cache.clear();
     }
     
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
-        let cache = self.cache.read().unwrap();
+        let cache = liquide_common::sync::read_or_recover(&self.cache);
         let total_bytes: usize = cache.values()
             .map(|c| c.pixels.len())
             .sum();

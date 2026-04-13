@@ -101,6 +101,9 @@ impl VaapiEncoder {
             });
         }
 
+        // SAFETY: `va_get_display_drm` is a C function from libva-drm.so
+        // loaded via VaLib. `fd` is a valid open DRM render node file
+        // descriptor. Returns null on failure, which we check below.
         let display = unsafe { (va.va_get_display_drm)(fd) };
         if display.is_null() {
             vaapi_ffi::close_fd(fd);
@@ -111,6 +114,9 @@ impl VaapiEncoder {
 
         let mut major: i32 = 0;
         let mut minor: i32 = 0;
+        // SAFETY: `va_initialize` is a C function from libva.so. `display`
+        // is a valid non-null VADisplay from `va_get_display_drm` above.
+        // `major`/`minor` are out-params written by the call.
         let st = unsafe { (va.va_initialize)(display, &mut major, &mut minor) };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
             vaapi_ffi::close_fd(fd);
@@ -122,6 +128,7 @@ impl VaapiEncoder {
             CodecId::H264 => vaapi_ffi::VA_PROFILE_H264_HIGH,
             CodecId::H265 => vaapi_ffi::VA_PROFILE_HEVC_MAIN,
             _ => {
+                // SAFETY: `display` is valid and must be terminated on error.
                 unsafe { (va.va_terminate)(display); }
                 vaapi_ffi::close_fd(fd);
                 return Err(crate::HwEncoderError::CodecNotSupported {
@@ -133,6 +140,9 @@ impl VaapiEncoder {
 
         // Create config.
         let mut config_id: vaapi_ffi::VAConfigID = 0;
+        // SAFETY: All VA-API function pointers were loaded and validated
+        // by VaLib::load(). `display` is an initialised VADisplay.
+        // Out-param `config_id` is written on success.
         let st = unsafe {
             (va.va_create_config)(
                 display,
@@ -144,6 +154,7 @@ impl VaapiEncoder {
             )
         };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
+            // SAFETY: Cleaning up on error — `display` is still valid.
             unsafe { (va.va_terminate)(display); }
             vaapi_ffi::close_fd(fd);
             return Err(va_error("vaCreateConfig", st));
@@ -155,6 +166,8 @@ impl VaapiEncoder {
         // Create surfaces (2: one for input, one as reference).
         let num_surfaces: u32 = 2;
         let mut surfaces = vec![0u32; num_surfaces as usize];
+        // SAFETY: `display` is valid. `surfaces` has capacity for
+        // `num_surfaces` elements. VA_RT_FORMAT_YUV420 is a standard format.
         let st = unsafe {
             (va.va_create_surfaces)(
                 display,
@@ -168,6 +181,8 @@ impl VaapiEncoder {
             )
         };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
+            // SAFETY: Cleaning up on error — destroy already-created
+            // resources in reverse order.
             unsafe {
                 (va.va_destroy_config)(display, config_id);
                 (va.va_terminate)(display);
@@ -178,6 +193,7 @@ impl VaapiEncoder {
 
         // Create context.
         let mut context_id: vaapi_ffi::VAContextID = 0;
+        // SAFETY: `config_id` and `surfaces` are valid VA-API objects.
         let st = unsafe {
             (va.va_create_context)(
                 display,
@@ -191,6 +207,7 @@ impl VaapiEncoder {
             )
         };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
+            // SAFETY: Reverse-order cleanup of surfaces, config, display.
             unsafe {
                 (va.va_destroy_surfaces)(
                     display,
@@ -208,6 +225,8 @@ impl VaapiEncoder {
         // is generous; real codecs compress far more.
         let coded_buf_size = (w * h) as u32;
         let mut coded_buf: vaapi_ffi::VABufferID = 0;
+        // SAFETY: `context_id` is a valid VA context. VA_ENC_CODED_BUFFER_TYPE
+        // requests an encode output buffer of `coded_buf_size` bytes.
         let st = unsafe {
             (va.va_create_buffer)(
                 display,
@@ -220,6 +239,8 @@ impl VaapiEncoder {
             )
         };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
+            // SAFETY: Reverse-order cleanup of context, surfaces, config,
+            // display. All handles are still valid at this point.
             unsafe {
                 (va.va_destroy_context)(display, context_id);
                 (va.va_destroy_surfaces)(
@@ -251,6 +272,10 @@ impl VaapiEncoder {
     #[cfg(target_os = "linux")]
     fn close_va_session(session: &mut VaSession) {
         if let Some(va) = crate::vaapi_ffi::VaLib::load() {
+            // SAFETY: All handles in `session` were created by
+            // `open_va_session` and are being destroyed in reverse order.
+            // This function is called at most once per session (during
+            // drop or explicit close).
             unsafe {
                 // Destroy any imported DMA-BUF surface.
                 if let Some(imported) = session.imported_surface.take() {
@@ -301,6 +326,8 @@ impl VaapiEncoder {
         };
 
         // --- begin picture ---
+        // SAFETY: `ses.display`, `ses.context_id`, and `surface` are valid
+        // VA-API handles from an active session.
         let st = unsafe {
             (va.va_begin_picture)(ses.display, ses.context_id, surface)
         };
@@ -310,6 +337,8 @@ impl VaapiEncoder {
 
         // Submit the coded-buffer so the driver knows where to write output.
         let mut buf_id = ses.coded_buf;
+        // SAFETY: `ses.coded_buf` is a valid VA buffer created during
+        // session init. We pass it as a render parameter for the encoder.
         let st = unsafe {
             (va.va_render_picture)(
                 ses.display,
@@ -323,6 +352,7 @@ impl VaapiEncoder {
         }
 
         // --- end picture ---
+        // SAFETY: Matches the `va_begin_picture` call above.
         let st = unsafe {
             (va.va_end_picture)(ses.display, ses.context_id)
         };
@@ -331,6 +361,7 @@ impl VaapiEncoder {
         }
 
         // --- sync ---
+        // SAFETY: `surface` is a valid VASurfaceID used in the picture above.
         let st = unsafe { (va.va_sync_surface)(ses.display, surface) };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
             return Err(va_error("vaSyncSurface", st));
@@ -338,6 +369,8 @@ impl VaapiEncoder {
 
         // --- map coded buffer and extract bitstream ---
         let mut seg_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+        // SAFETY: `ses.coded_buf` is a valid buffer. `seg_ptr` is an
+        // out-param that receives a pointer to VACodedBufferSegment.
         let st = unsafe {
             (va.va_map_buffer)(ses.display, ses.coded_buf, &mut seg_ptr)
         };
@@ -348,8 +381,12 @@ impl VaapiEncoder {
         let mut encoded = Vec::new();
         let mut seg = seg_ptr as *const VACodedBufferSegment;
         while !seg.is_null() {
+            // SAFETY: `seg` points to a VACodedBufferSegment in the mapped
+            // coded buffer. The linked list terminates with a null `next`.
             let segment = unsafe { &*seg };
             if segment.size > 0 && !segment.buf.is_null() {
+                // SAFETY: `segment.buf` points to `segment.size` bytes of
+                // encoded bitstream data within the mapped VA buffer.
                 let slice = unsafe {
                     std::slice::from_raw_parts(
                         segment.buf as *const u8,
@@ -361,6 +398,7 @@ impl VaapiEncoder {
             seg = segment.next;
         }
 
+        // SAFETY: Unmapping the coded buffer after we've copied the data.
         unsafe {
             (va.va_unmap_buffer)(ses.display, ses.coded_buf);
         }
@@ -370,6 +408,8 @@ impl VaapiEncoder {
         if imported {
             let ses = self.va_session.as_ref().unwrap();
             let mut id = surface;
+            // SAFETY: The imported DMA-BUF surface is no longer in use
+            // (encode is complete + synced). Destroying it here is correct.
             unsafe {
                 (va.va_destroy_surfaces)(ses.display, &mut id, 1);
             }
@@ -493,6 +533,12 @@ impl HwEncoderSession for VaapiEncoder {
 
     fn state(&self) -> SessionState {
         self.state
+    }
+}
+
+impl Drop for VaapiEncoder {
+    fn drop(&mut self) {
+        self.destroy();
     }
 }
 

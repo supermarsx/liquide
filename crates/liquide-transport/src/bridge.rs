@@ -95,7 +95,7 @@ impl ChannelHandle {
 
     /// Receive a payload from this channel.
     pub fn recv(&self) -> Result<Bytes, BridgeError> {
-        let mut rx = self.recv_rx.lock().unwrap();
+        let mut rx = liquide_common::sync::lock_or_recover(&self.recv_rx);
         rx.try_recv().map_err(|_| BridgeError::Empty)
     }
 }
@@ -332,7 +332,7 @@ impl TransportBridge {
             }
 
             // P6: budget * p6_fraction (suspend check)
-            let cc = self.congestion.lock().unwrap();
+            let cc = liquide_common::sync::lock_or_recover(&self.congestion);
             let pacing_rate = cc.pacing_rate();
             drop(cc);
             if !self.pool.is_suspended() && pacing_rate >= self.config.p6_min_bandwidth {
@@ -348,15 +348,15 @@ impl TransportBridge {
 
         // Update mode: if no frames remain, go Idle
         let any_queued = self.send_queues.iter().any(|(_, rx)| {
-            let rx = rx.lock().unwrap();
+            let rx = liquide_common::sync::lock_or_recover(rx);
             !rx.is_empty()
         });
         if !any_queued {
             self.set_scheduling_mode(SchedulingMode::Idle);
         } else if self.scheduling_mode() == SchedulingMode::Priority {
             // Check if P0/P1 are drained
-            let p0_empty = self.send_queues[0].1.lock().unwrap().is_empty();
-            let p1_empty = self.send_queues[1].1.lock().unwrap().is_empty();
+            let p0_empty = liquide_common::sync::lock_or_recover(&self.send_queues[0].1).is_empty();
+            let p1_empty = liquide_common::sync::lock_or_recover(&self.send_queues[1].1).is_empty();
             if p0_empty && p1_empty {
                 self.set_scheduling_mode(SchedulingMode::Normal);
             }
@@ -368,24 +368,24 @@ impl TransportBridge {
     /// Current scheduling mode.
     #[must_use]
     pub fn scheduling_mode(&self) -> SchedulingMode {
-        SchedulingMode::from_u8(self.mode.load(Ordering::Relaxed))
+        SchedulingMode::from_u8(self.mode.load(Ordering::Acquire))
     }
 
     /// Set the scheduling mode.
     pub fn set_scheduling_mode(&self, mode: SchedulingMode) {
-        self.mode.store(mode as u8, Ordering::Relaxed);
+        self.mode.store(mode as u8, Ordering::Release);
     }
 
     /// Signal shutdown.
     pub fn shutdown(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        self.cancelled.store(true, Ordering::Release);
         self.wake.notify_waiters();
     }
 
     /// Whether the bridge has been shut down.
     #[must_use]
     pub fn is_shutdown(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed)
+        self.cancelled.load(Ordering::Acquire)
     }
 
     /// Access the priority mapper.
@@ -421,7 +421,7 @@ impl TransportBridge {
         max_frames: u64,
     ) {
         let idx = priority.as_index();
-        let mut rx = self.send_queues[idx].1.lock().unwrap();
+        let mut rx = liquide_common::sync::lock_or_recover(&self.send_queues[idx].1);
         let mut count = 0u64;
         while count < max_frames {
             match rx.try_recv() {
@@ -443,7 +443,7 @@ impl TransportBridge {
         remaining: &mut u64,
     ) {
         let idx = priority.as_index();
-        let mut rx = self.send_queues[idx].1.lock().unwrap();
+        let mut rx = liquide_common::sync::lock_or_recover(&self.send_queues[idx].1);
         let mut latest = None;
         while let Ok(frame) = rx.try_recv() {
             latest = Some(frame);
@@ -463,7 +463,7 @@ impl TransportBridge {
         mut budget: u64,
     ) {
         let idx = priority.as_index();
-        let mut rx = self.send_queues[idx].1.lock().unwrap();
+        let mut rx = liquide_common::sync::lock_or_recover(&self.send_queues[idx].1);
         while budget > 0 {
             match rx.try_recv() {
                 Ok(frame) => {

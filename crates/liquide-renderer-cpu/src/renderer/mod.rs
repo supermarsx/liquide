@@ -88,6 +88,9 @@ pub struct SoftwareRenderer {
     /// Tracks font_family+size combos that have already been pre-warmed
     /// to avoid redundant synchronous rasterization.
     prewarmed_fonts: std::collections::HashSet<(u32, u16)>,
+    /// Active blend mode set by the most recent `RenderLayer` node.
+    /// Subsequent content nodes use this instead of the default `SrcOver`.
+    active_blend_mode: BlendMode,
 }
 
 impl SoftwareRenderer {
@@ -114,6 +117,7 @@ impl SoftwareRenderer {
             skeleton_window: None,
             has_pending_glyphs: false,
             prewarmed_fonts: std::collections::HashSet::new(),
+            active_blend_mode: BlendMode::SrcOver,
         }
     }
 
@@ -140,6 +144,7 @@ impl SoftwareRenderer {
             skeleton_window: None,
             has_pending_glyphs: false,
             prewarmed_fonts: std::collections::HashSet::new(),
+            active_blend_mode: BlendMode::SrcOver,
         }
     }
 
@@ -504,6 +509,9 @@ impl Renderer for SoftwareRenderer {
         // Reset pending-glyph tracker for this frame.
         self.has_pending_glyphs = false;
 
+        // Reset the active blend mode to default for this frame.
+        self.active_blend_mode = BlendMode::SrcOver;
+
         // Drain any completed async blur results before rendering.
         self.blur_worker.poll_results();
 
@@ -624,14 +632,15 @@ impl SoftwareRenderer {
                 if opacity < 1.0 {
                     c.a = (c.a as f32 * opacity + 0.5) as u8;
                 }
+                let blend = self.active_blend_mode;
                 let (r_tl, r_tr, r_br, r_bl) = node.corner_radius;
                 let has_radius = r_tl > 0.5 || r_tr > 0.5 || r_br > 0.5 || r_bl > 0.5;
                 if has_radius {
-                    self.fill_rounded_rect_per_corner(fb, bounds, c, r_tl, r_tr, r_br, r_bl, BlendMode::SrcOver);
-                } else if c.a == 255 {
+                    self.fill_rounded_rect_per_corner(fb, bounds, c, r_tl, r_tr, r_br, r_bl, blend);
+                } else if c.a == 255 && blend == BlendMode::SrcOver {
                     rasterizer::fill_rect(fb, bounds, c, BlendMode::Src);
                 } else {
-                    rasterizer::fill_rect(fb, bounds, c, BlendMode::SrcOver);
+                    rasterizer::fill_rect(fb, bounds, c, blend);
                 }
             }
 
@@ -701,10 +710,21 @@ impl SoftwareRenderer {
 
             SceneNodeKind::Content | SceneNodeKind::Overlay | SceneNodeKind::ShellLayer => {
                 if opacity < 1.0 {
-                    // Apply opacity as a semi-transparent black overlay.
-                    let alpha = ((1.0 - opacity) * 255.0 + 0.5) as u8;
-                    let tint = Color::new(0, 0, 0, alpha);
-                    rasterizer::fill_rect(fb, bounds, tint, BlendMode::SrcOver);
+                    // Multiply alpha of existing pixels in the region
+                    let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
+                    let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
+                    let x1 = (bounds.right().ceil() as u32).min(fb.width);
+                    let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                    for y in y0..y1 {
+                        for x in x0..x1 {
+                            let mut px = fb.get_pixel(x, y);
+                            px.r = (px.r as f32 * opacity + 0.5) as u8;
+                            px.g = (px.g as f32 * opacity + 0.5) as u8;
+                            px.b = (px.b as f32 * opacity + 0.5) as u8;
+                            px.a = (px.a as f32 * opacity + 0.5) as u8;
+                            fb.set_pixel(x, y, px);
+                        }
+                    }
                 }
             }
 
@@ -970,12 +990,78 @@ impl SoftwareRenderer {
                 self.render_border_image_node(node, fb);
             }
 
-            SceneNodeKind::Mask { mask: _ } => {
-                // Mask rendering is complex -- passthrough for now
+            SceneNodeKind::Mask { mask } => {
+                use liquide_compositor::scene::{MaskMode, MaskSpec};
+                let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
+                let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
+                let x1 = (bounds.right().ceil() as u32).min(fb.width);
+                let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                if x0 >= x1 || y0 >= y1 {
+                    return;
+                }
+                match mask {
+                    MaskSpec::Gradient { gradient, mode } => {
+                        // Evaluate the gradient at each pixel and use its
+                        // luminance or alpha channel as a mask multiplier.
+                        for y in y0..y1 {
+                            let fy = y as f32 + 0.5;
+                            for x in x0..x1 {
+                                let fx = x as f32 + 0.5;
+                                let t = gradient_t(gradient, fx, fy, &bounds);
+                                let stops = gradient_stops(gradient);
+                                let mc = gradients::sample_gradient_stops(stops, t, 1.0);
+                                let mask_alpha = match mode {
+                                    MaskMode::Alpha | MaskMode::MatchSource => mc.a,
+                                    MaskMode::Luminance => {
+                                        // ITU-R BT.709 luminance
+                                        let lum = 0.2126 * mc.r as f32
+                                            + 0.7152 * mc.g as f32
+                                            + 0.0722 * mc.b as f32;
+                                        (lum / 255.0 * mc.a as f32 + 0.5) as u8
+                                    }
+                                };
+                                let alpha_f = mask_alpha as f32 / 255.0 * opacity;
+                                if alpha_f >= 1.0 {
+                                    continue;
+                                }
+                                let mut px = fb.get_pixel(x, y);
+                                px.r = (px.r as f32 * alpha_f + 0.5) as u8;
+                                px.g = (px.g as f32 * alpha_f + 0.5) as u8;
+                                px.b = (px.b as f32 * alpha_f + 0.5) as u8;
+                                px.a = (px.a as f32 * alpha_f + 0.5) as u8;
+                                fb.set_pixel(x, y, px);
+                            }
+                        }
+                    }
+                    MaskSpec::Image { mode, .. } => {
+                        // Image mask requires texture lookup.  Without it,
+                        // fall back to opacity-based uniform alpha.
+                        let alpha_f = opacity;
+                        let _ = mode;
+                        if alpha_f < 1.0 {
+                            for y in y0..y1 {
+                                for x in x0..x1 {
+                                    let mut px = fb.get_pixel(x, y);
+                                    px.r = (px.r as f32 * alpha_f + 0.5) as u8;
+                                    px.g = (px.g as f32 * alpha_f + 0.5) as u8;
+                                    px.b = (px.b as f32 * alpha_f + 0.5) as u8;
+                                    px.a = (px.a as f32 * alpha_f + 0.5) as u8;
+                                    fb.set_pixel(x, y, px);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
-            SceneNodeKind::RenderLayer { .. } => {
-                // Render layer is a compositor optimization hint -- no-op in CPU renderer
+            SceneNodeKind::RenderLayer { blend_mode, isolate } => {
+                // Unconditionally set the blend mode so that a normal
+                // (SrcOver) layer resets the mode after a previous
+                // non-default layer.  True isolation would require
+                // rendering children into a temp buffer, but the flat
+                // node list has no end-of-layer marker.
+                self.active_blend_mode = *blend_mode;
+                let _ = isolate;
             }
 
             SceneNodeKind::Border { .. } => {
@@ -1046,6 +1132,85 @@ impl SoftwareRenderer {
                 }
             }
         }
+    }
+}
+
+// ── Mask gradient helpers ───────────────────────────────────────────
+
+/// Compute the gradient parameter `t` ∈ [0, 1] for a pixel at `(fx, fy)`
+/// within `bounds`, given a `GradientSpec`.
+fn gradient_t(
+    gradient: &liquide_compositor::scene::GradientSpec,
+    fx: f32,
+    fy: f32,
+    bounds: &Rect,
+) -> f32 {
+    use liquide_compositor::scene::GradientSpec;
+    match gradient {
+        GradientSpec::Linear {
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            ..
+        } => {
+            let sx = bounds.x + start_x * bounds.width;
+            let sy = bounds.y + start_y * bounds.height;
+            let ex = bounds.x + end_x * bounds.width;
+            let ey = bounds.y + end_y * bounds.height;
+            let dx = ex - sx;
+            let dy = ey - sy;
+            let len2 = dx * dx + dy * dy;
+            if len2 < 0.001 {
+                return 0.0;
+            }
+            (((fx - sx) * dx + (fy - sy) * dy) / len2).clamp(0.0, 1.0)
+        }
+        GradientSpec::Radial {
+            center_x,
+            center_y,
+            radius,
+            radius_y,
+            ..
+        } => {
+            let cx = bounds.x + center_x * bounds.width;
+            let cy = bounds.y + center_y * bounds.height;
+            let min_dim = bounds.width.min(bounds.height);
+            let rx = radius * min_dim;
+            let ry = radius_y * min_dim;
+            if rx <= 0.0 || ry <= 0.0 {
+                return 0.0;
+            }
+            let dx = fx - cx;
+            let dy = fy - cy;
+            ((dx * dx / (rx * rx) + dy * dy / (ry * ry)).sqrt()).clamp(0.0, 1.0)
+        }
+        GradientSpec::Conic {
+            center_x,
+            center_y,
+            start_angle,
+            ..
+        } => {
+            let cx = bounds.x + center_x * bounds.width;
+            let cy = bounds.y + center_y * bounds.height;
+            let mut angle = (fy - cy).atan2(fx - cx) - start_angle.to_radians();
+            if angle < 0.0 {
+                angle += std::f32::consts::TAU;
+            }
+            (angle / std::f32::consts::TAU).clamp(0.0, 1.0)
+        }
+        GradientSpec::Mesh { .. } => 0.5,
+    }
+}
+
+/// Extract the color stops slice from a `GradientSpec`.
+fn gradient_stops(gradient: &liquide_compositor::scene::GradientSpec) -> &[(f32, Color)] {
+    use liquide_compositor::scene::GradientSpec;
+    match gradient {
+        GradientSpec::Linear { stops, .. }
+        | GradientSpec::Radial { stops, .. }
+        | GradientSpec::Conic { stops, .. } => stops,
+        GradientSpec::Mesh { .. } => &[],
     }
 }
 

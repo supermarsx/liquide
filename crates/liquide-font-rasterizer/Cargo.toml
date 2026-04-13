@@ -8,6 +8,7 @@ rust-version.workspace = true
 description = "TrueType/OpenType font loading, shaping, and glyph rasterization bridge for the Liquide renderer"
 
 [dependencies]
+liquide-common.workspace = true
 liquide-fonts.workspace = true
 liquide-text-engine.workspace = true
 ab_glyph.workspace = true

@@ -8,8 +8,8 @@
 /// Both slices must be BGRA8 (length divisible by 4) and equal length.
 /// Formula per channel: `out = src + dst * (1 - src_alpha)`
 pub fn blend_scanline_src_over(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
-    debug_assert_eq!(dst.len() % 4, 0);
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -249,8 +249,8 @@ unsafe fn blend_scanline_src_over_avx2(dst: &mut [u8], src: &[u8]) {
 /// out_a = src_a + dst_a - (src_a * dst_a + 127) / 255
 /// ```
 pub fn blend_scanline_multiply(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
-    debug_assert_eq!(dst.len() % 4, 0);
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -508,7 +508,8 @@ unsafe fn blend_scanline_multiply_avx2(dst: &mut [u8], src: &[u8]) {
 
 /// Darken blend on a BGRA8 scanline: `out = min(src, dst)` per channel.
 pub fn blend_scanline_darken(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -519,8 +520,11 @@ pub fn blend_scanline_darken(dst: &mut [u8], src: &[u8]) {
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        for (d, s) in dst.iter_mut().zip(src.iter()) {
-            *d = (*d).min(*s);
+        for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+            d[0] = d[0].min(s[0]); // B
+            d[1] = d[1].min(s[1]); // G
+            d[2] = d[2].min(s[2]); // R
+            d[3] = d[3].max(s[3]); // A — use max, not min
         }
     }
 }
@@ -534,16 +538,33 @@ unsafe fn blend_scanline_darken_avx512(dst: &mut [u8], src: &[u8]) {
     let chunks = len / 64;
     let mut offset = 0;
 
+    // Alpha mask: 0xFF at every 4th byte (alpha channel in BGRA), 0x00 elsewhere
+    let alpha_mask = _mm512_set1_epi32(i32::from_ne_bytes([0x00, 0x00, 0x00, 0xFF_u8 as u8]));
+
     for _ in 0..chunks {
         let d_ptr = dst.as_mut_ptr().add(offset) as *mut __m512i;
         let s_ptr = src.as_ptr().add(offset) as *const __m512i;
-        let result = _mm512_min_epu8(_mm512_loadu_si512(d_ptr), _mm512_loadu_si512(s_ptr));
+        let d = _mm512_loadu_si512(d_ptr);
+        let s = _mm512_loadu_si512(s_ptr);
+        let rgb_blend = _mm512_min_epu8(d, s);   // min for BGR
+        let alpha_blend = _mm512_max_epu8(d, s);  // max for alpha
+        // Select: alpha bytes from alpha_blend, RGB bytes from rgb_blend
+        let result = _mm512_or_si512(
+            _mm512_and_si512(alpha_mask, alpha_blend),
+            _mm512_andnot_si512(alpha_mask, rgb_blend),
+        );
         _mm512_storeu_si512(d_ptr, result);
         offset += 64;
     }
 
-    for i in offset..len {
-        dst[i] = dst[i].min(src[i]);
+    // Scalar tail: process remaining pixels in 4-byte BGRA chunks
+    for chunk in (offset..len).step_by(4) {
+        if chunk + 3 < len {
+            dst[chunk]     = dst[chunk].min(src[chunk]);       // B
+            dst[chunk + 1] = dst[chunk + 1].min(src[chunk + 1]); // G
+            dst[chunk + 2] = dst[chunk + 2].min(src[chunk + 2]); // R
+            dst[chunk + 3] = dst[chunk + 3].max(src[chunk + 3]); // A
+        }
     }
 }
 
@@ -556,22 +577,39 @@ unsafe fn blend_scanline_darken_sse2(dst: &mut [u8], src: &[u8]) {
     let chunks = len / 16;
     let mut offset = 0;
 
+    // Alpha mask: 0xFF at every 4th byte (alpha channel in BGRA), 0x00 elsewhere
+    let alpha_mask = _mm_set1_epi32(i32::from_ne_bytes([0x00, 0x00, 0x00, 0xFF_u8 as u8]));
+
     for _ in 0..chunks {
         let d_ptr = dst.as_mut_ptr().add(offset) as *mut __m128i;
         let s_ptr = src.as_ptr().add(offset) as *const __m128i;
-        let result = _mm_min_epu8(_mm_loadu_si128(d_ptr), _mm_loadu_si128(s_ptr));
+        let d = _mm_loadu_si128(d_ptr);
+        let s = _mm_loadu_si128(s_ptr);
+        let rgb_blend = _mm_min_epu8(d, s);   // min for BGR
+        let alpha_blend = _mm_max_epu8(d, s);  // max for alpha
+        let result = _mm_or_si128(
+            _mm_and_si128(alpha_mask, alpha_blend),
+            _mm_andnot_si128(alpha_mask, rgb_blend),
+        );
         _mm_storeu_si128(d_ptr, result);
         offset += 16;
     }
 
-    for i in offset..len {
-        dst[i] = dst[i].min(src[i]);
+    // Scalar tail: process remaining pixels in 4-byte BGRA chunks
+    for chunk in (offset..len).step_by(4) {
+        if chunk + 3 < len {
+            dst[chunk]     = dst[chunk].min(src[chunk]);       // B
+            dst[chunk + 1] = dst[chunk + 1].min(src[chunk + 1]); // G
+            dst[chunk + 2] = dst[chunk + 2].min(src[chunk + 2]); // R
+            dst[chunk + 3] = dst[chunk + 3].max(src[chunk + 3]); // A
+        }
     }
 }
 
 /// Lighten blend on a BGRA8 scanline: `out = max(src, dst)` per channel.
 pub fn blend_scanline_lighten(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -634,7 +672,8 @@ unsafe fn blend_scanline_lighten_sse2(dst: &mut [u8], src: &[u8]) {
 
 /// Difference blend on a BGRA8 scanline: `out = |src - dst|` per byte.
 pub fn blend_scanline_difference(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -642,8 +681,11 @@ pub fn blend_scanline_difference(dst: &mut [u8], src: &[u8]) {
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        for (d, s) in dst.iter_mut().zip(src.iter()) {
-            *d = (*d as i16 - *s as i16).unsigned_abs() as u8;
+        for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+            d[0] = (d[0] as i16 - s[0] as i16).unsigned_abs() as u8; // B
+            d[1] = (d[1] as i16 - s[1] as i16).unsigned_abs() as u8; // G
+            d[2] = (d[2] as i16 - s[2] as i16).unsigned_abs() as u8; // R
+            d[3] = d[3].max(s[3]); // A — use max, not abs_diff
         }
     }
 }
@@ -663,22 +705,34 @@ unsafe fn blend_scanline_difference_sse2(dst: &mut [u8], src: &[u8]) {
         let d = _mm_loadu_si128(d_ptr);
         let s = _mm_loadu_si128(s_ptr);
         // |a - b| = max(a,b) - min(a,b) for unsigned bytes
-        let max = _mm_max_epu8(d, s);
-        let min = _mm_min_epu8(d, s);
-        let result = _mm_sub_epi8(max, min);
+        let max_val = _mm_max_epu8(d, s);
+        let min_val = _mm_min_epu8(d, s);
+        let diff = _mm_sub_epi8(max_val, min_val);
+        // Alpha channel should be max(d, s), not abs_diff
+        let alpha_mask = _mm_set1_epi32(i32::from_ne_bytes([0x00, 0x00, 0x00, 0xFF_u8 as u8]));
+        let result = _mm_or_si128(
+            _mm_and_si128(alpha_mask, max_val),
+            _mm_andnot_si128(alpha_mask, diff),
+        );
         _mm_storeu_si128(d_ptr, result);
         offset += 16;
     }
 
-    for i in offset..len {
-        dst[i] = (dst[i] as i16 - src[i] as i16).unsigned_abs() as u8;
+    // Scalar tail: process remaining pixels in 4-byte BGRA chunks
+    for chunk in (offset..len).step_by(4) {
+        if chunk + 3 < len {
+            dst[chunk]     = (dst[chunk] as i16 - src[chunk] as i16).unsigned_abs() as u8;     // B
+            dst[chunk + 1] = (dst[chunk + 1] as i16 - src[chunk + 1] as i16).unsigned_abs() as u8; // G
+            dst[chunk + 2] = (dst[chunk + 2] as i16 - src[chunk + 2] as i16).unsigned_abs() as u8; // R
+            dst[chunk + 3] = dst[chunk + 3].max(src[chunk + 3]); // A
+        }
     }
 }
 
 /// Screen blend on a BGRA8 scanline: `out = src + dst - src * dst / 255`.
 pub fn blend_scanline_screen(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
-    debug_assert_eq!(dst.len() % 4, 0);
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -806,7 +860,7 @@ unsafe fn blend_scanline_screen_avx2(dst: &mut [u8], src: &[u8]) {
 
 /// Invert a BGRA8 scanline in-place: `R = 255-R, G = 255-G, B = 255-B`, alpha preserved.
 pub fn invert_scanline(buf: &mut [u8]) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -901,8 +955,8 @@ unsafe fn invert_scanline_sse2(buf: &mut [u8]) {
 /// Per channel: `if d < 128 { 2*s*d/255 } else { 255 - 2*(255-s)*(255-d)/255 }`
 /// Alpha channel: `max(sa, da)` (matches renderer convention).
 pub fn blend_scanline_overlay(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
-    debug_assert_eq!(dst.len() % 4, 0);
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -1026,8 +1080,8 @@ unsafe fn blend_scanline_overlay_sse2(dst: &mut [u8], src: &[u8]) {
 /// Same as Overlay but the condition tests src instead of dst:
 /// `if s < 128 { 2*s*d/255 } else { 255 - 2*(255-s)*(255-d)/255 }`
 pub fn blend_scanline_hard_light(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
-    debug_assert_eq!(dst.len() % 4, 0);
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -1146,8 +1200,8 @@ unsafe fn blend_scanline_hard_light_sse2(dst: &mut [u8], src: &[u8]) {
 
 /// Exclusion blend on a BGRA8 scanline: `out = s + d - 2*s*d/255`.
 pub fn blend_scanline_exclusion(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
-    debug_assert_eq!(dst.len() % 4, 0);
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -1240,8 +1294,8 @@ unsafe fn blend_scanline_exclusion_sse2(dst: &mut [u8], src: &[u8]) {
 /// Per RGB channel: `if d == 0 { 0 } else if s == 255 { 255 } else { min(255, d*255/(255-s)) }`
 /// Scalar-only: per-pixel division makes SIMD impractical without lookup tables.
 pub fn blend_scanline_color_dodge(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
-    debug_assert_eq!(dst.len() % 4, 0);
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     let pixels = dst.len() / 4;
     for i in 0..pixels {
@@ -1270,8 +1324,8 @@ pub fn blend_scanline_color_dodge(dst: &mut [u8], src: &[u8]) {
 /// Per RGB channel: `if d == 255 { 255 } else if s == 0 { 0 } else { 255 - min(255, (255-d)*255/s) }`
 /// Scalar-only: per-pixel division makes SIMD impractical without lookup tables.
 pub fn blend_scanline_color_burn(dst: &mut [u8], src: &[u8]) {
-    debug_assert_eq!(dst.len(), src.len());
-    debug_assert_eq!(dst.len() % 4, 0);
+    assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len() % 4, 0);
 
     let pixels = dst.len() / 4;
     for i in 0..pixels {
@@ -1458,7 +1512,7 @@ mod tests {
         let mut dst = make_pixel(200, 50, 150, 255).to_vec();
         let src = make_pixel(100, 100, 100, 200);
         blend_scanline_darken(&mut dst, &src);
-        assert_eq!(dst, [100, 50, 100, 200]);
+        assert_eq!(dst, [100, 50, 100, 255]);
     }
 
     #[test]
@@ -1474,7 +1528,7 @@ mod tests {
         let mut dst = make_pixel(200, 50, 100, 255).to_vec();
         let src = make_pixel(100, 150, 100, 255);
         blend_scanline_difference(&mut dst, &src);
-        assert_eq!(dst, [100, 100, 0, 0]);
+        assert_eq!(dst, [100, 100, 0, 255]);
     }
 
     #[test]

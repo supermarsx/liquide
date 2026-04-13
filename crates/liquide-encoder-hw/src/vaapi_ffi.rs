@@ -252,6 +252,8 @@ impl VaLib {
         const _O_RDWR: i32 = 2;
 
         // --- load libraries ---
+        // SAFETY: Library names are valid null-terminated C strings.
+        // dlopen returns null on failure, which we check below.
         let handle = unsafe {
             dlopen(b"libva.so.2\0".as_ptr(), RTLD_NOW | RTLD_LOCAL)
         };
@@ -259,6 +261,7 @@ impl VaLib {
             return None;
         }
 
+        // SAFETY: Same as above — valid null-terminated library name.
         let drm_handle = unsafe {
             dlopen(b"libva-drm.so.2\0".as_ptr(), RTLD_NOW | RTLD_LOCAL)
         };
@@ -270,6 +273,11 @@ impl VaLib {
         /// Load a symbol from a handle, returning `None` on failure.
         macro_rules! sym {
             ($h:expr, $name:literal) => {{
+                // SAFETY: `$h` is a valid dlopen handle. The symbol name
+                // is null-terminated via concat!. We null-check the result
+                // before transmuting. The transmute is sound because the
+                // VA-API shared library exports these symbols with the
+                // expected C function ABI.
                 let p = unsafe { dlsym($h, concat!($name, "\0").as_ptr()) };
                 if p.is_null() {
                     return None;
@@ -321,7 +329,8 @@ pub fn open_render_node(path: &[u8]) -> i32 {
         fn open(path: *const u8, flags: i32) -> i32;
     }
     const O_RDWR: i32 = 2;
-    // Caller must ensure `path` is null-terminated.
+    // SAFETY: Caller guarantees `path` is a null-terminated byte string
+    // pointing to a valid filesystem path. open() returns -1 on failure.
     unsafe { open(path.as_ptr(), O_RDWR) }
 }
 
@@ -331,6 +340,8 @@ pub fn close_fd(fd: i32) {
     extern "C" {
         fn close(fd: i32) -> i32;
     }
+    // SAFETY: `fd` is a file descriptor previously returned by
+    // `open_render_node`. Closing it once is correct.
     unsafe {
         close(fd);
     }

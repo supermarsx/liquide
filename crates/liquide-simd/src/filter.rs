@@ -8,7 +8,7 @@
 /// Each color channel is multiplied by `factor`. Alpha is preserved.
 /// `factor = 1.0` is identity, `0.0` is black, `2.0` is double brightness.
 pub fn brightness(buf: &mut [u8], factor: f32) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -32,7 +32,7 @@ fn brightness_scalar(buf: &mut [u8], factor: f32) {
 ///
 /// `factor = 1.0` is identity, `0.0` is all gray, `2.0` is double contrast.
 pub fn contrast(buf: &mut [u8], factor: f32) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -56,7 +56,7 @@ fn contrast_scalar(buf: &mut [u8], factor: f32) {
 ///
 /// `Y = 0.2126R + 0.7152G + 0.0722B`. Alpha is preserved.
 pub fn grayscale(buf: &mut [u8]) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -97,7 +97,7 @@ pub fn sepia(buf: &mut [u8]) {
 ///
 /// `factor = 0.0` is grayscale, `1.0` is identity, `> 1.0` is oversaturated.
 pub fn saturate(buf: &mut [u8], factor: f32) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     let pixels = buf.len() / 4;
     for i in 0..pixels {
@@ -122,7 +122,7 @@ pub fn saturate(buf: &mut [u8], factor: f32) {
 /// out_A = m[15]*B + m[16]*G + m[17]*R + m[18]*A + m[19]*255
 /// ```
 pub fn color_matrix(buf: &mut [u8], m: &[f32; 20]) {
-    debug_assert_eq!(buf.len() % 4, 0);
+    assert_eq!(buf.len() % 4, 0);
 
     #[cfg(target_arch = "x86_64")]
     {

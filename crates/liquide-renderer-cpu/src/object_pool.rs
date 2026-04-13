@@ -4,6 +4,7 @@
 //! repeatedly allocating and deallocating them.
 
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 /// A generic object pool with configurable capacity.
 #[allow(dead_code)]
@@ -129,19 +130,16 @@ pub struct ObjectPoolStats {
 /// A pooled object that automatically returns to the pool when dropped.
 pub struct PooledObject<T> {
     object: Option<T>,
-    pool: *mut ObjectPool<T>,
+    free_list: Arc<Mutex<VecDeque<T>>>,
 }
 
 impl<T> PooledObject<T> {
-    /// Create a new pooled object.
-    ///
-    /// # Safety
-    /// The pool pointer must remain valid for the lifetime of this object.
+    /// Create a new pooled object backed by a shared free list.
     #[allow(dead_code)]
-    pub(crate) unsafe fn new(object: T, pool: *mut ObjectPool<T>) -> Self {
+    pub(crate) fn new(object: T, free_list: Arc<Mutex<VecDeque<T>>>) -> Self {
         Self {
             object: Some(object),
-            pool,
+            free_list,
         }
     }
 
@@ -160,8 +158,8 @@ impl<T> PooledObject<T> {
 impl<T> Drop for PooledObject<T> {
     fn drop(&mut self) {
         if let Some(object) = self.object.take() {
-            unsafe {
-                (*self.pool).release(object);
+            if let Ok(mut list) = self.free_list.lock() {
+                list.push_back(object);
             }
         }
     }

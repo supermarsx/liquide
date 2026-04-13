@@ -122,7 +122,7 @@ impl MetricsRegistry {
     /// Register a new metric. If a metric with the same name already exists
     /// this is a no-op (the existing metric is kept).
     pub fn register(&self, name: &str, kind: MetricKind) {
-        let mut map = self.entries.write().unwrap();
+        let mut map = liquide_common::sync::write_or_recover(&self.entries);
         if map.contains_key(name) {
             return;
         }
@@ -149,7 +149,7 @@ impl MetricsRegistry {
         kind: MetricKind,
         labels: Vec<(String, String)>,
     ) {
-        let mut map = self.entries.write().unwrap();
+        let mut map = liquide_common::sync::write_or_recover(&self.entries);
         if map.contains_key(name) {
             return;
         }
@@ -196,7 +196,7 @@ impl MetricsRegistry {
         if let Some(entry) = self.get_entry(name) {
             entry.value.fetch_add(1, Ordering::Relaxed);
             if let Some(ref buckets_lock) = entry.histogram_buckets {
-                let buckets = buckets_lock.read().unwrap();
+                let buckets = liquide_common::sync::read_or_recover(buckets_lock);
                 for (bound, count) in buckets.iter() {
                     if value <= *bound {
                         count.fetch_add(1, Ordering::Relaxed);
@@ -211,7 +211,7 @@ impl MetricsRegistry {
     pub fn set_histogram_buckets(&self, name: &str, boundaries: &[u64]) {
         if let Some(entry) = self.get_entry(name) {
             if let Some(ref buckets_lock) = entry.histogram_buckets {
-                let mut buckets = buckets_lock.write().unwrap();
+                let mut buckets = liquide_common::sync::write_or_recover(buckets_lock);
                 buckets.clear();
                 for &b in boundaries {
                     buckets.push((b, AtomicU64::new(0)));
@@ -222,7 +222,7 @@ impl MetricsRegistry {
 
     /// Capture a snapshot of all registered metrics.
     pub fn snapshot(&self) -> MetricsSnapshot {
-        let map = self.entries.read().unwrap();
+        let map = liquide_common::sync::read_or_recover(&self.entries);
         let mut metrics: Vec<Metric> = map
             .iter()
             .map(|(name, entry)| Metric {
@@ -238,12 +238,12 @@ impl MetricsRegistry {
 
     /// Returns the number of registered metrics.
     pub fn count(&self) -> usize {
-        self.entries.read().unwrap().len()
+        liquide_common::sync::read_or_recover(&self.entries).len()
     }
 
     /// Reset all counters/gauges to zero.
     pub fn reset(&self) {
-        let map = self.entries.read().unwrap();
+        let map = liquide_common::sync::read_or_recover(&self.entries);
         for entry in map.values() {
             entry.value.store(0, Ordering::Relaxed);
         }
@@ -251,13 +251,13 @@ impl MetricsRegistry {
 
     /// Check whether a metric with the given name is registered.
     pub fn contains(&self, name: &str) -> bool {
-        self.entries.read().unwrap().contains_key(name)
+        liquide_common::sync::read_or_recover(&self.entries).contains_key(name)
     }
 
     // --- internal helpers ---
 
     fn get_entry(&self, name: &str) -> Option<Arc<MetricEntry>> {
-        let map = self.entries.read().unwrap();
+        let map = liquide_common::sync::read_or_recover(&self.entries);
         map.get(name).cloned()
     }
 }

@@ -85,7 +85,7 @@ impl GlyphCache {
     /// Look up a cached glyph bitmap.
     #[must_use]
     pub fn get(&self, key: &GlyphCacheKey) -> Option<GlyphBitmap> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = liquide_common::sync::lock_or_recover(&self.inner);
         inner.access_counter += 1;
         let counter = inner.access_counter;
         if let Some(entry) = inner.entries.get_mut(key) {
@@ -101,7 +101,7 @@ impl GlyphCache {
 
     /// Insert a glyph bitmap into the cache.
     pub fn insert(&self, key: GlyphCacheKey, bitmap: GlyphBitmap) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = liquide_common::sync::lock_or_recover(&self.inner);
         let pixel_bytes = bitmap.pixels.len();
 
         // Evict if we're at capacity
@@ -134,7 +134,7 @@ impl GlyphCache {
 
     /// Invalidate all cached glyphs for a specific font face (e.g., on font reload).
     pub fn invalidate_face(&self, face_id: FontFaceId) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = liquide_common::sync::lock_or_recover(&self.inner);
         let keys_to_remove: Vec<GlyphCacheKey> = inner
             .entries
             .keys()
@@ -150,7 +150,7 @@ impl GlyphCache {
 
     /// Clear the entire cache.
     pub fn clear(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = liquide_common::sync::lock_or_recover(&self.inner);
         inner.entries.clear();
         inner.total_bytes = 0;
     }
@@ -158,7 +158,7 @@ impl GlyphCache {
     /// Get cache statistics.
     #[must_use]
     pub fn stats(&self) -> CacheStats {
-        let inner = self.inner.lock().unwrap();
+        let inner = liquide_common::sync::lock_or_recover(&self.inner);
         CacheStats {
             entries: inner.entries.len(),
             total_bytes: inner.total_bytes,

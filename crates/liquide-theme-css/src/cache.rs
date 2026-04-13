@@ -94,18 +94,18 @@ impl QueryCache {
         
         // Update stats
         {
-            let mut stats = self.stats.write().unwrap();
+            let mut stats = liquide_common::sync::write_or_recover(&self.stats);
             stats.total_queries += 1;
         }
-        
+
         // Try to get from cache
-        let cache = self.cache.read().unwrap();
+        let cache = liquide_common::sync::read_or_recover(&self.cache);
         if let Some(properties) = cache.get(&key) {
-            let mut stats = self.stats.write().unwrap();
+            let mut stats = liquide_common::sync::write_or_recover(&self.stats);
             stats.cache_hits += 1;
             Some(properties.clone())
         } else {
-            let mut stats = self.stats.write().unwrap();
+            let mut stats = liquide_common::sync::write_or_recover(&self.stats);
             stats.cache_misses += 1;
             None
         }
@@ -122,14 +122,14 @@ impl QueryCache {
     ) {
         let key = CacheKey::new(element, classes, id, pseudo_classes);
         
-        let mut cache = self.cache.write().unwrap();
-        
+        let mut cache = liquide_common::sync::write_or_recover(&self.cache);
+
         // Evict if at capacity (simple FIFO eviction)
         if self.max_size > 0 && cache.len() >= self.max_size {
             // Remove first entry (FIFO)
             if let Some(first_key) = cache.keys().next().cloned() {
                 cache.remove(&first_key);
-                let mut stats = self.stats.write().unwrap();
+                let mut stats = liquide_common::sync::write_or_recover(&self.stats);
                 stats.evictions += 1;
             }
         }
@@ -139,11 +139,11 @@ impl QueryCache {
     
     /// Clear the cache
     pub fn clear(&self) {
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = liquide_common::sync::write_or_recover(&self.cache);
         cache.clear();
-        
+
         // Reset stats except total queries
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = liquide_common::sync::write_or_recover(&self.stats);
         stats.cache_hits = 0;
         stats.cache_misses = 0;
         stats.evictions = 0;
@@ -151,13 +151,13 @@ impl QueryCache {
     
     /// Get cache size
     pub fn size(&self) -> usize {
-        let cache = self.cache.read().unwrap();
+        let cache = liquide_common::sync::read_or_recover(&self.cache);
         cache.len()
     }
-    
+
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
-        let stats = self.stats.read().unwrap();
+        let stats = liquide_common::sync::read_or_recover(&self.stats);
         stats.clone()
     }
     

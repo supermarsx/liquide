@@ -7,6 +7,9 @@ description = "CSS parser and theme engine for Liquide desktop"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+# Internal
+liquide-common = { path = "../liquide-common" }
+
 # CSS parsing
 lightningcss = { version = "1.0.0-alpha.70", features = ["serde"] }
 cssparser = "0.33"
