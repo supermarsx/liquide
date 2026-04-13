@@ -782,14 +782,184 @@ fn expand_text_decoration(value: &PropertyValue) -> Expanded {
 }
 
 /// Expand `transition: <property> <duration> <timing> <delay>`.
+///
+/// Supports: `transition: opacity 0.3s ease 0s`
+/// Also supports comma-separated list: `transition: opacity 0.3s, transform 0.5s ease-in`
+/// If only a keyword like "none" or "all", just set property.
 fn expand_transition(value: &PropertyValue) -> Expanded {
-    // Transition is complex — just pass through for now; the engine handles it
-    vec![("transition-property", value.clone())]
+    let text = match value {
+        PropertyValue::Keyword(kw) => kw.clone(),
+        PropertyValue::String(s) => s.clone(),
+        _ => return vec![("transition-property", value.clone())],
+    };
+
+    let trimmed = text.trim();
+    if trimmed == "none" || trimmed == "initial" || trimmed == "inherit" {
+        return vec![("transition-property", PropertyValue::Keyword(trimmed.to_string()))];
+    }
+
+    // Parse first transition item (we set longhands from the first item;
+    // multi-transition needs list storage but longhands are strings so we join).
+    let mut properties = Vec::new();
+    let mut durations = Vec::new();
+    let mut timings = Vec::new();
+    let mut delays = Vec::new();
+
+    for item in trimmed.split(',') {
+        let parts: Vec<&str> = item.trim().split_whitespace().collect();
+        let mut prop = "all";
+        let mut dur = "0s";
+        let mut timing = "ease";
+        let mut delay = "0s";
+
+        for part in &parts {
+            if part.ends_with('s') || part.ends_with("ms") {
+                // It's a time value
+                if dur == "0s" && durations.len() == properties.len() {
+                    dur = part;
+                } else {
+                    delay = part;
+                }
+            } else if is_timing_keyword(part) || part.starts_with("cubic-bezier(") || part.starts_with("steps(") {
+                timing = part;
+            } else {
+                prop = part;
+            }
+        }
+
+        properties.push(prop.to_string());
+        durations.push(dur.to_string());
+        timings.push(timing.to_string());
+        delays.push(delay.to_string());
+    }
+
+    vec![
+        ("transition-property", PropertyValue::Keyword(properties.join(", "))),
+        ("transition-duration", PropertyValue::Keyword(durations.join(", "))),
+        ("transition-timing-function", PropertyValue::Keyword(timings.join(", "))),
+        ("transition-delay", PropertyValue::Keyword(delays.join(", "))),
+    ]
 }
 
-/// Expand `animation: <name> <duration> <timing> <delay> ...`.
+/// Expand `animation: <name> <duration> <timing> <delay> <iteration-count> <direction> <fill-mode> <play-state>`.
+///
+/// Supports: `animation: fadeIn 1s ease-in 0s infinite alternate both`
 fn expand_animation(value: &PropertyValue) -> Expanded {
-    vec![("animation-name", value.clone())]
+    let text = match value {
+        PropertyValue::Keyword(kw) => kw.clone(),
+        PropertyValue::String(s) => s.clone(),
+        _ => return vec![("animation-name", value.clone())],
+    };
+
+    let trimmed = text.trim();
+    if trimmed == "none" || trimmed == "initial" || trimmed == "inherit" {
+        return vec![("animation-name", PropertyValue::Keyword(trimmed.to_string()))];
+    }
+
+    // Handle comma-separated multiple animations
+    if trimmed.contains(',') {
+        let mut names = Vec::new();
+        let mut durations = Vec::new();
+        let mut timings = Vec::new();
+        let mut delays = Vec::new();
+
+        for item in trimmed.split(',') {
+            let item = item.trim();
+            let parts: Vec<&str> = item.split_whitespace().collect();
+            let mut name = String::new();
+            let mut dur = "0s".to_string();
+            let mut timing = "ease".to_string();
+            let mut delay = "0s".to_string();
+            let mut time_count = 0;
+
+            for part in &parts {
+                if part.ends_with('s') || part.ends_with("ms") {
+                    if time_count == 0 { dur = part.to_string(); } else { delay = part.to_string(); }
+                    time_count += 1;
+                } else if is_timing_keyword(part) || part.starts_with("cubic-bezier(") || part.starts_with("steps(") {
+                    timing = part.to_string();
+                } else if matches!(*part, "infinite") || part.parse::<f32>().is_ok() {
+                    // iteration count — skip for shorthand expansion
+                } else if matches!(*part, "normal" | "reverse" | "alternate" | "alternate-reverse") {
+                    // direction — skip for shorthand expansion
+                } else if matches!(*part, "forwards" | "backwards" | "both") && !name.is_empty() {
+                    // fill mode — skip for shorthand expansion
+                } else if matches!(*part, "running" | "paused") {
+                    // play state — skip for shorthand expansion
+                } else {
+                    name = part.to_string();
+                }
+            }
+            if name.is_empty() { name = "none".to_string(); }
+            names.push(name);
+            durations.push(dur);
+            timings.push(timing);
+            delays.push(delay);
+        }
+
+        return vec![
+            ("animation-name", PropertyValue::Keyword(names.join(", "))),
+            ("animation-duration", PropertyValue::Keyword(durations.join(", "))),
+            ("animation-timing-function", PropertyValue::Keyword(timings.join(", "))),
+            ("animation-delay", PropertyValue::Keyword(delays.join(", "))),
+        ];
+    }
+
+    // Single animation: parse from the first animation item
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+
+    let mut name = String::new();
+    let mut duration = String::from("0s");
+    let mut timing = String::from("ease");
+    let mut delay = String::from("0s");
+    let mut iteration = String::from("1");
+    let mut direction = String::from("normal");
+    let mut fill_mode = String::from("none");
+    let mut play_state = String::from("running");
+
+    let mut time_count = 0;
+
+    for part in &parts {
+        if part.ends_with('s') || part.ends_with("ms") {
+            if time_count == 0 {
+                duration = part.to_string();
+            } else {
+                delay = part.to_string();
+            }
+            time_count += 1;
+        } else if is_timing_keyword(part) || part.starts_with("cubic-bezier(") || part.starts_with("steps(") {
+            timing = part.to_string();
+        } else if *part == "infinite" || part.parse::<f32>().is_ok() {
+            iteration = part.to_string();
+        } else if matches!(*part, "normal" | "reverse" | "alternate" | "alternate-reverse") {
+            direction = part.to_string();
+        } else if matches!(*part, "none" | "forwards" | "backwards" | "both") && !name.is_empty() {
+            fill_mode = part.to_string();
+        } else if matches!(*part, "running" | "paused") {
+            play_state = part.to_string();
+        } else {
+            name = part.to_string();
+        }
+    }
+
+    if name.is_empty() {
+        name = "none".to_string();
+    }
+
+    vec![
+        ("animation-name", PropertyValue::Keyword(name)),
+        ("animation-duration", PropertyValue::Keyword(duration)),
+        ("animation-timing-function", PropertyValue::Keyword(timing)),
+        ("animation-delay", PropertyValue::Keyword(delay)),
+        ("animation-iteration-count", PropertyValue::Keyword(iteration)),
+        ("animation-direction", PropertyValue::Keyword(direction)),
+        ("animation-fill-mode", PropertyValue::Keyword(fill_mode)),
+        ("animation-play-state", PropertyValue::Keyword(play_state)),
+    ]
+}
+
+fn is_timing_keyword(s: &str) -> bool {
+    matches!(s, "ease" | "ease-in" | "ease-out" | "ease-in-out" | "linear" | "step-start" | "step-end")
 }
 
 /// Expand `place-content: <align-content> <justify-content>`.

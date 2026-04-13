@@ -459,7 +459,7 @@ impl StyleEngine {
                 }
             }
             "text-emphasis-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.text_emphasis_color = Some(c);
                 }
             }
@@ -702,7 +702,7 @@ impl StyleEngine {
 
             // ── SVG presentation properties ──
             "fill" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.fill = Some(format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a));
                 } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     style.fill = if kw == "none" { Some("none".into()) } else { Some(kw.clone()) };
@@ -715,7 +715,7 @@ impl StyleEngine {
                 }
             }
             "stroke" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.stroke = Some(format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a));
                 } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     style.stroke = if kw == "none" { Some("none".into()) } else { Some(kw.clone()) };
@@ -750,10 +750,10 @@ impl StyleEngine {
                     style.color_interpolation_filters = match kw.as_str() { "sRGB" | "srgb" => ColorInterpolation::SRGB, "auto" => ColorInterpolation::Auto, _ => ColorInterpolation::LinearRGB };
                 }
             }
-            "flood-color" => { if let Some(c) = resolve_color(val) { style.flood_color = c; } }
+            "flood-color" => { if let Some(c) = resolve_color_with_current(val, style.color) { style.flood_color = c; } }
             "flood-opacity" => style.flood_opacity = resolve_number(val),
-            "lighting-color" => { if let Some(c) = resolve_color(val) { style.lighting_color = c; } }
-            "stop-color" => { if let Some(c) = resolve_color(val) { style.stop_color = c; } }
+            "lighting-color" => { if let Some(c) = resolve_color_with_current(val, style.color) { style.lighting_color = c; } }
+            "stop-color" => { if let Some(c) = resolve_color_with_current(val, style.color) { style.stop_color = c; } }
             "stop-opacity" => style.stop_opacity = resolve_number(val),
             "dominant-baseline" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
@@ -1023,7 +1023,100 @@ impl StyleEngine {
             // ── all ──
             "all" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    match kw.as_str() { "initial" | "unset" | "revert" => { *style = ComputedStyle::default(); } _ => {} }
+                    match kw.as_str() {
+                        "initial" => {
+                            // Reset everything to initial values
+                            *style = ComputedStyle::default();
+                        }
+                        "unset" | "revert" => {
+                            // For 'all: unset', inherited properties keep inherited values,
+                            // non-inherited properties reset to initial.
+                            // Since inherit_from() already ran, we just need to reset non-inherited fields.
+                            let initial = ComputedStyle::default();
+                            style.display = initial.display;
+                            style.position = initial.position;
+                            style.box_sizing = initial.box_sizing;
+                            style.width = initial.width;
+                            style.height = initial.height;
+                            style.min_width = initial.min_width;
+                            style.max_width = initial.max_width;
+                            style.min_height = initial.min_height;
+                            style.max_height = initial.max_height;
+                            style.margin = initial.margin;
+                            style.padding = initial.padding;
+                            style.border_width = initial.border_width;
+                            style.border_style = initial.border_style;
+                            style.border_color = initial.border_color;
+                            style.border_radius = initial.border_radius;
+                            style.top = initial.top;
+                            style.right = initial.right;
+                            style.bottom = initial.bottom;
+                            style.left = initial.left;
+                            style.z_index = initial.z_index;
+                            style.float = initial.float;
+                            style.clear = initial.clear;
+                            style.background_color = initial.background_color;
+                            style.background = initial.background;
+                            style.box_shadow = initial.box_shadow;
+                            style.opacity = initial.opacity;
+                            style.overflow_x = initial.overflow_x;
+                            style.overflow_y = initial.overflow_y;
+                            style.transform = initial.transform;
+                            style.filter = initial.filter;
+                            style.backdrop_filter = initial.backdrop_filter;
+                            style.mix_blend_mode = initial.mix_blend_mode;
+                            style.mask = initial.mask;
+                            style.clip_path = initial.clip_path;
+                            style.outline = initial.outline;
+                            style.flex_direction = initial.flex_direction;
+                            style.flex_wrap = initial.flex_wrap;
+                            style.flex_grow = initial.flex_grow;
+                            style.flex_shrink = initial.flex_shrink;
+                            style.flex_basis = initial.flex_basis;
+                            style.justify_content = initial.justify_content;
+                            style.align_items = initial.align_items;
+                            style.align_self = initial.align_self;
+                            style.align_content = initial.align_content;
+                            style.order = initial.order;
+                            style.contain = initial.contain;
+                            // Grid properties
+                            style.grid_template_columns = initial.grid_template_columns.clone();
+                            style.grid_template_rows = initial.grid_template_rows.clone();
+                            style.grid_auto_flow = initial.grid_auto_flow;
+                            style.grid_column = initial.grid_column.clone();
+                            style.grid_row = initial.grid_row.clone();
+                            style.grid_auto_columns = initial.grid_auto_columns.clone();
+                            style.grid_auto_rows = initial.grid_auto_rows.clone();
+                            // Aspect ratio
+                            style.aspect_ratio = initial.aspect_ratio;
+                            // Gap
+                            style.gap = initial.gap.clone();
+                            style.row_gap = initial.row_gap.clone();
+                            style.column_gap = initial.column_gap.clone();
+                            // Transitions
+                            style.transition_property = None;
+                            style.transition_duration = None;
+                            style.transition_timing_function = None;
+                            style.transition_delay = None;
+                            // Animations
+                            style.animation_name = None;
+                            style.animation_duration = None;
+                            style.animation_timing_function = None;
+                            style.animation_delay = None;
+                            // Transform extras
+                            style.transform_origin = initial.transform_origin.clone();
+                            style.perspective = initial.perspective.clone();
+                            // Visual
+                            style.isolation = initial.isolation;
+                            style.will_change = initial.will_change.clone();
+                            style.content_visibility = initial.content_visibility;
+                            // Writing mode
+                            style.writing_mode = initial.writing_mode;
+                            style.direction = initial.direction;
+                            style.unicode_bidi = initial.unicode_bidi;
+                        }
+                        _ => {}
+                    }
                 }
             }
 
@@ -1287,6 +1380,110 @@ impl StyleEngine {
             "right" => style.right = default.right,
             "bottom" => style.bottom = default.bottom,
             "left" => style.left = default.left,
+            // Grid properties
+            "grid-template-columns" => style.grid_template_columns = default.grid_template_columns.clone(),
+            "grid-template-rows" => style.grid_template_rows = default.grid_template_rows.clone(),
+            "grid-auto-flow" => style.grid_auto_flow = default.grid_auto_flow,
+            "grid-column-start" | "grid-column" => style.grid_column = default.grid_column.clone(),
+            "grid-row-start" | "grid-row" => style.grid_row = default.grid_row.clone(),
+            "grid-auto-columns" => style.grid_auto_columns = default.grid_auto_columns.clone(),
+            "grid-auto-rows" => style.grid_auto_rows = default.grid_auto_rows.clone(),
+            // Aspect ratio
+            "aspect-ratio" => style.aspect_ratio = default.aspect_ratio,
+            // Gap
+            "gap" | "grid-gap" => style.gap = default.gap.clone(),
+            "row-gap" | "grid-row-gap" => { style.row_gap = default.row_gap.clone(); style.gap.height = default.gap.height.clone(); }
+            "column-gap" | "grid-column-gap" => { style.column_gap = default.column_gap.clone(); style.gap.width = default.gap.width.clone(); }
+            // Transitions
+            "transition-property" => style.transition_property = None,
+            "transition-duration" => style.transition_duration = None,
+            "transition-timing-function" => style.transition_timing_function = None,
+            "transition-delay" => style.transition_delay = None,
+            // Animations
+            "animation-name" => style.animation_name = None,
+            "animation-duration" => style.animation_duration = None,
+            "animation-timing-function" => style.animation_timing_function = None,
+            "animation-delay" => style.animation_delay = None,
+            // Transform extras
+            "transform-origin" => style.transform_origin = default.transform_origin.clone(),
+            "perspective" => style.perspective = default.perspective.clone(),
+            // Visual
+            "isolation" => style.isolation = default.isolation,
+            "will-change" => style.will_change = default.will_change.clone(),
+            "contain" => style.contain = default.contain,
+            "content-visibility" => style.content_visibility = default.content_visibility,
+            // Float & clear
+            "float" => style.float = default.float,
+            "clear" => style.clear = default.clear,
+            // Writing mode
+            "writing-mode" => style.writing_mode = default.writing_mode,
+            "direction" => style.direction = default.direction,
+            "unicode-bidi" => style.unicode_bidi = default.unicode_bidi,
+            // Typography extras
+            "line-height" => style.line_height = default.line_height.clone(),
+            "letter-spacing" => style.letter_spacing = default.letter_spacing,
+            "word-spacing" => style.word_spacing = default.word_spacing,
+            "text-decoration" => style.text_decoration = default.text_decoration.clone(),
+            "text-overflow" => style.text_overflow = default.text_overflow,
+            "text-shadow" => style.text_shadow = default.text_shadow.clone(),
+            "text-indent" => style.text_indent = default.text_indent,
+            "vertical-align" => style.vertical_align = default.vertical_align,
+            "word-break" => style.word_break = default.word_break,
+            "tab-size" => style.tab_size = default.tab_size,
+            "overflow-wrap" => style.overflow_wrap = default.overflow_wrap,
+            "hyphens" => style.hyphens = default.hyphens,
+            // Visual extras
+            "box-shadow" => style.box_shadow = default.box_shadow.clone(),
+            "filter" => style.filter = default.filter.clone(),
+            "backdrop-filter" => style.backdrop_filter = default.backdrop_filter.clone(),
+            "backface-visibility" => style.backface_visibility = default.backface_visibility,
+            "mix-blend-mode" => style.mix_blend_mode = default.mix_blend_mode,
+            "clip-path" => style.clip_path = default.clip_path.clone(),
+            "outline" => style.outline = default.outline.clone(),
+            "mask" => style.mask = default.mask.clone(),
+            // Layout extras
+            "object-fit" => style.object_fit = default.object_fit,
+            "object-position" => { style.object_position_x = default.object_position_x; style.object_position_y = default.object_position_y; }
+            "resize" => style.resize = default.resize,
+            "column-count" => style.column_count = default.column_count,
+            "column-width" => style.column_width = default.column_width,
+            // Flex extras
+            "flex-basis" => style.flex_basis = default.flex_basis,
+            "align-content" => style.align_content = default.align_content,
+            "order" => style.order = default.order,
+            // Alignment extras
+            "justify-items" => style.justify_items = default.justify_items,
+            "justify-self" => style.justify_self = default.justify_self,
+            "place-content" => style.place_content = default.place_content.clone(),
+            // List styling
+            "list-style-type" => style.list_style_type = default.list_style_type,
+            "list-style-position" => style.list_style_position = default.list_style_position,
+            // Table
+            "table-layout" => style.table_layout = default.table_layout,
+            "border-collapse" => style.border_collapse = default.border_collapse,
+            "border-spacing" => style.border_spacing = default.border_spacing,
+            "empty-cells" => style.empty_cells = default.empty_cells,
+            "caption-side" => style.caption_side = default.caption_side,
+            // User interaction
+            "user-select" => style.user_select = default.user_select,
+            "appearance" => style.appearance = default.appearance,
+            "scroll-behavior" => style.scroll_behavior = default.scroll_behavior,
+            "overscroll-behavior-x" => style.overscroll_behavior_x = default.overscroll_behavior_x,
+            "overscroll-behavior-y" => style.overscroll_behavior_y = default.overscroll_behavior_y,
+            // Transform extras
+            "transform-style" => style.transform_style = default.transform_style,
+            "transform-box" => style.transform_box = default.transform_box,
+            "perspective-origin" => style.perspective_origin = default.perspective_origin.clone(),
+            // Content & counters
+            "content" => style.content = default.content.clone(),
+            "quotes" => style.quotes = default.quotes.clone(),
+            // Image
+            "image-rendering" => style.image_rendering = default.image_rendering,
+            // Interaction extras
+            "touch-action" => style.touch_action = default.touch_action,
+            "caret-color" => style.caret_color = default.caret_color,
+            "accent-color" => style.accent_color = default.accent_color,
+            "color-scheme" => style.color_scheme = default.color_scheme,
             _ => {} // Unknown property — no reset
         }
     }

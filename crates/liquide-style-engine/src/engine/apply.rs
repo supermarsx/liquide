@@ -42,9 +42,19 @@ impl StyleEngine {
                     // For inherited properties, just keep inherited value (do nothing)
                     return;
                 }
-                "revert" | "revert-layer" => {
-                    // Revert to the previous cascade origin's value
-                    // For now, simplified: act like unset
+                "revert" => {
+                    // CSS Cascading Level 5: roll back to the previous cascade origin.
+                    // Full origin-aware rollback requires cascade context we don't carry here,
+                    // so we approximate: for non-inherited properties reset to initial;
+                    // for inherited properties keep the inherited value (already set by inherit_from).
+                    if !crate::inheritance::is_inherited(key) {
+                        self.reset_property_to_initial(key, style);
+                    }
+                    return;
+                }
+                "revert-layer" => {
+                    // CSS Cascading Level 5: roll back within the current layer.
+                    // Same approximation as revert — reset non-inherited, keep inherited.
                     if !crate::inheritance::is_inherited(key) {
                         self.reset_property_to_initial(key, style);
                     }
@@ -127,27 +137,27 @@ impl StyleEngine {
 
             // Border color
             "border-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_color = Sides::all(c);
                 }
             }
             "border-top-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_color.top = c;
                 }
             }
             "border-right-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_color.right = c;
                 }
             }
             "border-bottom-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_color.bottom = c;
                 }
             }
             "border-left-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_color.left = c;
                 }
             }
@@ -339,7 +349,7 @@ impl StyleEngine {
 
             // Visual
             "background-color" | "background" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.background_color = c;
                 }
             }
@@ -415,13 +425,13 @@ impl StyleEngine {
                 }
             }
             "glass-tint" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.x_glass_tint = Some(c);
                 }
             }
             // Standard box-shadow-color shorthand (non-standard, used in themes)
             "box-shadow-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     // Store as a single zero-offset shadow with only the color set.
                     if style.box_shadow.is_empty() {
                         style
@@ -443,7 +453,7 @@ impl StyleEngine {
             }
             // titlebar-background (legacy compat — maps to x_custom)
             "titlebar-background" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.x_custom.push((
                         "titlebar-background".into(),
                         format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a),
@@ -611,6 +621,7 @@ impl StyleEngine {
                         "flex-end" | "end" => AlignContent::FlexEnd,
                         "space-between" => AlignContent::SpaceBetween,
                         "space-around" => AlignContent::SpaceAround,
+                        "space-evenly" => AlignContent::SpaceEvenly,
                         _ => AlignContent::Stretch,
                     };
                     style.justify_content = match justify_val {
@@ -981,7 +992,7 @@ impl StyleEngine {
                 }
             }
             "text-decoration-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.text_decoration_color = Some(c);
                 }
             }
@@ -1198,7 +1209,7 @@ impl StyleEngine {
                     if kw == "auto" {
                         style.caret_color = None;
                     }
-                } else if let Some(c) = resolve_color(val) {
+                } else if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.caret_color = Some(c);
                 }
             }
@@ -1320,7 +1331,7 @@ impl StyleEngine {
             "column-rule-width" => style.column_rule.width = resolve_number(val),
             "column-rule-style" => style.column_rule.style = resolve_border_style(val),
             "column-rule-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.column_rule.color = c;
                 }
             }
@@ -1520,22 +1531,22 @@ impl StyleEngine {
             }
             "border-block-end-style" => style.border_block_end_style = resolve_border_style(val),
             "border-inline-start-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_inline_start_color = c;
                 }
             }
             "border-inline-end-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_inline_end_color = c;
                 }
             }
             "border-block-start-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_block_start_color = c;
                 }
             }
             "border-block-end-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_block_end_color = c;
                 }
             }
@@ -1560,13 +1571,13 @@ impl StyleEngine {
                 style.border_block_end_style = s;
             }
             "border-inline-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_inline_start_color = c;
                     style.border_inline_end_color = c;
                 }
             }
             "border-block-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.border_block_start_color = c;
                     style.border_block_end_color = c;
                 }
@@ -1836,7 +1847,7 @@ impl StyleEngine {
                 }
             }
             "outline-color" => {
-                if let Some(c) = resolve_color(val) {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
                     if let Some(ref mut o) = style.outline {
                         o.color = c;
                     } else {

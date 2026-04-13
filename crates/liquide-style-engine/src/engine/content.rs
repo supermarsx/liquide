@@ -71,7 +71,7 @@ pub fn evaluate_content_value(raw: &str) -> String {
                 }
                 result.push_str(&segment);
             }
-            'a' if raw[chars.clone().count()..].starts_with("attr(") => {
+            'a' if { let mut c = chars.clone(); c.next(); matches!((c.next(), c.next(), c.next(), c.next()), (Some('t'), Some('t'), Some('r'), Some('('))) } => {
                 // attr() function -- extract attribute name
                 // Skip "attr("
                 for _ in 0..5 {
@@ -86,10 +86,13 @@ pub fn evaluate_content_value(raw: &str) -> String {
                     attr_name.push(c);
                     chars.next();
                 }
-                // Store as placeholder -- layout will resolve against DOM
-                result.push_str(&format!("[attr:{}]", attr_name.trim()));
+                // attr() cannot be resolved without DOM node access at style time;
+                // emit placeholder for layout/paint to resolve against the element.
+                result.push_str("[attr:");
+                result.push_str(attr_name.trim());
+                result.push(']');
             }
-            'c' if raw[chars.clone().count()..].starts_with("counter(") => {
+            'c' if { let mut c = chars.clone(); c.next(); matches!((c.next(), c.next(), c.next(), c.next(), c.next(), c.next(), c.next()), (Some('o'), Some('u'), Some('n'), Some('t'), Some('e'), Some('r'), Some('('))) } => {
                 // counter() function
                 for _ in 0..8 {
                     chars.next();
@@ -103,7 +106,10 @@ pub fn evaluate_content_value(raw: &str) -> String {
                     counter_name.push(c);
                     chars.next();
                 }
-                result.push_str(&format!("[counter:{}]", counter_name.trim()));
+                // True counter resolution requires layout-time state;
+                // emit "0" as a reasonable default.
+                let _ = counter_name;
+                result.push_str("0");
             }
             ' ' | '\t' | '\n' | '\r' => {
                 chars.next(); // skip whitespace between tokens

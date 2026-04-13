@@ -83,6 +83,7 @@ pub enum AlignContent {
     Center,
     SpaceBetween,
     SpaceAround,
+    SpaceEvenly,
     Stretch,
 }
 

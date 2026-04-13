@@ -204,6 +204,34 @@ pub fn resolve_color(val: &PropertyValue) -> Option<Color> {
     }
 }
 
+/// Resolve a PropertyValue to a Color, with `currentcolor` support.
+/// When `currentcolor` is encountered, returns the provided `current` color.
+pub fn resolve_color_with_current(val: &PropertyValue, current: Color) -> Option<Color> {
+    match val {
+        PropertyValue::Color(c) => Some(Color {
+            r: c.r,
+            g: c.g,
+            b: c.b,
+            a: c.a,
+        }),
+        PropertyValue::Keyword(kw) => {
+            if kw.trim().eq_ignore_ascii_case("currentcolor") {
+                Some(current)
+            } else {
+                try_parse_color(kw)
+            }
+        }
+        PropertyValue::String(s) => {
+            if s.trim().eq_ignore_ascii_case("currentcolor") {
+                Some(current)
+            } else {
+                try_parse_color(s)
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Resolve a keyword to a Display value.
 pub fn resolve_display(val: &PropertyValue) -> Display {
     if let PropertyValue::Keyword(kw) = val {

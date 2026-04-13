@@ -91,6 +91,10 @@ impl StyleEngine {
             self.apply_single_property(prop, val, &mut style, &empty_scope);
         }
 
+        // ── Populate structured transition/animation defs from longhands ──
+        style.transition = parse_transition_defs(&style);
+        style.animation = parse_animation_defs(&style);
+
         style
     }
 
@@ -256,6 +260,10 @@ impl StyleEngine {
             // Read remaining dead properties so the compiler sees them as consumed
             consume_remaining_properties(&style);
 
+            // Populate structured transition/animation defs from longhands
+            style.transition = parse_transition_defs(&style);
+            style.animation = parse_animation_defs(&style);
+
             let style = Arc::new(style);
             map.insert_shared(node_id, style.clone());
             let child_vars = owned_vars.as_ref().unwrap_or(scope_vars);
@@ -279,6 +287,10 @@ impl StyleEngine {
         Self::resolve_logical_properties(&mut style);
         // Read remaining dead properties so the compiler sees them as consumed
         consume_remaining_properties(&style);
+
+        // Populate structured transition/animation defs from longhands
+        style.transition = parse_transition_defs(&style);
+        style.animation = parse_animation_defs(&style);
 
         let style = Arc::new(style);
         map.insert_shared(node_id, style.clone());
@@ -385,6 +397,113 @@ impl StyleEngine {
             }
 
             map.insert_pseudo(node_id, kind, Arc::new(pseudo_style));
+        }
+    }
+}
+
+/// Parse transition longhand strings into structured TransitionDef vec.
+fn parse_transition_defs(style: &ComputedStyle) -> Vec<TransitionDef> {
+    let properties: Vec<&str> = style.transition_property.as_deref()
+        .unwrap_or("all").split(',').map(str::trim).collect();
+    let durations: Vec<&str> = style.transition_duration.as_deref()
+        .unwrap_or("0s").split(',').map(str::trim).collect();
+    let timings: Vec<&str> = style.transition_timing_function.as_deref()
+        .unwrap_or("ease").split(',').map(str::trim).collect();
+    let delays: Vec<&str> = style.transition_delay.as_deref()
+        .unwrap_or("0s").split(',').map(str::trim).collect();
+
+    let count = properties.len();
+    let mut defs = Vec::with_capacity(count);
+    for i in 0..count {
+        if properties[i] == "none" { continue; }
+        defs.push(TransitionDef {
+            property: properties[i].to_string(),
+            duration_ms: parse_time_ms(durations.get(i).copied().unwrap_or(durations.last().copied().unwrap_or("0s"))),
+            timing_function: parse_timing_function(timings.get(i).copied().unwrap_or(timings.last().copied().unwrap_or("ease"))),
+            delay_ms: parse_time_ms(delays.get(i).copied().unwrap_or(delays.last().copied().unwrap_or("0s"))),
+        });
+    }
+    defs
+}
+
+/// Parse animation longhand strings into structured AnimationDef vec.
+fn parse_animation_defs(style: &ComputedStyle) -> Vec<AnimationDef> {
+    let names_str = style.animation_name.as_deref().unwrap_or("none");
+    if names_str == "none" || names_str.is_empty() {
+        return Vec::new();
+    }
+
+    let names: Vec<&str> = names_str.split(',').map(str::trim).collect();
+    let durations: Vec<&str> = style.animation_duration.as_deref()
+        .unwrap_or("0s").split(',').map(str::trim).collect();
+    let timings: Vec<&str> = style.animation_timing_function.as_deref()
+        .unwrap_or("ease").split(',').map(str::trim).collect();
+    let delays: Vec<&str> = style.animation_delay.as_deref()
+        .unwrap_or("0s").split(',').map(str::trim).collect();
+
+    let count = names.len();
+    let mut defs = Vec::with_capacity(count);
+    for i in 0..count {
+        let name = names[i];
+        if name == "none" { continue; }
+        defs.push(AnimationDef {
+            name: name.to_string(),
+            duration_ms: parse_time_ms(durations.get(i).copied().unwrap_or(durations.last().copied().unwrap_or("0s"))),
+            timing_function: parse_timing_function(timings.get(i).copied().unwrap_or(timings.last().copied().unwrap_or("ease"))),
+            delay_ms: parse_time_ms(delays.get(i).copied().unwrap_or(delays.last().copied().unwrap_or("0s"))),
+            iteration_count: style.animation_iteration_count.clone(),
+            direction: style.animation_direction,
+            fill_mode: style.animation_fill_mode,
+            play_state: style.animation_play_state,
+        });
+    }
+    defs
+}
+
+/// Parse a CSS time string like "0.3s" or "300ms" to milliseconds.
+fn parse_time_ms(s: &str) -> f32 {
+    let s = s.trim();
+    if let Some(ms) = s.strip_suffix("ms") {
+        ms.trim().parse::<f32>().unwrap_or(0.0)
+    } else if let Some(sec) = s.strip_suffix('s') {
+        sec.trim().parse::<f32>().unwrap_or(0.0) * 1000.0
+    } else {
+        s.parse::<f32>().unwrap_or(0.0)
+    }
+}
+
+/// Parse a CSS timing function keyword to the enum.
+fn parse_timing_function(s: &str) -> TimingFunction {
+    match s.trim() {
+        "linear" => TimingFunction::Linear,
+        "ease" => TimingFunction::Ease,
+        "ease-in" => TimingFunction::EaseIn,
+        "ease-out" => TimingFunction::EaseOut,
+        "ease-in-out" => TimingFunction::EaseInOut,
+        "step-start" => TimingFunction::Steps(1, StepPosition::JumpStart),
+        "step-end" => TimingFunction::Steps(1, StepPosition::JumpEnd),
+        other => {
+            // Try cubic-bezier(x1, y1, x2, y2)
+            if let Some(inner) = other.strip_prefix("cubic-bezier(").and_then(|s| s.strip_suffix(')')) {
+                let nums: Vec<f32> = inner.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+                if nums.len() == 4 {
+                    return TimingFunction::CubicBezier(nums[0], nums[1], nums[2], nums[3]);
+                }
+            }
+            // Try steps(n, position)
+            if let Some(inner) = other.strip_prefix("steps(").and_then(|s| s.strip_suffix(')')) {
+                let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+                let n = parts.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                let pos = match parts.get(1).map(|s| *s) {
+                    Some("jump-start" | "start") => StepPosition::JumpStart,
+                    Some("jump-end" | "end") => StepPosition::JumpEnd,
+                    Some("jump-none") => StepPosition::JumpNone,
+                    Some("jump-both") => StepPosition::JumpBoth,
+                    _ => StepPosition::JumpEnd,
+                };
+                return TimingFunction::Steps(n, pos);
+            }
+            TimingFunction::Ease
         }
     }
 }

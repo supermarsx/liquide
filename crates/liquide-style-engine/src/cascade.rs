@@ -101,6 +101,30 @@ impl CascadePriority {
         }
     }
 
+    /// Create an animation-origin priority (overrides normal author).
+    pub fn animation(source_order: u32) -> Self {
+        Self {
+            important: false,
+            origin: CascadeOrigin::Animation,
+            layer_order: 0,
+            specificity: Specificity::ZERO,
+            source_order,
+            is_inline: false,
+        }
+    }
+
+    /// Create a transition-origin priority (highest normal priority).
+    pub fn transition(source_order: u32) -> Self {
+        Self {
+            important: false,
+            origin: CascadeOrigin::Transition,
+            layer_order: 0,
+            specificity: Specificity::ZERO,
+            source_order,
+            is_inline: false,
+        }
+    }
+
     /// Effective priority level for sorting.
     /// Normal: UA < User < Author < Inline < Animation < Transition
     /// Important: Author !imp < User !imp < UA !imp (reversed)
@@ -286,17 +310,32 @@ impl Default for CascadeMap {
 fn strip_important(
     value: &liquide_theme_css::value::PropertyValue,
 ) -> (liquide_theme_css::value::PropertyValue, bool) {
-    if let liquide_theme_css::value::PropertyValue::Keyword(kw) = value {
-        if let Some(stripped) = kw.strip_suffix("!important") {
-            let cleaned = stripped.trim();
-            if cleaned.is_empty() {
-                return (value.clone(), false);
+    match value {
+        liquide_theme_css::value::PropertyValue::Keyword(kw) => {
+            if let Some(stripped) = kw.strip_suffix("!important") {
+                let cleaned = stripped.trim();
+                if cleaned.is_empty() {
+                    return (value.clone(), false);
+                }
+                return (
+                    liquide_theme_css::value::PropertyValue::Keyword(cleaned.to_string()),
+                    true,
+                );
             }
-            return (
-                liquide_theme_css::value::PropertyValue::Keyword(cleaned.to_string()),
-                true,
-            );
         }
+        liquide_theme_css::value::PropertyValue::String(s) => {
+            if let Some(stripped) = s.strip_suffix("!important") {
+                let cleaned = stripped.trim();
+                if cleaned.is_empty() {
+                    return (value.clone(), false);
+                }
+                return (
+                    liquide_theme_css::value::PropertyValue::String(cleaned.to_string()),
+                    true,
+                );
+            }
+        }
+        _ => {}
     }
     // Not important — return a clone. The caller needs an owned value for
     // CascadeDeclaration anyway, so this clone is unavoidable.
