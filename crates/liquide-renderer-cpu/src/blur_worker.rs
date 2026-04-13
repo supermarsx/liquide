@@ -76,15 +76,21 @@ impl BlurWorker {
         let (req_tx, req_rx) = mpsc::channel::<WorkerMsg>();
         let (res_tx, res_rx) = mpsc::channel::<(NodeId, CachedBlur)>();
 
-        let handle = thread::Builder::new()
+        let handle = match thread::Builder::new()
             .name("blur-worker".into())
             .spawn(move || Self::worker_loop(req_rx, res_tx))
-            .expect("failed to spawn blur worker thread");
+        {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::error!("failed to spawn blur worker thread: {e}; blur effects disabled");
+                None
+            }
+        };
 
         Self {
             request_tx: req_tx,
             result_rx: res_rx,
-            handle: Some(handle),
+            handle,
             cache: HashMap::new(),
             pending: HashSet::new(),
             frame: 0,
@@ -210,13 +216,16 @@ impl BlurWorker {
         radius: u32,
     ) {
         self.pending.insert(node_id);
-        let _ = self.request_tx.send(WorkerMsg::Blur(BlurRequest {
+        if self.request_tx.send(WorkerMsg::Blur(BlurRequest {
             node_id,
             pixels,
             width,
             height,
             radius,
-        }));
+        })).is_err() {
+            self.pending.remove(&node_id);
+            tracing::warn!("blur worker channel closed; dropping blur request for node {}", node_id);
+        }
     }
 
     /// Remove cached entries for nodes no longer in the scene.

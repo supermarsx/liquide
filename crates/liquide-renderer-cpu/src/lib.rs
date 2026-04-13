@@ -50,6 +50,10 @@ pub enum RendererError {
     #[error("glyph atlas full (current size: {size}x{size})")]
     AtlasFull { size: u32 },
 
+    /// Invalid glyph bitmap data (size mismatch or overflow).
+    #[error("invalid glyph bitmap data")]
+    InvalidGlyph,
+
     /// Generic internal error.
     #[error("render error: {0}")]
     Internal(String),

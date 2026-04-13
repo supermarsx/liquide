@@ -102,15 +102,21 @@ impl FontWorker {
         let (req_tx, req_rx) = mpsc::channel::<WorkerMsg>();
         let (res_tx, res_rx) = mpsc::channel::<RasterizedGlyph>();
 
-        let handle = thread::Builder::new()
+        let handle = match thread::Builder::new()
             .name("font-worker".into())
             .spawn(move || Self::worker_loop(req_rx, res_tx, db_clone))
-            .expect("failed to spawn font worker thread");
+        {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::error!("failed to spawn font worker thread: {e}; glyph rasterization disabled");
+                None
+            }
+        };
 
         Self {
             request_tx: req_tx,
             result_rx: res_rx,
-            handle: Some(handle),
+            handle,
             pending: HashSet::new(),
             font_db,
         }

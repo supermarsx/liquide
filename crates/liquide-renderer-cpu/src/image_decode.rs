@@ -290,7 +290,9 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
 
     // Convert to RGBA
     let pixel_count = (width * height) as usize;
-    let mut pixels = vec![0u8; pixel_count * 4];
+    let alloc_size = pixel_count.checked_mul(4)
+        .ok_or(ImageDecodeError::InvalidFormat("pixel buffer overflow".into()))?;
+    let mut pixels = vec![0u8; alloc_size];
 
     match color_type {
         0 => {

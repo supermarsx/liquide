@@ -56,10 +56,11 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
         let bgra = pm.to_bgra_bytes();
         let row_bytes = w * 4;
         let stride = fb.stride as usize;
+        let pixels = fb.pixels_mut().expect("CPU framebuffer required");
 
         // Fill the first row in-place.
         let first_start = y0 as usize * stride + x0 as usize * 4;
-        for chunk in fb.pixels_mut()[first_start..first_start + row_bytes].chunks_exact_mut(4) {
+        for chunk in pixels[first_start..first_start + row_bytes].chunks_exact_mut(4) {
             chunk.copy_from_slice(&bgra);
         }
 
@@ -68,7 +69,7 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
             let row_start = y as usize * stride + x0 as usize * 4;
             // Safety: source and destination don't overlap because they
             // are on different scanlines (y0 != y).
-            fb.pixels_mut().copy_within(first_start..first_start + row_bytes, row_start);
+            pixels.copy_within(first_start..first_start + row_bytes, row_start);
         }
     } else if mode == BlendMode::SrcOver {
         // Semi-transparent fill: use SIMD-accelerated constant-color SrcOver.
@@ -77,10 +78,11 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
         }
         let bgra = pm.to_bgra_bytes();
         let stride = fb.stride as usize;
+        let pixels = fb.pixels_mut().expect("CPU framebuffer required");
 
         for y in y0..y1 {
             let row_start = y as usize * stride + x0 as usize * 4;
-            let row = &mut fb.pixels_mut()[row_start..row_start + w * 4];
+            let row = &mut pixels[row_start..row_start + w * 4];
             liquide_simd::convert::blend_constant_src_over(row, bgra);
         }
     } else {
@@ -124,41 +126,55 @@ pub fn fill_rect_gradient(
             // Pre-compute per-pixel t increment along x axis (t is affine in x)
             let dt_dx = dx * inv_len_sq;
 
-            for y in y0..y1 {
-                // Compute t at the start of this scanline
-                let py = y as f32 + 0.5 - start.y;
-                let px0 = x0 as f32 + 0.5 - start.x;
-                let mut t = (px0 * dx + py * dy) * inv_len_sq;
+            let stride = fb.stride as usize;
+            if mode == BlendMode::SrcOver {
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
+                for y in y0..y1 {
+                    let py = y as f32 + 0.5 - start.y;
+                    let px0 = x0 as f32 + 0.5 - start.x;
+                    let mut t = (px0 * dx + py * dy) * inv_len_sq;
 
-                let row_offset = (y * fb.stride) as usize;
-                for x in x0..x1 {
-                    let t_clamped = t.clamp(0.0, 1.0);
-                    let color = sample_gradient(stops, t_clamped, lut);
-                    let pm = color.premultiply();
+                    let row_offset = y as usize * stride;
+                    for x in x0..x1 {
+                        let t_clamped = t.clamp(0.0, 1.0);
+                        let color = sample_gradient(stops, t_clamped, lut);
+                        let pm = color.premultiply();
 
-                    // Inline SrcOver blend to avoid function-call + get_pixel/set_pixel overhead
-                    if mode == BlendMode::SrcOver {
                         let off = row_offset + (x as usize) * 4;
                         let sa = pm.a as u16;
                         if sa == 255 {
-                            fb.pixels_mut()[off] = pm.b;
-                            fb.pixels_mut()[off + 1] = pm.g;
-                            fb.pixels_mut()[off + 2] = pm.r;
-                            fb.pixels_mut()[off + 3] = pm.a;
+                            pixels[off] = pm.b;
+                            pixels[off + 1] = pm.g;
+                            pixels[off + 2] = pm.r;
+                            pixels[off + 3] = pm.a;
                         } else if sa > 0 {
                             let inv_a = 255 - sa;
-                            fb.pixels_mut()[off] = (pm.b as u16 + (fb.pixels_mut()[off] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels_mut()[off + 1] = (pm.g as u16 + (fb.pixels_mut()[off + 1] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels_mut()[off + 2] = (pm.r as u16 + (fb.pixels_mut()[off + 2] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels_mut()[off + 3] = (pm.a as u16 + (fb.pixels_mut()[off + 3] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off] = (pm.b as u16 + (pixels[off] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 1] = (pm.g as u16 + (pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 2] = (pm.r as u16 + (pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 3] = (pm.a as u16 + (pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
                         }
-                    } else {
+
+                        t += dt_dx;
+                    }
+                }
+            } else {
+                for y in y0..y1 {
+                    let py = y as f32 + 0.5 - start.y;
+                    let px0 = x0 as f32 + 0.5 - start.x;
+                    let mut t = (px0 * dx + py * dy) * inv_len_sq;
+
+                    for x in x0..x1 {
+                        let t_clamped = t.clamp(0.0, 1.0);
+                        let color = sample_gradient(stops, t_clamped, lut);
+                        let pm = color.premultiply();
+
                         let dst = fb.get_pixel(x, y);
                         let result = blend::blend(dst, pm, mode);
                         fb.set_pixel(x, y, result);
-                    }
 
-                    t += dt_dx;
+                        t += dt_dx;
+                    }
                 }
             }
         }
@@ -177,34 +193,47 @@ pub fn fill_rect_gradient(
 
             let inv_radius = 1.0 / *radius;
 
-            for y in y0..y1 {
-                let py = y as f32 + 0.5 - center.y;
-                let row_offset = (y * fb.stride) as usize;
-                for x in x0..x1 {
-                    let px = x as f32 + 0.5 - center.x;
-                    let dist = (px * px + py * py).sqrt();
-                    let t = (dist * inv_radius).clamp(0.0, 1.0);
+            let stride = fb.stride as usize;
+            if mode == BlendMode::SrcOver {
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
+                for y in y0..y1 {
+                    let py = y as f32 + 0.5 - center.y;
+                    let row_offset = y as usize * stride;
+                    for x in x0..x1 {
+                        let px = x as f32 + 0.5 - center.x;
+                        let dist = (px * px + py * py).sqrt();
+                        let t = (dist * inv_radius).clamp(0.0, 1.0);
 
-                    let color = sample_gradient(stops, t, lut);
-                    let pm = color.premultiply();
+                        let color = sample_gradient(stops, t, lut);
+                        let pm = color.premultiply();
 
-                    // Inline SrcOver blend
-                    if mode == BlendMode::SrcOver {
                         let off = row_offset + (x as usize) * 4;
                         let sa = pm.a as u16;
                         if sa == 255 {
-                            fb.pixels_mut()[off] = pm.b;
-                            fb.pixels_mut()[off + 1] = pm.g;
-                            fb.pixels_mut()[off + 2] = pm.r;
-                            fb.pixels_mut()[off + 3] = pm.a;
+                            pixels[off] = pm.b;
+                            pixels[off + 1] = pm.g;
+                            pixels[off + 2] = pm.r;
+                            pixels[off + 3] = pm.a;
                         } else if sa > 0 {
                             let inv_a = 255 - sa;
-                            fb.pixels_mut()[off] = (pm.b as u16 + (fb.pixels_mut()[off] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels_mut()[off + 1] = (pm.g as u16 + (fb.pixels_mut()[off + 1] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels_mut()[off + 2] = (pm.r as u16 + (fb.pixels_mut()[off + 2] as u16 * inv_a + 127) / 255) as u8;
-                            fb.pixels_mut()[off + 3] = (pm.a as u16 + (fb.pixels_mut()[off + 3] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off] = (pm.b as u16 + (pixels[off] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 1] = (pm.g as u16 + (pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 2] = (pm.r as u16 + (pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 3] = (pm.a as u16 + (pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
                         }
-                    } else {
+                    }
+                }
+            } else {
+                for y in y0..y1 {
+                    let py = y as f32 + 0.5 - center.y;
+                    for x in x0..x1 {
+                        let px = x as f32 + 0.5 - center.x;
+                        let dist = (px * px + py * py).sqrt();
+                        let t = (dist * inv_radius).clamp(0.0, 1.0);
+
+                        let color = sample_gradient(stops, t, lut);
+                        let pm = color.premultiply();
+
                         let dst = fb.get_pixel(x, y);
                         let result = blend::blend(dst, pm, mode);
                         fb.set_pixel(x, y, result);
@@ -606,10 +635,10 @@ pub fn blit_opaque_stride(
             break;
         }
         let dst_off = fb.pixel_offset(dst_x, dy);
-        if dst_off + bytes > fb.pixels_mut().len() {
+        if dst_off + bytes > fb.pixels_mut().expect("CPU framebuffer required").len() {
             break;
         }
-        fb.pixels_mut()[dst_off..dst_off + bytes].copy_from_slice(&src[src_off..src_off + bytes]);
+        fb.pixels_mut().expect("CPU framebuffer required")[dst_off..dst_off + bytes].copy_from_slice(&src[src_off..src_off + bytes]);
     }
 }
 
@@ -777,7 +806,7 @@ pub fn stroke_rect(fb: &mut FrameBuffer, rect: Rect, width: f32, color: Color, m
     // Left edge (between top and bottom)
     fill_rect(
         fb,
-        Rect::new(rect.x - half, rect.y + half, width, rect.height - width),
+        Rect::new(rect.x - half, rect.y + half, width, (rect.height - width).max(0.0)),
         color,
         mode,
     );
@@ -788,7 +817,7 @@ pub fn stroke_rect(fb: &mut FrameBuffer, rect: Rect, width: f32, color: Color, m
             rect.right() - half,
             rect.y + half,
             width,
-            rect.height - width,
+            (rect.height - width).max(0.0),
         ),
         color,
         mode,
@@ -989,14 +1018,14 @@ pub fn draw_line(
                     if alpha > 0 {
                         let c = Color { r: color.r, g: color.g, b: color.b, a: alpha };
                         let idx = py as usize * fb.stride as usize + px as usize * 4;
-                        if idx + 3 < fb.pixels_mut().len() {
+                        if idx + 3 < fb.pixels_mut().expect("CPU framebuffer required").len() {
                             let sa = c.a as f32 / 255.0;
                             let da = 1.0 - sa;
                             // BGRA layout in the framebuffer
-                            fb.pixels_mut()[idx]     = (c.b as f32 * sa + fb.pixels_mut()[idx]     as f32 * da) as u8;
-                            fb.pixels_mut()[idx + 1] = (c.g as f32 * sa + fb.pixels_mut()[idx + 1] as f32 * da) as u8;
-                            fb.pixels_mut()[idx + 2] = (c.r as f32 * sa + fb.pixels_mut()[idx + 2] as f32 * da) as u8;
-                            fb.pixels_mut()[idx + 3] = (c.a.max(fb.pixels_mut()[idx + 3])) as u8;
+                            fb.pixels_mut().expect("CPU framebuffer required")[idx]     = (c.b as f32 * sa + fb.pixels_mut().expect("CPU framebuffer required")[idx]     as f32 * da) as u8;
+                            fb.pixels_mut().expect("CPU framebuffer required")[idx + 1] = (c.g as f32 * sa + fb.pixels_mut().expect("CPU framebuffer required")[idx + 1] as f32 * da) as u8;
+                            fb.pixels_mut().expect("CPU framebuffer required")[idx + 2] = (c.r as f32 * sa + fb.pixels_mut().expect("CPU framebuffer required")[idx + 2] as f32 * da) as u8;
+                            fb.pixels_mut().expect("CPU framebuffer required")[idx + 3] = (c.a as f32 + fb.pixels_mut().expect("CPU framebuffer required")[idx + 3] as f32 * (1.0 - sa)) as u8;
                         }
                     }
                 }

@@ -142,6 +142,13 @@ impl GlyphAtlas {
             return Err(crate::RendererError::AtlasFull { size: self.width });
         }
 
+        // Validate bitmap dimensions
+        let _total = width.checked_mul(height)
+            .ok_or(crate::RendererError::AtlasFull { size: self.width })?;
+        if bitmap.len() < (width * height) as usize {
+            return Err(crate::RendererError::InvalidGlyph);
+        }
+
         // Copy glyph bitmap into atlas
         for row in 0..height {
             let src_start = (row * width) as usize;

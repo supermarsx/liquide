@@ -42,33 +42,45 @@ impl PixelFilter {
 
         match self {
             Self::ColorMatrix(m) => {
+                let stride = fb.stride as usize;
+                let row_bytes = (x1 - x0) as usize * 4;
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
                 for y in y0..y1 {
-                    let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
+                    let off = y as usize * stride + x0 as usize * 4;
+                    let row = &mut pixels[off..off + row_bytes];
                     liquide_simd::filter::color_matrix(row, m);
                 }
             }
             Self::Brightness(b) => {
                 let factor = *b;
+                let stride = fb.stride as usize;
+                let row_bytes = (x1 - x0) as usize * 4;
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
                 for y in y0..y1 {
-                    let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
+                    let off = y as usize * stride + x0 as usize * 4;
+                    let row = &mut pixels[off..off + row_bytes];
                     liquide_simd::filter::brightness(row, factor);
                 }
             }
             Self::Contrast(c_factor) => {
                 let f = *c_factor;
+                let stride = fb.stride as usize;
+                let row_bytes = (x1 - x0) as usize * 4;
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
                 for y in y0..y1 {
-                    let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
+                    let off = y as usize * stride + x0 as usize * 4;
+                    let row = &mut pixels[off..off + row_bytes];
                     liquide_simd::filter::contrast(row, f);
                 }
             }
             Self::Saturate(s) => {
                 let sat = *s;
+                let stride = fb.stride as usize;
+                let row_bytes = (x1 - x0) as usize * 4;
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
                 for y in y0..y1 {
-                    let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
+                    let off = y as usize * stride + x0 as usize * 4;
+                    let row = &mut pixels[off..off + row_bytes];
                     liquide_simd::filter::saturate(row, sat);
                 }
             }
@@ -93,30 +105,42 @@ impl PixelFilter {
                     0.0, 0.0,
                     0.0, 0.0, 0.0, 1.0, 0.0,
                 ];
+                let stride = fb.stride as usize;
+                let row_bytes = (x1 - x0) as usize * 4;
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
                 for y in y0..y1 {
-                    let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
+                    let off = y as usize * stride + x0 as usize * 4;
+                    let row = &mut pixels[off..off + row_bytes];
                     liquide_simd::filter::color_matrix(row, &m);
                 }
             }
             Self::Grayscale => {
+                let stride = fb.stride as usize;
+                let row_bytes = (x1 - x0) as usize * 4;
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
                 for y in y0..y1 {
-                    let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
+                    let off = y as usize * stride + x0 as usize * 4;
+                    let row = &mut pixels[off..off + row_bytes];
                     liquide_simd::filter::grayscale(row);
                 }
             }
             Self::Sepia => {
+                let stride = fb.stride as usize;
+                let row_bytes = (x1 - x0) as usize * 4;
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
                 for y in y0..y1 {
-                    let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
+                    let off = y as usize * stride + x0 as usize * 4;
+                    let row = &mut pixels[off..off + row_bytes];
                     liquide_simd::filter::sepia(row);
                 }
             }
             Self::Invert => {
+                let stride = fb.stride as usize;
+                let row_bytes = (x1 - x0) as usize * 4;
+                let pixels = fb.pixels_mut().expect("CPU framebuffer required");
                 for y in y0..y1 {
-                    let off = fb.pixel_offset(x0, y);
-                    let row = &mut fb.pixels_mut()[off..off + (x1 - x0) as usize * 4];
+                    let off = y as usize * stride + x0 as usize * 4;
+                    let row = &mut pixels[off..off + row_bytes];
                     liquide_simd::blend::invert_scanline(row);
                 }
             }

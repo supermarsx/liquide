@@ -63,9 +63,12 @@ pub fn clear_region(fb: &mut FrameBuffer, rect: Rect, color: Color) {
         return;
     }
 
+    let stride = fb.stride as usize;
+    let pixels = fb.pixels_mut().expect("CPU framebuffer required");
+
     for y in y0..y1 {
-        let row_start = (y * fb.stride) as usize + x0 as usize * 4;
-        let row = &mut fb.pixels_mut()[row_start..row_start + w * 4];
+        let row_start = y as usize * stride + x0 as usize * 4;
+        let row = &mut pixels[row_start..row_start + w * 4];
         liquide_simd::fill::fill_pattern(row, bgra);
     }
 }
