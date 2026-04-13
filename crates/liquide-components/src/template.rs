@@ -28,7 +28,7 @@
 //! DOM API calls.  Keyed children use a `data-key` attribute for O(n)
 //! reconciliation instead of O(n²) brute-force.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use liquide_dom::{Document, NodeId, PseudoStateFlags};
 
@@ -479,7 +479,7 @@ impl TemplateRenderer {
             }
         }
 
-        let mut used_old: Vec<NodeId> = Vec::new();
+        let mut used_old: HashSet<NodeId> = HashSet::new();
         let mut new_children: Vec<NodeId> = Vec::new();
         let mut unkeyed_idx = 0;
 
@@ -513,7 +513,7 @@ impl TemplateRenderer {
                 if let Some(ref key) = desired.key {
                     doc.set_attribute(existing, "data-key", key);
                 }
-                used_old.push(existing);
+                used_old.insert(existing);
                 new_children.push(existing);
             } else {
                 // Create new node

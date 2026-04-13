@@ -163,6 +163,11 @@ impl Document {
         if let Some(old_parent) = self.nodes.get(&child).and_then(|n| n.parent) {
             if let Some(p) = self.nodes.get_mut(&old_parent) {
                 p.children.retain(|&c| c != child);
+            } else {
+                eprintln!(
+                    "prepend_child: old parent {:?} for child {:?} not found in nodes",
+                    old_parent, child,
+                );
             }
         }
 
@@ -202,6 +207,11 @@ impl Document {
         if let Some(old_parent) = self.nodes.get(&child).and_then(|n| n.parent) {
             if let Some(p) = self.nodes.get_mut(&old_parent) {
                 p.children.retain(|&c| c != child);
+            } else {
+                eprintln!(
+                    "append_child: old parent {:?} for child {:?} not found in nodes",
+                    old_parent, child,
+                );
             }
         }
 
@@ -222,7 +232,15 @@ impl Document {
 
         // Notify observers
         for obs in &mut self.observers {
-            obs.on_child_added(parent, child);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                obs.on_child_added(parent, child);
+            }));
+            if result.is_err() {
+                eprintln!(
+                    "mutation observer panicked during on_child_added on node {:?}",
+                    parent,
+                );
+            }
         }
     }
 
@@ -232,6 +250,11 @@ impl Document {
         if let Some(old_parent) = self.nodes.get(&child).and_then(|n| n.parent) {
             if let Some(p) = self.nodes.get_mut(&old_parent) {
                 p.children.retain(|&c| c != child);
+            } else {
+                eprintln!(
+                    "insert_before: old parent {:?} for child {:?} not found in nodes",
+                    old_parent, child,
+                );
             }
         }
 
@@ -252,7 +275,15 @@ impl Document {
         self.dirty.mark_layout(parent);
 
         for obs in &mut self.observers {
-            obs.on_child_added(parent, child);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                obs.on_child_added(parent, child);
+            }));
+            if result.is_err() {
+                eprintln!(
+                    "mutation observer panicked during on_child_added on node {:?}",
+                    parent,
+                );
+            }
         }
     }
 
@@ -271,7 +302,15 @@ impl Document {
         self.dirty.mark_layout(parent);
 
         for obs in &mut self.observers {
-            obs.on_child_removed(parent, child);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                obs.on_child_removed(parent, child);
+            }));
+            if result.is_err() {
+                eprintln!(
+                    "mutation observer panicked during on_child_removed on node {:?}",
+                    parent,
+                );
+            }
         }
     }
 
@@ -325,7 +364,15 @@ impl Document {
         self.dirty.mark_style(node_id);
 
         for obs in &mut self.observers {
-            obs.on_attribute_changed(node_id, key, old_value.as_deref(), Some(value));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                obs.on_attribute_changed(node_id, key, old_value.as_deref(), Some(value));
+            }));
+            if result.is_err() {
+                eprintln!(
+                    "mutation observer panicked during on_attribute_changed on node {:?}",
+                    node_id,
+                );
+            }
         }
     }
 
@@ -349,7 +396,15 @@ impl Document {
         if old_value.is_some() {
             self.dirty.mark_style(node_id);
             for obs in &mut self.observers {
-                obs.on_attribute_changed(node_id, key, old_value.as_deref(), None);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    obs.on_attribute_changed(node_id, key, old_value.as_deref(), None);
+                }));
+                if result.is_err() {
+                    eprintln!(
+                        "mutation observer panicked during on_attribute_changed on node {:?}",
+                        node_id,
+                    );
+                }
             }
         }
     }
@@ -421,7 +476,15 @@ impl Document {
             self.dirty.mark_style(node_id);
 
             for obs in &mut self.observers {
-                obs.on_class_changed(node_id, &classes);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    obs.on_class_changed(node_id, &classes);
+                }));
+                if result.is_err() {
+                    eprintln!(
+                        "mutation observer panicked during on_class_changed on node {:?}",
+                        node_id,
+                    );
+                }
             }
         }
     }
@@ -443,7 +506,15 @@ impl Document {
             self.dirty.mark_style(node_id);
 
             for obs in &mut self.observers {
-                obs.on_class_changed(node_id, &classes);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    obs.on_class_changed(node_id, &classes);
+                }));
+                if result.is_err() {
+                    eprintln!(
+                        "mutation observer panicked during on_class_changed on node {:?}",
+                        node_id,
+                    );
+                }
             }
         }
     }
@@ -498,7 +569,15 @@ impl Document {
 
         let new_id = if id.is_empty() { None } else { Some(id) };
         for obs in &mut self.observers {
-            obs.on_id_changed(node_id, old_id.as_deref(), new_id);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                obs.on_id_changed(node_id, old_id.as_deref(), new_id);
+            }));
+            if result.is_err() {
+                eprintln!(
+                    "mutation observer panicked during on_id_changed on node {:?}",
+                    node_id,
+                );
+            }
         }
     }
 
@@ -516,7 +595,15 @@ impl Document {
         self.dirty.mark_layout(node_id);
 
         for obs in &mut self.observers {
-            obs.on_text_changed(node_id, text);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                obs.on_text_changed(node_id, text);
+            }));
+            if result.is_err() {
+                eprintln!(
+                    "mutation observer panicked during on_text_changed on node {:?}",
+                    node_id,
+                );
+            }
         }
     }
 
@@ -539,7 +626,15 @@ impl Document {
                 self.dirty.mark_style(node_id);
 
                 for obs in &mut self.observers {
-                    obs.on_pseudo_state_changed(node_id, old, new);
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        obs.on_pseudo_state_changed(node_id, old, new);
+                    }));
+                    if result.is_err() {
+                        eprintln!(
+                            "mutation observer panicked during on_pseudo_state_changed on node {:?}",
+                            node_id,
+                        );
+                    }
                 }
             }
         }

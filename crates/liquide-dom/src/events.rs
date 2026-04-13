@@ -281,7 +281,19 @@ fn fire_listeners(
         if event.is_immediate_propagation_stopped() {
             break;
         }
-        (listener.callback)(event);
+        // Catch panics from individual listeners to ensure:
+        // 1. Remaining listeners still fire
+        // 2. `once` listeners are still cleaned up
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (listener.callback)(event);
+        }));
+        if let Err(_) = result {
+            eprintln!(
+                "event listener panicked during '{}' on node {:?}",
+                event.event_type,
+                node_id,
+            );
+        }
         if listener.options.once {
             to_remove.push(listener.id);
         }
