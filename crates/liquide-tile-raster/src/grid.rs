@@ -101,8 +101,12 @@ impl TileGrid {
         let mut tiles = Vec::with_capacity((cols * rows) as usize);
         for row in 0..rows {
             for col in 0..cols {
-                let tw = tile_size.min(viewport_width.saturating_sub(col * tile_size));
-                let th = tile_size.min(viewport_height.saturating_sub(row * tile_size));
+                let tw = tile_size.min(viewport_width.saturating_sub(
+                    col.checked_mul(tile_size).unwrap_or(viewport_width),
+                ));
+                let th = tile_size.min(viewport_height.saturating_sub(
+                    row.checked_mul(tile_size).unwrap_or(viewport_height),
+                ));
                 tiles.push(Tile::new(TileId::new(col, row), tw, th));
             }
         }
@@ -191,13 +195,16 @@ impl TileGrid {
         }
 
         let ts = self.tile_size as f32;
-        let col_start = (rect.x / ts).floor().max(0.0) as u32;
-        let row_start = (rect.y / ts).floor().max(0.0) as u32;
-        let col_end = (rect.right() / ts).ceil().min(self.cols as f32) as u32;
-        let row_end = (rect.bottom() / ts).ceil().min(self.rows as f32) as u32;
+        let max_x = self.cols as f32 * ts;
+        let max_y = self.rows as f32 * ts;
+        let col_start = ((rect.x.max(0.0).min(max_x)) / ts).floor() as u32;
+        let row_start = ((rect.y.max(0.0).min(max_y)) / ts).floor() as u32;
+        let col_end = ((rect.right().max(0.0).min(max_x) / ts).ceil() as u32).min(self.cols);
+        let row_end = ((rect.bottom().max(0.0).min(max_y) / ts).ceil() as u32).min(self.rows);
 
         let mut result = Vec::with_capacity(
-            ((col_end - col_start) * (row_end - row_start)) as usize,
+            (col_end.saturating_sub(col_start) as usize)
+                * (row_end.saturating_sub(row_start) as usize),
         );
         for row in row_start..row_end {
             for col in col_start..col_end {
@@ -219,8 +226,12 @@ impl TileGrid {
         let mut new_tiles = Vec::with_capacity((new_cols * new_rows) as usize);
         for row in 0..new_rows {
             for col in 0..new_cols {
-                let tw = self.tile_size.min(new_width.saturating_sub(col * self.tile_size));
-                let th = self.tile_size.min(new_height.saturating_sub(row * self.tile_size));
+                let tw = self.tile_size.min(new_width.saturating_sub(
+                    col.checked_mul(self.tile_size).unwrap_or(new_width),
+                ));
+                let th = self.tile_size.min(new_height.saturating_sub(
+                    row.checked_mul(self.tile_size).unwrap_or(new_height),
+                ));
 
                 // Try to reuse existing clean tile if it fits
                 if col < self.cols && row < self.rows {

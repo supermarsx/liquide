@@ -116,7 +116,7 @@ pub fn budget_rasterize(
                                    id.col * tile_size, id.row * tile_size, item);
         }
 
-        tile.generation += 1;
+        tile.generation = tile.generation.saturating_add(1);
         tile.state = TileState::Clean;
     }
 
@@ -351,10 +351,10 @@ fn fill_rect_tile(
     }
 
     // Convert viewport coords to tile-local coords.
-    let local_x0 = (rect_x - tile_origin_x as f32).max(0.0) as u32;
-    let local_y0 = (rect_y - tile_origin_y as f32).max(0.0) as u32;
-    let local_x1 = ((rect_x + rect_w - tile_origin_x as f32).ceil() as u32).min(tile_width);
-    let local_y1 = ((rect_y + rect_h - tile_origin_y as f32).ceil() as u32).min(tile_height);
+    let local_x0 = (rect_x - tile_origin_x as f32).max(0.0).floor() as u32;
+    let local_y0 = (rect_y - tile_origin_y as f32).max(0.0).floor() as u32;
+    let local_x1 = ((rect_x + rect_w - tile_origin_x as f32).max(0.0).ceil() as u32).min(tile_width);
+    let local_y1 = ((rect_y + rect_h - tile_origin_y as f32).max(0.0).ceil() as u32).min(tile_height);
 
     if local_x0 >= local_x1 || local_y0 >= local_y1 {
         return;

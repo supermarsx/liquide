@@ -173,6 +173,11 @@ impl TileCache {
 
     /// Detach a node from the doubly-linked list.
     fn detach(&mut self, id: TileId) {
+        debug_assert!(
+            self.entries.contains_key(&id),
+            "detach called for entry not in the map: {:?}", id
+        );
+
         let (prev, next) = {
             let entry = match self.entries.get(&id) {
                 Some(e) => e,
@@ -206,6 +211,28 @@ impl TileCache {
             entry.prev = None;
             entry.next = None;
         }
+
+        // Invariant: head.prev must be None, tail.next must be None.
+        debug_assert!(
+            self.head.map_or(true, |h| self.entries.get(&h).map_or(false, |e| e.prev.is_none())),
+            "LRU list corruption: head.prev is not None"
+        );
+        debug_assert!(
+            self.tail.map_or(true, |t| self.entries.get(&t).map_or(false, |e| e.next.is_none())),
+            "LRU list corruption: tail.next is not None"
+        );
+        // After detach the node is still in entries but unlinked,
+        // so the list should contain entries.len() - 1 nodes.
+        debug_assert!({
+            let mut count = 0usize;
+            let mut cur = self.head;
+            while let Some(nid) = cur {
+                count += 1;
+                if count > self.entries.len() { break; }
+                cur = self.entries.get(&nid).and_then(|e| e.next);
+            }
+            count + 1 == self.entries.len()
+        }, "LRU list length does not match entries.len() after detach");
     }
 
     /// Push a node to the front of the LRU list (most recently used).

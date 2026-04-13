@@ -55,7 +55,20 @@ impl DamageTracker {
     /// merges them. This reduces the number of invalidation passes without
     /// over-inflating the damage area.
     pub fn merge_damage(&mut self) {
+        const MAX_DAMAGE_RECTS: usize = 256;
+        const MAX_MERGE_ITERS: usize = 50;
+
         if self.rects.len() <= 1 {
+            return;
+        }
+
+        // If there are too many rects, collapse into one bounding rect
+        // to avoid O(n³) merge cost.
+        if self.rects.len() > MAX_DAMAGE_RECTS {
+            if let Some(bbox) = self.bounding_box() {
+                self.rects.clear();
+                self.rects.push(bbox);
+            }
             return;
         }
 
@@ -63,8 +76,10 @@ impl DamageTracker {
         self.rects.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut merged = true;
-        while merged {
+        let mut iterations = 0;
+        while merged && iterations < MAX_MERGE_ITERS {
             merged = false;
+            iterations += 1;
             let mut i = 0;
             while i < self.rects.len() {
                 let mut j = i + 1;
