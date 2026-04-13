@@ -11,12 +11,11 @@ use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::PixelFormat;
 use liquide_compositor::scene::{CursorShape, FlatNode, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_compositor::{Compositor, CompositorContract};
-use liquide_devtools::FrameSnapshot;
 use liquide_compositor::Renderer;
-use liquide_renderer_cpu::SoftwareRenderer;
 use tracing::{debug, info, warn};
 
 use super::DesktopCompositor;
+use super::scene_split::{SplitScene, split_flat_nodes};
 
 // ---------------------------------------------------------------------------
 // Render thread types
@@ -50,6 +49,10 @@ pub(super) struct RenderedFrame {
     /// being rasterised.  The main thread uses this to schedule a quick
     /// follow-up render so the real TrueType glyphs appear without delay.
     pub(super) has_pending_glyphs: bool,
+    /// Per-component node count breakdown for telemetry.
+    pub(super) scene_split: SplitScene,
+    /// Tile-level damage for incremental encoding (None = full damage).
+    pub(super) damage: Option<DamageSet>,
 }
 
 /// A lightweight cursor-only update that reuses the cached scene.
@@ -97,43 +100,21 @@ impl DesktopCompositor {
         };
 
         // 1b. Overlay devtools panel scene nodes (if active).
-        if !self.loading && self.dev_mode {
-            if let Some(ref mut devtools) = self.devtools {
-                let doc = self.shell.document();
-                // Refresh inspector tree from live DOM so the Elements tab is populated.
-                devtools.refresh_inspector(doc);
-
-                // Push pipeline stats for the Debugger tab.
-                if let Ok(tel) = self.telemetry.read() {
-                    let fm = tel.frame_metrics();
-                    devtools.push_frame_snapshot(FrameSnapshot {
-                        frame_number: self.frame_count,
-                        fps: fm.current_fps,
-                        avg_frame_ms: fm.avg_frame_ms,
-                        css_rule_count: self.shell.css_rule_count(),
-                        css_variable_count: self.shell.css_variable_count(),
-                        stylesheet_count: self.shell.stylesheet_count(),
-                        viewport_w: self.width as f32,
-                        viewport_h: self.height as f32,
-                    });
-                }
-
-                if let (Some(layout), Some(styles)) =
-                    (self.shell.layout_tree(), self.shell.style_map())
-                {
-                    // Refresh scene graph debugger from the current scene.
-                    devtools.scene_debugger.snapshot(&scene);
-                    for node in devtools.build_scene(doc, layout, styles) {
-                        scene.add_child(node);
-                    }
-                }
-            }
+        if !self.loading {
+            self.dt.overlay_scene(
+                &mut scene,
+                &self.shell,
+                self.frame_count,
+                &self.telemetry,
+                self.width,
+                self.height,
+            );
         }
 
         // 2. Add software cursor to the scene (skip if hardware cursor handles it).
-        if !self.loading && !self.use_hardware_cursor {
+        if !self.loading && !self.cursor.use_hardware {
             let cursor_size = 24.0_f32;
-            let cursor_bounds = Rect::new(self.cursor_x, self.cursor_y, cursor_size, cursor_size);
+            let cursor_bounds = Rect::new(self.cursor.x, self.cursor.y, cursor_size, cursor_size);
             scene.add_child(SceneNode::new(
                 999_999,
                 SceneNodeKind::Cursor {
@@ -153,7 +134,7 @@ impl DesktopCompositor {
         }
 
         // 4. Full-screen damage.
-        let tile_size = self.tile_size;
+        let tile_size = self.tiles.tile_size;
         let grid_w = self.width.div_ceil(tile_size);
         let grid_h = self.height.div_ceil(tile_size);
         let mut damage = DamageSet::new(tile_size);
@@ -205,36 +186,14 @@ impl DesktopCompositor {
         let mut scene = self.shell.build_scene();
 
         // Overlay devtools panel scene nodes (if active).
-        if self.dev_mode {
-            if let Some(ref mut devtools) = self.devtools {
-                let doc = self.shell.document();
-                devtools.refresh_inspector(doc);
-
-                // Push pipeline stats for the Debugger tab.
-                if let Ok(tel) = self.telemetry.read() {
-                    let fm = tel.frame_metrics();
-                    devtools.push_frame_snapshot(FrameSnapshot {
-                        frame_number: self.frame_count,
-                        fps: fm.current_fps,
-                        avg_frame_ms: fm.avg_frame_ms,
-                        css_rule_count: self.shell.css_rule_count(),
-                        css_variable_count: self.shell.css_variable_count(),
-                        stylesheet_count: self.shell.stylesheet_count(),
-                        viewport_w: self.width as f32,
-                        viewport_h: self.height as f32,
-                    });
-                }
-
-                if let (Some(layout), Some(styles)) =
-                    (self.shell.layout_tree(), self.shell.style_map())
-                {
-                    devtools.scene_debugger.snapshot(&scene);
-                    for node in devtools.build_scene(doc, layout, styles) {
-                        scene.add_child(node);
-                    }
-                }
-            }
-        }
+        self.dt.overlay_scene(
+            &mut scene,
+            &self.shell,
+            self.frame_count,
+            &self.telemetry,
+            self.width,
+            self.height,
+        );
 
         // Get current state for telemetry.
         let dragged_window = self.shell.dragged_window();
@@ -248,23 +207,23 @@ impl DesktopCompositor {
 
         let job = RenderJob {
             scene,
-            cursor_x: self.cursor_x,
-            cursor_y: self.cursor_y,
+            cursor_x: self.cursor.x,
+            cursor_y: self.cursor.y,
             cursor_shape: self.shell.cursor_shape(),
             width: self.width,
             height: self.height,
-            tile_size: self.tile_size,
+            tile_size: self.tiles.tile_size,
             dragged_window: dragged_window.map(|wid| wid.0),
-            hardware_cursor: self.use_hardware_cursor,
+            hardware_cursor: self.cursor.use_hardware,
         };
 
         if let Some(ref tx) = self.render_tx {
             if tx.send(RenderMsg::Job(job)).is_ok() {
                 self.render_in_flight = true;
+                self.render_metrics.record_submission();
                 // Update previous cursor position so subsequent cursor-only
                 // renders know where the cursor was in this full frame.
-                self.prev_cursor_x = self.cursor_x;
-                self.prev_cursor_y = self.cursor_y;
+                self.cursor.sync_prev();
             }
         }
     }
@@ -279,23 +238,23 @@ impl DesktopCompositor {
         }
 
         let job = CursorOnlyJob {
-            cursor_x: self.cursor_x,
-            cursor_y: self.cursor_y,
-            prev_cursor_x: self.prev_cursor_x,
-            prev_cursor_y: self.prev_cursor_y,
+            cursor_x: self.cursor.x,
+            cursor_y: self.cursor.y,
+            prev_cursor_x: self.cursor.prev_x,
+            prev_cursor_y: self.cursor.prev_y,
             cursor_shape: self.shell.cursor_shape(),
             width: self.width,
             height: self.height,
-            tile_size: self.tile_size,
+            tile_size: self.tiles.tile_size,
         };
 
         // Update previous cursor position after capturing it.
-        self.prev_cursor_x = self.cursor_x;
-        self.prev_cursor_y = self.cursor_y;
+        self.cursor.sync_prev();
 
         if let Some(ref tx) = self.render_tx {
             if tx.send(RenderMsg::CursorOnly(job)).is_ok() {
                 self.render_in_flight = true;
+                self.render_metrics.record_submission();
             }
         }
     }
@@ -315,6 +274,10 @@ impl DesktopCompositor {
         match rx.try_recv() {
             Ok(frame) => {
                 self.render_in_flight = false;
+
+                // Record render metrics.
+                let render_duration = std::time::Duration::from_secs_f64(frame.render_ms / 1000.0);
+                self.render_metrics.record_completion(render_duration, true);
 
                 // Present the rendered pixels.
                 let t4 = Instant::now();
@@ -344,11 +307,14 @@ impl DesktopCompositor {
                 }
 
                 if self.debug_perf {
+                    let s = &frame.scene_split;
                     debug!(
                         frame = self.frame_count,
                         render_ms = format!("{:.2}", frame.render_ms),
                         present_ms = format!("{:.2}", present_ms),
                         blur = frame.blur_enabled,
+                        nodes = s.total(),
+                        windows = s.window_ids,
                         "frame presented (threaded)"
                     );
                 }
@@ -363,27 +329,13 @@ impl DesktopCompositor {
                 }
 
                 // Encode tiles for remote transmission.
-                if let Some(ref mut encoder) = self.tile_encoder {
-                    let grid_w = frame.width.div_ceil(self.tile_size);
-                    let grid_h = frame.height.div_ceil(self.tile_size);
-                    let mut damage = DamageSet::new(self.tile_size);
-                    damage.mark_all(grid_w, grid_h);
-
-                    match encoder.encode_frame_raw(
-                        &frame.pixels,
-                        frame.width,
-                        frame.height,
-                        frame.stride,
-                        &damage.tiles,
-                    ) {
-                        Ok(batch) => {
-                            self.pending_batches.push(batch);
-                        }
-                        Err(e) => {
-                            warn!("tile encode failed: {e}");
-                        }
-                    }
-                }
+                self.tiles.encode_frame(
+                    &frame.pixels,
+                    frame.width,
+                    frame.height,
+                    frame.stride,
+                    frame.damage.as_ref(),
+                );
 
                 // If the renderer still has glyphs being rasterised,
                 // schedule an immediate follow-up render so the real
@@ -561,8 +513,8 @@ impl DesktopCompositor {
                     let old_ty_end = ((cursor_job.prev_cursor_y + cursor_size) / ts) as u32;
 
                     for ty in old_ty_start..=old_ty_end.min(grid_h.saturating_sub(1)) {
-                        for tx in old_tx_start..=old_tx_end.min(grid_w.saturating_sub(1)) {
-                            damage.mark_tile(tx, ty);
+                        for tx_idx in old_tx_start..=old_tx_end.min(grid_w.saturating_sub(1)) {
+                            damage.mark_tile(tx_idx, ty);
                         }
                     }
 
@@ -573,8 +525,8 @@ impl DesktopCompositor {
                     let new_ty_end = ((cursor_job.cursor_y + cursor_size) / ts) as u32;
 
                     for ty in new_ty_start..=new_ty_end.min(grid_h.saturating_sub(1)) {
-                        for tx in new_tx_start..=new_tx_end.min(grid_w.saturating_sub(1)) {
-                            damage.mark_tile(tx, ty);
+                        for tx_idx in new_tx_start..=new_tx_end.min(grid_w.saturating_sub(1)) {
+                            damage.mark_tile(tx_idx, ty);
                         }
                     }
 
@@ -584,7 +536,7 @@ impl DesktopCompositor {
                     renderer.report_render_time(total_ms);
                     compositor.report_frame_time(total_ms);
 
-                    let pixel_data = std::mem::take(framebuf.pixels_mut());
+                    let pixel_data = std::mem::take(framebuf.pixels_mut().expect("CPU framebuffer required"));
                     let result = RenderedFrame {
                         pixels: Arc::new(pixel_data),
                         width: framebuf.width,
@@ -594,6 +546,8 @@ impl DesktopCompositor {
                         render_ms: total_ms,
                         blur_enabled: renderer.blur_enabled(),
                         has_pending_glyphs: renderer.has_pending_glyphs(),
+                        scene_split: SplitScene::default(), // cursor-only: scene unchanged
+                        damage: Some(damage), // cursor-only: targeted damage
                     };
                     // Re-allocate pixel buffer for next frame.
                     framebuf.memory = FrameMemory::Cpu(vec![0u8; (framebuf.stride * framebuf.height) as usize]);
@@ -759,8 +713,11 @@ impl DesktopCompositor {
         // Report frame time to compositor.
         compositor.report_frame_time(total_ms);
 
+        // Per-component node breakdown for telemetry.
+        let scene_split = split_flat_nodes(flat_nodes_buf);
+
         // Send completed frame back — move pixels into Arc (zero-copy).
-        let pixel_data = std::mem::take(framebuf.pixels_mut());
+        let pixel_data = std::mem::take(framebuf.pixels_mut().expect("CPU framebuffer required"));
         let result = RenderedFrame {
             pixels: Arc::new(pixel_data),
             width: framebuf.width,
@@ -770,6 +727,8 @@ impl DesktopCompositor {
             render_ms: total_ms,
             blur_enabled: renderer.blur_enabled(),
             has_pending_glyphs: renderer.has_pending_glyphs(),
+            scene_split,
+            damage: Some(damage),
         };
         // Re-allocate pixel buffer for next frame.
         framebuf.memory = FrameMemory::Cpu(vec![0u8; (framebuf.stride * framebuf.height) as usize]);

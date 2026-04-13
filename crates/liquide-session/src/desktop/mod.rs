@@ -13,23 +13,30 @@
 //! method, which translates them into `ShellAction`s that modify shell
 //! state (focus, window management, launcher toggle, etc.).
 
+mod cursor_state;
 mod debug;
 mod devtools;
+mod devtools_state;
 mod event_handling;
 mod event_loop;
 pub mod lockfree_queue;
 mod loading;
+mod paint_state;
 mod render_thread;
+mod scene_split;
+mod tile_state;
+mod window_render;
 
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use liquide_render_coordinator::metrics::MetricsCollector;
+use liquide_telemetry_viewer::metrics::MetricsRegistry;
 use liquide_compositor::effects::QualityProfile;
 use liquide_compositor::Compositor;
-use liquide_devtools::DevToolsPanel;
-use liquide_encoder::encoder::TileEncoder;
-use liquide_encoder::tile::{TileBatch, TileConfig};
+use liquide_encoder::tile::TileBatch;
 use liquide_input::InputState;
 use liquide_platform::NativeWindowHandle;
 use liquide_compositor::Renderer;
@@ -39,7 +46,12 @@ use tracing::info;
 
 use crate::telemetry::{TelemetryHandle, create_telemetry};
 
+use cursor_state::CursorState;
+use devtools_state::DevToolsState;
+use paint_state::PaintState;
 use render_thread::{RenderMsg, RenderedFrame};
+use tile_state::TileEncoderState;
+use window_render::WindowRenderManager;
 
 /// The desktop compositor loop.
 ///
@@ -59,23 +71,11 @@ pub struct DesktopCompositor {
     input_state: InputState,
     width: u32,
     height: u32,
-    /// Tile size used by the compositor.
-    tile_size: u32,
     window_handle: Option<NativeWindowHandle>,
     frame_count: u64,
     running: bool,
     dirty: bool,
-    /// Whether only the cursor position changed (no shell state change).
-    /// When true and `dirty` is false, we can skip the full CSS pipeline
-    /// and reuse the cached scene with just the cursor position updated.
-    cursor_dirty: bool,
-    last_tick: Instant,
     last_render: Instant,
-    cursor_x: f32,
-    cursor_y: f32,
-    /// Previous cursor position (for cursor-only damage tracking).
-    prev_cursor_x: f32,
-    prev_cursor_y: f32,
     loading: bool,
     /// Minimum interval between frames. 0 = unlimited.
     frame_interval: Duration,
@@ -91,21 +91,20 @@ pub struct DesktopCompositor {
     render_in_flight: bool,
     /// Telemetry system for performance monitoring.
     telemetry: TelemetryHandle,
-    /// Whether developer mode is enabled (windowed + devtools).
-    dev_mode: bool,
-    /// DevTools panel (only active in dev_mode).
-    devtools: Option<DevToolsPanel>,
-    /// When true, the OS renders the cursor (zero CPU for mouse movement).
-    /// Set to true after confirming the platform supports `set_cursor_shape`.
-    use_hardware_cursor: bool,
-    /// Last cursor shape sent to the platform (avoid redundant calls).
-    last_hw_cursor_shape: liquide_compositor::scene::CursorShape,
-    /// Whether the hardware cursor shape needs to be synced to the platform.
-    hw_cursor_needs_sync: bool,
-    /// Tile encoder for remote frame transmission.
-    tile_encoder: Option<TileEncoder>,
-    /// Encoded tile batches ready for network transmission.
-    pending_batches: Vec<TileBatch>,
+    /// Cursor position, shape, and hardware/software cursor management.
+    cursor: CursorState,
+    /// DevTools panel lifecycle and integration.
+    dt: DevToolsState,
+    /// Tile encoding for remote frame transmission.
+    tiles: TileEncoderState,
+    /// Paint coalescing and timer management (from liquide-message-queue).
+    paint: PaintState,
+    /// Render pipeline metrics (from liquide-render-coordinator).
+    render_metrics: Arc<MetricsCollector>,
+    /// Per-window chrome/content render thread pairs (opt-in fault isolation).
+    window_render: WindowRenderManager,
+    /// Telemetry viewer metrics registry — counters, gauges, histograms.
+    viewer_metrics: MetricsRegistry,
 }
 
 impl DesktopCompositor {
@@ -180,18 +179,11 @@ impl DesktopCompositor {
             input_state: InputState::new(),
             width,
             height,
-            tile_size,
             window_handle: None,
             frame_count: 0,
             running: true,
             dirty: true,
-            cursor_dirty: false,
-            last_tick: Instant::now(),
             last_render: Instant::now(),
-            cursor_x: width as f32 / 2.0,
-            cursor_y: height as f32 / 2.0,
-            prev_cursor_x: width as f32 / 2.0,
-            prev_cursor_y: height as f32 / 2.0,
             loading: true,
             frame_interval: Duration::from_millis(16), // ~60fps default
             debug_perf: false,
@@ -200,45 +192,29 @@ impl DesktopCompositor {
             render_thread: None,
             render_in_flight: false,
             telemetry: create_telemetry(60), // 60fps target
-            dev_mode: false,
-            devtools: None,
-            use_hardware_cursor: false,
-            last_hw_cursor_shape: liquide_compositor::scene::CursorShape::Arrow,
-            hw_cursor_needs_sync: false,
-            tile_encoder: Some(TileEncoder::new(width, height, TileConfig::default())),
-            pending_batches: Vec::new(),
+            cursor: CursorState::new(width as f32 / 2.0, height as f32 / 2.0),
+            dt: DevToolsState::new(),
+            tiles: TileEncoderState::new(width, height, tile_size),
+            paint: PaintState::new(),
+            render_metrics: Arc::new(MetricsCollector::new()),
+            window_render: WindowRenderManager::new(),
+            viewer_metrics: MetricsRegistry::with_builtins(),
         }
     }
 
     /// Drain encoded tile batches ready for network transmission.
     pub fn drain_encoded_batches(&mut self) -> Vec<TileBatch> {
-        std::mem::take(&mut self.pending_batches)
+        self.tiles.drain_batches()
     }
 
     /// Enable developer mode (windowed, resizable, devtools available).
     pub fn set_dev_mode(&mut self, enabled: bool) {
-        self.dev_mode = enabled;
-        if enabled && self.devtools.is_none() {
-            let mut panel = DevToolsPanel::with_defaults();
-            panel.set_screen_size(self.width as f32, self.height as f32);
-            self.devtools = Some(panel);
-
-            // Load devtools structural CSS into the pipeline.
-            static DEVTOOLS_CSS: &str =
-                include_str!("../../../../assets/themes/components/devtools.css");
-            self.shell.add_stylesheet(DEVTOOLS_CSS);
-
-            info!("devtools panel initialized (F12 to toggle)");
-        } else if !enabled {
-            // Unmount devtools from the DOM when disabling.
-            self.shell.unmount_template("devtools-panel");
-            self.devtools = None;
-        }
+        self.dt.set_dev_mode(enabled, &mut self.shell, self.width, self.height);
     }
 
     /// Whether developer mode is enabled.
     pub fn is_dev_mode(&self) -> bool {
-        self.dev_mode
+        self.dt.dev_mode
     }
 
     /// Set the maximum frames per second. 0 means unlimited.
@@ -282,6 +258,12 @@ impl DesktopCompositor {
     /// Mutable access to the shell.
     pub fn shell_mut(&mut self) -> &mut Shell {
         &mut self.shell
+    }
+
+    /// Snapshot of render pipeline metrics (throughput, latency percentiles).
+    #[must_use]
+    pub fn render_metrics(&self) -> liquide_render_coordinator::metrics::RenderMetrics {
+        self.render_metrics.snapshot()
     }
 
     /// Try loading external CSS theme files and user overrides.

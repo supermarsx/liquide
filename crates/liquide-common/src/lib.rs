@@ -6,5 +6,6 @@
 pub mod config;
 pub mod error;
 pub mod logging;
+pub mod sync;
 
 pub use error::{LiquideError, Result};

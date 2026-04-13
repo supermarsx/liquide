@@ -12,7 +12,7 @@ impl DesktopCompositor {
     /// Handle a platform event: route through shell and input state.
     ///
     /// Returns `true` if the event requires a full redraw.
-    /// Sets `self.cursor_dirty` when only cursor position changed.
+    /// Sets `self.cursor.dirty` when only cursor position changed.
     pub fn handle_event(&mut self, event: &PlatformEvent) -> bool {
         let mut needs_redraw = false;
 
@@ -33,12 +33,8 @@ impl DesktopCompositor {
                 }
 
                 self.shell.resize_screen(*width as f32, *height as f32);
-                if let Some(ref mut encoder) = self.tile_encoder {
-                    encoder.resize(*width, *height);
-                }
-                if let Some(ref mut devtools) = self.devtools {
-                    devtools.set_screen_size(*width as f32, *height as f32);
-                }
+                self.tiles.resize(*width, *height);
+                self.dt.on_resize(*width, *height);
                 needs_redraw = true;
             }
             PlatformEvent::WindowCloseRequested { .. } | PlatformEvent::Quit => {
@@ -49,8 +45,8 @@ impl DesktopCompositor {
             }
             PlatformEvent::KeyInput { event: ke, .. } => {
                 // DevTools keyboard shortcuts (intercept before shell).
-                if self.dev_mode {
-                    if let Some(ref mut devtools) = self.devtools {
+                if self.dt.dev_mode {
+                    if let Some(ref mut devtools) = self.dt.devtools {
                         if ke.state == KeyState::Pressed {
                             // Map KeyCode to a string for devtools handle_key.
                             let key_str: Option<&str> = match ke.key {
@@ -192,28 +188,15 @@ impl DesktopCompositor {
                 use liquide_input::mouse::MouseEvent;
                 match me {
                     MouseEvent::Move { x, y } => {
-                        // Only mark cursor dirty if position actually changed
-                        // (avoid redundant redraws on minor sub-pixel jitter).
-                        // We set cursor_dirty instead of needs_redraw so the
-                        // event loop can use the cursor-only fast path when no
-                        // shell state changed.
-                        let new_x = *x;
-                        let new_y = *y;
-                        if (new_x - self.cursor_x).abs() > 0.1
-                            || (new_y - self.cursor_y).abs() > 0.1
-                        {
-                            self.cursor_x = new_x;
-                            self.cursor_y = new_y;
-                            self.cursor_dirty = true;
-                        }
+                        self.cursor.update_position(*x, *y);
                         // Forward to devtools element picker.
-                        if self.dev_mode {
-                            if let Some(ref mut devtools) = self.devtools {
+                        if self.dt.dev_mode {
+                            if let Some(ref mut devtools) = self.dt.devtools {
                                 if let (Some(hit_test), Some(layout)) =
                                     (self.shell.hit_test_engine(), self.shell.layout_tree())
                                 {
                                     let doc = self.shell.document();
-                                    if devtools.on_mouse_move(new_x, new_y, hit_test, doc, layout) {
+                                    if devtools.on_mouse_move(*x, *y, hit_test, doc, layout) {
                                         needs_redraw = true;
                                     }
                                 }
@@ -226,16 +209,15 @@ impl DesktopCompositor {
                         button,
                         state,
                     } => {
-                        self.cursor_x = *x;
-                        self.cursor_y = *y;
+                        self.cursor.set_position(*x, *y);
                         // Only react on button press, not release.
                         if *state == liquide_input::mouse::ButtonState::Pressed
                             && *button == liquide_input::mouse::MouseButton::Left
                         {
                             // Forward click to devtools panel (tabs, tree nodes, etc.)
                             // and element picker / viewport click-to-inspect.
-                            if self.dev_mode {
-                                if let Some(ref mut devtools) = self.devtools {
+                            if self.dt.dev_mode {
+                                if let Some(ref mut devtools) = self.dt.devtools {
                                     if let (Some(styles), Some(hit_test)) =
                                         (self.shell.style_map(), self.shell.hit_test_engine())
                                     {
@@ -260,8 +242,8 @@ impl DesktopCompositor {
                         if *state == liquide_input::mouse::ButtonState::Pressed
                             && *button == liquide_input::mouse::MouseButton::Right
                         {
-                            if self.dev_mode {
-                                if let Some(ref mut devtools) = self.devtools {
+                            if self.dt.dev_mode {
+                                if let Some(ref mut devtools) = self.dt.devtools {
                                     if let Some(styles) = self.shell.style_map() {
                                         if devtools.on_right_click(*x, *y, styles) {
                                             needs_redraw = true;
@@ -273,8 +255,8 @@ impl DesktopCompositor {
                     }
                     MouseEvent::Scroll { delta, x, y, .. } => {
                         // Forward scroll to devtools panel.
-                        if self.dev_mode {
-                            if let Some(ref mut devtools) = self.devtools {
+                        if self.dt.dev_mode {
+                            if let Some(ref mut devtools) = self.dt.devtools {
                                 // Convert scroll delta: positive delta = scroll up
                                 // in most platform conventions, but we want positive
                                 // = scroll content down (increase offset).
@@ -308,12 +290,8 @@ impl DesktopCompositor {
         // Sync hardware cursor shape when it changes. This is free (just
         // a Win32 SetCursor call) and avoids needing to re-render the
         // entire framebuffer for cursor shape changes.
-        if self.use_hardware_cursor {
-            let current_shape = self.shell.cursor_shape();
-            if current_shape != self.last_hw_cursor_shape {
-                self.last_hw_cursor_shape = current_shape;
-                self.hw_cursor_needs_sync = true;
-            }
+        if self.cursor.use_hardware {
+            self.cursor.request_hw_shape_sync(self.shell.cursor_shape());
         }
 
         needs_redraw

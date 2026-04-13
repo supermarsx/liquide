@@ -5,6 +5,28 @@ use std::time::Instant;
 
 use crate::{SessionError, Result};
 
+/// Number of session states.
+const NUM_STATES: usize = 9;
+
+/// Compile-time transition matrix. `TRANSITIONS[from][to]` is `true` when the
+/// transition is allowed.
+const TRANSITIONS: [[bool; NUM_STATES]; NUM_STATES] = {
+    const F: bool = false;
+    const T: bool = true;
+    //              Cr     Au     Ru     Lo     Di     Su     Cr     Fa     Te
+    [
+        /* Created       */ [F, T, F, F, F, F, F, F, T],
+        /* Authenticating*/ [F, F, T, F, F, F, F, T, T],
+        /* Running       */ [F, F, F, T, T, T, T, F, T],
+        /* Locked        */ [F, F, T, F, T, F, F, F, T],
+        /* Disconnected  */ [F, F, T, F, F, T, F, F, T],
+        /* Suspended     */ [F, F, T, F, F, F, F, F, T],
+        /* Crashed       */ [F, F, T, F, F, F, F, T, T],
+        /* Failed        */ [F, F, F, F, F, F, F, F, T],
+        /* Terminated    */ [F, F, F, F, F, F, F, F, F],
+    ]
+};
+
 /// States a session can be in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionState {
@@ -45,6 +67,19 @@ impl fmt::Display for SessionState {
 }
 
 impl SessionState {
+    /// Map a state to its index in the transition matrix.
+    #[inline]
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// O(1) check whether a transition from `self` to `target` is allowed.
+    #[must_use]
+    #[inline]
+    pub const fn can_transition_to(self, target: SessionState) -> bool {
+        TRANSITIONS[self.index()][target.index()]
+    }
+
     /// Returns all states that are valid transition targets from this state.
     #[must_use]
     pub fn valid_transitions(&self) -> &[SessionState] {
@@ -151,8 +186,7 @@ impl SessionStateMachine {
     ///
     /// Returns `Ok(())` if the transition is valid, or an error if not.
     pub fn transition_to(&mut self, target: SessionState) -> Result<()> {
-        let valid = self.state.valid_transitions();
-        if !valid.contains(&target) {
+        if !self.state.can_transition_to(target) {
             return Err(SessionError::InvalidStateTransition {
                 from: self.state.to_string(),
                 to: target.to_string(),

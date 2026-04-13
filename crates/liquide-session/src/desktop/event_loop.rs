@@ -8,6 +8,7 @@ use liquide_platform::{NativeWindowParams, PlatformBackend};
 use tracing::{debug, info};
 
 use super::{DesktopCompositor, RenderMsg};
+use super::paint_state::TimerAction;
 
 impl DesktopCompositor {
     /// Run the desktop event loop using the given platform backend.
@@ -25,7 +26,7 @@ impl DesktopCompositor {
         // Detect the actual primary screen size and resize the compositor
         // to match so the framebuffer covers the full display.
         // In dev mode, keep the requested resolution for windowed mode.
-        if !self.dev_mode {
+        if !self.dt.dev_mode {
             let screen_rect = platform.display().virtual_screen_rect();
             let screen_w = screen_rect.width as u32;
             let screen_h = screen_rect.height as u32;
@@ -43,8 +44,8 @@ impl DesktopCompositor {
                     let _ = compositor.resize(screen_w, screen_h);
                 }
                 self.shell.resize_screen(screen_w as f32, screen_h as f32);
-                self.cursor_x = screen_w as f32 / 2.0;
-                self.cursor_y = screen_h as f32 / 2.0;
+                self.cursor.x = screen_w as f32 / 2.0;
+                self.cursor.y = screen_h as f32 / 2.0;
             }
         }
 
@@ -52,7 +53,7 @@ impl DesktopCompositor {
         // windowed mode when dev_mode is active.
         debug!("creating desktop window {}x{}", self.width, self.height);
         let t_win = Instant::now();
-        let params = if self.dev_mode {
+        let params = if self.dt.dev_mode {
             // Dev mode: create a normal resizable window at the requested
             // size (not fullscreen) so the desktop can be inspected alongside
             // other host windows.
@@ -79,7 +80,7 @@ impl DesktopCompositor {
         info!(
             width = self.width,
             height = self.height,
-            windowed = self.dev_mode,
+            windowed = self.dt.dev_mode,
             elapsed_ms = format!("{:.1}", t_win.elapsed().as_secs_f64() * 1000.0),
             "desktop window created"
         );
@@ -89,7 +90,7 @@ impl DesktopCompositor {
         if let Some(handle) = self.window_handle {
             let shape = self.shell.cursor_shape();
             if platform.set_cursor_shape(handle, shape.css_name()) {
-                self.use_hardware_cursor = true;
+                self.cursor.use_hardware = true;
                 info!("hardware cursor enabled — zero-cost mouse movement");
             }
         }
@@ -125,11 +126,6 @@ impl DesktopCompositor {
         self.spawn_render_thread();
 
         // Non-blocking event loop with threaded rendering.
-        //
-        // The main thread handles input events and scene building.
-        // The render thread handles the expensive CPU rendering in parallel.
-        // This ensures the shell stays responsive to mouse/keyboard input
-        // even when rendering takes hundreds of milliseconds.
         info!(
             fps_cap = if self.frame_interval.is_zero() {
                 0
@@ -139,9 +135,6 @@ impl DesktopCompositor {
             debug_perf = self.debug_perf,
             "entering threaded event loop"
         );
-
-        let mut last_telemetry_report = Instant::now();
-        let telemetry_report_interval = Duration::from_secs(10);
 
         while self.running {
             // Drain all pending events.
@@ -155,18 +148,16 @@ impl DesktopCompositor {
 
             // Sync hardware cursor shape to the platform backend.
             // This is a cheap Win32 SetCursor call — no rendering needed.
-            if self.hw_cursor_needs_sync {
-                self.hw_cursor_needs_sync = false;
+            if let Some(shape) = self.cursor.consume_hw_sync() {
                 if let Some(handle) = self.window_handle {
-                    let css_name = self.last_hw_cursor_shape.css_name();
-                    platform.set_cursor_shape(handle, css_name);
+                    platform.set_cursor_shape(handle, shape.css_name());
                 }
             }
 
             // When hardware cursor is active, cursor-only moves are free —
             // the OS draws the cursor. Discard cursor_dirty entirely.
-            if self.use_hardware_cursor {
-                self.cursor_dirty = false;
+            if self.cursor.use_hardware {
+                self.cursor.dirty = false;
             }
 
             // Check for completed frames from the render thread.
@@ -177,25 +168,27 @@ impl DesktopCompositor {
                 if self.dirty {
                     self.submit_render();
                     self.dirty = false;
-                    self.cursor_dirty = false;
-                } else if self.cursor_dirty {
+                    self.cursor.dirty = false;
+                } else if self.cursor.dirty {
                     self.submit_cursor_only_render();
-                    self.cursor_dirty = false;
+                    self.cursor.dirty = false;
                 }
             }
 
             // Periodic tick every ~1s for clock / notification expiry.
-            if self.last_tick.elapsed().as_millis() >= 1000 {
-                if self.tick() {
-                    self.dirty = true;
+            // Periodic telemetry report every ~10s.
+            // Both are driven by TimerManager from liquide-message-queue.
+            for action in self.paint.check_timers() {
+                match action {
+                    TimerAction::Tick => {
+                        if self.tick() {
+                            self.dirty = true;
+                        }
+                    }
+                    TimerAction::TelemetryReport => {
+                        self.print_telemetry_report();
+                    }
                 }
-                self.last_tick = Instant::now();
-            }
-
-            // Periodic telemetry report every 10 seconds.
-            if last_telemetry_report.elapsed() >= telemetry_report_interval {
-                self.print_telemetry_report();
-                last_telemetry_report = Instant::now();
             }
 
             // Submit a render job if dirty and render thread is free.
@@ -208,16 +201,16 @@ impl DesktopCompositor {
                 if can_render {
                     self.submit_render();
                     self.dirty = false;
-                    self.cursor_dirty = false;
+                    self.cursor.dirty = false;
                 }
-            } else if self.cursor_dirty && !self.dirty && !self.render_in_flight {
+            } else if self.cursor.dirty && !self.dirty && !self.render_in_flight {
                 // Cursor moved but nothing else changed — use fast path
                 // that reuses the cached scene without running the CSS pipeline.
                 let can_render = self.frame_interval.is_zero()
                     || self.last_render.elapsed() >= self.frame_interval;
                 if can_render {
                     self.submit_cursor_only_render();
-                    self.cursor_dirty = false;
+                    self.cursor.dirty = false;
                 }
             }
 
@@ -266,6 +259,9 @@ impl DesktopCompositor {
             let _ = handle.join();
         }
         info!("render thread joined");
+
+        // Shut down per-window render threads.
+        self.window_render.shutdown_all();
 
         // Clean up the window on exit.
         if let Some(handle) = self.window_handle.take() {

@@ -13,32 +13,7 @@ impl DesktopCompositor {
     /// can lay out and paint the devtools panel.  Uses the previous frame's
     /// layout / style data (one-frame-behind is expected for dev tools).
     pub(super) fn sync_devtools_template(&mut self) {
-        if !self.dev_mode {
-            return;
-        }
-
-        // Determine visibility first with a shared borrow.
-        let visible = self.devtools.as_ref().map_or(false, |d| d.is_visible());
-
-        if visible {
-            // Build the template from (previous frame's) data.
-            // We clone just the TemplateNode out so all shared borrows are dropped
-            // before the mutable mount call.
-            let template = {
-                let devtools = self.devtools.as_ref().unwrap();
-                let doc = self.shell.document();
-                match (self.shell.layout_tree(), self.shell.style_map()) {
-                    (Some(layout), Some(styles)) => devtools.render_template(doc, layout, styles),
-                    _ => {
-                        // First frame — minimal stub so the pipeline has something.
-                        liquide_devtools::TemplateNode::el("devtools-panel").id("devtools-panel")
-                    }
-                }
-            };
-            self.shell.mount_template("devtools-panel", &template);
-        } else {
-            self.shell.unmount_template("devtools-panel");
-        }
+        self.dt.sync_template(&mut self.shell);
     }
 
     /// Get a clone of the telemetry handle for monitoring.
@@ -52,5 +27,23 @@ impl DesktopCompositor {
             let report = telemetry.status_report();
             info!("\n{}", report);
         }
+        // Append render pipeline metrics from liquide-render-coordinator.
+        let rm = self.render_metrics.snapshot();
+        if rm.tasks_submitted > 0 {
+            info!(
+                submitted = rm.tasks_submitted,
+                completed = rm.tasks_completed,
+                failed = rm.tasks_failed,
+                avg_us = format!("{:.0}", rm.avg_render_time_us),
+                p95_us = rm.p95_render_time_us,
+                p99_us = rm.p99_render_time_us,
+                throughput = format!("{:.1}", rm.tasks_per_second),
+                "render pipeline metrics"
+            );
+        }
+        // Feed render metrics into the telemetry viewer registry.
+        use liquide_telemetry_viewer::metrics;
+        self.viewer_metrics.set(metrics::FRAME_COUNT, self.frame_count);
+        self.viewer_metrics.set(metrics::DROPPED_FRAMES, rm.tasks_failed);
     }
 }
