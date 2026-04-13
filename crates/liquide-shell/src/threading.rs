@@ -143,7 +143,8 @@ impl ElementThread {
                 }
                 Ok(ElementMessage::Render { response }) => {
                     debug!("{} rendering", name);
-                    let nodes = pipeline.render_to_scene(&document.doc, 0);
+                    // TODO: use actual frame clock delta instead of hardcoded 16ms
+                    let (nodes, _animations_active) = pipeline.render_to_scene(&mut document.doc, 0, 16.0);
                     let _ = response.send(nodes);
                 }
                 Ok(ElementMessage::Shutdown) => {

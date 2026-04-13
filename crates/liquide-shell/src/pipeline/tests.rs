@@ -11,9 +11,9 @@ fn pipeline_runs_on_desktop_document() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _animations_active) = pipeline.run(&mut desktop.doc, 16.0);
 
     // Should have styles for all nodes
     assert!(output.styles.len() > 0);
@@ -27,9 +27,9 @@ fn pipeline_produces_scene_nodes() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
-    let nodes = pipeline.render_to_scene(&desktop.doc, 0);
+    let (nodes, _animations_active) = pipeline.render_to_scene(&mut desktop.doc, 0, 16.0);
     // The pipeline should produce at least some nodes from styled elements
     // (background colors, borders, text, etc.)
     // Note: exact count depends on which elements have visible styles

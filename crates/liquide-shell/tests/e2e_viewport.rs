@@ -428,15 +428,15 @@ fn pipeline_viewport_resize_affects_layout() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
     // Run at 1080p
-    let output_1080 = pipeline.run(&desktop.doc);
+    let (output_1080, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     // Resize to 4K
     pipeline.set_viewport(3840.0, 2160.0);
-    let output_4k = pipeline.run(&desktop.doc);
+    let (output_4k, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     // Layout should be recalculated (potentially different positions)
     // Both should produce valid output
@@ -453,10 +453,10 @@ fn statusbar_positioned_at_top() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     // Find statusbar in layout
     let statusbar_id = desktop.doc.get_element_by_id("shell-statusbar");
@@ -480,11 +480,11 @@ fn dock_positioned_at_bottom() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     // Find dock in layout
     let dock_id = desktop.doc.get_element_by_id("shell-dock");
@@ -511,10 +511,10 @@ fn elements_respect_viewport_width() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     // No layout box should extend beyond viewport
     for b in &output.layout.boxes {
@@ -539,10 +539,10 @@ fn elements_respect_viewport_height() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     // No layout box should extend beyond viewport
     for b in &output.layout.boxes {
@@ -571,10 +571,10 @@ fn layout_at_720p() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     assert!(output.styles.len() > 0);
     assert!(output.layout.boxes.len() > 0);
@@ -589,10 +589,10 @@ fn layout_at_1440p() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     assert!(output.styles.len() > 0);
     assert!(output.layout.boxes.len() > 0);
@@ -607,10 +607,10 @@ fn layout_at_4k() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     assert!(output.styles.len() > 0);
     assert!(output.layout.boxes.len() > 0);
@@ -625,10 +625,10 @@ fn layout_at_ultrawide() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     assert!(output.styles.len() > 0);
     assert!(output.layout.boxes.len() > 0);
@@ -643,10 +643,10 @@ fn layout_at_portrait() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     assert!(output.styles.len() > 0);
     assert!(output.layout.boxes.len() > 0);
@@ -661,10 +661,10 @@ fn layout_at_small_viewport() {
     };
     let mut pipeline = DesktopPipeline::new(&config);
 
-    let desktop = DesktopDocument::new();
+    let mut desktop = DesktopDocument::new();
 
 
-    let output = pipeline.run(&desktop.doc);
+    let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     assert!(output.styles.len() > 0);
     assert!(output.layout.boxes.len() > 0);

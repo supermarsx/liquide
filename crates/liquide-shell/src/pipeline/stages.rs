@@ -8,6 +8,7 @@ use liquide_font_rasterizer::database::FontDatabase;
 use liquide_layout::{DefaultTextMeasurer, LayoutInput, LayoutTree, Size};
 use liquide_paint::DisplayList;
 
+use liquide_animation::{AnimationScheduler, TransitionEngine};
 use liquide_style_engine::engine::ViewportSize;
 use liquide_style_engine::StyleEngine;
 
@@ -43,11 +44,15 @@ impl DesktopPipeline {
             layout_engine,
             painter: liquide_paint::Painter::new(),
             next_scene_id: 1_000_000,
+            frame_counter: 0,
             last_styles: None,
             last_layout: None,
             last_display_list: None,
             pending_images: Vec::new(),
             font_db: None,
+            transition_engine: TransitionEngine::new(),
+            animation_scheduler: AnimationScheduler::new(),
+            prev_styles: std::collections::HashMap::new(),
         }
     }
 
@@ -100,14 +105,17 @@ impl DesktopPipeline {
 
     /// Run the full pipeline: Style → Layout → Paint.
     ///
-    /// Returns the style map, layout tree, and display list.
-    pub fn run(&mut self, doc: &Document) -> PipelineOutput {
+    /// Returns the style map, layout tree, and display list, plus a flag
+    /// indicating whether animations are active (caller should schedule a
+    /// follow-up frame when `true`).
+    pub fn run(&mut self, doc: &Document, dt_ms: f32) -> (PipelineOutput, bool) {
         // Use real font metrics when a font database is available.
         let font_measurer: Option<FontTextMeasurer> =
             self.font_db.as_ref().map(|db| FontTextMeasurer::new(Arc::clone(db)));
+        let default_measurer = DefaultTextMeasurer;
         let text_measurer: &dyn liquide_layout::TextMeasurer = match &font_measurer {
             Some(fm) => fm,
-            None => &DefaultTextMeasurer,
+            None => &default_measurer,
         };
         let image_measurer = liquide_layout::DefaultImageMeasurer;
 
@@ -123,12 +131,14 @@ impl DesktopPipeline {
             && self.last_styles.is_some()
             && self.last_layout.is_some()
             && self.last_display_list.is_some()
+            && self.transition_engine.active_count() == 0
+            && self.animation_scheduler.active_count() == 0
         {
-            return PipelineOutput {
+            return (PipelineOutput {
                 styles: Arc::clone(self.last_styles.as_ref().unwrap()),
                 layout: Arc::clone(self.last_layout.as_ref().unwrap()),
                 display_list: Arc::clone(self.last_display_list.as_ref().unwrap()),
-            };
+            }, false);
         }
 
         // 1. Style — unwrap Arc for mutation (try_unwrap succeeds when we're
@@ -219,6 +229,24 @@ impl DesktopPipeline {
             }
         }
 
+        // 2c. Animation — detect transitions/animations and tick.
+        // Must run after style computation but before paint so that
+        // interpolated values are visible in the display list.
+
+        // Bridge @keyframes from style engine → animation scheduler
+        for (_name, kf_rule) in &self.style_engine.keyframes {
+            if !self.animation_scheduler.has_keyframes(&kf_rule.name) {
+                self.animation_scheduler.register_keyframes(kf_rule.clone());
+            }
+        }
+
+        self.detect_transitions(&styles);
+        self.detect_animations(&styles);
+        let animations_active = self.tick_and_apply(dt_ms, &mut styles);
+        if animations_active || has_style_work {
+            self.snapshot_styles(&styles);
+        }
+
         // 3. Paint — unwrap Arc for mutation
         let recompute_paint = recompute_layout || has_paint_work || self.last_display_list.is_none();
         let display_list = if recompute_paint {
@@ -242,11 +270,11 @@ impl DesktopPipeline {
         self.last_layout = Some(Arc::clone(&layout));
         self.last_display_list = Some(Arc::clone(&display_list));
 
-        PipelineOutput {
+        (PipelineOutput {
             styles,
             layout,
             display_list,
-        }
+        }, animations_active)
     }
 
     /// Run the full pipeline and convert the result to compositor SceneNodes.
@@ -254,9 +282,9 @@ impl DesktopPipeline {
     /// Glass SceneNodes are generated for elements with `blur-radius` CSS
     /// property. These are placed *before* the element's normal paint output
     /// so the blur effect renders behind the content.
-    pub fn render_to_scene(&mut self, doc: &Document, base_z: u32) -> Vec<SceneNode> {
-        let (nodes, _output) = self.render_to_scene_with_output(doc, base_z);
-        nodes
+    pub fn render_to_scene(&mut self, doc: &Document, base_z: u32, dt_ms: f32) -> (Vec<SceneNode>, bool) {
+        let (nodes, _output, animations_active) = self.render_to_scene_with_output(doc, base_z, dt_ms);
+        (nodes, animations_active)
     }
 
     /// Like [`render_to_scene`] but also returns the pipeline output
@@ -265,13 +293,14 @@ impl DesktopPipeline {
         &mut self,
         doc: &Document,
         base_z: u32,
-    ) -> (Vec<SceneNode>, PipelineOutput) {
-        // Reset scene ID counter each frame so glass/blur nodes get stable IDs.
-        // Without this, the blur_worker cache grows unbounded since each frame
-        // generates new IDs that never match old cache entries.
-        self.next_scene_id = 1_000_000;
+        dt_ms: f32,
+    ) -> (Vec<SceneNode>, PipelineOutput, bool) {
+        // Use a frame-based offset so each frame gets a unique ID range.
+        // Prevents cross-frame aliasing in the blur_worker cache.
+        self.frame_counter = self.frame_counter.wrapping_add(1);
+        self.next_scene_id = 1_000_000 + (self.frame_counter % 1000) * 100_000;
 
-        let output = self.run(doc);
+        let (output, animations_active) = self.run(doc, dt_ms);
 
         // Collect Glass nodes from elements with x_blur_radius > 0.
         let glass_nodes = self.extract_glass_nodes(&output, base_z);
@@ -282,7 +311,7 @@ impl DesktopPipeline {
         let paint_nodes = self.display_list_to_scene(&output.display_list, base_z + glass_count);
         nodes.extend(paint_nodes);
 
-        (nodes, output)
+        (nodes, output, animations_active)
     }
 
     /// Generate Glass SceneNodes for DOM elements that have `x_blur_radius > 0`

@@ -41,9 +41,10 @@ impl Shell {
         self.sync_dom();
 
         // ── Run the CSS pipeline (all shell chrome) ─────────
-        let (pipeline_nodes, pipeline_output) = self.css_pipeline.render_to_scene_with_output(
-            &self.desktop_dom.doc,
+        let (pipeline_nodes, pipeline_output, _animations_active) = self.css_pipeline.render_to_scene_with_output(
+            &mut self.desktop_dom.doc,
             0, // base z-order
+            16.0, // TODO: use actual frame clock delta
         );
 
         // Collect threaded fallback nodes. These are composited only when the
@@ -60,7 +61,6 @@ impl Shell {
             Arc::clone(&pipeline_output.layout),
             Arc::clone(&pipeline_output.styles),
         ));
-        self.desktop_dom.doc.dirty.clear_all();
 
         let theme = &self.theme;
 
