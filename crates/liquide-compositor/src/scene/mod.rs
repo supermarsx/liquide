@@ -322,6 +322,9 @@ impl SceneNodeKind {
     }
 }
 
+/// Guard against pathologically deep scene trees (stack overflow prevention).
+const MAX_SCENE_DEPTH: u32 = 512;
+
 /// A node in the compositor's scene graph.
 #[derive(Debug, Clone)]
 pub struct SceneNode {
@@ -355,7 +358,7 @@ impl SceneNode {
     /// Walk the tree depth-first in z-order, calling the visitor on each node
     /// with the accumulated absolute transform and effective opacity.
     pub fn walk<F: FnMut(&SceneNode, &Affine2D, f32)>(&self, visitor: &mut F) {
-        self.walk_inner(&Affine2D::identity(), 1.0, visitor);
+        self.walk_inner(&Affine2D::identity(), 1.0, visitor, 0);
     }
 
     fn walk_inner<F: FnMut(&SceneNode, &Affine2D, f32)>(
@@ -363,7 +366,12 @@ impl SceneNode {
         parent_transform: &Affine2D,
         parent_opacity: f32,
         visitor: &mut F,
+        depth: u32,
     ) {
+        if depth >= MAX_SCENE_DEPTH {
+            return;
+        }
+
         if !self.properties.visible {
             return;
         }
@@ -384,7 +392,7 @@ impl SceneNode {
         if n <= 1 {
             // 0 or 1 children — no sorting needed
             for child in &self.children {
-                child.walk_inner(&absolute, effective_opacity, visitor);
+                child.walk_inner(&absolute, effective_opacity, visitor, depth + 1);
             }
         } else if n <= 16 {
             // Small child count — use stack array
@@ -392,16 +400,16 @@ impl SceneNode {
             for i in 0..n {
                 indices[i] = i as u16;
             }
-            indices[..n].sort_by_key(|&i| self.children[i as usize].properties.z_order);
+            indices[..n].sort_by(|&a, &b| self.children[a as usize].properties.z_order.cmp(&self.children[b as usize].properties.z_order).then_with(|| self.children[a as usize].id.cmp(&self.children[b as usize].id)));
             for &i in &indices[..n] {
-                self.children[i as usize].walk_inner(&absolute, effective_opacity, visitor);
+                self.children[i as usize].walk_inner(&absolute, effective_opacity, visitor, depth + 1);
             }
         } else {
             // Fallback to heap-allocated sort for large child counts
             let mut sorted_indices: Vec<usize> = (0..n).collect();
-            sorted_indices.sort_by_key(|&i| self.children[i].properties.z_order);
+            sorted_indices.sort_by(|&a, &b| self.children[a].properties.z_order.cmp(&self.children[b].properties.z_order).then_with(|| self.children[a].id.cmp(&self.children[b].id)));
             for &i in &sorted_indices {
-                self.children[i].walk_inner(&absolute, effective_opacity, visitor);
+                self.children[i].walk_inner(&absolute, effective_opacity, visitor, depth + 1);
             }
         }
     }
@@ -409,11 +417,18 @@ impl SceneNode {
     /// Find a node by ID using depth-first search.
     #[must_use]
     pub fn find(&self, id: NodeId) -> Option<&SceneNode> {
+        self.find_inner(id, 0)
+    }
+
+    fn find_inner(&self, id: NodeId, depth: u32) -> Option<&SceneNode> {
+        if depth >= MAX_SCENE_DEPTH {
+            return None;
+        }
         if self.id == id {
             return Some(self);
         }
         for child in &self.children {
-            if let Some(found) = child.find(id) {
+            if let Some(found) = child.find_inner(id, depth + 1) {
                 return Some(found);
             }
         }
@@ -422,11 +437,18 @@ impl SceneNode {
 
     /// Find a node by ID (mutable) using depth-first search.
     pub fn find_mut(&mut self, id: NodeId) -> Option<&mut SceneNode> {
+        self.find_mut_inner(id, 0)
+    }
+
+    fn find_mut_inner(&mut self, id: NodeId, depth: u32) -> Option<&mut SceneNode> {
+        if depth >= MAX_SCENE_DEPTH {
+            return None;
+        }
         if self.id == id {
             return Some(self);
         }
         for child in &mut self.children {
-            if let Some(found) = child.find_mut(id) {
+            if let Some(found) = child.find_mut_inner(id, depth + 1) {
                 return Some(found);
             }
         }
@@ -484,22 +506,36 @@ impl SceneNode {
     #[must_use]
     pub fn descendants(&self) -> Vec<NodeId> {
         let mut result = Vec::new();
+        self.descendants_inner(&mut result, 0);
+        result
+    }
+
+    fn descendants_inner(&self, result: &mut Vec<NodeId>, depth: u32) {
+        if depth >= MAX_SCENE_DEPTH {
+            return;
+        }
         for child in &self.children {
             result.push(child.id);
-            result.extend(child.descendants());
+            child.descendants_inner(result, depth + 1);
         }
-        result
     }
 
     /// Compute the depth of the subtree (0 for a leaf, 1+ for internal nodes).
     #[must_use]
     pub fn depth(&self) -> u32 {
+        self.depth_inner(0)
+    }
+
+    fn depth_inner(&self, depth: u32) -> u32 {
+        if depth >= MAX_SCENE_DEPTH {
+            return depth;
+        }
         if self.children.is_empty() {
             return 0;
         }
         self.children
             .iter()
-            .map(|c| c.depth() + 1)
+            .map(|c| c.depth_inner(depth + 1) + 1)
             .max()
             .unwrap_or(0)
     }
@@ -507,9 +543,16 @@ impl SceneNode {
     /// Total number of descendants (recursive child count, excludes self).
     #[must_use]
     pub fn child_count(&self) -> usize {
+        self.child_count_inner(0)
+    }
+
+    fn child_count_inner(&self, depth: u32) -> usize {
+        if depth >= MAX_SCENE_DEPTH {
+            return 0;
+        }
         let mut count = self.children.len();
         for child in &self.children {
-            count += child.child_count();
+            count += child.child_count_inner(depth + 1);
         }
         count
     }
@@ -517,6 +560,14 @@ impl SceneNode {
     /// Walk the tree depth-first in z-order with mutable access,
     /// calling the visitor on each visible node.
     pub fn walk_mut<F: FnMut(&mut SceneNode)>(&mut self, visitor: &mut F) {
+        self.walk_mut_inner(visitor, 0);
+    }
+
+    fn walk_mut_inner<F: FnMut(&mut SceneNode)>(&mut self, visitor: &mut F, depth: u32) {
+        if depth >= MAX_SCENE_DEPTH {
+            return;
+        }
+
         if !self.properties.visible {
             return;
         }
@@ -525,22 +576,22 @@ impl SceneNode {
         let n = self.children.len();
         if n <= 1 {
             for child in &mut self.children {
-                child.walk_mut(visitor);
+                child.walk_mut_inner(visitor, depth + 1);
             }
         } else if n <= 16 {
             let mut indices = [0u16; 16];
             for i in 0..n {
                 indices[i] = i as u16;
             }
-            indices[..n].sort_by_key(|&i| self.children[i as usize].properties.z_order);
+            indices[..n].sort_by(|&a, &b| self.children[a as usize].properties.z_order.cmp(&self.children[b as usize].properties.z_order).then_with(|| self.children[a as usize].id.cmp(&self.children[b as usize].id)));
             for &i in &indices[..n] {
-                self.children[i as usize].walk_mut(visitor);
+                self.children[i as usize].walk_mut_inner(visitor, depth + 1);
             }
         } else {
             let mut sorted_indices: Vec<usize> = (0..n).collect();
-            sorted_indices.sort_by_key(|&i| self.children[i].properties.z_order);
+            sorted_indices.sort_by(|&a, &b| self.children[a].properties.z_order.cmp(&self.children[b].properties.z_order).then_with(|| self.children[a].id.cmp(&self.children[b].id)));
             for &i in &sorted_indices {
-                self.children[i].walk_mut(visitor);
+                self.children[i].walk_mut_inner(visitor, depth + 1);
             }
         }
     }
@@ -560,34 +611,124 @@ impl SceneNode {
     /// caller-provided `Vec` instead of allocating a new one each frame.
     pub fn flatten_into(&self, output: &mut Vec<FlatNode>) {
         output.clear();
-        self.walk(&mut |node, abs_transform, effective_opacity| {
-            // Skip non-visual structural nodes (Root, Workspace containers)
-            let is_visual = !matches!(
-                node.kind,
-                SceneNodeKind::Root | SceneNodeKind::Workspace { .. }
-            );
+        self.flatten_walk(
+            &Affine2D::identity(),
+            1.0,
+            None,
+            (0.0, 0.0, 0.0, 0.0),
+            output,
+            0,
+        );
+    }
 
-            if is_visual {
-                let abs_bounds = abs_transform.transform_rect(Rect::new(
-                    0.0,
-                    0.0,
-                    node.properties.bounds.width,
-                    node.properties.bounds.height,
-                ));
+    /// Recursive helper for [`flatten_into`](Self::flatten_into) that
+    /// accumulates transforms, opacity, clip rectangles and clip radii.
+    fn flatten_walk(
+        &self,
+        parent_transform: &Affine2D,
+        parent_opacity: f32,
+        parent_clip: Option<Rect>,
+        parent_clip_radius: (f32, f32, f32, f32),
+        output: &mut Vec<FlatNode>,
+        depth: u32,
+    ) {
+        const MAX_SCENE_DEPTH: u32 = 512;
+        if depth >= MAX_SCENE_DEPTH {
+            return;
+        }
 
-                output.push(FlatNode {
-                    id: node.id,
-                    kind: node.kind.clone(),
-                    absolute_bounds: abs_bounds,
-                    absolute_transform: *abs_transform,
-                    clip: node.properties.clip.map(|c| abs_transform.transform_rect(c)),
-                    opacity: effective_opacity,
-                    z_order: node.properties.z_order,
-                    corner_radius: node.properties.corner_radius,
-                    clip_radius: node.properties.clip_radius,
-                });
+        if !self.properties.visible {
+            return;
+        }
+
+        let effective_opacity = parent_opacity * self.properties.opacity;
+
+        let local = Affine2D::translation(self.properties.bounds.x, self.properties.bounds.y)
+            .then(&self.properties.transform);
+        let abs_transform = local.then(parent_transform);
+
+        // Accumulate clip: intersect the parent's absolute clip with this
+        // node's own clip (transformed to absolute coordinates).
+        let node_abs_clip = self
+            .properties
+            .clip
+            .map(|c| abs_transform.transform_rect(c));
+        let effective_clip = match (parent_clip, node_abs_clip) {
+            (Some(pc), Some(nc)) => Some(
+                pc.intersection(&nc)
+                    .unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)),
+            ),
+            (Some(pc), None) => Some(pc),
+            (None, Some(nc)) => Some(nc),
+            (None, None) => None,
+        };
+
+        // Accumulate clip radius: if the child has its own clip with a
+        // radius, use the child's; otherwise inherit the parent's radius
+        // when the parent's clip is still in effect.
+        let effective_clip_radius = if self.properties.clip.is_some() {
+            self.properties.clip_radius
+        } else if parent_clip.is_some() {
+            parent_clip_radius
+        } else {
+            (0.0, 0.0, 0.0, 0.0)
+        };
+
+        // Emit a FlatNode for visual nodes only.
+        let is_visual = !matches!(
+            self.kind,
+            SceneNodeKind::Root | SceneNodeKind::Workspace { .. }
+        );
+
+        if is_visual {
+            let abs_bounds = abs_transform.transform_rect(Rect::new(
+                0.0,
+                0.0,
+                self.properties.bounds.width,
+                self.properties.bounds.height,
+            ));
+
+            output.push(FlatNode {
+                id: self.id,
+                kind: self.kind.clone(),
+                absolute_bounds: abs_bounds,
+                absolute_transform: abs_transform,
+                clip: effective_clip,
+                opacity: effective_opacity,
+                z_order: self.properties.z_order,
+                corner_radius: self.properties.corner_radius,
+                clip_radius: effective_clip_radius,
+            });
+        }
+
+        // Recurse into children sorted by z-order (same logic as walk_inner).
+        let n = self.children.len();
+        if n <= 1 {
+            for child in &self.children {
+                child.flatten_walk(&abs_transform, effective_opacity, effective_clip, effective_clip_radius, output, depth + 1);
             }
-        });
+        } else if n <= 16 {
+            let mut indices = [0u16; 16];
+            for i in 0..n {
+                indices[i] = i as u16;
+            }
+            indices[..n].sort_by(|&a, &b| {
+                self.children[a as usize].properties.z_order.cmp(&self.children[b as usize].properties.z_order)
+                    .then_with(|| self.children[a as usize].id.cmp(&self.children[b as usize].id))
+            });
+            for &i in &indices[..n] {
+                self.children[i as usize].flatten_walk(&abs_transform, effective_opacity, effective_clip, effective_clip_radius, output, depth + 1);
+            }
+        } else {
+            let mut sorted_indices: Vec<usize> = (0..n).collect();
+            sorted_indices.sort_by(|&a, &b| {
+                self.children[a].properties.z_order.cmp(&self.children[b].properties.z_order)
+                    .then_with(|| self.children[a].id.cmp(&self.children[b].id))
+            });
+            for &i in &sorted_indices {
+                self.children[i].flatten_walk(&abs_transform, effective_opacity, effective_clip, effective_clip_radius, output, depth + 1);
+            }
+        }
     }
 }
 

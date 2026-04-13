@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use liquide_compositor::pixel::BlendMode;
 use liquide_compositor::property_tree::FilterOp;
-use liquide_compositor::scene::MaskSpec;
+use liquide_compositor::scene::{MaskSpec, OutlineStyle};
 use liquide_dom::{Document, NodeData};
 use liquide_layout::tree::{BoxType, LayoutBoxId, LayoutTree};
 use liquide_style_engine::computed::*;
@@ -68,7 +68,9 @@ impl Painter {
         let abs_border = layout_box.border_rect.offset(ox, oy);
         let _abs_margin = layout_box.margin_rect.offset(ox, oy);
 
-        // Skip invisible elements
+        // Skip invisible elements.
+        // SAFETY: This return is before any PushClip/PushTransform/PushLayer
+        // operations, so the display list state stack remains balanced.
         if !style.is_visible() {
             return;
         }
@@ -276,10 +278,10 @@ impl Painter {
         // Push clipping for overflow (or contain:paint forces clip)
         let needs_clip = style.contain.paint || matches!(
             style.overflow_x,
-            liquide_compositor::scene::Overflow::Hidden | liquide_compositor::scene::Overflow::Scroll
+            liquide_compositor::scene::Overflow::Hidden | liquide_compositor::scene::Overflow::Scroll | liquide_compositor::scene::Overflow::Auto
         ) || matches!(
             style.overflow_y,
-            liquide_compositor::scene::Overflow::Hidden | liquide_compositor::scene::Overflow::Scroll
+            liquide_compositor::scene::Overflow::Hidden | liquide_compositor::scene::Overflow::Scroll | liquide_compositor::scene::Overflow::Auto
         );
 
         if needs_clip {
@@ -390,7 +392,7 @@ impl Painter {
         // background-origin determines the reference box for background-position:
         //   border-box → abs_border, padding-box → abs_padding (default),
         //   content-box → abs_content.
-        let _bg_origin_rect = match style.background_origin {
+        let bg_origin_rect = match style.background_origin {
             BackgroundOrigin::BorderBox => abs_border,
             BackgroundOrigin::PaddingBox => abs_padding,
             BackgroundOrigin::ContentBox => abs_content,
@@ -423,10 +425,46 @@ impl Painter {
                 use liquide_compositor::scene::BackgroundImage;
                 match bg_image {
                     BackgroundImage::Gradient(gradient) => {
-                        // Use origin rect for positioning, clip rect for painting
-                        emit_gradient(list, &bg_clip_rect, &style.border_radius, gradient);
+                        // Apply background-size to compute the gradient tile rect
+                        let bg_tile = compute_background_tile(
+                            &bg_origin_rect,
+                            style.background_size.as_deref(),
+                            &style.background_position_x,
+                            &style.background_position_y,
+                            bg_origin_rect.width,
+                            bg_origin_rect.height,
+                            None,
+                        );
+                        emit_gradient(list, &bg_tile, &style.border_radius, gradient);
                     }
-                    _ => {} // URL/ImageId handled elsewhere
+                    BackgroundImage::Url(url) => {
+                        // Emit image display item for URL background images
+                        let bg_tile = compute_background_tile(
+                            &bg_origin_rect,
+                            style.background_size.as_deref(),
+                            &style.background_position_x,
+                            &style.background_position_y,
+                            bg_origin_rect.width,
+                            bg_origin_rect.height,
+                            None,
+                        );
+                        // Determine repeat mode
+                        let repeat = style.background_repeat.as_deref().unwrap_or("repeat");
+                        emit_background_image_tiled(list, url, &bg_clip_rect, &bg_tile, repeat, &style.border_radius);
+                    }
+                    BackgroundImage::ImageId(img_id) => {
+                        let bg_tile = compute_background_tile(
+                            &bg_origin_rect,
+                            style.background_size.as_deref(),
+                            &style.background_position_x,
+                            &style.background_position_y,
+                            bg_origin_rect.width,
+                            bg_origin_rect.height,
+                            None,
+                        );
+                        let repeat = style.background_repeat.as_deref().unwrap_or("repeat");
+                        emit_background_image_id_tiled(list, *img_id, &bg_clip_rect, &bg_tile, repeat, &style.border_radius);
+                    }
                 }
             }
         }
@@ -592,22 +630,9 @@ impl Painter {
                     caret_color: pe_style.caret_color,
                 });
             }
-            BoxType::ListMarker => {
-                // Generate list marker text based on list-style-type.
-                // For ordered lists, we'd need the ordinal position — use the
-                // fallback bullet for non-numeric types.
-                let marker_text = match style.list_style_type {
-                    ListStyleType::None => String::new(),
-                    ListStyleType::Disc => "\u{2022} ".to_string(),         // •
-                    ListStyleType::Circle => "\u{25E6} ".to_string(),       // ◦
-                    ListStyleType::Square => "\u{25AA} ".to_string(),       // ▪
-                    ListStyleType::Decimal
-                    | ListStyleType::DecimalLeadingZero => "1. ".to_string(), // placeholder
-                    ListStyleType::LowerRoman => "i. ".to_string(),
-                    ListStyleType::UpperRoman => "I. ".to_string(),
-                    ListStyleType::LowerAlpha | ListStyleType::LowerLatin => "a. ".to_string(),
-                    ListStyleType::UpperAlpha | ListStyleType::UpperLatin => "A. ".to_string(),
-                };
+            BoxType::ListMarker { text } => {
+                // Use the marker text generated at layout time with real ordinal.
+                let marker_text = text.clone();
                 if !marker_text.is_empty() {
                     // list-style-position: inside → marker is inline with content
                     // list-style-position: outside → positioned to the left (default)
@@ -722,7 +747,17 @@ impl Painter {
                     abs_border.height + (outline.width + outline.offset) * 2.0,
                 ),
                 width: outline.width,
-                style: BorderLineStyle::Solid, // Map outline style to border style
+                style: match outline.style {
+                    OutlineStyle::None => BorderLineStyle::None,
+                    OutlineStyle::Solid => BorderLineStyle::Solid,
+                    OutlineStyle::Dotted => BorderLineStyle::Dotted,
+                    OutlineStyle::Dashed => BorderLineStyle::Dashed,
+                    OutlineStyle::Double => BorderLineStyle::Double,
+                    OutlineStyle::Groove => BorderLineStyle::Groove,
+                    OutlineStyle::Ridge => BorderLineStyle::Ridge,
+                    OutlineStyle::Inset => BorderLineStyle::Inset,
+                    OutlineStyle::Outset => BorderLineStyle::Outset,
+                },
                 color: outline.color,
                 offset: outline.offset,
             });
@@ -730,7 +765,7 @@ impl Painter {
 
         // Paint children — full CSS 2.1 §E stacking context painting order.
         // Collect and classify children into proper stacking categories.
-        let children = layout_box.children.clone();
+        let children = &layout_box.children;
         // Subtract scroll offset for scroll containers so children are
         // painted at their scrolled position within the clipped viewport.
         let (scroll_x, scroll_y) = layout_box.scroll_offset;
@@ -770,7 +805,7 @@ impl Painter {
 
         if !skip_children && !needs_stacking_sort {
             // Simple path: all children are in-flow block, paint in DOM order.
-            for &child_id in &children {
+            for &child_id in children {
                 self.paint_box(doc, layout, styles, child_id, child_offset, list);
             }
         } else if !skip_children {
@@ -778,7 +813,7 @@ impl Painter {
             // Categories: 0=negative-z, 1=in-flow block, 2=floats,
             //             3=in-flow inline, 4=z auto/0, 5=positive-z
             let mut classified: Vec<(LayoutBoxId, u8, i32)> = Vec::with_capacity(children.len());
-            for &child_id in &children {
+            for &child_id in children {
                 let child_style = layout
                     .get(child_id)
                     .and_then(|cb| styles.get(cb.node));
@@ -949,6 +984,176 @@ impl Default for Painter {
     }
 }
 
+
+/// Compute the background tile rectangle, given the painting area,
+/// background-size, and background-position.
+fn compute_background_tile(
+    paint_rect: &liquide_layout::Rect,
+    bg_size_str: Option<&str>,
+    pos_x: &liquide_style_engine::dimension::Dimension,
+    pos_y: &liquide_style_engine::dimension::Dimension,
+    container_w: f32,
+    container_h: f32,
+    image_size: Option<(f32, f32)>,
+) -> liquide_layout::Rect {
+    // Resolve background-size
+    let (tile_w, tile_h) = match bg_size_str {
+        Some("cover") => {
+            if let Some((iw, ih)) = image_size {
+                if iw > 0.0 && ih > 0.0 {
+                    let ratio = (container_w / iw).max(container_h / ih);
+                    (iw * ratio, ih * ratio)
+                } else {
+                    (container_w, container_h)
+                }
+            } else {
+                (container_w, container_h)
+            }
+        }
+        Some("contain") => {
+            if let Some((iw, ih)) = image_size {
+                if iw > 0.0 && ih > 0.0 {
+                    let ratio = (container_w / iw).min(container_h / ih);
+                    (iw * ratio, ih * ratio)
+                } else {
+                    (container_w, container_h)
+                }
+            } else {
+                (container_w, container_h)
+            }
+        }
+        Some(s) => {
+            let parts: Vec<&str> = s.split_whitespace().collect();
+            let w = parse_bg_dimension(parts.first().copied().unwrap_or("auto"), container_w);
+            let h = parse_bg_dimension(parts.get(1).copied().unwrap_or("auto"), container_h);
+            (w.unwrap_or(container_w), h.unwrap_or(container_h))
+        }
+        None => (container_w, container_h),
+    };
+
+    // Resolve background-position
+    let offset_x = resolve_bg_position(pos_x, container_w, tile_w);
+    let offset_y = resolve_bg_position(pos_y, container_h, tile_h);
+
+    liquide_layout::Rect {
+        x: paint_rect.x + offset_x,
+        y: paint_rect.y + offset_y,
+        width: tile_w,
+        height: tile_h,
+    }
+}
+
+fn parse_bg_dimension(s: &str, container: f32) -> Option<f32> {
+    if s == "auto" {
+        None
+    } else if let Some(pct) = s.strip_suffix('%') {
+        pct.trim().parse::<f32>().ok().map(|p| container * p / 100.0)
+    } else if let Some(px) = s.strip_suffix("px") {
+        px.trim().parse::<f32>().ok()
+    } else {
+        s.parse::<f32>().ok()
+    }
+}
+
+fn resolve_bg_position(
+    dim: &liquide_style_engine::dimension::Dimension,
+    container_size: f32,
+    tile_size: f32,
+) -> f32 {
+    use liquide_style_engine::dimension::Dimension;
+    match dim {
+        Dimension::Px(px) => *px,
+        Dimension::Percent(pct) => (container_size - tile_size) * pct / 100.0,
+        Dimension::Em(em) => em * 16.0, // approximate
+        _ => 0.0,
+    }
+}
+
+/// Emit tiled background images from a URL source.
+fn emit_background_image_tiled(
+    list: &mut DisplayList,
+    url: &str,
+    clip_rect: &liquide_layout::Rect,
+    tile: &liquide_layout::Rect,
+    repeat: &str,
+    radius: &liquide_style_engine::dimension::Corners<f32>,
+) {
+    let src_string = url.to_string();
+    let repeat_x = matches!(repeat, "repeat" | "repeat-x");
+    let repeat_y = matches!(repeat, "repeat" | "repeat-y");
+
+    if !repeat_x && !repeat_y {
+        // no-repeat: single tile
+        list.push(DisplayItem::Image {
+            rect: *tile,
+            src: src_string,
+            radius: radius.clone(),
+        });
+        return;
+    }
+
+    // Push clip to prevent tiling outside the painting area
+    list.push(DisplayItem::PushClip {
+        rect: *clip_rect,
+        radius: radius.clone(),
+    });
+
+    let start_x = if repeat_x {
+        // Find leftmost tile position
+        let mut x = tile.x;
+        while x > clip_rect.x { x -= tile.width; }
+        x
+    } else {
+        tile.x
+    };
+    let start_y = if repeat_y {
+        let mut y = tile.y;
+        while y > clip_rect.y { y -= tile.height; }
+        y
+    } else {
+        tile.y
+    };
+
+    let end_x = if repeat_x { clip_rect.x + clip_rect.width } else { tile.x + tile.width };
+    let end_y = if repeat_y { clip_rect.y + clip_rect.height } else { tile.y + tile.height };
+
+    let mut y = start_y;
+    while y < end_y {
+        let mut x = start_x;
+        while x < end_x {
+            list.push(DisplayItem::Image {
+                rect: liquide_layout::Rect {
+                    x, y, width: tile.width, height: tile.height,
+                },
+                src: src_string.clone(),
+                radius: liquide_style_engine::dimension::Corners::all(0.0),
+            });
+            x += tile.width;
+            if !repeat_x { break; }
+        }
+        y += tile.height;
+        if !repeat_y { break; }
+    }
+
+    list.push(DisplayItem::PopClip);
+}
+
+/// Emit tiled background images from an image ID source.
+fn emit_background_image_id_tiled(
+    list: &mut DisplayList,
+    _img_id: u64,
+    _clip_rect: &liquide_layout::Rect,
+    tile: &liquide_layout::Rect,
+    _repeat: &str,
+    radius: &liquide_style_engine::dimension::Corners<f32>,
+) {
+    // Image ID rendering: emit a single rect for now until image registry is wired
+    list.push(DisplayItem::FillRect {
+        rect: *tile,
+        color: liquide_compositor::pixel::Color { r: 200, g: 200, b: 200, a: 255 },
+    });
+    let _ = radius;
+}
 
 #[cfg(test)]
 mod tests {

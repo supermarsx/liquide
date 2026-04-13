@@ -77,7 +77,7 @@ fn framebuffer_pixel_offset() {
 fn framebuffer_row_and_row_mut() {
     let mut fb = FrameBuffer::new(10, 10, PixelFormat::Bgra8);
     // Write to row 3 via row_mut
-    let row = fb.row_mut(3);
+    let row = fb.row_mut(3).expect("row_mut: CPU framebuffer expected in test");
     row[0] = 0xFF;
     // Read back via row
     assert_eq!(fb.row(3)[0], 0xFF);

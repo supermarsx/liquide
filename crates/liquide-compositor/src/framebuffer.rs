@@ -38,14 +38,14 @@ impl FrameBuffer {
     #[must_use]
     pub fn new(width: u32, height: u32, format: PixelFormat) -> Self {
         let bpp = format.bytes_per_pixel();
-        let stride = width * bpp;
-        Self::with_stride(width, height, stride, format)
+        let stride = width as usize * bpp as usize;
+        Self::with_stride(width, height, stride as u32, format)
     }
 
     /// Create a frame buffer with an explicit stride (for alignment).
     #[must_use]
     pub fn with_stride(width: u32, height: u32, stride: u32, format: PixelFormat) -> Self {
-        let size = (stride * height) as usize;
+        let size = stride as usize * height as usize;
         Self {
             memory: FrameMemory::Cpu(vec![0u8; size]),
             width,
@@ -67,12 +67,11 @@ impl FrameBuffer {
 
     /// Get mutable pixel slice (CPU path only).
     ///
-    /// # Panics
-    /// Panics if called on a GPU-backed framebuffer.
-    pub fn pixels_mut(&mut self) -> &mut Vec<u8> {
+    /// Returns `None` for GPU-backed framebuffers.
+    pub fn pixels_mut(&mut self) -> Option<&mut Vec<u8>> {
         match &mut self.memory {
-            FrameMemory::Cpu(v) => v,
-            FrameMemory::Gpu { .. } => panic!("cannot get mutable pixel access on GPU framebuffer"),
+            FrameMemory::Cpu(v) => Some(v),
+            FrameMemory::Gpu { .. } => None,
         }
     }
 
@@ -103,7 +102,7 @@ impl FrameBuffer {
     /// Panics if `y >= self.height`.
     #[must_use]
     pub fn row(&self, y: u32) -> &[u8] {
-        debug_assert!(y < self.height, "row({y}) out of bounds (height={})", self.height);
+        assert!(y < self.height, "row({y}) out of bounds (height={})", self.height);
         let start = (y * self.stride) as usize;
         let end = start + (self.width * self.format.bytes_per_pixel()) as usize;
         &self.pixels()[start..end]
@@ -111,13 +110,14 @@ impl FrameBuffer {
 
     /// Get a mutable slice of the pixel row at `y`.
     ///
-    /// # Panics
-    /// Panics if `y >= self.height`.
-    pub fn row_mut(&mut self, y: u32) -> &mut [u8] {
-        debug_assert!(y < self.height, "row_mut({y}) out of bounds (height={})", self.height);
+    /// Returns `None` if `y` is out of bounds or the framebuffer is GPU-backed.
+    pub fn row_mut(&mut self, y: u32) -> Option<&mut [u8]> {
+        if y >= self.height {
+            return None;
+        }
         let start = (y * self.stride) as usize;
         let end = start + (self.width * self.format.bytes_per_pixel()) as usize;
-        &mut self.pixels_mut()[start..end]
+        self.pixels_mut().map(|px| &mut px[start..end])
     }
 
     /// Extract raw pixel bytes for a tile region.
@@ -163,7 +163,9 @@ impl FrameBuffer {
         let height = self.height as usize;
 
         // Fill the first scanline pixel-by-pixel.
-        let pixels = self.pixels_mut();
+        let Some(pixels) = self.pixels_mut() else {
+            return; // Cannot clear GPU-backed framebuffer via CPU path
+        };
         {
             let first_row = &mut pixels[..row_bytes];
             for x in 0..width {
@@ -238,7 +240,9 @@ impl FrameBuffer {
         let off = self.pixel_offset(x, y);
         let bpp = self.format.bytes_per_pixel() as usize;
         let fmt = self.format;
-        let px = self.pixels_mut();
+        let Some(px) = self.pixels_mut() else {
+            return; // Cannot set pixel on GPU-backed framebuffer
+        };
         if off + bpp > px.len() {
             return;
         }
@@ -258,19 +262,25 @@ impl FrameBuffer {
                 px[off + 1] = color.g;
                 px[off + 2] = color.b;
             }
-            _ => {}
+            _ => { debug_assert!(false, "unhandled pixel format: {:?}", fmt); }
         }
     }
 
     /// Width of the tile grid for a given tile size.
     #[must_use]
     pub fn tile_grid_width(&self, tile_size: u32) -> u32 {
+        if tile_size == 0 {
+            return 1;
+        }
         self.width.div_ceil(tile_size)
     }
 
     /// Height of the tile grid for a given tile size.
     #[must_use]
     pub fn tile_grid_height(&self, tile_size: u32) -> u32 {
+        if tile_size == 0 {
+            return 1;
+        }
         self.height.div_ceil(tile_size)
     }
 }
