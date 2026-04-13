@@ -42,7 +42,7 @@ fn test_hide_show() {
 fn test_custom_image() {
     let mut c = CursorState::new();
     let image = vec![0xFF; 32 * 32 * 4];
-    c.set_custom_image(image.clone(), 32, 32, 0, 0);
+    assert!(c.set_custom_image(image.clone(), 32, 32, 0, 0));
     assert!(c.has_custom_image());
     assert_eq!(c.shape, CursorShape::Custom);
     assert_eq!(c.custom_width, 32);
@@ -53,7 +53,7 @@ fn test_custom_image() {
 #[test]
 fn test_custom_image_hotspot() {
     let mut c = CursorState::new();
-    c.set_custom_image(vec![0; 64], 4, 4, 2, 3);
+    assert!(c.set_custom_image(vec![0; 64], 4, 4, 2, 3));
     assert_eq!(c.hotspot_x, 2);
     assert_eq!(c.hotspot_y, 3);
 }

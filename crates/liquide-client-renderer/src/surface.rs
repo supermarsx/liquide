@@ -40,7 +40,8 @@ impl RenderSurface {
         self.height = height;
         self.stride = width * bpp;
         let size = (self.stride * height) as usize;
-        self.pixels = vec![0u8; size];
+        self.pixels.clear();
+        self.pixels.resize(size, 0);
     }
 
     /// Width in pixels.
@@ -108,7 +109,7 @@ impl RenderSurface {
     ///
     /// The tile data is stored row-major with `tile_size * bpp` bytes per row.
     /// Edge tiles that extend past the surface boundary are clipped.
-    pub fn write_tile(&mut self, tx: u32, ty: u32, tile_size: u32, data: &[u8]) {
+    pub fn write_tile(&mut self, tx: u32, ty: u32, tile_size: u32, data: &[u8]) -> bool {
         let bpp = self.format.bytes_per_pixel();
         let px_x = tx * tile_size;
         let px_y = ty * tile_size;
@@ -117,6 +118,7 @@ impl RenderSurface {
         let cols = tile_size.min(self.width.saturating_sub(px_x));
         let row_bytes = (cols * bpp) as usize;
         let tile_stride = (tile_size * bpp) as usize;
+        let mut all_written = true;
 
         for row in 0..rows {
             let dst_off = ((px_y + row) * self.stride) as usize + (px_x * bpp) as usize;
@@ -124,8 +126,11 @@ impl RenderSurface {
             if src_off + row_bytes <= data.len() && dst_off + row_bytes <= self.pixels.len() {
                 self.pixels[dst_off..dst_off + row_bytes]
                     .copy_from_slice(&data[src_off..src_off + row_bytes]);
+            } else {
+                all_written = false;
             }
         }
+        all_written
     }
 
     /// Read tile data from the surface at tile coordinates (tx, ty).

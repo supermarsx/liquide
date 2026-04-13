@@ -72,6 +72,10 @@ impl FrameAssembler {
         let mut tiles_skipped = 0u32;
         let mut bytes_decompressed = 0u64;
 
+        // Phase 1: Decode all tiles (no state mutation).
+        // If any tile fails to decode, we return early without committing
+        // partial results, keeping the decoder in a consistent state.
+        let mut decoded: Vec<(u32, u32, Vec<u8>)> = Vec::with_capacity(batch.tiles.len());
         for update in &batch.tiles {
             let data = self.decoder.decode_tile(update)?;
 
@@ -82,8 +86,16 @@ impl FrameAssembler {
                 bytes_decompressed += data.len() as u64;
             }
 
-            self.surface.write_tile(update.tx, update.ty, self.tile_size, &data);
-            self.decoder.commit_tile(update.tx, update.ty, data);
+            decoded.push((update.tx, update.ty, data));
+        }
+
+        // Phase 2: Commit all decoded tiles and write to surface.
+        // Only reached if all tiles decoded successfully.
+        for (tx, ty, data) in decoded {
+            if !self.surface.write_tile(tx, ty, self.tile_size, &data) {
+                tracing::warn!("write_tile({}, {}): incomplete write, buffer size mismatch", tx, ty);
+            }
+            self.decoder.commit_tile(tx, ty, data);
         }
 
         self.frame_count += 1;

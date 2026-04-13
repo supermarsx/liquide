@@ -94,6 +94,11 @@ impl TileDecoder {
                         "solid tile payload too short".to_string(),
                     ));
                 }
+                if tile_bytes % 4 != 0 {
+                    return Err(ClientRendererError::DecodeError(
+                        format!("solid tile: tile_bytes ({}) not divisible by 4", tile_bytes),
+                    ));
+                }
                 let color = [
                     update.payload[0],
                     update.payload[1],
@@ -120,7 +125,13 @@ impl TileDecoder {
                 }
                 match &self.previous_tiles[src] {
                     Some(data) => Ok(data.clone()),
-                    None => Ok(vec![0u8; tile_bytes]),
+                    None => {
+                        tracing::debug!(
+                            "copy tile: source index {} not yet committed, using zeros",
+                            source_index,
+                        );
+                        Ok(vec![0u8; tile_bytes])
+                    }
                 }
             }
         }

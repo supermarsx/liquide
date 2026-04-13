@@ -58,7 +58,7 @@ fn test_write_read_tile() {
         *byte = (i % 256) as u8;
     }
 
-    s.write_tile(0, 0, tile_size, &tile_data);
+    assert!(s.write_tile(0, 0, tile_size, &tile_data));
     let readback = s.read_tile(0, 0, tile_size);
     assert_eq!(readback, tile_data);
 }
@@ -70,7 +70,7 @@ fn test_write_tile_second_position() {
     let tile_bytes = (tile_size * tile_size * 4) as usize;
 
     let tile_data = vec![42u8; tile_bytes];
-    s.write_tile(1, 1, tile_size, &tile_data);
+    assert!(s.write_tile(1, 1, tile_size, &tile_data));
     let readback = s.read_tile(1, 1, tile_size);
     assert_eq!(readback, tile_data);
 

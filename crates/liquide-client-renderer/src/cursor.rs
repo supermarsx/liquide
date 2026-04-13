@@ -138,6 +138,9 @@ impl CursorState {
     }
 
     /// Set a custom cursor image.
+    ///
+    /// Returns `false` if the image data length doesn't match `width * height * 4`
+    /// (RGBA8) or if hotspot is outside image bounds.
     pub fn set_custom_image(
         &mut self,
         image: Vec<u8>,
@@ -145,13 +148,21 @@ impl CursorState {
         height: u32,
         hotspot_x: u32,
         hotspot_y: u32,
-    ) {
+    ) -> bool {
+        let expected = width as usize * height as usize * 4;
+        if image.len() != expected {
+            return false;
+        }
+        if width > 0 && height > 0 && (hotspot_x >= width || hotspot_y >= height) {
+            return false;
+        }
         self.custom_image = Some(image);
         self.custom_width = width;
         self.custom_height = height;
         self.hotspot_x = hotspot_x;
         self.hotspot_y = hotspot_y;
         self.shape = CursorShape::Custom;
+        true
     }
 
     /// Check if this cursor has a custom image.
