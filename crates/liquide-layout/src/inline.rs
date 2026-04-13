@@ -277,7 +277,7 @@ fn soft_hyphen_points(word: &str) -> Vec<usize> {
 fn tokenise_text(
     text: &str,
     ws: WhiteSpace,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
     font_size: f32,
     font_family: &[String],
     font_weight: u16,
@@ -352,7 +352,7 @@ fn collect_inline_items(
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
     parent_width: f32,
     items: &mut Vec<InlineItem>,
     is_root: bool,
@@ -469,7 +469,7 @@ fn break_into_lines(
     text_wrap_mode: TextWrapMode,
     hyphens: Hyphens,
     hyphenate_char: &str,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
     font_family: &[String],
     font_weight: u16,
     text_props: &TextProperties,
@@ -633,7 +633,7 @@ fn try_hyphenate_word(
     font_size: f32,
     font_family: &[String],
     font_weight: u16,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
     props: &TextProperties,
     hyphens: Hyphens,
     hyphenate_char: &str,
@@ -695,6 +695,11 @@ fn try_hyphenate_word(
         let m = text_measurer.measure(
             &first_display, font_size, font_family, font_weight, None, props,
         );
+
+        // Skip zero-width or negative-width break points
+        if m.width <= 0.0 {
+            continue;
+        }
 
         if m.width <= available_width + 0.01 {
             // Strip any remaining soft hyphens from the text fragments so they
@@ -764,7 +769,7 @@ fn vertical_offset(
 fn layout_lines(
     items: &[InlineItem],
     line_indices: &[Vec<usize>],
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
     text_align: TextAlign,
     text_align_last: TextAlignLast,
     text_indent: f32,
@@ -974,7 +979,7 @@ pub fn layout_inline(
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
     max_width: f32,
     offset_x: f32,
     offset_y: f32,

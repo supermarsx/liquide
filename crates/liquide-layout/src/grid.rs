@@ -2,6 +2,10 @@
 
 use std::collections::HashMap;
 
+/// Safety cap for auto-placed grid tracks to prevent unbounded memory growth.
+const MAX_AUTO_COLS: usize = 10_000;
+const MAX_AUTO_ROWS: usize = 10_000;
+
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{AlignContent, AlignItems, AlignSelf, BoxSizing, Display, GridAutoFlow, GridLine, JustifyContent, JustifyItems, JustifySelf, Position, TrackSize};
@@ -22,13 +26,13 @@ struct GridItem {
 }
 
 /// Perform grid layout.
-pub fn layout_grid(
+pub fn layout_grid<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
-    image_measurer: &dyn ImageMeasurer,
+    text_measurer: &TM,
+    image_measurer: &IM,
     container_width: f32,
     container_height: f32,
     offset_x: f32,
@@ -204,6 +208,9 @@ pub fn layout_grid(
         Vec::new()
     };
 
+    let parent_col_track_count = parent_col_tracks.len();
+    let parent_row_track_count = parent_row_tracks.len();
+
     let col_tracks = if has_subgrid_cols && !parent_col_tracks.is_empty() {
         parent_col_tracks
     } else {
@@ -258,12 +265,28 @@ pub fn layout_grid(
         // Resolve explicit grid placement using the helper that handles negative lines
         let col_start = resolve_grid_line(&child_style.grid_column.start, num_col_lines, &area_line_names, "col", true);
         let col_end = match &child_style.grid_column.end {
-            GridLine::Span(n) => col_start.map(|s| s + *n as usize),
+            GridLine::Span(n) => {
+                // H14: clamp span to parent track count for subgrid children
+                let span = if has_subgrid_cols && parent_col_track_count > 0 {
+                    (*n as usize).min(parent_col_track_count)
+                } else {
+                    *n as usize
+                };
+                col_start.map(|s| s + span)
+            }
             other => resolve_grid_line(other, num_col_lines, &area_line_names, "col", false),
         };
         let row_start = resolve_grid_line(&child_style.grid_row.start, num_row_lines, &area_line_names, "row", true);
         let row_end = match &child_style.grid_row.end {
-            GridLine::Span(n) => row_start.map(|s| s + *n as usize),
+            GridLine::Span(n) => {
+                // H14: clamp span to parent track count for subgrid children
+                let span = if has_subgrid_rows && parent_row_track_count > 0 {
+                    (*n as usize).min(parent_row_track_count)
+                } else {
+                    *n as usize
+                };
+                row_start.map(|s| s + span)
+            }
             other => resolve_grid_line(other, num_row_lines, &area_line_names, "row", false),
         };
 
@@ -329,6 +352,9 @@ pub fn layout_grid(
                 }
                 // If all columns are exhausted, extend the grid with a new column
                 if auto_cursor_col >= num_cols {
+                    if num_cols >= MAX_AUTO_COLS {
+                        break;
+                    }
                     let new_cols = num_cols + 1;
                     let mut new_occupied = vec![false; num_rows * new_cols];
                     for r in 0..num_rows {
@@ -341,11 +367,17 @@ pub fn layout_grid(
                 }
             } else if auto_cursor_row >= num_rows {
                 // Extend the grid
+                if num_rows >= MAX_AUTO_ROWS {
+                    break;
+                }
                 occupied.extend(std::iter::repeat(false).take(num_cols));
                 num_rows += 1;
             }
             // Ensure occupied grid is large enough
             while auto_cursor_row >= num_rows {
+                if num_rows >= MAX_AUTO_ROWS {
+                    break;
+                }
                 occupied.extend(std::iter::repeat(false).take(num_cols));
                 num_rows += 1;
             }
@@ -894,6 +926,11 @@ fn expand_repeat_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<T
                             .sum();
                         
                         if rep_size > 0.0 {
+                            // Guard against NaN when rep_size + gap is zero or negative
+                            if rep_size + gap <= 0.0 {
+                                expanded.extend(inner.clone());
+                                continue;
+                            }
                             // Calculate how many can fit
                             // Available = (count * rep_size) + ((count - 1) * gap)
                             // Solve for count: count = (available + gap) / (rep_size + gap)
@@ -1005,7 +1042,7 @@ fn resolve_grid_line(
                 if abs_n <= num_lines {
                     Some(num_lines - abs_n)
                 } else {
-                    Some(0) // Clamped to first line
+                    None // Out-of-range negative index → treat as auto-placed
                 }
             } else {
                 // Line 0 is invalid in CSS Grid, treat as auto
@@ -1074,5 +1111,9 @@ fn grid_content_distribute_align(ac: AlignContent, free: f32, count: usize) -> (
             (s / 2.0, s)
         }
         AlignContent::Stretch => (0.0, free / count as f32),
+        AlignContent::SpaceEvenly => {
+            let gap = free / (count + 1) as f32;
+            (gap, gap)
+        }
     }
 }

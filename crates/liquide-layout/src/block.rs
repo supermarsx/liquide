@@ -16,13 +16,13 @@ use crate::{ImageMeasurer, TextMeasurer};
 ///
 /// Block layout places children vertically, one below another, each taking
 /// the full available width (unless the child has its own width constraint).
-pub fn layout_block(
+pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
-    image_measurer: &dyn ImageMeasurer,
+    text_measurer: &TM,
+    image_measurer: &IM,
     container_width: f32,
     container_height: f32,
     offset_x: f32,
@@ -286,6 +286,7 @@ pub fn layout_block(
     // Negative margins: the collapsed margin = max(positive) - abs(max(negative)).
     let mut child_y = 0.0f32;
     let mut prev_margin_bottom: Option<f32> = None;
+    let mut float_breaks_collapsing = false;
 
     // Parent-child margin collapsing detection
     // A new BFC prevents margin collapsing with children (CSS §8.3.1)
@@ -328,9 +329,11 @@ pub fn layout_block(
     if let Some(before_style) = styles.get_pseudo(node_id, PseudoKind::Before) {
         if let Some(ref content) = before_style.content {
             if !content.is_empty() {
+                // Resolve [attr:name] placeholders against the element's attributes
+                let resolved = resolve_attr_placeholders(content, doc, node_id);
                 let text_props = crate::TextProperties::from_style(before_style);
                 let metrics = text_measurer.measure(
-                    content,
+                    &resolved,
                     before_style.font_size,
                     &before_style.font_family,
                     before_style.font_weight,
@@ -339,7 +342,7 @@ pub fn layout_block(
                 );
                 let pe_box = tree.alloc(node_id, BoxType::PseudoElement {
                     kind: PseudoElementKind::Before,
-                    content: content.clone(),
+                    content: resolved,
                 });
                 if let Some(pb) = tree.get_mut(pe_box) {
                     pb.content_rect = Rect::new(0.0, child_y, metrics.width.min(content_width), metrics.height);
@@ -369,8 +372,8 @@ pub fn layout_block(
         doc: &Document,
         styles: &StyleMap,
         tree: &mut LayoutTree,
-        text_measurer: &dyn TextMeasurer,
-        image_measurer: &dyn ImageMeasurer,
+        text_measurer: &(impl TextMeasurer + ?Sized),
+        image_measurer: &(impl ImageMeasurer + ?Sized),
         content_width: f32,
         container_height: f32,
         viewport_w: f32,
@@ -610,7 +613,14 @@ pub fn layout_block(
             // Floats do NOT advance child_y — they are out of normal flow.
             // They also break the margin collapsing sequence.
             prev_margin_bottom = None;
+            float_breaks_collapsing = true;
             continue;
+        }
+
+        // A float between siblings prevents margin collapsing for the next sibling.
+        if float_breaks_collapsing {
+            prev_margin_bottom = None;
+            float_breaks_collapsing = false;
         }
 
         // ── Block-in-inline: accumulate inline children when mixed ──
@@ -951,7 +961,7 @@ pub fn layout_block(
             );
 
             // Create a marker box and position it
-            let marker_box_id = tree.alloc(child_id, BoxType::ListMarker);
+            let marker_box_id = tree.alloc(child_id, BoxType::ListMarker { text: marker_text });
             let marker_h = child_style.font_size * 1.2;
             if let Some(mb) = tree.get_mut(marker_box_id) {
                 match child_style.list_style_position {
@@ -1059,9 +1069,11 @@ pub fn layout_block(
     if let Some(after_style) = styles.get_pseudo(node_id, PseudoKind::After) {
         if let Some(ref content) = after_style.content {
             if !content.is_empty() {
+                // Resolve [attr:name] placeholders against the element's attributes
+                let resolved = resolve_attr_placeholders(content, doc, node_id);
                 let text_props = crate::TextProperties::from_style(after_style);
                 let metrics = text_measurer.measure(
-                    content,
+                    &resolved,
                     after_style.font_size,
                     &after_style.font_family,
                     after_style.font_weight,
@@ -1070,7 +1082,7 @@ pub fn layout_block(
                 );
                 let pe_box = tree.alloc(node_id, BoxType::PseudoElement {
                     kind: PseudoElementKind::After,
-                    content: content.clone(),
+                    content: resolved,
                 });
                 if let Some(pb) = tree.get_mut(pe_box) {
                     pb.content_rect = Rect::new(0.0, child_y, metrics.width.min(content_width), metrics.height);
@@ -1426,5 +1438,31 @@ fn to_lower_roman(mut n: usize) -> String {
             n -= val;
         }
     }
+    result
+}
+
+/// Resolve `[attr:name]` placeholders in generated content using the element's DOM attributes.
+fn resolve_attr_placeholders(content: &str, doc: &Document, node_id: NodeId) -> String {
+    if !content.contains("[attr:") {
+        return content.to_string();
+    }
+    let mut result = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(start) = rest.find("[attr:") {
+        result.push_str(&rest[..start]);
+        let after_prefix = &rest[start + 6..]; // skip "[attr:"
+        if let Some(end) = after_prefix.find(']') {
+            let attr_name = &after_prefix[..end];
+            if let Some(val) = doc.get_attribute(node_id, attr_name) {
+                result.push_str(&val);
+            }
+            rest = &after_prefix[end + 1..];
+        } else {
+            // Malformed placeholder — emit literally
+            result.push_str(&rest[start..]);
+            break;
+        }
+    }
+    result.push_str(rest);
     result
 }

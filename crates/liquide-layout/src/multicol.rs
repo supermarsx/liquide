@@ -19,13 +19,13 @@ use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
 use crate::{ImageMeasurer, TextMeasurer};
 
 /// Perform multi-column layout.
-pub fn layout_multicol(
+pub fn layout_multicol<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
-    image_measurer: &dyn ImageMeasurer,
+    text_measurer: &TM,
+    image_measurer: &IM,
     container_width: f32,
     container_height: f32,
     offset_x: f32,
@@ -180,6 +180,11 @@ pub fn layout_multicol(
     let orphans = style.orphans.max(1);
     // widows: minimum lines/children at the top of a column after a break (default 2).
     let widows = style.widows.max(1);
+
+    // Cap orphans/widows to total children to prevent unsatisfiable constraints.
+    let total_children = doc.children(node_id).len() as u32;
+    let orphans = orphans.min(total_children);
+    let widows = widows.min(total_children);
     // box-decoration-break: slice (default) or clone — controls whether
     // borders/padding are "sliced" at column breaks or re-drawn in each fragment.
     let _box_decoration_break = style.box_decoration_break;
@@ -347,8 +352,15 @@ pub fn layout_multicol(
                 // Track how many children have been placed in the current column
                 // (used for orphans/widows enforcement).
                 let mut children_in_col = 0u32;
+                // Safety limit to prevent infinite loops with pathological orphans/widows values.
+                const MAX_BALANCE_ITERS: usize = 100;
+                let mut balance_iters = 0usize;
 
                 for (item_idx, &(child_box_id, child_h, brk_before, brk_after, brk_inside_avoid)) in items.iter().enumerate() {
+                    balance_iters += 1;
+                    if balance_iters > MAX_BALANCE_ITERS {
+                        break;
+                    }
                     let remaining_items = (items.len() - item_idx) as u32;
 
                     // break-before: column — force a column break before this child

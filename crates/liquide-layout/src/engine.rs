@@ -18,19 +18,19 @@ pub struct LayoutEngine {
 }
 
 /// Bundled input for layout and relayout APIs.
-pub struct LayoutInput<'a> {
+pub struct LayoutInput<'a, TM: TextMeasurer + ?Sized = dyn TextMeasurer, IM: ImageMeasurer + ?Sized = dyn ImageMeasurer> {
     pub doc: &'a Document,
     pub styles: &'a StyleMap,
-    pub text_measurer: &'a dyn TextMeasurer,
-    pub image_measurer: &'a dyn ImageMeasurer,
+    pub text_measurer: &'a TM,
+    pub image_measurer: &'a IM,
 }
 
-impl<'a> LayoutInput<'a> {
+impl<'a, TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized> LayoutInput<'a, TM, IM> {
     pub fn new(
         doc: &'a Document,
         styles: &'a StyleMap,
-        text_measurer: &'a dyn TextMeasurer,
-        image_measurer: &'a dyn ImageMeasurer,
+        text_measurer: &'a TM,
+        image_measurer: &'a IM,
     ) -> Self {
         Self {
             doc,
@@ -51,12 +51,12 @@ impl LayoutEngine {
     }
 
     /// Run layout on the entire document.
-    pub fn layout(
+    pub fn layout<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         &mut self,
         doc: &Document,
         styles: &StyleMap,
-        text_measurer: &dyn TextMeasurer,
-        image_measurer: &dyn ImageMeasurer,
+        text_measurer: &TM,
+        image_measurer: &IM,
     ) -> LayoutTree {
         let mut tree = LayoutTree::new();
 
@@ -214,7 +214,10 @@ impl LayoutEngine {
     }
 
     /// Run layout using a bundled input object.
-    pub fn layout_with_input(&mut self, input: &LayoutInput<'_>) -> LayoutTree {
+    pub fn layout_with_input<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
+        &mut self,
+        input: &LayoutInput<'_, TM, IM>,
+    ) -> LayoutTree {
         self.layout(
             input.doc,
             input.styles,
@@ -224,9 +227,9 @@ impl LayoutEngine {
     }
 
     /// Incremental relayout entrypoint.
-    pub fn relayout_subtree(
+    pub fn relayout_subtree<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         &mut self,
-        input: &LayoutInput<'_>,
+        input: &LayoutInput<'_, TM, IM>,
         node_id: NodeId,
         previous_tree: &LayoutTree,
     ) -> LayoutTree {
@@ -379,9 +382,9 @@ impl LayoutEngine {
             )
     }
 
-    fn layout_node_in_context(
+    fn layout_node_in_context<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         &self,
-        input: &LayoutInput<'_>,
+        input: &LayoutInput<'_, TM, IM>,
         node_id: NodeId,
         tree: &mut LayoutTree,
         container_width: f32,
@@ -592,8 +595,18 @@ impl LayoutEngine {
         _doc: &Document,
         styles: &StyleMap,
     ) {
+        const MAX_PROPAGATION_DEPTH: usize = 64;
         let outward_delta = delta_h;
+        let mut depth = 0usize;
         while outward_delta.abs() > 0.001 {
+            depth += 1;
+            if depth > MAX_PROPAGATION_DEPTH {
+                tracing::warn!(
+                    "propagate_block_flow_delta: exceeded max depth {}, aborting propagation",
+                    MAX_PROPAGATION_DEPTH,
+                );
+                break;
+            }
             let Some(parent_snapshot) = tree.get(parent_box_id).cloned() else {
                 break;
             };
@@ -866,14 +879,14 @@ impl LayoutEngine {
     }
 
     /// Layout positioned elements (absolute/fixed) in a second pass.
-    fn layout_positioned_elements(
+    fn layout_positioned_elements<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         &self,
         doc: &Document,
         node_id: NodeId,
         styles: &StyleMap,
         tree: &mut LayoutTree,
-        text_measurer: &dyn TextMeasurer,
-        image_measurer: &dyn ImageMeasurer,
+        text_measurer: &TM,
+        image_measurer: &IM,
     ) {
         let viewport_rect = Rect::new(0.0, 0.0, self.viewport.width, self.viewport.height);
         self.layout_positioned_recursive(
@@ -886,14 +899,14 @@ impl LayoutEngine {
     /// Per CSS Transforms §7.1, an ancestor with transform/perspective/filter/
     /// contain:paint creates a containing block for fixed-position descendants,
     /// overriding the viewport.
-    fn layout_positioned_recursive(
+    fn layout_positioned_recursive<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         &self,
         doc: &Document,
         node_id: NodeId,
         styles: &StyleMap,
         tree: &mut LayoutTree,
-        text_measurer: &dyn TextMeasurer,
-        image_measurer: &dyn ImageMeasurer,
+        text_measurer: &TM,
+        image_measurer: &IM,
         fixed_cb: Rect,
     ) {
         let children = doc.children(node_id).to_vec();

@@ -27,13 +27,13 @@ use crate::tree::{BoxType, LayoutBoxId, LayoutTree};
 use crate::{ImageMeasurer, TextMeasurer};
 
 /// Perform flexbox layout with full multi-line wrapping.
-pub fn layout_flex(
+pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
-    image_measurer: &dyn ImageMeasurer,
+    text_measurer: &TM,
+    image_measurer: &IM,
     container_width: f32,
     container_height: f32,
     offset_x: f32,
@@ -588,37 +588,79 @@ pub fn layout_flex(
         let free_space = available_main - total_main;
 
         if free_space > 0.0 {
-            let total_grow: f32 = line_items
-                .iter()
-                .filter(|i| !i.collapsed)
-                .map(|i| i.flex_grow)
-                .sum();
-            if total_grow > 0.0 {
-                for item in line_items.iter_mut() {
-                    if item.collapsed {
+            // CSS Flexbox §9.7: multi-pass grow with min/max clamping.
+            // Freeze items that hit their constraints, then redistribute
+            // the excess among unfrozen items.
+            let mut frozen = vec![false; count];
+            for _pass in 0..10 {
+                let total_grow: f32 = line_items
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, i)| !i.collapsed && !frozen[*idx])
+                    .map(|(_, i)| i.flex_grow)
+                    .sum();
+                if total_grow <= 0.0 {
+                    break;
+                }
+                let remaining: f32 = available_main
+                    - line_items.iter().map(|i| i.main_size).sum::<f32>()
+                    - total_gaps;
+                if remaining <= 0.0 {
+                    break;
+                }
+                let mut any_clamped = false;
+                for (idx, item) in line_items.iter_mut().enumerate() {
+                    if item.collapsed || frozen[idx] {
                         continue;
                     }
-                    let grow = free_space * (item.flex_grow / total_grow);
-                    item.main_size = (item.main_size + grow)
-                        .min(item.max_main)
-                        .max(item.min_main);
+                    let grow = remaining * (item.flex_grow / total_grow);
+                    let desired = item.main_size + grow;
+                    let clamped = desired.min(item.max_main).max(item.min_main);
+                    item.main_size = clamped;
+                    if (clamped - desired).abs() > 0.001 {
+                        frozen[idx] = true;
+                        any_clamped = true;
+                    }
+                }
+                if !any_clamped {
+                    break;
                 }
             }
         } else if free_space < 0.0 {
-            let total_shrink: f32 = line_items
-                .iter()
-                .filter(|i| !i.collapsed)
-                .map(|i| i.flex_shrink * i.base_main_size)
-                .sum();
-            if total_shrink > 0.0 {
-                for item in line_items.iter_mut() {
-                    if item.collapsed {
+            // CSS Flexbox §9.7: multi-pass shrink with min/max clamping.
+            let mut frozen = vec![false; count];
+            for _pass in 0..10 {
+                let total_shrink: f32 = line_items
+                    .iter()
+                    .enumerate()
+                    .filter(|(idx, i)| !i.collapsed && !frozen[*idx])
+                    .map(|(_, i)| i.flex_shrink * i.base_main_size)
+                    .sum();
+                if total_shrink <= 0.0 {
+                    break;
+                }
+                let remaining: f32 = available_main
+                    - line_items.iter().map(|i| i.main_size).sum::<f32>()
+                    - total_gaps;
+                if remaining >= 0.0 {
+                    break;
+                }
+                let mut any_clamped = false;
+                for (idx, item) in line_items.iter_mut().enumerate() {
+                    if item.collapsed || frozen[idx] {
                         continue;
                     }
                     let factor = (item.flex_shrink * item.base_main_size) / total_shrink;
-                    item.main_size = (item.main_size + free_space * factor)
-                        .min(item.max_main)
-                        .max(item.min_main);
+                    let desired = item.main_size + remaining * factor;
+                    let clamped = desired.min(item.max_main).max(item.min_main);
+                    item.main_size = clamped;
+                    if (clamped - desired).abs() > 0.001 {
+                        frozen[idx] = true;
+                        any_clamped = true;
+                    }
+                }
+                if !any_clamped {
+                    break;
                 }
             }
         }
@@ -1117,5 +1159,9 @@ fn align_content(ac: AlignContent, free: f32, line_count: usize) -> (f32, f32) {
             (s / 2.0, s)
         }
         AlignContent::Stretch => (0.0, free / line_count as f32),
+        AlignContent::SpaceEvenly => {
+            let gap = free / (line_count + 1) as f32;
+            (gap, gap)
+        }
     }
 }
