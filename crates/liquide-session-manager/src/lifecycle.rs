@@ -106,28 +106,17 @@ impl LifecycleManager {
             // Try graceful shutdown
             let _ = child.kill(); // On Unix we'd send SIGTERM first
 
-            let timeout = registry.get(id)
-                .map(|e| e.descriptor.stop_timeout)
-                .unwrap_or(Duration::from_secs(10));
-
-            let start = Instant::now();
-            loop {
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        if let Some(entry) = registry.get_mut(id) {
-                            entry.last_exit_code = status.code();
-                        }
-                        break;
+            // WARNING: blocks calling thread until child process exits.
+            // If timeout behavior is needed in the future, consider spawning
+            // a helper thread or using platform-specific APIs for timed waits.
+            match child.wait() {
+                Ok(status) => {
+                    if let Some(entry) = registry.get_mut(id) {
+                        entry.last_exit_code = status.code();
                     }
-                    Ok(None) => {
-                        if start.elapsed() > timeout {
-                            let _ = child.kill();
-                            let _ = child.wait();
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(50));
-                    }
-                    Err(_) => break,
+                }
+                Err(_) => {
+                    // Process already gone or OS error
                 }
             }
         }

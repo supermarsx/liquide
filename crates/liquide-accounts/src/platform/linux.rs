@@ -444,7 +444,18 @@ impl PlatformBackend for LinuxBackend {
 
     fn set_avatar(&mut self, uid: u32, path: &str) -> Result<(), AccountError> {
         let username = Self::uid_to_username(uid)?;
-        // Copy the file to AccountsService icons directory.
+        // Validate avatar source path to prevent reading arbitrary files.
+        let src = std::path::Path::new(path);
+        if !src.exists() {
+            return Err(AccountError::PlatformError("avatar source file does not exist".into()));
+        }
+        if !src.is_file() {
+            return Err(AccountError::PlatformError("avatar source must be a regular file".into()));
+        }
+        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "bmp" | "svg") {
+            return Err(AccountError::PlatformError("avatar must be an image file (png, jpg, jpeg, bmp, svg)".into()));
+        }
         let dest = format!("{}/{}", self.avatar_dir, username);
         Self::run_cmd("cp", &[path, &dest])
     }
@@ -452,10 +463,30 @@ impl PlatformBackend for LinuxBackend {
     fn change_password(
         &mut self,
         uid: u32,
-        _old_password: &str,
+        old_password: &str,
         new_password: &str,
     ) -> Result<(), AccountError> {
         let username = Self::uid_to_username(uid)?;
+
+        // Verify old password first using su.
+        let verify = Command::new("su")
+            .args(["-c", "true", &username])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                if let Some(ref mut stdin) = child.stdin {
+                    stdin.write_all(old_password.as_bytes())?;
+                }
+                child.wait_with_output()
+            })
+            .map_err(|e| AccountError::PlatformError(format!("old password verification failed: {e}")))?;
+        if !verify.status.success() {
+            return Err(AccountError::PlatformError("old password is incorrect".into()));
+        }
+
         let passwd_input = format!("{username}:{new_password}");
         let output = Command::new("chpasswd")
             .stdin(std::process::Stdio::piped())

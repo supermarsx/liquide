@@ -47,7 +47,7 @@ mod unix_pty {
         fn posix_openpt(flags: libc_c_int) -> libc_c_int;
         fn grantpt(fd: libc_c_int) -> libc_c_int;
         fn unlockpt(fd: libc_c_int) -> libc_c_int;
-        fn ptsname(fd: libc_c_int) -> *const libc_c_char;
+        fn ptsname_r(fd: libc_c_int, buf: *mut libc_c_char, buflen: usize) -> libc_c_int;
         fn fork() -> libc_c_int;
         fn setsid() -> libc_c_int;
         fn dup2(old: libc_c_int, new: libc_c_int) -> libc_c_int;
@@ -132,11 +132,12 @@ mod unix_pty {
                     return Err("unlockpt failed".into());
                 }
 
-                let slave_name = ptsname(master);
-                if slave_name.is_null() {
+                let mut ptsname_buf = [0i8; 256];
+                if ptsname_r(master, ptsname_buf.as_mut_ptr(), ptsname_buf.len()) != 0 {
                     close(master);
-                    return Err("ptsname failed".into());
+                    return Err("ptsname_r failed".into());
                 }
+                let slave_name = ptsname_buf.as_ptr();
 
                 // Set initial window size on the master.
                 let ws = Winsize {

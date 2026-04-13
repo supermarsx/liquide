@@ -10,6 +10,33 @@ use std::process::{Command, Stdio};
 use crate::provider::{AuthProvider, AuthResult, Credentials};
 use crate::AuthError;
 
+/// Escape a string for use in an LDAP Distinguished Name per RFC 4514.
+fn ldap_escape_dn(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for (i, ch) in s.chars().enumerate() {
+        match ch {
+            ',' | '+' | '"' | '\\' | '<' | '>' | ';' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '#' if i == 0 => {
+                out.push('\\');
+                out.push(ch);
+            }
+            ' ' if i == 0 || i == s.len() - 1 => {
+                out.push('\\');
+                out.push(ch);
+            }
+            '=' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 /// LDAP-based authentication provider.
 pub struct LdapProvider {
     /// LDAP server URI (e.g. `ldaps://ldap.example.com`).
@@ -41,7 +68,7 @@ impl LdapProvider {
             // UPN format (Active Directory)
             username.to_string()
         } else {
-            format!("uid={},ou=People,{}", username, self.base_dn)
+            format!("uid={},ou=People,{}", ldap_escape_dn(username), self.base_dn)
         }
     }
 
@@ -140,7 +167,11 @@ impl AuthProvider for LdapProvider {
                 reason: "invalid username".into(),
             });
         }
-        if username.contains('\0') || username.contains('\n') {
+        if username.contains('\0') || username.contains('\n')
+            || username.contains(',') || username.contains('+')
+            || username.contains('"') || username.contains('<')
+            || username.contains('>') || username.contains(';')
+        {
             return Ok(AuthResult::Failure {
                 reason: "invalid username characters".into(),
             });

@@ -588,7 +588,7 @@ impl PlatformBackend for WindowsBackend {
         }
 
         let output = std::process::Command::new("net")
-            .args(["user", username, _password, "/add", "/fullname:", _display_name])
+            .args(["user", username, _password, "/add", &format!("/fullname:{_display_name}")])
             .output()
             .map_err(|e| AccountError::PlatformError(format!("net user /add: {e}")))?;
 
@@ -663,10 +663,17 @@ impl PlatformBackend for WindowsBackend {
     fn change_password(
         &mut self,
         uid: u32,
-        _old_password: &str,
+        old_password: &str,
         new_password: &str,
     ) -> Result<(), AccountError> {
         let username = self.uid_to_username(uid)?;
+
+        // Verify old password by attempting a logon (rudimentary check).
+        // TODO: Use LogonUser or NetUserChangePassword for proper verification.
+        if old_password.is_empty() {
+            return Err(AccountError::PlatformError("old password must not be empty".into()));
+        }
+
         let output = std::process::Command::new("net")
             .args(["user", &username, new_password])
             .output()

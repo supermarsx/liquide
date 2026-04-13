@@ -9,6 +9,7 @@ pub struct SharedMemory {
     /// On Windows the kernel reference-counts section objects automatically.
     #[allow(dead_code)]
     is_owner: bool,
+    access: ShmAccess,
 }
 
 // Safety: SharedMemory is conceptually an owned memory region.
@@ -109,6 +110,7 @@ impl SharedMemoryOps for SharedMemory {
                 size,
                 handle,
                 is_owner: true,
+                access: ShmAccess::ReadWrite,
             })
         }
     }
@@ -152,6 +154,7 @@ impl SharedMemoryOps for SharedMemory {
                 size,
                 handle,
                 is_owner: false,
+                access,
             })
         }
     }
@@ -166,6 +169,10 @@ impl SharedMemoryOps for SharedMemory {
 
     fn size(&self) -> usize {
         self.size
+    }
+
+    fn access(&self) -> ShmAccess {
+        self.access
     }
 
     fn handle(&self) -> ShmHandle {

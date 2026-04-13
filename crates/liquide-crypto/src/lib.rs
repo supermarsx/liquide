@@ -34,3 +34,9 @@ pub enum CryptoError {
 
 /// Convenience result type for this crate.
 pub type Result<T> = std::result::Result<T, CryptoError>;
+
+impl From<CryptoError> for liquide_common::LiquideError {
+    fn from(e: CryptoError) -> Self {
+        Self::Crypto(e.to_string())
+    }
+}

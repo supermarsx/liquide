@@ -40,3 +40,9 @@ pub enum AuthError {
 
 /// Convenience result alias.
 pub type Result<T> = std::result::Result<T, AuthError>;
+
+impl From<AuthError> for liquide_common::LiquideError {
+    fn from(e: AuthError) -> Self {
+        Self::Auth(e.to_string())
+    }
+}

@@ -26,7 +26,13 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// # Safety
+///
+/// `module` must be a valid HMODULE from `LoadLibraryW`. `name` must be a
+/// valid null-terminated byte string matching an exported symbol.
 unsafe fn load_fn(module: HMODULE, name: &[u8]) -> *mut c_void {
+    // SAFETY: Caller guarantees `module` is valid and `name` is
+    // null-terminated. GetProcAddress returns null on failure.
     unsafe { GetProcAddress(module, name.as_ptr()) }
 }
 
@@ -129,6 +135,11 @@ unsafe impl Sync for IpHlpApi {}
 
 impl IpHlpApi {
     fn load() -> Option<Self> {
+        // SAFETY: LoadLibraryW is called with a valid null-terminated UTF-16
+        // string. We null-check the returned HMODULE. load_fn resolves
+        // GetAdaptersAddresses which we null-check before transmuting.
+        // The function pointer ABI matches the Windows SDK declaration.
+        // On failure we call FreeLibrary to avoid leaking the module handle.
         unsafe {
             let module = LoadLibraryW(wide("iphlpapi.dll").as_ptr());
             if module.is_null() {
@@ -297,6 +308,11 @@ unsafe impl Sync for WlanApi {}
 
 impl WlanApi {
     fn load() -> Option<Self> {
+        // SAFETY: LoadLibraryW is called with a valid null-terminated UTF-16
+        // string. Every symbol is loaded via load_fn and null-checked before
+        // transmuting to a typed function pointer. The ABI of each function
+        // matches the Windows SDK 10.0.22621 declarations. On any failure
+        // FreeLibrary is called to avoid leaking the module handle.
         unsafe {
             let module = LoadLibraryW(wide("wlanapi.dll").as_ptr());
             if module.is_null() {
@@ -332,6 +348,8 @@ impl WlanApi {
     fn open_handle(&self) -> Result<*mut c_void, NetworkError> {
         let mut negotiated: u32 = 0;
         let mut handle: *mut c_void = std::ptr::null_mut();
+        // SAFETY: `wlan_open_handle` was resolved from wlanapi.dll and
+        // validated non-null. The out-params are written by the API call.
         let rc = unsafe {
             (self.wlan_open_handle)(
                 WLAN_API_VERSION_2_0,
@@ -349,12 +367,15 @@ impl WlanApi {
     }
 
     fn close_handle(&self, handle: *mut c_void) {
+        // SAFETY: `handle` was obtained from `open_handle` (WlanOpenHandle).
         unsafe {
             (self.wlan_close_handle)(handle, std::ptr::null());
         }
     }
 
     fn free(&self, ptr: *mut c_void) {
+        // SAFETY: `ptr` was allocated by a Wlan API call and must be freed
+        // exactly once via WlanFreeMemory.
         unsafe {
             (self.wlan_free_memory)(ptr);
         }
@@ -371,11 +392,17 @@ fn wlanapi() -> Option<&'static WlanApi> {
 // Helper functions
 // ---------------------------------------------------------------------------
 
+/// # Safety
+///
+/// `ptr` must point to a valid null-terminated UTF-16 string, or be null
+/// (in which case an empty String is returned).
 unsafe fn wide_ptr_to_string(ptr: *const u16) -> String {
     if ptr.is_null() {
         return String::new();
     }
     let mut len = 0usize;
+    // SAFETY: We scan forward until we hit a null terminator. The caller
+    // guarantees the pointer is to a valid null-terminated UTF-16 buffer.
     unsafe {
         while *ptr.add(len) != 0 {
             len += 1;
@@ -448,6 +475,8 @@ fn enumerate_adapters() -> Vec<NetworkInterface> {
 
     // First call to get required buffer size
     let mut buf_len: u32 = 0;
+    // SAFETY: `get_adapters_addresses` was resolved from iphlpapi.dll and
+    // validated non-null. First call with null buffer retrieves required size.
     let rc = unsafe {
         (api.get_adapters_addresses)(
             AF_UNSPEC,
@@ -465,6 +494,7 @@ fn enumerate_adapters() -> Vec<NetworkInterface> {
     }
 
     let mut buffer: Vec<u8> = vec![0u8; buf_len as usize];
+    // SAFETY: `buffer` is at least `buf_len` bytes; the API writes into it.
     let rc = unsafe {
         (api.get_adapters_addresses)(
             AF_UNSPEC,
@@ -482,7 +512,13 @@ fn enumerate_adapters() -> Vec<NetworkInterface> {
     let mut current = buffer.as_ptr() as *const IpAdapterAddresses;
 
     while !current.is_null() {
+        // SAFETY: `current` is a valid pointer into the buffer filled by
+        // GetAdaptersAddresses above. The linked-list `next` pointers are
+        // maintained by the OS. Our IpAdapterAddresses repr(C) layout
+        // matches the Windows SDK 10.0.22621 definition.
         let adapter = unsafe { &*current };
+        // SAFETY: `friendly_name` and `description` are valid null-terminated
+        // UTF-16 pointers set by GetAdaptersAddresses.
         let friendly = unsafe { wide_ptr_to_string(adapter.friendly_name) };
         let desc = unsafe { wide_ptr_to_string(adapter.description) };
         let mac = format_mac(&adapter.physical_address, adapter.physical_address_length);
@@ -498,6 +534,8 @@ fn enumerate_adapters() -> Vec<NetworkInterface> {
         let mut ipv6 = None;
         let mut unicast = adapter.first_unicast_address;
         while !unicast.is_null() {
+            // SAFETY: `unicast` walks the linked list allocated by
+            // GetAdaptersAddresses. Each node is valid while the buffer lives.
             let ua = unsafe { &*unicast };
             let sa = ua.address.lp_sockaddr;
             if !sa.is_null() {
@@ -505,6 +543,8 @@ fn enumerate_adapters() -> Vec<NetworkInterface> {
                 if family == 2 && ipv4.is_none() {
                     // AF_INET
                     let sin = sa as *const SockaddrIn;
+                    // SAFETY: `family == 2` guarantees AF_INET, so `sa`
+                    // actually points to a SockaddrIn. Layout is per WinSock.
                     let octets = unsafe { (*sin).sin_addr };
                     ipv4 = Some(format!(
                         "{}.{}.{}.{}",
@@ -513,6 +553,8 @@ fn enumerate_adapters() -> Vec<NetworkInterface> {
                 } else if family == 23 && ipv6.is_none() {
                     // AF_INET6
                     let sin6 = sa as *const SockaddrIn6;
+                    // SAFETY: `family == 23` guarantees AF_INET6, so `sa`
+                    // actually points to a SockaddrIn6.
                     let addr = unsafe { (*sin6).sin6_addr };
                     let segments: Vec<String> = (0..8)
                         .map(|i| {

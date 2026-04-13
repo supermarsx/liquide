@@ -2,6 +2,18 @@
 
 use crate::config::ManagementApiConfig;
 
+/// Constant-time byte comparison to prevent timing side-channel attacks.
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut acc = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        acc |= x ^ y;
+    }
+    acc == 0
+}
+
 /// Known management API endpoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiEndpoint {
@@ -90,7 +102,7 @@ impl ManagementApi {
         if self.config.api_key.is_empty() {
             return false;
         }
-        key == self.config.api_key
+        constant_time_eq(key.as_bytes(), self.config.api_key.as_bytes())
     }
 
     /// Handle a management API request.

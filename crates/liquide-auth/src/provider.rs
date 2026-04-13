@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Credentials supplied by a user during authentication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum Credentials {
     /// Username and password.
     Password { username: String, password: String },
@@ -16,6 +16,31 @@ pub enum Credentials {
         primary: Box<Credentials>,
         code: String,
     },
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Password { username, .. } => f
+                .debug_struct("Password")
+                .field("username", username)
+                .field("password", &"[REDACTED]")
+                .finish(),
+            Self::Certificate { der } => f
+                .debug_struct("Certificate")
+                .field("der", &format_args!("[REDACTED {} bytes]", der.len()))
+                .finish(),
+            Self::OidcToken { .. } => f
+                .debug_struct("OidcToken")
+                .field("token", &"[REDACTED]")
+                .finish(),
+            Self::Mfa { primary, .. } => f
+                .debug_struct("Mfa")
+                .field("primary", primary)
+                .field("code", &"[REDACTED]")
+                .finish(),
+        }
+    }
 }
 
 /// The outcome of an authentication attempt.

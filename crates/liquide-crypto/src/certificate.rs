@@ -37,6 +37,27 @@ pub struct FsCertificateStore {
     pub root: std::path::PathBuf,
 }
 
+/// Validate a subject name to prevent path traversal attacks.
+fn validate_subject(subject: &str) -> super::Result<()> {
+    if subject.is_empty() {
+        return Err(super::CryptoError::Certificate("empty subject".into()));
+    }
+    if subject.len() > 255 {
+        return Err(super::CryptoError::Certificate("subject too long".into()));
+    }
+    if subject.contains('/')
+        || subject.contains('\\')
+        || subject.contains("..")
+        || subject.contains('\0')
+        || subject.chars().any(|c| c.is_control())
+    {
+        return Err(super::CryptoError::Certificate(
+            "subject contains invalid characters".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl FsCertificateStore {
     /// Create a new store backed by the given directory.
     #[must_use]
@@ -49,6 +70,7 @@ impl FsCertificateStore {
 
 impl CertificateStore for FsCertificateStore {
     fn load(&self, subject: &str) -> super::Result<CertificateBundle> {
+        validate_subject(subject)?;
         let cert_path = self.root.join(format!("{subject}.crt"));
         let key_path = self.root.join(format!("{subject}.key"));
 
@@ -86,6 +108,7 @@ impl CertificateStore for FsCertificateStore {
     }
 
     fn store(&self, subject: &str, bundle: &CertificateBundle) -> super::Result<()> {
+        validate_subject(subject)?;
         let cert_path = self.root.join(format!("{subject}.crt"));
         let key_path = self.root.join(format!("{subject}.key"));
 
@@ -117,6 +140,7 @@ impl CertificateStore for FsCertificateStore {
     }
 
     fn is_valid(&self, subject: &str) -> super::Result<bool> {
+        validate_subject(subject)?;
         let cert_path = self.root.join(format!("{subject}.crt"));
         Ok(cert_path.exists())
     }

@@ -12,7 +12,7 @@
 #![allow(clippy::upper_case_acronyms)]
 #![allow(dead_code)]
 
-use std::ffi::c_void;
+use std::ffi::{c_void, CString};
 use std::os::raw::{c_char, c_int, c_uint};
 
 // ---------------------------------------------------------------------------
@@ -490,11 +490,12 @@ pub unsafe fn msg_send_id_cstr(receiver: id, sel: SEL, arg: *const c_char) -> id
 pub unsafe fn nsstring(s: &str) -> id {
     let cls = unsafe { class(b"NSString\0") };
     let alloc = unsafe { msg_send_id(cls, sel(b"alloc\0")) };
+    let c_str = CString::new(s).expect("interior NUL in string passed to nsstring()");
     unsafe {
         msg_send_id_cstr(
             alloc,
             sel(b"initWithUTF8String:\0"),
-            s.as_ptr() as *const c_char,
+            c_str.as_ptr(),
         )
     }
 }

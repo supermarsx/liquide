@@ -7,6 +7,7 @@ pub struct SharedMemory {
     size: usize,
     fd: i32,
     is_owner: bool,
+    access: ShmAccess,
 }
 
 // Safety: SharedMemory is conceptually an owned memory region.
@@ -64,6 +65,7 @@ impl SharedMemoryOps for SharedMemory {
                 size,
                 fd,
                 is_owner: true,
+                access: ShmAccess::ReadWrite,
             })
         }
     }
@@ -111,6 +113,7 @@ impl SharedMemoryOps for SharedMemory {
                 size,
                 fd,
                 is_owner: false,
+                access,
             })
         }
     }
@@ -125,6 +128,10 @@ impl SharedMemoryOps for SharedMemory {
 
     fn size(&self) -> usize {
         self.size
+    }
+
+    fn access(&self) -> ShmAccess {
+        self.access
     }
 
     fn handle(&self) -> ShmHandle {

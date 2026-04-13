@@ -112,14 +112,12 @@ impl AuthProvider for OidcProvider {
             .cloned()
             .unwrap_or_else(|| user_id.clone());
 
-        // NOTE: In production, we should also verify the JWT signature against
-        // the issuer's JWKS endpoint. For now, we validate structure + claims only.
-        // Full signature verification requires fetching keys from {issuer}/.well-known/jwks.json
-        tracing::warn!("OIDC signature verification not yet implemented — validating claims only");
+        // TODO: implement JWKS fetching from {issuer}/.well-known/jwks.json
+        // and RS256/ES256 signature verification before accepting tokens.
+        tracing::error!("OIDC signature verification not yet implemented — refusing unverified token");
 
-        Ok(AuthResult::Success {
-            user_id,
-            display_name,
+        Ok(AuthResult::Failure {
+            reason: "OIDC JWT signature verification not implemented — refusing unverified token".into(),
         })
     }
 
@@ -346,14 +344,10 @@ mod tests {
         let creds = Credentials::OidcToken { token };
         let result = provider.authenticate(&creds).await.unwrap();
         match result {
-            AuthResult::Success {
-                user_id,
-                display_name,
-            } => {
-                assert_eq!(user_id, "user1");
-                assert_eq!(display_name, "Alice");
+            AuthResult::Failure { reason } => {
+                assert!(reason.contains("signature verification not implemented"));
             }
-            _ => panic!("expected success"),
+            _ => panic!("expected failure due to unimplemented signature verification"),
         }
     }
 

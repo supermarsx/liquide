@@ -41,6 +41,9 @@ pub trait SharedMemoryOps {
     /// Size of the mapping in bytes
     fn size(&self) -> usize;
 
+    /// Get the access mode of this mapping.
+    fn access(&self) -> ShmAccess;
+
     /// Get the handle (can be shared with other processes)
     fn handle(&self) -> ShmHandle;
 
@@ -61,6 +64,9 @@ pub trait SharedMemoryOps {
 
     /// Write bytes to the shared memory
     fn write(&mut self, offset: usize, data: &[u8]) -> Result<(), SharedMemoryError> {
+        if self.access() == ShmAccess::ReadOnly {
+            return Err(SharedMemoryError::PermissionDenied);
+        }
         if offset + data.len() > self.size() {
             return Err(SharedMemoryError::OutOfBounds {
                 offset,
@@ -81,6 +87,10 @@ pub trait SharedMemoryOps {
 
     /// Get a mutable slice view
     fn as_mut_slice(&mut self) -> &mut [u8] {
+        assert!(
+            self.access() == ShmAccess::ReadWrite,
+            "as_mut_slice() called on a ReadOnly shared memory mapping"
+        );
         unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), self.size()) }
     }
 }

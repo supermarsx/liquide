@@ -7,6 +7,7 @@ use liquide_auth::pam::PamProvider;
 
 use crate::{GatewayError, Result};
 use crate::config::ManagementApiConfig;
+use crate::management::constant_time_eq;
 
 /// Supported authentication methods.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,28 +102,24 @@ impl AuthHandler {
                 self.authenticate_username_password(credential)
             }
             GatewayAuthMethod::Oidc => {
-                // Stub: accept any non-empty credential as an OIDC assertion.
                 if credential.is_empty() {
                     Ok(AuthResult::Denied {
                         reason: "empty OIDC assertion".to_string(),
                     })
                 } else {
-                    Ok(AuthResult::Authenticated {
-                        user_id: format!("oidc-{}", &credential[..credential.len().min(8)]),
-                        roles: vec!["user".to_string()],
+                    Ok(AuthResult::Denied {
+                        reason: "OIDC authentication backend not implemented".to_string(),
                     })
                 }
             }
             GatewayAuthMethod::ClientCertificate => {
-                // Stub: accept any non-empty certificate fingerprint.
                 if credential.is_empty() {
                     Ok(AuthResult::Denied {
                         reason: "no client certificate presented".to_string(),
                     })
                 } else {
-                    Ok(AuthResult::Authenticated {
-                        user_id: format!("cert-{}", &credential[..credential.len().min(8)]),
-                        roles: vec!["user".to_string()],
+                    Ok(AuthResult::Denied {
+                        reason: "client certificate authentication backend not implemented".to_string(),
                     })
                 }
             }
@@ -156,12 +153,9 @@ impl AuthHandler {
         }
 
         // The PAM provider's `authenticate()` is async and currently a
-        // `todo!()` stub. Until the real PAM backend is implemented we
-        // fall back to the simple accept-if-non-empty logic so the
-        // gateway remains functional for development and testing.
-        Ok(AuthResult::Authenticated {
-            user_id: user.to_string(),
-            roles: vec!["user".to_string()],
+        // `todo!()` stub. Deny until the real PAM backend is implemented.
+        Ok(AuthResult::Denied {
+            reason: "PAM authentication backend not yet implemented".to_string(),
         })
     }
 
@@ -172,10 +166,8 @@ impl AuthHandler {
                 reason: "empty token".to_string(),
             });
         }
-        // Stub: accept any non-empty token.
-        Ok(AuthResult::Authenticated {
-            user_id: format!("token-{}", &token[..token.len().min(8)]),
-            roles: vec!["user".to_string()],
+        Ok(AuthResult::Denied {
+            reason: "token authentication backend not implemented".to_string(),
         })
     }
 
@@ -186,7 +178,7 @@ impl AuthHandler {
                 reason: "no API key configured".to_string(),
             });
         }
-        if key == self.management_config.api_key {
+        if constant_time_eq(key.as_bytes(), self.management_config.api_key.as_bytes()) {
             Ok(AuthResult::Authenticated {
                 user_id: "admin".to_string(),
                 roles: vec!["admin".to_string()],

@@ -8,6 +8,7 @@ pub mod dxgi;
 pub mod ffi;
 pub mod input;
 
+use std::cell::UnsafeCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
 use std::ptr;
@@ -65,7 +66,9 @@ struct WindowData {
     /// Pointer back to the platform's event queue.
     /// The queue lives inside the `Win32Platform`, which owns all windows
     /// and outlives them.
-    event_queue: *mut VecDeque<PlatformEvent>,
+    /// Wrapped in `UnsafeCell` to avoid creating `&mut` references in the
+    /// reentrant wndproc (which would alias with other borrows).
+    event_queue: *const UnsafeCell<VecDeque<PlatformEvent>>,
     /// Current hardware cursor handle. When non-null, the wndproc uses
     /// this for `WM_SETCURSOR` so the OS renders the cursor shape.
     cursor: std::sync::atomic::AtomicIsize,
@@ -100,17 +103,24 @@ unsafe extern "system" fn wndproc(
     // heap-allocated `WindowData` that is valid until `destroy_window`.
     let wd = unsafe { &*(user_ptr as *const WindowData) };
     let handle = wd.handle;
-    let queue = unsafe { &mut *wd.event_queue };
+
+    // Use a macro to push events via raw pointer operations to avoid
+    // creating a `&mut` reference, which would be UB due to reentrancy.
+    macro_rules! push_event {
+        ($event:expr) => {
+            unsafe { (*(*wd.event_queue).get()).push_back($event) }
+        };
+    }
 
     match msg {
         ffi::WM_CLOSE => {
-            queue.push_back(PlatformEvent::WindowCloseRequested { handle });
+            push_event!(PlatformEvent::WindowCloseRequested { handle });
             // Return 0 to prevent DefWindowProc from calling DestroyWindow.
             return 0;
         }
 
         ffi::WM_DESTROY => {
-            queue.push_back(PlatformEvent::WindowDestroyed { handle });
+            push_event!(PlatformEvent::WindowDestroyed { handle });
         }
 
         ffi::WM_SIZE => {
@@ -118,18 +128,18 @@ unsafe extern "system" fn wndproc(
             let height = ffi::hiword(lp as usize) as u32;
             match wp {
                 ffi::SIZE_MINIMIZED => {
-                    queue.push_back(PlatformEvent::WindowMinimized { handle });
+                    push_event!(PlatformEvent::WindowMinimized { handle });
                 }
                 ffi::SIZE_MAXIMIZED => {
-                    queue.push_back(PlatformEvent::WindowMaximized { handle });
-                    queue.push_back(PlatformEvent::WindowResized {
+                    push_event!(PlatformEvent::WindowMaximized { handle });
+                    push_event!(PlatformEvent::WindowResized {
                         handle,
                         width,
                         height,
                     });
                 }
                 _ => {
-                    queue.push_back(PlatformEvent::WindowResized {
+                    push_event!(PlatformEvent::WindowResized {
                         handle,
                         width,
                         height,
@@ -141,7 +151,7 @@ unsafe extern "system" fn wndproc(
         ffi::WM_MOVE => {
             let x = ffi::get_x_lparam(lp);
             let y = ffi::get_y_lparam(lp);
-            queue.push_back(PlatformEvent::WindowMoved { handle, x, y });
+            push_event!(PlatformEvent::WindowMoved { handle, x, y });
         }
 
         ffi::WM_PAINT => {
@@ -151,7 +161,7 @@ unsafe extern "system" fn wndproc(
                 ffi::BeginPaint(hwnd, &mut ps);
                 ffi::EndPaint(hwnd, &ps);
             }
-            queue.push_back(PlatformEvent::WindowRedraw { handle });
+            push_event!(PlatformEvent::WindowRedraw { handle });
             return 0;
         }
 
@@ -174,11 +184,11 @@ unsafe extern "system" fn wndproc(
         }
 
         ffi::WM_SETFOCUS => {
-            queue.push_back(PlatformEvent::FocusGained { handle });
+            push_event!(PlatformEvent::FocusGained { handle });
         }
 
         ffi::WM_KILLFOCUS => {
-            queue.push_back(PlatformEvent::FocusLost { handle });
+            push_event!(PlatformEvent::FocusLost { handle });
         }
 
         ffi::WM_KEYDOWN | ffi::WM_SYSKEYDOWN => {
@@ -193,7 +203,7 @@ unsafe extern "system" fn wndproc(
                 };
                 let mods = input::modifiers_from_state();
                 let event = KeyEvent::new(key, state, mods, scancode, timestamp_us());
-                queue.push_back(PlatformEvent::KeyInput { handle, event });
+                push_event!(PlatformEvent::KeyInput { handle, event });
             }
             // Let DefWindowProc handle Alt+F4 etc. for SYSKEYDOWN.
             if msg == ffi::WM_SYSKEYDOWN {
@@ -208,7 +218,7 @@ unsafe extern "system" fn wndproc(
             if let Some(key) = input::vk_to_keycode(vk) {
                 let mods = input::modifiers_from_state();
                 let event = KeyEvent::new(key, KeyState::Released, mods, scancode, timestamp_us());
-                queue.push_back(PlatformEvent::KeyInput { handle, event });
+                push_event!(PlatformEvent::KeyInput { handle, event });
             }
             if msg == ffi::WM_SYSKEYUP {
                 return unsafe { ffi::DefWindowProcW(hwnd, msg, wp, lp) };
@@ -219,7 +229,7 @@ unsafe extern "system" fn wndproc(
         ffi::WM_MOUSEMOVE => {
             let x = ffi::get_x_lparam(lp) as f32;
             let y = ffi::get_y_lparam(lp) as f32;
-            queue.push_back(PlatformEvent::MouseInput {
+            push_event!(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Move { x, y },
             });
@@ -229,7 +239,7 @@ unsafe extern "system" fn wndproc(
         ffi::WM_LBUTTONDOWN => {
             let x = ffi::get_x_lparam(lp) as f32;
             let y = ffi::get_y_lparam(lp) as f32;
-            queue.push_back(PlatformEvent::MouseInput {
+            push_event!(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Button {
                     button: MouseButton::Left,
@@ -247,7 +257,7 @@ unsafe extern "system" fn wndproc(
         ffi::WM_LBUTTONUP => {
             let x = ffi::get_x_lparam(lp) as f32;
             let y = ffi::get_y_lparam(lp) as f32;
-            queue.push_back(PlatformEvent::MouseInput {
+            push_event!(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Button {
                     button: MouseButton::Left,
@@ -265,7 +275,7 @@ unsafe extern "system" fn wndproc(
         ffi::WM_RBUTTONDOWN => {
             let x = ffi::get_x_lparam(lp) as f32;
             let y = ffi::get_y_lparam(lp) as f32;
-            queue.push_back(PlatformEvent::MouseInput {
+            push_event!(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Button {
                     button: MouseButton::Right,
@@ -280,7 +290,7 @@ unsafe extern "system" fn wndproc(
         ffi::WM_RBUTTONUP => {
             let x = ffi::get_x_lparam(lp) as f32;
             let y = ffi::get_y_lparam(lp) as f32;
-            queue.push_back(PlatformEvent::MouseInput {
+            push_event!(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Button {
                     button: MouseButton::Right,
@@ -295,7 +305,7 @@ unsafe extern "system" fn wndproc(
         ffi::WM_MBUTTONDOWN => {
             let x = ffi::get_x_lparam(lp) as f32;
             let y = ffi::get_y_lparam(lp) as f32;
-            queue.push_back(PlatformEvent::MouseInput {
+            push_event!(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Button {
                     button: MouseButton::Middle,
@@ -310,7 +320,7 @@ unsafe extern "system" fn wndproc(
         ffi::WM_MBUTTONUP => {
             let x = ffi::get_x_lparam(lp) as f32;
             let y = ffi::get_y_lparam(lp) as f32;
-            queue.push_back(PlatformEvent::MouseInput {
+            push_event!(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Button {
                     button: MouseButton::Middle,
@@ -332,7 +342,7 @@ unsafe extern "system" fn wndproc(
             unsafe {
                 ffi::ScreenToClient(hwnd, &mut pt);
             }
-            queue.push_back(PlatformEvent::MouseInput {
+            push_event!(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Scroll {
                     axis: ScrollAxis::Vertical,
@@ -353,7 +363,7 @@ unsafe extern "system" fn wndproc(
             unsafe {
                 ffi::ScreenToClient(hwnd, &mut pt);
             }
-            queue.push_back(PlatformEvent::MouseInput {
+            push_event!(PlatformEvent::MouseInput {
                 handle,
                 event: MouseEvent::Scroll {
                     axis: ScrollAxis::Horizontal,
@@ -368,7 +378,7 @@ unsafe extern "system" fn wndproc(
         ffi::WM_DPICHANGED => {
             let new_dpi = ffi::loword(wp) as f32;
             let dpi_scale = new_dpi / 96.0;
-            queue.push_back(PlatformEvent::DpiChanged { handle, dpi_scale });
+            push_event!(PlatformEvent::DpiChanged { handle, dpi_scale });
             // Move / resize window to the suggested rectangle.
             if lp != 0 {
                 let suggested = unsafe { &*(lp as *const ffi::RECT) };
@@ -520,7 +530,7 @@ struct Win32WindowHost {
     /// Class name (wide) kept alive for `CreateWindowExW`.
     class_name: Vec<u16>,
     /// Shared event queue (raw pointer because `WindowData` needs it).
-    event_queue: *mut VecDeque<PlatformEvent>,
+    event_queue: *const UnsafeCell<VecDeque<PlatformEvent>>,
 }
 
 // Safety: Win32WindowHost is !Send by default due to raw pointers. However,
@@ -657,7 +667,7 @@ impl NativeWindowHost for Win32WindowHost {
         // Safety: the event_queue pointer is valid for the lifetime of
         // the platform.
         unsafe {
-            (*self.event_queue).push_back(PlatformEvent::WindowCreated {
+            (*(*self.event_queue).get()).push_back(PlatformEvent::WindowCreated {
                 handle,
                 width,
                 height,
@@ -966,8 +976,9 @@ pub struct Win32Platform {
     keymap: Win32Keymap,
 
     /// Shared event queue. Kept in a `Box` so that its heap address is
-    /// stable for `WindowData` pointers.
-    event_queue: Box<VecDeque<PlatformEvent>>,
+    /// stable for `WindowData` pointers. Wrapped in `UnsafeCell` to
+    /// allow the wndproc to push events without creating `&mut` references.
+    event_queue: Box<UnsafeCell<VecDeque<PlatformEvent>>>,
 
     /// ATOM from `RegisterClassExW` (needed for unregistration).
     class_atom: ffi::ATOM,
@@ -1072,12 +1083,13 @@ impl Win32Platform {
 
         // Allocate a stable event queue on the heap.  The Box provides a
         // stable heap address that survives moves of the containing struct.
-        let mut event_queue = Box::new(VecDeque::<PlatformEvent>::with_capacity(256));
+        // Wrapped in UnsafeCell so the wndproc can push events without
+        // creating &mut references that would alias.
+        let event_queue = Box::new(UnsafeCell::new(VecDeque::<PlatformEvent>::with_capacity(256)));
 
-        // Safety: obtain a raw mutable pointer with write provenance from the
-        // mutable reference.  The temporary `&mut` borrow ends at the
-        // semicolon so it does not conflict with later accesses.
-        let eq_ptr: *mut VecDeque<PlatformEvent> = &mut *event_queue;
+        // Safety: obtain a raw pointer to the UnsafeCell. The temporary borrow
+        // ends at the semicolon so it does not conflict with later accesses.
+        let eq_ptr: *const UnsafeCell<VecDeque<PlatformEvent>> = &*event_queue;
 
         let window_host = Win32WindowHost {
             windows: HashMap::new(),
@@ -1113,7 +1125,7 @@ impl Win32Platform {
         // queue. The MSG struct is valid.
         while unsafe { ffi::PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, ffi::PM_REMOVE) != 0 } {
             if msg.message == ffi::WM_QUIT {
-                self.event_queue.push_back(PlatformEvent::Quit);
+                unsafe { (*self.event_queue.get()).push_back(PlatformEvent::Quit) };
                 return;
             }
             // Safety: TranslateMessage and DispatchMessageW are standard
@@ -1198,13 +1210,18 @@ impl PlatformBackend for Win32Platform {
 
     fn poll_event(&mut self) -> Option<PlatformEvent> {
         // First drain any already-queued events.
-        if let Some(ev) = self.event_queue.pop_front() {
+        // Safety: we have &mut self, so no other Rust code can access
+        // the event_queue concurrently. The wndproc only runs during
+        // pump_messages below (same thread).
+        let queue = unsafe { &mut *self.event_queue.get() };
+        if let Some(ev) = queue.pop_front() {
             return Some(ev);
         }
         // Pump the Win32 message queue.
         self.pump_messages();
         // Return the next event, if any.
-        self.event_queue.pop_front()
+        let queue = unsafe { &mut *self.event_queue.get() };
+        queue.pop_front()
     }
 
     fn wait_event(&mut self) -> PlatformEvent {
@@ -1215,7 +1232,8 @@ impl PlatformBackend for Win32Platform {
         // backend's looping behaviour.
         loop {
             // Drain any already-queued events first.
-            if let Some(ev) = self.event_queue.pop_front() {
+            let queue = unsafe { &mut *self.event_queue.get() };
+            if let Some(ev) = queue.pop_front() {
                 return ev;
             }
 

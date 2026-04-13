@@ -285,42 +285,33 @@ pub enum BluetoothEvent {
 // ── Errors ─────────────────────────────────────────────────────────────
 
 /// Errors from the Bluetooth subsystem.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum BtError {
     /// No Bluetooth adapter was found on this system.
+    #[error("no bluetooth adapter found")]
     AdapterNotFound,
     /// The specified device address was not found.
+    #[error("device not found")]
     DeviceNotFound,
     /// The device is not paired (required for this operation).
+    #[error("device not paired")]
     NotPaired,
     /// The device is already connected.
+    #[error("already connected")]
     AlreadyConnected,
     /// Connection attempt failed.
+    #[error("connection failed: {0}")]
     ConnectionFailed(String),
     /// Pairing authentication failed (wrong PIN, rejected, etc.).
+    #[error("authentication failed")]
     AuthenticationFailed,
     /// The operation timed out.
+    #[error("operation timed out")]
     Timeout,
     /// A platform-specific error.
+    #[error("{0}")]
     PlatformError(String),
 }
-
-impl std::fmt::Display for BtError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::AdapterNotFound => write!(f, "no bluetooth adapter found"),
-            Self::DeviceNotFound => write!(f, "device not found"),
-            Self::NotPaired => write!(f, "device not paired"),
-            Self::AlreadyConnected => write!(f, "already connected"),
-            Self::ConnectionFailed(msg) => write!(f, "connection failed: {msg}"),
-            Self::AuthenticationFailed => write!(f, "authentication failed"),
-            Self::Timeout => write!(f, "operation timed out"),
-            Self::PlatformError(msg) => write!(f, "{msg}"),
-        }
-    }
-}
-
-impl std::error::Error for BtError {}
 
 // ── Backend trait ──────────────────────────────────────────────────────
 

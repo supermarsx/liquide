@@ -2,6 +2,8 @@
 
 use crate::AuthError;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Supported MFA methods.
@@ -16,20 +18,110 @@ pub enum MfaMethod {
 }
 
 /// An MFA challenge issued to the user.
+///
+/// The `challenge_id` is an opaque identifier — the actual secret is stored
+/// server-side in the [`ChallengeStore`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MfaChallenge {
     /// Which MFA method is being used.
     pub method: MfaMethod,
-    /// An opaque challenge identifier.
+    /// An opaque challenge identifier (NOT the secret).
     pub challenge_id: String,
 }
 
-/// Verify an MFA response against a challenge.
+/// Server-side store mapping opaque challenge IDs to TOTP secrets.
+pub struct ChallengeStore {
+    challenges: Mutex<HashMap<String, String>>,
+}
+
+impl ChallengeStore {
+    /// Create an empty challenge store.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            challenges: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Issue a challenge for a TOTP secret. Returns an opaque challenge ID.
+    pub fn issue(&self, method: MfaMethod, secret: &str) -> MfaChallenge {
+        let challenge_id = format!(
+            "{:016x}{:016x}",
+            rand_u64(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64
+        );
+        self.challenges
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(challenge_id.clone(), secret.to_string());
+        MfaChallenge {
+            method,
+            challenge_id,
+        }
+    }
+
+    /// Look up the secret for a challenge ID, removing it from the store.
+    pub fn take_secret(&self, challenge_id: &str) -> Option<String> {
+        self.challenges
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(challenge_id)
+    }
+}
+
+/// Simple non-cryptographic random u64 for challenge IDs (seeded from time).
+fn rand_u64() -> u64 {
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    // Mix nanos to get some entropy; not cryptographically secure but
+    // sufficient for opaque identifiers.
+    let mut x = t.as_nanos() as u64;
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xff51afd7ed558ccd);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xc4ceb9fe1a85ec53);
+    x ^= x >> 33;
+    x
+}
+
+/// Verify an MFA response against a challenge using the server-side store.
 ///
 /// # Errors
 ///
 /// Returns [`AuthError::MfaFailed`](super::AuthError::MfaFailed) if the code
 /// is incorrect or expired.
+pub fn verify_with_store(
+    store: &ChallengeStore,
+    challenge: &MfaChallenge,
+    code: &str,
+) -> super::Result<bool> {
+    match challenge.method {
+        MfaMethod::Totp => {
+            let secret = store.take_secret(&challenge.challenge_id).ok_or(
+                AuthError::MfaFailed
+            )?;
+            verify_totp(&secret, code)
+        }
+        MfaMethod::Fido2 => {
+            tracing::warn!("FIDO2 verification not yet implemented");
+            Err(AuthError::Internal("FIDO2 not implemented".into()))
+        }
+        MfaMethod::Push => {
+            tracing::warn!("Push verification not yet implemented");
+            Err(AuthError::Internal("Push MFA not implemented".into()))
+        }
+    }
+}
+
+/// Verify an MFA response against a challenge.
+///
+/// DEPRECATED: Use [`verify_with_store`] to avoid leaking TOTP secrets.
+/// This function interprets `challenge_id` as the raw TOTP secret for
+/// backwards compatibility.
 pub fn verify(challenge: &MfaChallenge, code: &str) -> super::Result<bool> {
     match challenge.method {
         MfaMethod::Totp => verify_totp(&challenge.challenge_id, code),

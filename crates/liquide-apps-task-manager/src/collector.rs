@@ -621,15 +621,23 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
         ) -> i32;
     }
 
+    // SAFETY: CreateToolhelp32Snapshot is a Win32 API that returns an owned
+    // handle. TH32CS_SNAPPROCESS is a valid flag. Returns INVALID_HANDLE_VALUE
+    // on failure, which we check below.
     let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snap == INVALID_HANDLE_VALUE {
         return Vec::new();
     }
 
     let mut procs = Vec::new();
+    // SAFETY: ProcessEntry32W is a repr(C) POD struct. Zero-init is valid
+    // for this struct per the Win32 API documentation. We set dw_size to
+    // the struct size as required by Process32FirstW.
     let mut pe: ProcessEntry32W = unsafe { mem::zeroed() };
     pe.dw_size = mem::size_of::<ProcessEntry32W>() as u32;
 
+    // SAFETY: `snap` is a valid snapshot handle. `pe` has dw_size set
+    // correctly. Process32FirstW writes into `pe` on success (returns != 0).
     if unsafe { Process32FirstW(snap, &mut pe) } != 0 {
         loop {
             let name_end = pe
@@ -652,10 +660,14 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
             let mut cpu_kernel_ms: u64 = 0;
             let mut page_faults: u32 = 0;
 
+            // SAFETY: OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION is a
+            // safe Win32 call. Returns null on failure (e.g. access denied).
             let proc_handle =
                 unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
             if !proc_handle.is_null() {
                 // Memory info
+                // SAFETY: `pmc` is zero-initialized with `cb` set to the
+                // correct struct size. `proc_handle` is a valid process handle.
                 let mut pmc: ProcessMemoryCountersEx = unsafe { mem::zeroed() };
                 pmc.cb = mem::size_of::<ProcessMemoryCountersEx>() as u32;
                 if unsafe { K32GetProcessMemoryInfo(proc_handle, &mut pmc, pmc.cb) } != 0 {
@@ -666,6 +678,9 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
                 }
 
                 // CPU times
+                // SAFETY: All Filetime structs are zero-initialized PODs.
+                // `proc_handle` is a valid process handle. GetProcessTimes
+                // writes creation/exit/kernel/user times as FILETIME structs.
                 let mut creation: Filetime = unsafe { mem::zeroed() };
                 let mut exit: Filetime = unsafe { mem::zeroed() };
                 let mut kernel: Filetime = unsafe { mem::zeroed() };
@@ -689,6 +704,7 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
                     cpu_kernel_ms = kernel_100ns / 10_000;
                 }
 
+                // SAFETY: `proc_handle` is non-null and valid.
                 unsafe {
                     CloseHandle(proc_handle);
                 }
@@ -729,14 +745,18 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
                 ..ProcessInfo::default()
             });
 
+            // SAFETY: Zero-init is valid for ProcessEntry32W. We set dw_size
+            // as required by Process32NextW.
             pe = unsafe { mem::zeroed() };
             pe.dw_size = mem::size_of::<ProcessEntry32W>() as u32;
+            // SAFETY: `snap` is still a valid snapshot handle.
             if unsafe { Process32NextW(snap, &mut pe) } == 0 {
                 break;
             }
         }
     }
 
+    // SAFETY: `snap` is a valid handle from CreateToolhelp32Snapshot.
     unsafe {
         CloseHandle(snap);
     }
@@ -797,11 +817,15 @@ fn collect_system_metrics_native() -> SystemMetrics {
     let mut metrics = SystemMetrics::default();
 
     // CPU count
+    // SAFETY: SystemInfo is a repr(C) POD struct; zero-init is valid.
+    // GetSystemInfo is a safe Win32 call that fills the output struct.
     let mut sys_info: SystemInfo = unsafe { mem::zeroed() };
     unsafe { GetSystemInfo(&mut sys_info) };
     metrics.cpu_count = sys_info.number_of_processors;
 
     // CPU usage from GetSystemTimes
+    // SAFETY: Filetime is a repr(C) POD struct; zero-init is valid.
+    // GetSystemTimes writes idle/kernel/user times as FILETIME structs.
     let mut idle_ft: Filetime = unsafe { mem::zeroed() };
     let mut kernel_ft: Filetime = unsafe { mem::zeroed() };
     let mut user_ft: Filetime = unsafe { mem::zeroed() };
@@ -821,6 +845,8 @@ fn collect_system_metrics_native() -> SystemMetrics {
     }
 
     // Memory
+    // SAFETY: MemoryStatusEx is a repr(C) POD struct with dw_length set
+    // to the correct struct size. GlobalMemoryStatusEx fills the struct.
     let mut mem_status: MemoryStatusEx = unsafe { mem::zeroed() };
     mem_status.dw_length = mem::size_of::<MemoryStatusEx>() as u32;
     if unsafe { GlobalMemoryStatusEx(&mut mem_status) } != 0 {
@@ -831,6 +857,8 @@ fn collect_system_metrics_native() -> SystemMetrics {
     }
 
     // Uptime
+    // SAFETY: GetTickCount64 is a stateless Win32 function with no
+    // preconditions; it returns milliseconds since system boot.
     metrics.uptime_seconds = unsafe { GetTickCount64() } / 1000;
 
     metrics
