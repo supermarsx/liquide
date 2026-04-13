@@ -31,8 +31,15 @@ impl PartialOrd for PrioritizedTask {
 
 impl Ord for PrioritizedTask {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering for max-heap (higher priority = smaller value)
-        other.task.priority.cmp(&self.task.priority)
+        // Tasks past their deadline get highest priority.
+        let self_overdue = self.task.is_overdue();
+        let other_overdue = other.task.is_overdue();
+        other_overdue
+            .cmp(&self_overdue)
+            .then_with(|| {
+                // Reverse ordering for max-heap (higher priority = smaller value)
+                other.task.priority.cmp(&self.task.priority)
+            })
             .then_with(|| self.task.created_at.cmp(&other.task.created_at))
     }
 }
@@ -214,6 +221,11 @@ impl RenderThread {
             Self::execute_task(prioritized.task, &output_tx, &task_counter);
         }
         
+        // Drain any remaining tasks from the channel
+        while let Ok(task) = task_rx.try_recv() {
+            Self::execute_task(task, &output_tx, &task_counter);
+        }
+        
         info!("Render thread '{}' stopped", config.name);
     }
     
@@ -276,10 +288,24 @@ impl RenderThreadPool {
         })
     }
     
-    /// Submit task to the pool (round-robin)
+    /// Submit task to the pool (round-robin with retry on dead threads)
     pub fn submit(&self, task: RenderTask) -> Result<()> {
-        let idx = self.next_thread.fetch_add(1, AtomicOrdering::Relaxed) as usize % self.threads.len();
-        self.threads[idx].submit(task)
+        let count = self.threads.len();
+        let start_idx = self.next_thread.fetch_add(1, AtomicOrdering::AcqRel) as usize % count;
+        
+        let mut last_err = None;
+        for attempt in 0..count {
+            let idx = (start_idx + attempt) % count;
+            match self.threads[idx].submit(task.clone()) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    warn!("Thread {} failed to accept task: {}, trying next", idx, e);
+                    last_err = Some(e);
+                }
+            }
+        }
+        
+        Err(last_err.unwrap_or_else(|| RenderError::RenderTaskFailed("All threads failed to accept task".to_string())))
     }
     
     /// Submit task to specific thread

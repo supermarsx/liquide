@@ -6,6 +6,7 @@
 use crate::chrome_thread::ChromeThread;
 use crate::content_thread::ContentThread;
 use crate::message::{DamageRect, FrameComplete, FrameId};
+use liquide_compositor::scene::FlatNode;
 
 /// Frame pacing strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +39,10 @@ pub struct RenderCoordinator {
     frames_rendered: u64,
     frames_dropped: u64,
     total_render_time_us: u64,
+    /// Buffered chrome completion waiting for content pair.
+    pending_chrome_completion: Option<FrameComplete>,
+    /// Buffered content completion waiting for chrome pair.
+    pending_content_completion: Option<FrameComplete>,
 }
 
 impl RenderCoordinator {
@@ -56,6 +61,8 @@ impl RenderCoordinator {
             frames_rendered: 0,
             frames_dropped: 0,
             total_render_time_us: 0,
+            pending_chrome_completion: None,
+            pending_content_completion: None,
         }
     }
 
@@ -92,7 +99,14 @@ impl RenderCoordinator {
     }
 
     /// Request both threads to render a frame.
-    pub fn request_frame(&mut self) -> Result<(Option<FrameId>, Option<FrameId>), crate::RenderThreadError> {
+    ///
+    /// `chrome_nodes` and `content_nodes` are the pre-split flat scene nodes
+    /// for the decoration and content regions respectively.
+    pub fn request_frame(
+        &mut self,
+        chrome_nodes: Vec<FlatNode>,
+        content_nodes: Vec<FlatNode>,
+    ) -> Result<(Option<FrameId>, Option<FrameId>), crate::RenderThreadError> {
         let chrome_id = if let Some(chrome) = &mut self.chrome {
             let full_damage = vec![DamageRect {
                 x: 0,
@@ -100,7 +114,7 @@ impl RenderCoordinator {
                 width: self.width,
                 height: self.height,
             }];
-            Some(chrome.request_frame(full_damage)?)
+            Some(chrome.request_frame(full_damage, chrome_nodes)?)
         } else {
             None
         };
@@ -114,7 +128,7 @@ impl RenderCoordinator {
                     width: vw,
                     height: vh,
                 }];
-                Some(content.request_frame(full_damage)?)
+                Some(content.request_frame(full_damage, content_nodes)?)
             } else {
                 None
             }
@@ -124,20 +138,57 @@ impl RenderCoordinator {
     }
 
     /// Collect completed frames (non-blocking).
+    ///
+    /// When both chrome and content threads are attached, completions are
+    /// paired by frame ID: results are only emitted when both threads have
+    /// completed the same frame.
     pub fn poll_completions(&mut self) -> Vec<FrameComplete> {
         let mut completions = Vec::new();
+
+        // Try to receive from each thread into pending buffers.
         if let Some(chrome) = &mut self.chrome {
-            if let Some(c) = chrome.try_recv_completion() {
-                self.record_completion(&c);
-                completions.push(c);
+            if self.pending_chrome_completion.is_none() {
+                if let Some(c) = chrome.try_recv_completion() {
+                    self.record_completion(&c);
+                    self.pending_chrome_completion = Some(c);
+                }
             }
         }
         if let Some(content) = &mut self.content {
-            if let Some(c) = content.try_recv_completion() {
-                self.record_completion(&c);
-                completions.push(c);
+            if self.pending_content_completion.is_none() {
+                if let Some(c) = content.try_recv_completion() {
+                    self.record_completion(&c);
+                    self.pending_content_completion = Some(c);
+                }
             }
         }
+
+        let have_both_threads = self.chrome.is_some() && self.content.is_some();
+
+        if have_both_threads {
+            // Only emit when both have completed the same frame.
+            let paired = matches!(
+                (&self.pending_chrome_completion, &self.pending_content_completion),
+                (Some(c), Some(x)) if c.frame_id == x.frame_id
+            );
+            if paired {
+                completions.push(self.pending_chrome_completion.take().unwrap());
+                completions.push(self.pending_content_completion.take().unwrap());
+            }
+        } else {
+            // Single-thread mode: emit immediately.
+            if self.chrome.is_none() {
+                if let Some(c) = self.pending_content_completion.take() {
+                    completions.push(c);
+                }
+            }
+            if self.content.is_none() {
+                if let Some(c) = self.pending_chrome_completion.take() {
+                    completions.push(c);
+                }
+            }
+        }
+
         completions
     }
 
@@ -234,7 +285,7 @@ mod tests {
         coord.attach_chrome(chrome);
         coord.attach_content(content);
 
-        let (cid, xid) = coord.request_frame().unwrap();
+        let (cid, xid) = coord.request_frame(vec![], vec![]).unwrap();
         assert!(cid.is_some());
         assert!(xid.is_some());
 
@@ -246,6 +297,10 @@ mod tests {
                         frame_id,
                         render_time_us: 200,
                         dropped: false,
+                        pixels: None,
+                        width: 800,
+                        height: 600,
+                        stride: 800 * 4,
                     })
                     .unwrap();
             }
@@ -257,6 +312,10 @@ mod tests {
                         frame_id,
                         render_time_us: 800,
                         dropped: false,
+                        pixels: None,
+                        width: 800,
+                        height: 570,
+                        stride: 800 * 4,
                     })
                     .unwrap();
             }

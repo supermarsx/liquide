@@ -70,7 +70,7 @@ impl TileEncoder {
     ) -> crate::Result<TileBatch> {
         let frame_start = Instant::now();
 
-        self.sequence += 1;
+        self.sequence = self.sequence.saturating_add(1);
         self.cache.advance_frame();
 
         let mut batch = TileBatch::new(self.sequence);
@@ -138,6 +138,10 @@ impl TileEncoder {
                     (idx, dt.x, dt.y)
                 })
                 .collect();
+            // Deduplicate: if two damage tiles map to the same index, only encode once.
+            // Duplicate indices would cause the second write to silently overwrite the first.
+            let mut seen = std::collections::HashSet::with_capacity(work.len());
+            let work: Vec<(usize, u32, u32)> = work.into_iter().filter(|(idx, _, _)| seen.insert(*idx)).collect();
 
             // Shared read-only references for the thread pool.
             let codec = &self.codec;
@@ -166,9 +170,18 @@ impl TileEncoder {
 
                 // Collect results back into the single-owner vectors.
                 for handle in handles {
-                    for (idx, crc, tile_data) in handle.join().unwrap() {
-                        current_crcs[idx] = crc;
-                        current_tiles[idx] = Some(tile_data);
+                    match handle.join() {
+                        Ok(tiles) => {
+                            for (idx, crc, tile_data) in tiles {
+                                current_crcs[idx] = crc;
+                                current_tiles[idx] = Some(tile_data);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("tile encoder thread panicked: {:?}", e.downcast_ref::<&str>());
+                            // Mark all tiles from this chunk as needing fallback.
+                            // We'll handle missing tiles below with an empty tile fallback.
+                        }
                     }
                 }
             });
@@ -184,7 +197,17 @@ impl TileEncoder {
         // Encode each damaged tile
         for dt in damage_tiles {
             let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
-            let current = current_tiles[idx].as_ref().unwrap();
+            let empty_tile;
+            let current = match current_tiles[idx].as_ref() {
+                Some(data) => data,
+                None => {
+                    // Tile extraction failed (thread panic). Use empty tile as fallback
+                    // and skip encoding to avoid sending corrupted data.
+                    tracing::warn!("tile ({}, {}): extraction missing, using fallback", dt.x, dt.y);
+                    empty_tile = vec![0u8; self.codec.config().tile_bytes()];
+                    &empty_tile
+                }
+            };
             let crc = current_crcs[idx];
             let prev_crc = if self.prev_tiles[idx].is_empty() {
                 None
@@ -358,7 +381,7 @@ fn encode_tile(
         }
 
         EncodingStrategy::Delta => {
-            let prev = previous.expect("delta requires previous tile data");
+            let prev = previous.ok_or_else(|| crate::EncoderError::Internal("delta requires previous tile data".into()))?;
             let xor = delta::xor_delta(current, prev);
             let compressed = compress_with_method(&xor, compression)?;
             Ok((TileEncoding::Delta, compressed))

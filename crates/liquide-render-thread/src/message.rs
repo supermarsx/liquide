@@ -1,6 +1,10 @@
 //! Inter-thread messages for the render architecture.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
+
+use liquide_compositor::scene::FlatNode;
 
 /// Monotonic frame identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -9,7 +13,7 @@ pub struct FrameId(pub u64);
 impl FrameId {
     #[must_use]
     pub fn next(self) -> Self {
-        Self(self.0 + 1)
+        Self(self.0.wrapping_add(1))
     }
 }
 
@@ -23,7 +27,6 @@ pub struct DamageRect {
 }
 
 /// Messages sent to the chrome rendering thread.
-#[derive(Debug, Clone)]
 pub enum ChromeMessage {
     /// Render a new frame of window chrome.
     RenderFrame {
@@ -31,6 +34,8 @@ pub enum ChromeMessage {
         width: u32,
         height: u32,
         damage: Vec<DamageRect>,
+        /// Flattened scene nodes for the chrome region (decorations).
+        nodes: Vec<FlatNode>,
     },
     /// Window was resized.
     Resize { width: u32, height: u32 },
@@ -43,7 +48,6 @@ pub enum ChromeMessage {
 }
 
 /// Messages sent to the content rendering thread.
-#[derive(Debug, Clone)]
 pub enum ContentMessage {
     /// Render content for a frame.
     RenderFrame {
@@ -51,6 +55,8 @@ pub enum ContentMessage {
         viewport_width: u32,
         viewport_height: u32,
         damage: Vec<DamageRect>,
+        /// Flattened scene nodes for the content region.
+        nodes: Vec<FlatNode>,
     },
     /// Scroll position changed.
     Scroll { x: f64, y: f64 },
@@ -61,13 +67,21 @@ pub enum ContentMessage {
 }
 
 /// Frame completion notification.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FrameComplete {
     pub frame_id: FrameId,
     /// Rendering time in microseconds.
     pub render_time_us: u64,
     /// Whether the frame was dropped (rendered too late).
     pub dropped: bool,
+    /// Rendered pixel data (BGRA8, may be None if no rendering occurred).
+    pub pixels: Option<Arc<Vec<u8>>>,
+    /// Width of the rendered framebuffer.
+    pub width: u32,
+    /// Height of the rendered framebuffer.
+    pub height: u32,
+    /// Stride (bytes per row) of the rendered framebuffer.
+    pub stride: u32,
 }
 
 #[cfg(test)]

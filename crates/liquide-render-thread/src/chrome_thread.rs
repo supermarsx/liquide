@@ -6,7 +6,14 @@
 //! keeping the window responsive.
 
 use std::sync::mpsc;
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use liquide_compositor::damage::DamageSet;
+use liquide_compositor::framebuffer::{FrameBuffer, FrameMemory};
+use liquide_compositor::pixel::PixelFormat;
+use liquide_compositor::scene::FlatNode;
+use liquide_compositor::Renderer;
 
 use crate::message::{ChromeMessage, DamageRect, FrameComplete, FrameId};
 
@@ -57,7 +64,18 @@ impl ChromeThread {
     }
 
     /// Request a chrome frame render.
-    pub fn request_frame(&mut self, damage: Vec<DamageRect>) -> Result<FrameId, crate::RenderThreadError> {
+    pub fn request_frame(
+        &mut self,
+        damage: Vec<DamageRect>,
+        nodes: Vec<FlatNode>,
+    ) -> Result<FrameId, crate::RenderThreadError> {
+        if self.state == ChromeThreadState::Rendering {
+            tracing::warn!(
+                "Chrome thread already rendering frame {}, skipping new request",
+                self.current_frame.0
+            );
+            return Ok(self.current_frame);
+        }
         self.current_frame = self.current_frame.next();
         self.state = ChromeThreadState::Rendering;
 
@@ -67,6 +85,7 @@ impl ChromeThread {
                 width: self.width,
                 height: self.height,
                 damage,
+                nodes,
             })
             .map_err(|_| crate::RenderThreadError::ChannelDisconnected)?;
 
@@ -124,30 +143,90 @@ impl ChromeThread {
 
 /// The worker function that runs on the chrome rendering thread.
 ///
-/// In a real implementation, this would run in `std::thread::spawn`.
+/// Each worker creates its own `SoftwareRenderer` instance with the shared
+/// font database, rendering decoration FlatNodes into a thread-local
+/// FrameBuffer and sending the pixel data back as an `Arc<Vec<u8>>`.
 pub fn chrome_worker(
     rx: mpsc::Receiver<ChromeMessage>,
     completion_tx: mpsc::Sender<FrameComplete>,
+    renderer: Box<dyn Renderer>,
 ) {
     tracing::info!("Chrome render thread started");
+    let mut renderer = renderer;
+    let mut fb: Option<FrameBuffer> = None;
+
     loop {
-        match rx.recv() {
+        match rx.recv_timeout(Duration::from_secs(5)) {
             Ok(ChromeMessage::Shutdown) => {
                 tracing::info!("Chrome render thread shutting down");
                 break;
             }
-            Ok(ChromeMessage::RenderFrame { frame_id, .. }) => {
+            Ok(ChromeMessage::RenderFrame {
+                frame_id,
+                width,
+                height,
+                nodes,
+                // TODO: Use the damage vector to skip unchanged regions instead
+                // of always performing full-damage renders.
+                ..
+            }) => {
                 let start = Instant::now();
-                // ... actual chrome rendering would happen here ...
+
+                // Ensure framebuffer matches dimensions, stride, and format.
+                let expected_stride = width * PixelFormat::Bgra8.bytes_per_pixel();
+                let needs_new = fb
+                    .as_ref()
+                    .map_or(true, |f| {
+                        f.width != width
+                            || f.height != height
+                            || f.stride != expected_stride
+                            || f.format != PixelFormat::Bgra8
+                    });
+                if needs_new {
+                    fb = Some(FrameBuffer::new(width, height, PixelFormat::Bgra8));
+                }
+                let framebuf = fb.as_mut().unwrap();
+                framebuf.clear(liquide_compositor::pixel::Color::new(0, 0, 0, 0));
+
+                // Full-damage render.
+                let tile_size = 64;
+                let mut damage = DamageSet::new(tile_size);
+                let grid_w = width.div_ceil(tile_size);
+                let grid_h = height.div_ceil(tile_size);
+                damage.mark_all(grid_w, grid_h);
+
+                let _ = renderer.render(&nodes, framebuf, &damage);
+
                 let elapsed = start.elapsed();
-                let _ = completion_tx.send(FrameComplete {
+
+                // Extract pixels and send back.
+                // TODO: Consider a ring buffer of 2-3 Arc buffers to avoid
+                // allocating a new Arc<Vec<u8>> per frame.
+                let pixel_data =
+                    std::mem::take(framebuf.pixels_mut().expect("CPU framebuffer required"));
+                let result = FrameComplete {
                     frame_id,
                     render_time_us: elapsed.as_micros() as u64,
                     dropped: false,
-                });
+                    pixels: Some(Arc::new(pixel_data)),
+                    width: framebuf.width,
+                    height: framebuf.height,
+                    stride: framebuf.stride,
+                };
+                // Re-allocate pixel buffer for next frame.
+                framebuf.memory = FrameMemory::Cpu(vec![
+                    0u8;
+                    (framebuf.stride * framebuf.height) as usize
+                ]);
+
+                if completion_tx.send(result).is_err() {
+                    tracing::warn!("frame {} lost: completion channel closed", frame_id.0);
+                    break;
+                }
             }
             Ok(ChromeMessage::Resize { width, height }) => {
                 tracing::debug!(width, height, "Chrome: resize");
+                fb = None; // recreate on next render
             }
             Ok(ChromeMessage::SetTitle { title }) => {
                 tracing::debug!(title, "Chrome: title changed");
@@ -155,7 +234,11 @@ pub fn chrome_worker(
             Ok(ChromeMessage::ThemeChanged) => {
                 tracing::debug!("Chrome: theme changed");
             }
-            Err(_) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // No message within timeout, loop back to check again.
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 }
@@ -168,7 +251,7 @@ mod tests {
     fn test_chrome_thread_messaging() {
         let (mut handle, rx, comp_tx) = ChromeThread::new(800, 600);
 
-        let frame_id = handle.request_frame(vec![]).unwrap();
+        let frame_id = handle.request_frame(vec![], vec![]).unwrap();
         assert_eq!(frame_id, FrameId(1));
 
         // Simulate worker processing
@@ -181,6 +264,10 @@ mod tests {
                         frame_id: fid,
                         render_time_us: 500,
                         dropped: false,
+                        pixels: None,
+                        width: 800,
+                        height: 600,
+                        stride: 800 * 4,
                     })
                     .unwrap();
             }

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Metrics for rendering performance
@@ -45,7 +45,7 @@ pub struct MetricsCollector {
     tasks_completed: AtomicU64,
     tasks_failed: AtomicU64,
     render_times: RwLock<Vec<u64>>,
-    start_time: Instant,
+    start_time: Mutex<Instant>,
 }
 
 impl Default for MetricsCollector {
@@ -62,7 +62,7 @@ impl MetricsCollector {
             tasks_completed: AtomicU64::new(0),
             tasks_failed: AtomicU64::new(0),
             render_times: RwLock::new(Vec::with_capacity(1000)),
-            start_time: Instant::now(),
+            start_time: Mutex::new(Instant::now()),
         }
     }
     
@@ -97,8 +97,11 @@ impl MetricsCollector {
         let completed = self.tasks_completed.load(Ordering::Relaxed);
         let failed = self.tasks_failed.load(Ordering::Relaxed);
         
-        let times = self.render_times.read().unwrap();
-        let mut sorted_times = times.clone();
+        // Clone under read lock, then release before sorting.
+        let mut sorted_times = {
+            let times = liquide_common::sync::read_or_recover(&self.render_times);
+            times.clone()
+        };
         sorted_times.sort_unstable();
         
         let avg = if !sorted_times.is_empty() {
@@ -110,13 +113,13 @@ impl MetricsCollector {
         let min = sorted_times.first().copied().unwrap_or(0);
         let max = sorted_times.last().copied().unwrap_or(0);
         
-        let p95_idx = (sorted_times.len() as f64 * 0.95) as usize;
-        let p99_idx = (sorted_times.len() as f64 * 0.99) as usize;
+        let p95_idx = ((sorted_times.len().saturating_sub(1)) as f64 * 0.95).round() as usize;
+        let p99_idx = ((sorted_times.len().saturating_sub(1)) as f64 * 0.99).round() as usize;
         
         let p95 = sorted_times.get(p95_idx).copied().unwrap_or(0);
         let p99 = sorted_times.get(p99_idx).copied().unwrap_or(0);
         
-        let elapsed = self.start_time.elapsed().as_secs_f64();
+        let elapsed = self.start_time.lock().unwrap().elapsed().as_secs_f64();
         let tasks_per_second = if elapsed > 0.0 {
             completed as f64 / elapsed
         } else {
@@ -144,6 +147,9 @@ impl MetricsCollector {
         self.tasks_failed.store(0, Ordering::Relaxed);
         if let Ok(mut times) = self.render_times.write() {
             times.clear();
+        }
+        if let Ok(mut t) = self.start_time.lock() {
+            *t = Instant::now();
         }
     }
 }

@@ -9,7 +9,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+/// Maximum number of pending outputs to buffer before rejecting new insertions.
+const MAX_PENDING: usize = 1024;
 
 /// Central coordinator for multi-threaded rendering
 pub struct RenderCoordinator {
@@ -117,10 +120,8 @@ impl RenderCoordinator {
     
     /// Submit a render task
     pub async fn submit_task(&self, mut task: RenderTask) -> Result<u64> {
-        // Assign task ID if not set
-        if task.id == 0 {
-            task.id = self.next_task_id.fetch_add(1, Ordering::Relaxed);
-        }
+        // Always assign a new unique ID from the atomic counter to prevent collisions.
+        task.id = self.next_task_id.fetch_add(1, Ordering::AcqRel);
         
         // Set deadline if not set
         if task.deadline.is_none() {
@@ -202,7 +203,7 @@ impl RenderCoordinator {
     pub async fn wait_for_task(&self, task_id: u64, timeout: Duration) -> Result<RenderOutput> {
         // Check if already completed
         {
-            let mut pending = self.pending_outputs.lock().unwrap();
+            let mut pending = liquide_common::sync::lock_or_recover(&self.pending_outputs);
             if let Some(output) = pending.remove(&task_id) {
                 return Ok(output);
             }
@@ -213,14 +214,31 @@ impl RenderCoordinator {
         while start.elapsed() < timeout {
             let outputs = self.poll_outputs().await?;
             
+            // Separate target output from others before locking.
+            let mut found = None;
+            let mut others = Vec::new();
             for output in outputs {
                 if output.task_id == task_id {
-                    return Ok(output);
+                    found = Some(output);
                 } else {
-                    // Store for later
-                    let mut pending = self.pending_outputs.lock().unwrap();
-                    pending.insert(output.task_id, output);
+                    others.push(output);
                 }
+            }
+            
+            // Batch-insert non-target outputs under a single short lock.
+            if !others.is_empty() {
+                let mut pending = liquide_common::sync::lock_or_recover(&self.pending_outputs);
+                if pending.len() + others.len() <= MAX_PENDING {
+                    for output in others {
+                        pending.insert(output.task_id, output);
+                    }
+                } else {
+                    warn!("Pending outputs at capacity ({}), dropping {} outputs", MAX_PENDING, others.len());
+                }
+            }
+            
+            if let Some(output) = found {
+                return Ok(output);
             }
             
             tokio::time::sleep(Duration::from_micros(100)).await;

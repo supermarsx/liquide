@@ -75,8 +75,10 @@ impl ThreadedRenderCoordinator {
     fn coordinator_thread(config: RenderConfig, rx: Receiver<CoordinatorMessage>) {
         info!("Render coordinator thread started");
         
-        // Create tokio runtime for the coordinator
-        let rt = match tokio::runtime::Builder::new_current_thread()
+        // Create tokio runtime for the coordinator.
+        // Use multi-thread to prevent deadlock when async operations spawn tasks.
+        let rt = match tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
         {

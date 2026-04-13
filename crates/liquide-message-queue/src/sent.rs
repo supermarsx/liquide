@@ -57,35 +57,52 @@ impl SentMessage {
     /// Has the receiver replied?
     #[must_use]
     pub fn is_replied(&self) -> bool {
-        self.inner.0.lock().unwrap().replied
+        liquide_common::sync::lock_or_recover(&self.inner.0).replied
     }
 
     /// Set the reply result and wake the sender.
     pub fn reply(&self, result: MessageResult) {
         let (lock, cvar) = &*self.inner;
-        let mut state = lock.lock().unwrap();
+        let mut state = liquide_common::sync::lock_or_recover(lock);
         state.replied = true;
         state.result = Some(result);
         cvar.notify_one();
     }
 
-    /// Block the calling thread until the receiver replies.
+    /// Block the calling thread until the receiver replies, with a 10-second timeout.
     ///
     /// This is called by the *sender* after posting the message to the
-    /// receiver's queue.  Returns the result written by the receiver.
-    pub fn wait_for_reply(&self) -> MessageResult {
+    /// receiver's queue.  Returns the result written by the receiver,
+    /// or `None` if the wait timed out.
+    pub fn wait_for_reply(&self) -> Option<MessageResult> {
+        const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
         let (lock, cvar) = &*self.inner;
-        let mut state = lock.lock().unwrap();
+        let mut state = liquide_common::sync::lock_or_recover(lock);
+        let deadline = std::time::Instant::now() + REPLY_TIMEOUT;
         while !state.replied {
-            state = cvar.wait(state).unwrap();
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                tracing::error!("wait_for_reply timed out after {:?}", REPLY_TIMEOUT);
+                return None;
+            }
+            let (new_state, timeout_result) = cvar.wait_timeout(state, remaining)
+                .unwrap_or_else(|poisoned| {
+                    tracing::warn!("recovering from poisoned condvar mutex");
+                    poisoned.into_inner()
+                });
+            state = new_state;
+            if timeout_result.timed_out() && !state.replied {
+                tracing::error!("wait_for_reply timed out after {:?}", REPLY_TIMEOUT);
+                return None;
+            }
         }
-        state.result.unwrap_or(0)
+        Some(state.result.unwrap_or(0))
     }
 
     /// Non-blocking check: if replied, returns the result.
     #[must_use]
     pub fn try_get_result(&self) -> Option<MessageResult> {
-        let state = self.inner.0.lock().unwrap();
+        let state = liquide_common::sync::lock_or_recover(&self.inner.0);
         if state.replied {
             state.result
         } else {

@@ -552,7 +552,7 @@ fn sent_message_reply() {
     sm.reply(42);
     assert!(sm.is_replied());
     assert_eq!(sm.try_get_result(), Some(42));
-    assert_eq!(sm.wait_for_reply(), 42);
+    assert_eq!(sm.wait_for_reply(), Some(42));
 }
 
 #[test]
@@ -573,7 +573,7 @@ fn sent_message_process_in_queue() {
 
     assert_eq!(q.sent_count(), 0);
     assert!(!q.wake_bits().contains(WakeBits::QS_SENDMESSAGE));
-    assert_eq!(sm_clone.wait_for_reply(), 7);
+    assert_eq!(sm_clone.wait_for_reply(), Some(7));
 }
 
 // ── Purge window ────────────────────────────────────────────────────────
@@ -713,7 +713,7 @@ fn pump_processes_sent_before_posted() {
     // 1. process_sent_messages calls handler for Close (sent message)
     // 2. pump_one dispatches Show (posted message) via handler
     // So the handler sees Close first, then Show.
-    assert_eq!(sm_clone.wait_for_reply(), 55);
+    assert_eq!(sm_clone.wait_for_reply(), Some(55));
     assert_eq!(order, vec![MessageType::Close, MessageType::Show]);
 }
 
