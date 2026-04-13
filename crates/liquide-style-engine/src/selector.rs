@@ -52,7 +52,7 @@ pub enum PseudoClassSelector {
     Empty,
     Is(Vec<ComplexSelector>),
     Where(Vec<ComplexSelector>),
-    Has(Box<ComplexSelector>),
+    Has(Vec<ComplexSelector>),
     NthOfType(AnB),
     NthLastOfType(AnB),
     LastOfType,
@@ -84,6 +84,18 @@ pub enum PseudoClassSelector {
     InRange,
     /// `:out-of-range`
     OutOfRange,
+    /// `:link` — unvisited hyperlink
+    Link,
+    /// `:any-link` — any hyperlink
+    AnyLink,
+    /// `:dir(ltr|rtl)` — directionality
+    Dir(String),
+    /// `:autofill` — auto-filled form element
+    Autofill,
+    /// `:modal` — modal dialog element
+    Modal,
+    /// `:fullscreen` — fullscreen element
+    Fullscreen,
 }
 
 /// A CSS pseudo-element (e.g. `::before`, `::after`).
@@ -203,8 +215,10 @@ impl CompoundSelector {
                 PseudoClassSelector::Where(_) => {
                     // :where() contributes zero specificity
                 }
-                PseudoClassSelector::Has(inner) => {
-                    extra = extra.add(inner.specificity());
+                PseudoClassSelector::Has(selectors) => {
+                    if let Some(max_spec) = selectors.iter().map(|s| s.specificity()).max() {
+                        extra = extra.add(max_spec);
+                    }
                 }
                 _ => class += 1,
             }
@@ -316,19 +330,24 @@ impl CompoundSelector {
             PseudoClassSelector::Is(selectors) | PseudoClassSelector::Where(selectors) => {
                 selectors.iter().any(|s| s.matches(doc, node.id))
             }
-            PseudoClassSelector::Has(inner) => {
-                fn check_descendants(doc: &Document, parent: NodeId, sel: &ComplexSelector) -> bool {
+            PseudoClassSelector::Has(selectors) => {
+                const MAX_HAS_DEPTH: u32 = 256;
+                fn check_descendants(doc: &Document, parent: NodeId, sel: &ComplexSelector, depth: u32) -> bool {
+                    if depth >= MAX_HAS_DEPTH {
+                        return false;
+                    }
                     for &child_id in doc.children(parent) {
                         if sel.matches(doc, child_id) {
                             return true;
                         }
-                        if check_descendants(doc, child_id, sel) {
+                        if check_descendants(doc, child_id, sel, depth + 1) {
                             return true;
                         }
                     }
                     false
                 }
-                check_descendants(doc, node.id, inner)
+                // :has(S1, S2, ...) matches if ANY of the selectors match a descendant
+                selectors.iter().any(|s| check_descendants(doc, node.id, s, 0))
             }
             PseudoClassSelector::NthOfType(anb) => {
                 if let Some(parent_id) = node.parent {
@@ -481,6 +500,33 @@ impl CompoundSelector {
                     return below_min || above_max;
                 }
                 false
+            }
+            PseudoClassSelector::Link => {
+                // :link matches unvisited links — treat as any link that's not visited
+                let is_link_tag = node.tag_name() == "a" || node.tag_name() == "area";
+                is_link_tag && node.attrs.contains("href") && !node.has_pseudo_state(PseudoStateFlags::VISITED)
+            }
+            PseudoClassSelector::AnyLink => {
+                let is_link_tag = node.tag_name() == "a" || node.tag_name() == "area";
+                is_link_tag && node.attrs.contains("href")
+            }
+            PseudoClassSelector::Dir(dir) => {
+                // Check direction attribute or inherited direction
+                if let Some(d) = node.attrs.get("dir") {
+                    d.eq_ignore_ascii_case(dir)
+                } else {
+                    // Default LTR
+                    dir.eq_ignore_ascii_case("ltr")
+                }
+            }
+            PseudoClassSelector::Autofill => {
+                node.has_pseudo_state(PseudoStateFlags::AUTOFILL)
+            }
+            PseudoClassSelector::Modal => {
+                node.has_pseudo_state(PseudoStateFlags::MODAL)
+            }
+            PseudoClassSelector::Fullscreen => {
+                node.has_pseudo_state(PseudoStateFlags::FULLSCREEN)
             }
         }
     }
@@ -854,6 +900,9 @@ fn parse_pseudo_element(name: &str) -> Option<PseudoElement> {
     }
 }
 
+/// Maximum number of selectors in a `:is()`, `:not()`, `:where()`, or `:has()` list.
+const MAX_SELECTOR_LIST: usize = 1024;
+
 fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
     match name {
         "hover" => Some(PseudoClassSelector::Hover),
@@ -886,6 +935,11 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
         "invalid" => Some(PseudoClassSelector::Invalid),
         "in-range" => Some(PseudoClassSelector::InRange),
         "out-of-range" => Some(PseudoClassSelector::OutOfRange),
+        "link" => Some(PseudoClassSelector::Link),
+        "any-link" => Some(PseudoClassSelector::AnyLink),
+        "autofill" => Some(PseudoClassSelector::Autofill),
+        "modal" => Some(PseudoClassSelector::Modal),
+        "fullscreen" => Some(PseudoClassSelector::Fullscreen),
         _ if name.starts_with("nth-child(") && name.ends_with(')') => {
             let expr = &name[10..name.len() - 1];
             parse_anb(expr).map(PseudoClassSelector::NthChild)
@@ -898,6 +952,7 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
             let inner = &name[3..name.len() - 1];
             let selectors: Vec<ComplexSelector> = inner.split(',')
                 .filter_map(|s| ComplexSelector::parse(s.trim()))
+                .take(MAX_SELECTOR_LIST)
                 .collect();
             if selectors.is_empty() { None } else { Some(PseudoClassSelector::Is(selectors)) }
         }
@@ -905,18 +960,24 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
             let inner = &name[6..name.len() - 1];
             let selectors: Vec<ComplexSelector> = inner.split(',')
                 .filter_map(|s| ComplexSelector::parse(s.trim()))
+                .take(MAX_SELECTOR_LIST)
                 .collect();
             if selectors.is_empty() { None } else { Some(PseudoClassSelector::Where(selectors)) }
         }
         _ if name.starts_with("has(") && name.ends_with(')') => {
             let inner = &name[4..name.len() - 1];
-            ComplexSelector::parse(inner.trim()).map(|s| PseudoClassSelector::Has(Box::new(s)))
+            let selectors: Vec<ComplexSelector> = inner.split(',')
+                .filter_map(|s| ComplexSelector::parse(s.trim()))
+                .take(MAX_SELECTOR_LIST)
+                .collect();
+            if selectors.is_empty() { None } else { Some(PseudoClassSelector::Has(selectors)) }
         }
         _ if name.starts_with("not(") && name.ends_with(')') => {
             let inner = &name[4..name.len() - 1];
             // :not() takes a selector list per Selectors Level 4
             let selectors: Vec<ComplexSelector> = inner.split(',')
                 .filter_map(|s| ComplexSelector::parse(s.trim()))
+                .take(MAX_SELECTOR_LIST)
                 .collect();
             if selectors.is_empty() {
                 None
@@ -940,6 +1001,10 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
             } else {
                 Some(PseudoClassSelector::Lang(lang_code.to_string()))
             }
+        }
+        _ if name.starts_with("dir(") && name.ends_with(')') => {
+            let dir_val = &name[4..name.len() - 1];
+            Some(PseudoClassSelector::Dir(dir_val.trim().to_string()))
         }
         _ => None,
     }

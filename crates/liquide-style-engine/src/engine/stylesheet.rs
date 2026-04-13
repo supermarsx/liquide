@@ -1,4 +1,10 @@
 //! Stylesheet parsing and compilation into prepared rules.
+//!
+//! **Known gap**: CSS `@import` rules are not currently resolved. The
+//! [`ThemeParser`] strips `@import` during parsing and the engine never
+//! fetches external stylesheets.  When `@import` support is added, cycle
+//! detection (e.g. a `HashSet<String>` of visited URLs and a max depth of
+//! 16) must be implemented to prevent infinite import loops.
 
 use liquide_theme_css::ThemeParser;
 

@@ -74,7 +74,7 @@ impl PreparedSheet {
         for (i, rule) in rules.iter().enumerate() {
             // The key selector is compounds[0] (rightmost in CSS, first in our array)
             if let Some(tag) = rule.selector.compounds[0].tag.as_ref() {
-                tag_index.entry(tag.clone()).or_default().push(i);
+                tag_index.entry(tag.to_ascii_lowercase()).or_default().push(i);
             } else {
                 universal_rule_indices.push(i);
             }
@@ -89,9 +89,10 @@ impl PreparedSheet {
 
     /// Iterate rule indices that could potentially match a node with the given tag name.
     pub fn candidate_indices(&self, tag_name: &str) -> impl Iterator<Item = usize> + '_ {
+        let lower = tag_name.to_ascii_lowercase();
         let tag_iter = self
             .tag_index
-            .get(tag_name)
+            .get(&lower)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
             .iter()
@@ -217,6 +218,21 @@ impl StyleEngine {
     /// Number of CSS custom properties (variables) defined.
     pub fn variable_count(&self) -> usize {
         self.variables.len()
+    }
+
+    /// Invalidate all cached style data, forcing styles to be recomputed.
+    ///
+    /// Currently styles are recomputed on demand each time
+    /// [`compute_style`](Self::compute_style) is called, so this method
+    /// clears the compiled sheet and variable state to allow a full
+    /// re-evaluation after stylesheet changes.
+    pub fn invalidate_all(&mut self) {
+        self.sheets.clear();
+        self.variables.clear();
+        self.font_faces.clear();
+        self.registered_properties.clear();
+        self.keyframes.clear();
+        self.layer_order.clear();
     }
 }
 

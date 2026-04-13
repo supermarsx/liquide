@@ -66,11 +66,25 @@ impl StyleEngine {
                 (inner.trim(), None)
             };
 
-            // Cycle detection: if this variable is already being resolved, it's circular
+            // Cycle detection: if this variable is already being resolved, it's circular.
+            // Per CSS spec: cyclic references produce the guaranteed-invalid value.
             if resolution_stack.contains(&var_name.to_string()) {
-                // Per spec: cyclic references produce the guaranteed-invalid value
                 if let Some(fb) = fallback {
-                    result = format!("{}{}{}", &result[..start], fb, &rest[end + 1..]);
+                    // Resolve fallback, but don't allow it to reference the cyclic variable
+                    if fb.contains("var(") {
+                        if let Some(resolved_fb) = self.resolve_var_recursive(fb, scope_vars, resolution_stack) {
+                            let fb_str = match resolved_fb {
+                                liquide_theme_css::value::PropertyValue::Keyword(k) => k,
+                                liquide_theme_css::value::PropertyValue::String(s) => s,
+                                other => format!("{}", other),
+                            };
+                            result = format!("{}{}{}", &result[..start], fb_str, &rest[end + 1..]);
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        result = format!("{}{}{}", &result[..start], fb, &rest[end + 1..]);
+                    }
                     continue;
                 }
                 return None;
@@ -139,11 +153,14 @@ impl StyleEngine {
                 };
                 result = format!("{}{}{}", &result[..start], replacement, &rest[end + 1..]);
             } else if let Some(fb) = fallback {
-                // Fallback may itself contain var() references
+                // Fallback may itself contain var() references.
+                // Push var_name to resolution_stack to detect cycles through fallbacks.
                 if fb.contains("var(") {
-                    if let Some(resolved_fb) =
-                        self.resolve_var_recursive(fb, scope_vars, resolution_stack)
-                    {
+                    resolution_stack.push(var_name.to_string());
+                    let resolved_fb =
+                        self.resolve_var_recursive(fb, scope_vars, resolution_stack);
+                    resolution_stack.pop();
+                    if let Some(resolved_fb) = resolved_fb {
                         let fb_str = match resolved_fb {
                             liquide_theme_css::value::PropertyValue::Keyword(k) => k,
                             liquide_theme_css::value::PropertyValue::String(s) => s,
