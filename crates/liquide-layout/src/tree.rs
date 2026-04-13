@@ -38,7 +38,7 @@ pub enum BoxType {
     /// Sticky positioned.
     Sticky,
     /// List marker (bullet, number, etc.) for display: list-item.
-    ListMarker,
+    ListMarker { text: String },
     /// Anonymous block box created when inline and block children are mixed
     /// (CSS 2.1 §9.2.1.1).
     AnonBlock,

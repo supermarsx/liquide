@@ -302,7 +302,7 @@ pub fn layout_ruby_from_dom(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
     start_x: f32,
     baseline_y: f32,
 ) -> RubyContainerResult {

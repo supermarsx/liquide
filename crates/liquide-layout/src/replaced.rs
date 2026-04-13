@@ -35,7 +35,7 @@ pub fn layout_replaced(
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    image_measurer: &dyn ImageMeasurer,
+    image_measurer: &(impl ImageMeasurer + ?Sized),
     container_width: f32,
     container_height: f32,
     offset_x: f32,

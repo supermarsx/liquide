@@ -225,6 +225,16 @@ impl Node {
     pub fn has_class(&self, class: &str) -> bool {
         self.classes.contains(class)
     }
+
+    /// Check if the node has a specific attribute.
+    pub fn has_attribute(&self, name: &str) -> bool {
+        self.attrs.contains(name)
+    }
+
+    /// Get the value of a specific attribute.
+    pub fn get_attribute(&self, name: &str) -> Option<&str> {
+        self.attrs.get(name)
+    }
 }
 
 #[cfg(test)]

@@ -19,6 +19,7 @@ pub enum GradientSpec {
         center_x: f32,
         center_y: f32,
         radius: f32,
+        radius_y: f32,
         stops: Vec<(f32, Color)>,
     },
     /// Conic (sweep) gradient around a center point.

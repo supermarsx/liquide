@@ -2353,6 +2353,9 @@ dependencies = [
 [[package]]
 name = "liquide-bluetooth"
 version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "liquide-bridge-gtk"
@@ -2552,6 +2555,7 @@ dependencies = [
  "criterion",
  "fontdb",
  "image",
+ "liquide-common",
  "liquide-cursor",
  "resvg",
  "roxmltree",
@@ -2695,6 +2699,7 @@ name = "liquide-font-rasterizer"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "liquide-common",
  "liquide-fonts",
  "liquide-text-engine",
  "rustybuzz 0.20.1",
@@ -2865,6 +2870,10 @@ dependencies = [
 [[package]]
 name = "liquide-message-queue"
 version = "0.1.0"
+dependencies = [
+ "liquide-common",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-mobile-core"
@@ -3022,6 +3031,8 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "crossbeam-channel",
+ "liquide-common",
+ "liquide-compositor",
  "metrics",
  "rayon",
  "serde",
@@ -3036,6 +3047,9 @@ dependencies = [
 name = "liquide-render-thread"
 version = "0.1.0"
 dependencies = [
+ "liquide-compositor",
+ "liquide-font-rasterizer",
+ "liquide-renderer-cpu",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -3125,6 +3139,7 @@ dependencies = [
  "liquide-compositor",
  "liquide-css",
  "liquide-cursor",
+ "liquide-cursor-vector",
  "liquide-devtools",
  "liquide-dom",
  "liquide-encoder",
@@ -3132,11 +3147,15 @@ dependencies = [
  "liquide-input",
  "liquide-interop",
  "liquide-layout",
+ "liquide-message-queue",
  "liquide-platform",
  "liquide-plugin-host",
  "liquide-protocol",
+ "liquide-render-coordinator",
+ "liquide-render-thread",
  "liquide-renderer-cpu",
  "liquide-shell",
+ "liquide-telemetry-viewer",
  "liquide-theme-css",
  "liquide-transport",
  "serde",
@@ -3168,6 +3187,7 @@ name = "liquide-shell"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "liquide-animation",
  "liquide-components",
  "liquide-compositor",
  "liquide-context-menu",
@@ -3276,6 +3296,8 @@ dependencies = [
  "clap",
  "crossterm",
  "humantime",
+ "liquide-common",
+ "liquide-render-coordinator",
  "ratatui",
  "serde",
  "serde_json",
@@ -3305,6 +3327,7 @@ dependencies = [
  "cssparser",
  "glob",
  "lightningcss",
+ "liquide-common",
  "notify",
  "regex",
  "serde",

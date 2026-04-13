@@ -7,33 +7,34 @@
 pub mod app_history;
 pub mod calculator;
 pub mod config;
-pub mod css_integration;
+pub(crate) mod css_integration;
 pub mod decoration;
 pub mod desktop_dom;
 pub mod focus;
-pub mod font_text_measurer;
+pub(crate) mod font_text_measurer;
 pub mod history;
 pub mod launcher;
 pub mod layout;
 pub mod notification;
 pub mod pipeline;
-pub mod sandboxing;
-pub mod scene_builder;
+pub(crate) mod sandboxing;
+pub(crate) mod scene_builder;
 pub mod screen_time;
 pub mod seamless;
 pub mod shell;
 pub mod shortcuts;
 pub mod stats;
 pub mod theme;
-pub mod theme_loader;
+pub(crate) mod theme_loader;
 pub mod themes;
-pub mod threading;
+pub(crate) mod threading;
 pub mod tiling;
 pub mod window;
 pub mod workspace;
 
 // Example modules demonstrating CSS styling
-pub mod css_dock_example;
+#[cfg(test)]
+mod css_dock_example;
 
 // Re-export the components from liquide-components
 pub use liquide_components::{

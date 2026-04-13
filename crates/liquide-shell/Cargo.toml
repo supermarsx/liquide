@@ -25,6 +25,7 @@ liquide-hit-test.workspace = true
 liquide-components.workspace = true
 liquide-statusbar = { path = "../liquide-statusbar" }
 liquide-font-rasterizer.workspace = true
+liquide-animation = { path = "../liquide-animation" }
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

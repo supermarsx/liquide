@@ -80,7 +80,7 @@ fn cached_measure_width(
     font_weight: u16,
     max_width: Option<f32>,
     text_props: &TextProperties,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
 ) -> f32 {
     let key = MeasureCacheKey {
         text_hash: hash_text(text),
@@ -126,7 +126,7 @@ pub fn min_content_width(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
 ) -> f32 {
     let style = styles.get(node_id).cloned().unwrap_or_default();
 
@@ -205,7 +205,7 @@ pub fn max_content_width(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
 ) -> f32 {
     let style = styles.get(node_id).cloned().unwrap_or_default();
 
@@ -285,7 +285,7 @@ pub fn fit_content_width(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
-    text_measurer: &dyn TextMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
     available_width: f32,
 ) -> f32 {
     let min_cw = min_content_width(doc, node_id, styles, text_measurer);

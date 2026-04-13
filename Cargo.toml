@@ -321,6 +321,13 @@ miniz_oxide = "0.8"
 wgpu = "24"
 bytemuck = { version = "1", features = ["derive"] }
 
+# Concurrency
+crossbeam-channel = "0.5"
+rayon = "1.10"
+
+# Metrics
+metrics = "0.24"
+
 # Bitflags
 bitflags = "2"
 
@@ -343,6 +350,7 @@ windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "W
 
 # Testing
 criterion = { version = "0.5", features = ["html_reports"] }
+tokio-test = "0.4"
 
 # Internal crates
 liquide-common = { path = "crates/liquide-common" }
@@ -427,7 +435,11 @@ liquide-window-tree = { path = "crates/liquide-window-tree" }
 liquide-overview = { path = "crates/liquide-overview" }
 liquide-compositor-anim = { path = "crates/liquide-compositor-anim" }
 liquide-shortcut-manager = { path = "crates/liquide-shortcut-manager" }
+liquide-telemetry-viewer = { path = "crates/liquide-telemetry-viewer" }
 
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "warn"
 
 [profile.dev]
 opt-level = 0

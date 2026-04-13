@@ -46,6 +46,14 @@ bitflags! {
         const TARGET           = 0x10000;
         /// `:scope` — element is the scoping root (context element).
         const SCOPE            = 0x20000;
+        /// `:link` — unvisited hyperlink.
+        const LINK             = 0x40000;
+        /// `:fullscreen` — element is in fullscreen mode.
+        const FULLSCREEN       = 0x80000;
+        /// `:modal` — element is a modal dialog.
+        const MODAL            = 0x100000;
+        /// `:autofill` — auto-filled form element.
+        const AUTOFILL         = 0x200000;
     }
 }
 
@@ -118,6 +126,18 @@ impl PseudoStateFlags {
         if self.contains(Self::SCOPE) {
             names.push("scope");
         }
+        if self.contains(Self::LINK) {
+            names.push("link");
+        }
+        if self.contains(Self::FULLSCREEN) {
+            names.push("fullscreen");
+        }
+        if self.contains(Self::MODAL) {
+            names.push("modal");
+        }
+        if self.contains(Self::AUTOFILL) {
+            names.push("autofill");
+        }
         names
     }
 
@@ -141,6 +161,10 @@ impl PseudoStateFlags {
             "root" => Some(Self::ROOT),
             "target" => Some(Self::TARGET),
             "scope" => Some(Self::SCOPE),
+            "link" => Some(Self::LINK),
+            "fullscreen" => Some(Self::FULLSCREEN),
+            "modal" => Some(Self::MODAL),
+            "autofill" => Some(Self::AUTOFILL),
             _ => None,
         }
     }

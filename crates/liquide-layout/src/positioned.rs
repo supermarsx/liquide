@@ -11,13 +11,13 @@ use crate::{ImageMeasurer, TextMeasurer};
 /// Layout positioned (absolute/fixed) elements after normal flow.
 ///
 /// `containing_rect` is the border box of the containing block.
-pub fn layout_positioned(
+pub fn layout_positioned<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
-    image_measurer: &dyn ImageMeasurer,
+    text_measurer: &TM,
+    image_measurer: &IM,
     containing_rect: Rect,
     viewport_w: f32,
     viewport_h: f32,
@@ -369,8 +369,8 @@ fn layout_children_in_positioned(
     style: &std::sync::Arc<liquide_style_engine::computed::ComputedStyle>,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
-    image_measurer: &dyn ImageMeasurer,
+    text_measurer: &(impl TextMeasurer + ?Sized),
+    image_measurer: &(impl ImageMeasurer + ?Sized),
     content_w: f32,
     content_h: f32,
     content_x: f32,

@@ -238,8 +238,8 @@ fn test_text_renders_non_empty_with_font_db() {
     let mut fb = FrameBuffer::new(1920, 1080, PixelFormat::Bgra8);
 
     // Fill black
-    fb.pixels_mut().fill(0);
-    for pixel in fb.pixels_mut().chunks_exact_mut(4) {
+    fb.pixels_mut().expect("CPU framebuffer required").fill(0);
+    for pixel in fb.pixels_mut().expect("CPU framebuffer required").chunks_exact_mut(4) {
         pixel[3] = 255;
     }
 

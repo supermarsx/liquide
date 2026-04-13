@@ -143,13 +143,14 @@ impl DesktopPipeline {
                     let is_non_default = !matches!(mode, BlendMode::SrcOver);
                     if is_non_default {
                         let id = self.alloc_id();
+                        let blend_bounds = current.clip.unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
                         let node = SceneNode::new(
                             id,
                             SceneNodeKind::RenderLayer {
                                 blend_mode: *mode,
                                 isolate: true,
                             },
-                            NodeProperties::new(CRect::new(0.0, 0.0, 0.0, 0.0)).with_z_order(z),
+                            NodeProperties::new(blend_bounds).with_z_order(z),
                         );
                         nodes.push(node);
                         z += 1;
@@ -161,8 +162,11 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::PushStackingContext { .. } => {
+                DisplayItem::PushStackingContext { z_index, isolation: _ } => {
                     stack.push(current.clone());
+                    // z_index influences ordering — the painter already emits items
+                    // in stacking context order, so we just preserve state here.
+                    let _ = z_index;
                 }
                 DisplayItem::PopStackingContext => {
                     if let Some(prev) = stack.pop() {
@@ -178,11 +182,11 @@ impl DesktopPipeline {
                         let filter_specs = filters.iter().filter_map(|f| filter_op_to_spec(f)).collect::<Vec<_>>();
                         if !filter_specs.is_empty() {
                             let id = self.alloc_id();
-                            // Use a small bounding rect — the filter applies to preceding content
+                            let filter_bounds = current.clip.unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
                             let node = SceneNode::new(
                                 id,
                                 SceneNodeKind::Filter { filters: filter_specs },
-                                NodeProperties::new(CRect::new(0.0, 0.0, 0.0, 0.0)).with_z_order(z),
+                                NodeProperties::new(filter_bounds).with_z_order(z),
                             );
                             nodes.push(node);
                             z += 1;
@@ -230,8 +234,24 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::PushMask { .. } => {
+                DisplayItem::PushMask { mask_image, rect } => {
                     stack.push(current.clone());
+                    let mask_bounds = to_compositor_rect(rect);
+                    let mask_id = hash_string(mask_image);
+                    self.pending_images.push((mask_id, mask_image.clone()));
+                    let id = self.alloc_id();
+                    let node = SceneNode::new(
+                        id,
+                        SceneNodeKind::Mask {
+                            mask: liquide_compositor::scene::MaskSpec::Image {
+                                image_id: mask_id,
+                                mode: liquide_compositor::scene::MaskMode::Alpha,
+                            },
+                        },
+                        NodeProperties::new(mask_bounds).with_z_order(z),
+                    );
+                    nodes.push(node);
+                    z += 1;
                 }
                 DisplayItem::PopMask => {
                     if let Some(prev) = stack.pop() {
@@ -245,8 +265,21 @@ impl DesktopPipeline {
                     current.clip_path_bounds = None;
                 }
 
-                DisplayItem::SaveLayer { .. } => {
+                DisplayItem::SaveLayer { rect, opacity } => {
                     stack.push(current.clone());
+                    let layer_bounds = to_compositor_rect(rect);
+                    let id = self.alloc_id();
+                    let mut node = SceneNode::new(
+                        id,
+                        SceneNodeKind::RenderLayer {
+                            blend_mode: liquide_compositor::pixel::BlendMode::SrcOver,
+                            isolate: true,
+                        },
+                        NodeProperties::new(layer_bounds).with_z_order(z),
+                    );
+                    node.properties.opacity = *opacity;
+                    nodes.push(node);
+                    z += 1;
                 }
                 DisplayItem::RestoreLayer => {
                     if let Some(prev) = stack.pop() {
@@ -504,12 +537,13 @@ impl DesktopPipeline {
                 Some(node)
             }
 
-            DisplayItem::RadialGradient { rect, center_x, center_y, radius_x, stops, .. } => {
+            DisplayItem::RadialGradient { rect, center_x, center_y, radius_x, radius_y, stops, .. } => {
                 let bounds = to_compositor_rect(rect);
                 let gradient = liquide_compositor::scene::GradientSpec::Radial {
                     center_x: *center_x,
                     center_y: *center_y,
                     radius: *radius_x,
+                    radius_y: *radius_y,
                     stops: stops.iter().map(|s| (s.offset, s.color)).collect(),
                 };
                 let node = SceneNode::new(
@@ -606,7 +640,7 @@ impl DesktopPipeline {
                 ))
             }
 
-            DisplayItem::TextRun { rect, text, color, font_size, font_family, font_weight, .. } => {
+            DisplayItem::TextRun { rect, text, color, font_size, font_family, font_weight, baseline: _ } => {
                 let bounds = to_compositor_rect(rect);
                 Some(SceneNode::new(
                     id,
@@ -633,16 +667,26 @@ impl DesktopPipeline {
                 ))
             }
 
-            DisplayItem::BorderImage { rect, source, .. } => {
+            DisplayItem::BorderImage { rect, source, slice, widths, outset, repeat_x, repeat_y: _, fill: _ } => {
                 let bounds = to_compositor_rect(rect);
+                let img_id = hash_string(source);
+                self.pending_images.push((img_id, source.clone()));
+                let repeat = match repeat_x {
+                    liquide_paint::display_list::BorderImageRepeat::Stretch => liquide_compositor::scene::BorderImageRepeat::Stretch,
+                    liquide_paint::display_list::BorderImageRepeat::Repeat => liquide_compositor::scene::BorderImageRepeat::Repeat,
+                    liquide_paint::display_list::BorderImageRepeat::Round => liquide_compositor::scene::BorderImageRepeat::Round,
+                    liquide_paint::display_list::BorderImageRepeat::Space => liquide_compositor::scene::BorderImageRepeat::Space,
+                };
+                let spec = liquide_compositor::scene::BorderImageSpec {
+                    source: liquide_compositor::scene::BackgroundImage::ImageId(img_id),
+                    slice: *slice,
+                    width: *widths,
+                    outset: *outset,
+                    repeat,
+                };
                 Some(SceneNode::new(
                     id,
-                    SceneNodeKind::Image {
-                        image_id: hash_string(source),
-                        width: bounds.width as u32,
-                        height: bounds.height as u32,
-                        fit: liquide_compositor::scene::ImageFit::Fill,
-                    },
+                    SceneNodeKind::BorderImage { spec },
                     NodeProperties::new(bounds).with_z_order(z),
                 ))
             }
@@ -747,13 +791,17 @@ fn convert_paint_clip_path(
             *bounds,
         )),
         PaintClipPath::RoundedRect { radii, .. } => {
-            let avg = (radii.top_left + radii.top_right + radii.bottom_right + radii.bottom_left)
-                / 4.0;
-            Some((ClipPathKind::RoundedRect { corner_radius: avg }, *bounds))
+            let max_r = radii.top_left
+                .max(radii.top_right)
+                .max(radii.bottom_right)
+                .max(radii.bottom_left);
+            Some((ClipPathKind::RoundedRect { corner_radius: max_r }, *bounds))
         }
         PaintClipPath::Inset { top, right, bottom, left, radius } => {
-            let avg = (radius.top_left + radius.top_right + radius.bottom_right + radius.bottom_left)
-                / 4.0;
+            let max_r = radius.top_left
+                .max(radius.top_right)
+                .max(radius.bottom_right)
+                .max(radius.bottom_left);
             // Compute the inset rect relative to the element bounds
             let inset_bounds = CRect::new(
                 bounds.x + left,
@@ -761,7 +809,7 @@ fn convert_paint_clip_path(
                 (bounds.width - left - right).max(0.0),
                 (bounds.height - top - bottom).max(0.0),
             );
-            Some((ClipPathKind::RoundedRect { corner_radius: avg }, inset_bounds))
+            Some((ClipPathKind::RoundedRect { corner_radius: max_r }, inset_bounds))
         }
     }
 }

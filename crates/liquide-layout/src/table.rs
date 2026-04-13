@@ -111,13 +111,13 @@ fn read_span_attr(doc: &Document, node_id: NodeId, attr: &str) -> usize {
 /// 3. Building an occupancy grid for spanning cells
 /// 4. Computing column widths (distributing spanning-cell excess equally)
 /// 5. Positioning cells using spanned widths/heights
-pub fn layout_table(
+pub fn layout_table<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
-    image_measurer: &dyn ImageMeasurer,
+    text_measurer: &TM,
+    image_measurer: &IM,
     container_width: f32,
     container_height: f32,
     offset_x: f32,
@@ -337,8 +337,8 @@ pub fn layout_table(
         row_id: NodeId,
         styles: &StyleMap,
         tree: &mut LayoutTree,
-        text_measurer: &dyn TextMeasurer,
-        image_measurer: &dyn ImageMeasurer,
+        text_measurer: &(impl TextMeasurer + ?Sized),
+        image_measurer: &(impl ImageMeasurer + ?Sized),
         content_width: f32,
         container_height: f32,
         viewport_w: f32,

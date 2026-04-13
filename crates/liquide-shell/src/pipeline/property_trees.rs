@@ -181,8 +181,17 @@ impl DesktopPipeline {
                 }
 
                 DisplayItem::PushClipPath { .. } => {
-                    // Clip paths share PopClip with PushClip, so push a clip node
-                    // to keep the clip stack balanced.
+                    // PushClipPath pushes a clip node just like PushClip.  Both are
+                    // popped by `DisplayItem::PopClip` — there is no separate
+                    // `PopClipPath` variant. The painter emits them in this order:
+                    //
+                    //   PushClipPath  (if clip-path)
+                    //   PushClip      (if overflow clip)
+                    //   … children …
+                    //   PopClip       (overflow — pops PushClip)
+                    //   PopClip       (clip-path — pops PushClipPath)
+                    //
+                    // Each push gets its own pop, so the clip stack stays balanced.
                     let parent = *clip_stack.last().unwrap_or(&ROOT_NODE_ID);
                     let transform_id = *transform_stack.last().unwrap_or(&ROOT_NODE_ID);
                     let node = ClipNode {

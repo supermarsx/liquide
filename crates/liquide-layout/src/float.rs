@@ -197,13 +197,13 @@ impl From<liquide_style_engine::computed::Clear> for ClearSide {
 /// It processes children in order: floated children are positioned via
 /// the float context, and non-floated children have their available
 /// width adjusted based on active floats.
-pub fn layout_block_with_floats(
+pub fn layout_block_with_floats<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     doc: &Document,
     node_id: NodeId,
     styles: &StyleMap,
     tree: &mut LayoutTree,
-    text_measurer: &dyn TextMeasurer,
-    image_measurer: &dyn ImageMeasurer,
+    text_measurer: &TM,
+    image_measurer: &IM,
     container_width: f32,
     container_height: f32,
     content_x: f32,

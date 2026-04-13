@@ -11,7 +11,7 @@ use liquide_animation::scheduler::{
 use liquide_dom::NodeId;
 use liquide_style_engine::computed::{
     AnimationDirection, AnimationFillMode, AnimationIterationCount,
-    AnimationPlayState, ComputedStyle,
+    AnimationPlayState, ComputedStyle, LineHeight,
 };
 use liquide_style_engine::Dimension;
 use liquide_style_engine::StyleMap;
@@ -97,19 +97,43 @@ fn convert_iteration_count(c: &AnimationIterationCount) -> IterationCount {
 
 // ── Transitionable property float extraction ────────────────────────────
 
+/// CSS properties that support color transitions.
+const COLOR_PROPERTIES: &[&str] = &[
+    "color",
+    "background-color",
+    "border-top-color",
+    "border-right-color",
+    "border-bottom-color",
+    "border-left-color",
+    "outline-color",
+];
+
 /// List of CSS properties we support float transitions for.
 const TRANSITIONABLE_PROPERTIES: &[&str] = &[
+    // Opacity
     "opacity",
-    "font-size",
-    "flex-grow",
-    "flex-shrink",
-    "border-top-width",
-    "border-right-width",
-    "border-bottom-width",
-    "border-left-width",
-    "letter-spacing",
-    "word-spacing",
-    "text-indent",
+    // Dimensions
+    "width", "height", "min-width", "min-height", "max-width", "max-height",
+    // Spacing
+    "margin-top", "margin-right", "margin-bottom", "margin-left",
+    "padding-top", "padding-right", "padding-bottom", "padding-left",
+    // Position
+    "top", "right", "bottom", "left",
+    // Border widths
+    "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+    // Border radius
+    "border-top-left-radius", "border-top-right-radius",
+    "border-bottom-left-radius", "border-bottom-right-radius",
+    // Typography
+    "font-size", "letter-spacing", "word-spacing", "text-indent", "line-height",
+    // Flex
+    "flex-grow", "flex-shrink", "flex-basis",
+    // Grid/gap
+    "row-gap", "column-gap", "gap",
+    // Outline
+    "outline-width", "outline-offset",
+    // Other numeric
+    "z-index", "order",
 ];
 
 /// Extract a float value for a known transitionable property from a computed style.
@@ -127,9 +151,29 @@ fn get_float_property(style: &ComputedStyle, property: &str) -> Option<f32> {
         "letter-spacing" => Some(style.letter_spacing),
         "word-spacing" => Some(style.word_spacing),
         "text-indent" => Some(style.text_indent),
+        "order" => Some(style.order as f32),
+        "z-index" => style.z_index.map(|z| z as f32),
+        // Border radius
+        "border-top-left-radius" => Some(style.border_radius.top_left),
+        "border-top-right-radius" => Some(style.border_radius.top_right),
+        "border-bottom-left-radius" => Some(style.border_radius.bottom_left),
+        "border-bottom-right-radius" => Some(style.border_radius.bottom_right),
+        // Line-height
+        "line-height" => match &style.line_height {
+            LineHeight::Px(v) => Some(*v),
+            LineHeight::Number(v) => Some(*v * style.font_size),
+            LineHeight::Normal => None,
+        },
+        // Outline
+        "outline-width" => style.outline.as_ref().map(|o| o.width),
+        "outline-offset" => style.outline.as_ref().map(|o| o.offset),
         // Dimension properties — extract Px value only
         "width" => dimension_px(&style.width),
         "height" => dimension_px(&style.height),
+        "min-width" => dimension_px(&style.min_width),
+        "min-height" => dimension_px(&style.min_height),
+        "max-width" => dimension_px(&style.max_width),
+        "max-height" => dimension_px(&style.max_height),
         "margin-top" => dimension_px(&style.margin.top),
         "margin-right" => dimension_px(&style.margin.right),
         "margin-bottom" => dimension_px(&style.margin.bottom),
@@ -142,7 +186,10 @@ fn get_float_property(style: &ComputedStyle, property: &str) -> Option<f32> {
         "right" => dimension_px(&style.right),
         "bottom" => dimension_px(&style.bottom),
         "left" => dimension_px(&style.left),
+        "flex-basis" => dimension_px(&style.flex_basis),
         "gap" => dimension_px(&style.gap.width),
+        "row-gap" => dimension_px(&style.row_gap),
+        "column-gap" => dimension_px(&style.column_gap),
         _ => None,
     }
 }
@@ -161,8 +208,33 @@ fn set_float_property(style: &mut ComputedStyle, property: &str, value: f32) {
         "letter-spacing" => style.letter_spacing = value,
         "word-spacing" => style.word_spacing = value,
         "text-indent" => style.text_indent = value,
+        "order" => style.order = value as i32,
+        "z-index" => style.z_index = Some(value as i32),
+        // Border radius
+        "border-top-left-radius" => style.border_radius.top_left = value,
+        "border-top-right-radius" => style.border_radius.top_right = value,
+        "border-bottom-left-radius" => style.border_radius.bottom_left = value,
+        "border-bottom-right-radius" => style.border_radius.bottom_right = value,
+        // Line-height
+        "line-height" => style.line_height = LineHeight::Px(value),
+        // Outline
+        "outline-width" => {
+            if let Some(ref mut o) = style.outline {
+                o.width = value;
+            }
+        }
+        "outline-offset" => {
+            if let Some(ref mut o) = style.outline {
+                o.offset = value;
+            }
+        }
+        // Dimension properties
         "width" => style.width = Dimension::Px(value),
         "height" => style.height = Dimension::Px(value),
+        "min-width" => style.min_width = Dimension::Px(value),
+        "min-height" => style.min_height = Dimension::Px(value),
+        "max-width" => style.max_width = Dimension::Px(value),
+        "max-height" => style.max_height = Dimension::Px(value),
         "margin-top" => style.margin.top = Dimension::Px(value),
         "margin-right" => style.margin.right = Dimension::Px(value),
         "margin-bottom" => style.margin.bottom = Dimension::Px(value),
@@ -175,7 +247,62 @@ fn set_float_property(style: &mut ComputedStyle, property: &str, value: f32) {
         "right" => style.right = Dimension::Px(value),
         "bottom" => style.bottom = Dimension::Px(value),
         "left" => style.left = Dimension::Px(value),
+        "flex-basis" => style.flex_basis = Dimension::Px(value),
         "gap" => style.gap.width = Dimension::Px(value),
+        "row-gap" => style.row_gap = Dimension::Px(value),
+        "column-gap" => style.column_gap = Dimension::Px(value),
+        _ => {}
+    }
+}
+
+/// Extract a color for a known color property from a computed style.
+fn get_color_property(style: &ComputedStyle, property: &str) -> Option<[u8; 4]> {
+    match property {
+        "color" => {
+            let c = &style.color;
+            Some([c.r, c.g, c.b, c.a])
+        }
+        "background-color" => {
+            let c = &style.background_color;
+            Some([c.r, c.g, c.b, c.a])
+        }
+        "border-top-color" => {
+            let c = &style.border_color.top;
+            Some([c.r, c.g, c.b, c.a])
+        }
+        "border-right-color" => {
+            let c = &style.border_color.right;
+            Some([c.r, c.g, c.b, c.a])
+        }
+        "border-bottom-color" => {
+            let c = &style.border_color.bottom;
+            Some([c.r, c.g, c.b, c.a])
+        }
+        "border-left-color" => {
+            let c = &style.border_color.left;
+            Some([c.r, c.g, c.b, c.a])
+        }
+        "outline-color" => style.outline.as_ref().map(|o| [o.color.r, o.color.g, o.color.b, o.color.a]),
+        _ => None,
+    }
+}
+
+/// Set a color property on a mutable `ComputedStyle`.
+fn set_color_property(style: &mut ComputedStyle, property: &str, rgba: [u8; 4]) {
+    use liquide_compositor::pixel::Color as CssColor;
+    let c = CssColor::new(rgba[0], rgba[1], rgba[2], rgba[3]);
+    match property {
+        "color" => style.color = c,
+        "background-color" => style.background_color = c,
+        "border-top-color" => style.border_color.top = c,
+        "border-right-color" => style.border_color.right = c,
+        "border-bottom-color" => style.border_color.bottom = c,
+        "border-left-color" => style.border_color.left = c,
+        "outline-color" => {
+            if let Some(ref mut o) = style.outline {
+                o.color = c;
+            }
+        }
         _ => {}
     }
 }
@@ -192,6 +319,9 @@ fn dimension_px(d: &Dimension) -> Option<f32> {
 impl DesktopPipeline {
     /// Detect and start CSS transitions by comparing old and new computed styles.
     pub(super) fn detect_transitions(&mut self, styles: &StyleMap) {
+        let mut dur_cache: HashMap<String, f32> = HashMap::new();
+        let mut timing_cache: HashMap<String, EasingFunction> = HashMap::new();
+
         for (node_id, new_style) in styles.iter() {
             let old_style = match self.prev_styles.get(node_id) {
                 Some(s) => s,
@@ -204,37 +334,36 @@ impl DesktopPipeline {
                 None => continue,
             };
 
-            let duration_ms = new_style
-                .transition_duration
-                .as_deref()
-                .map(parse_duration_ms)
-                .unwrap_or(0.0);
+            let duration_ms = match new_style.transition_duration.as_deref() {
+                Some(s) => *dur_cache.entry(s.to_owned()).or_insert_with(|| parse_duration_ms(s)),
+                None => 0.0,
+            };
 
             if duration_ms <= 0.0 {
                 continue;
             }
 
-            let delay_ms = new_style
-                .transition_delay
-                .as_deref()
-                .map(parse_duration_ms)
-                .unwrap_or(0.0);
+            let delay_ms = match new_style.transition_delay.as_deref() {
+                Some(s) => *dur_cache.entry(s.to_owned()).or_insert_with(|| parse_duration_ms(s)),
+                None => 0.0,
+            };
 
-            let easing = new_style
-                .transition_timing_function
-                .as_deref()
-                .map(parse_timing_function)
-                .unwrap_or(EasingFunction::Ease);
+            let easing = match new_style.transition_timing_function.as_deref() {
+                Some(s) => *timing_cache.entry(s.to_owned()).or_insert_with(|| parse_timing_function(s)),
+                None => EasingFunction::Ease,
+            };
 
             // Determine which properties to transition
             let props: Vec<&str> = if transition_property.trim() == "all" {
-                // All supported float properties
-                TRANSITIONABLE_PROPERTIES.to_vec()
+                // All supported float and color properties
+                let mut all = TRANSITIONABLE_PROPERTIES.to_vec();
+                all.extend_from_slice(COLOR_PROPERTIES);
+                all
             } else {
                 transition_property.split(',').map(|s| s.trim()).collect()
             };
 
-            for prop in props {
+            for prop in &props {
                 let old_val = match get_float_property(old_style, prop) {
                     Some(v) => v,
                     None => continue,
@@ -277,11 +406,45 @@ impl DesktopPipeline {
                     *node_id, prop, old_val, new_val, duration_ms, delay_ms, easing,
                 );
             }
+
+            // Color transitions
+            for prop in &props {
+                if !COLOR_PROPERTIES.contains(prop) {
+                    continue;
+                }
+                let old_c = match get_color_property(old_style, prop) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let new_c = match get_color_property(new_style, prop) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                if old_c == new_c {
+                    continue;
+                }
+                // Encode RGBA as 4 separate float transitions
+                let suffixes = ["_r", "_g", "_b", "_a"];
+                for (i, suffix) in suffixes.iter().enumerate() {
+                    let key = format!("{}{}", prop, suffix);
+                    let from = old_c[i] as f32;
+                    let to = new_c[i] as f32;
+                    if (from - to).abs() < 0.5 {
+                        continue;
+                    }
+                    self.transition_engine.start(
+                        *node_id, &key, from, to, duration_ms, delay_ms, easing,
+                    );
+                }
+            }
         }
     }
 
     /// Detect and start CSS animations based on `animation-name` in computed styles.
     pub(super) fn detect_animations(&mut self, styles: &StyleMap) {
+        let mut dur_cache: HashMap<String, f32> = HashMap::new();
+        let mut timing_cache: HashMap<String, EasingFunction> = HashMap::new();
+
         for (node_id, style) in styles.iter() {
             let anim_name = match &style.animation_name {
                 Some(name) if !name.is_empty() && name != "none" => name.clone(),
@@ -300,28 +463,25 @@ impl DesktopPipeline {
                 continue;
             }
 
-            let duration_ms = style
-                .animation_duration
-                .as_deref()
-                .map(parse_duration_ms)
-                .unwrap_or(0.0);
+            let duration_ms = match style.animation_duration.as_deref() {
+                Some(s) => *dur_cache.entry(s.to_owned()).or_insert_with(|| parse_duration_ms(s)),
+                None => 0.0,
+            };
 
             // Skip zero-duration animations
             if duration_ms <= 0.0 {
                 continue;
             }
 
-            let delay_ms = style
-                .animation_delay
-                .as_deref()
-                .map(parse_duration_ms)
-                .unwrap_or(0.0);
+            let delay_ms = match style.animation_delay.as_deref() {
+                Some(s) => *dur_cache.entry(s.to_owned()).or_insert_with(|| parse_duration_ms(s)),
+                None => 0.0,
+            };
 
-            let easing = style
-                .animation_timing_function
-                .as_deref()
-                .map(parse_timing_function)
-                .unwrap_or(EasingFunction::Ease);
+            let easing = match style.animation_timing_function.as_deref() {
+                Some(s) => *timing_cache.entry(s.to_owned()).or_insert_with(|| parse_timing_function(s)),
+                None => EasingFunction::Ease,
+            };
 
             let direction = convert_direction(&style.animation_direction);
             let fill_mode = convert_fill_mode(&style.animation_fill_mode);
@@ -397,6 +557,23 @@ impl DesktopPipeline {
                 for &(prop, val) in props {
                     set_float_property(&mut patched, prop, val);
                 }
+                // Apply color channel overrides
+                for color_prop in COLOR_PROPERTIES {
+                    let r = self.transition_engine.get(*node_id, &format!("{}_r", color_prop));
+                    let g = self.transition_engine.get(*node_id, &format!("{}_g", color_prop));
+                    let b = self.transition_engine.get(*node_id, &format!("{}_b", color_prop));
+                    let a = self.transition_engine.get(*node_id, &format!("{}_a", color_prop));
+                    if r.is_some() || g.is_some() || b.is_some() || a.is_some() {
+                        let base = get_color_property(&patched, color_prop).unwrap_or([0, 0, 0, 255]);
+                        let rgba = [
+                            r.map(|v| v.clamp(0.0, 255.0) as u8).unwrap_or(base[0]),
+                            g.map(|v| v.clamp(0.0, 255.0) as u8).unwrap_or(base[1]),
+                            b.map(|v| v.clamp(0.0, 255.0) as u8).unwrap_or(base[2]),
+                            a.map(|v| v.clamp(0.0, 255.0) as u8).unwrap_or(base[3]),
+                        ];
+                        set_color_property(&mut patched, color_prop, rgba);
+                    }
+                }
                 styles.insert(*node_id, patched);
             }
         }
@@ -407,8 +584,14 @@ impl DesktopPipeline {
         // Collect all (node_id, property, value) triples first to avoid borrow issues
         let mut animation_overrides: Vec<(NodeId, String, f32)> = Vec::new();
 
-        let node_ids: Vec<NodeId> = styles.iter().map(|(id, _)| *id).collect();
-        for node_id in &node_ids {
+        // Only iterate nodes with active animations to avoid O(n*m) iteration
+        let mut animated_set: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        for (node_id, style) in styles.iter() {
+            if style.animation_name.is_some() {
+                animated_set.insert(*node_id);
+            }
+        }
+        for node_id in &animated_set {
             let anims = self.animation_scheduler.animations_for(*node_id);
             for anim in anims {
                 if anim.state != AnimationState::Running {
@@ -416,18 +599,12 @@ impl DesktopPipeline {
                 }
                 for prop in TRANSITIONABLE_PROPERTIES
                     .iter()
-                    .chain(
-                        [
-                            "width", "height", "margin-top", "margin-right",
-                            "margin-bottom", "margin-left", "padding-top",
-                            "padding-right", "padding-bottom", "padding-left",
-                            "top", "right", "bottom", "left", "gap",
-                        ]
-                        .iter(),
-                    )
                 {
                     if let Some(pv) = self.animation_scheduler.resolve_property(anim, prop) {
-                        if let Some(val) = property_value_to_float(&pv) {
+                        let vw = self.style_engine.viewport.width;
+                        let vh = self.style_engine.viewport.height;
+                        let fs = self.style_engine.base_font_size;
+                        if let Some(val) = property_value_to_float(&pv, vw, vh, fs) {
                             animation_overrides.push((*node_id, prop.to_string(), val));
                         }
                     }
@@ -461,10 +638,24 @@ impl DesktopPipeline {
 }
 
 /// Try to extract a float value from a `PropertyValue`.
-fn property_value_to_float(pv: &liquide_theme_css::value::PropertyValue) -> Option<f32> {
-    use liquide_theme_css::value::PropertyValue;
+fn property_value_to_float(
+    pv: &liquide_theme_css::value::PropertyValue,
+    viewport_width: f32,
+    viewport_height: f32,
+    base_font_size: f32,
+) -> Option<f32> {
+    use liquide_theme_css::value::{PropertyValue, LengthUnit};
     match pv {
-        PropertyValue::Length(liquide_theme_css::value::LengthUnit::Px(v)) => Some(*v),
+        PropertyValue::Length(lu) => match lu {
+            LengthUnit::Px(v) => Some(*v),
+            LengthUnit::Em(v) => Some(*v * base_font_size),
+            LengthUnit::Rem(v) => Some(*v * base_font_size),
+            LengthUnit::Pt(v) => Some(*v * 1.333),
+            LengthUnit::Vw(v) => Some(*v * viewport_width / 100.0),
+            LengthUnit::Vh(v) => Some(*v * viewport_height / 100.0),
+            LengthUnit::Percent(v) => Some(*v),
+            _ => None,
+        },
         PropertyValue::Number(v) => Some(*v),
         _ => None,
     }

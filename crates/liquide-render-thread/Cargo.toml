@@ -9,3 +9,6 @@ license.workspace = true
 serde = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+liquide-compositor = { workspace = true }
+liquide-renderer-cpu = { workspace = true }
+liquide-font-rasterizer = { workspace = true }

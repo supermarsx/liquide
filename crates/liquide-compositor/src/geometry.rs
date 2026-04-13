@@ -148,6 +148,9 @@ impl Rect {
     /// Returns `(start_col, start_row, end_col_exclusive, end_row_exclusive)`.
     #[must_use]
     pub fn to_tile_coords(&self, tile_size: u32) -> (u32, u32, u32, u32) {
+        if tile_size == 0 {
+            return (0, 0, 0, 0);
+        }
         let ts = tile_size as f32;
         let start_col = (self.x / ts).floor().max(0.0) as u32;
         let start_row = (self.y / ts).floor().max(0.0) as u32;

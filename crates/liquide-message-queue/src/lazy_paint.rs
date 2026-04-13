@@ -219,17 +219,17 @@ impl LazyPaintManager {
     /// Called by the message pump when no higher-priority work exists.
     pub fn synthesize(&mut self) -> Vec<PaintRequest> {
         self.generation += 1;
-        let gen = self.generation;
+        let current_gen = self.generation;
         let mut requests = Vec::new();
 
         for (&id, state) in self.surfaces.iter_mut() {
             if state.needs_paint {
                 self.paint_count += 1;
-                state.generation = gen;
+                state.generation = current_gen;
                 requests.push(PaintRequest {
                     surface_id: id,
                     damage: std::mem::replace(&mut state.damage, PaintDamage::None),
-                    generation: gen,
+                    generation: current_gen,
                     erase_background: state.needs_erase && !state.opaque,
                 });
                 state.needs_paint = false;
@@ -243,16 +243,16 @@ impl LazyPaintManager {
     /// Synthesize for a single surface only.
     pub fn synthesize_for(&mut self, surface_id: SurfaceId) -> Option<PaintRequest> {
         self.generation += 1;
-        let gen = self.generation;
+        let current_gen = self.generation;
 
         if let Some(state) = self.surfaces.get_mut(&surface_id) {
             if state.needs_paint {
                 self.paint_count += 1;
-                state.generation = gen;
+                state.generation = current_gen;
                 let req = PaintRequest {
                     surface_id,
                     damage: std::mem::replace(&mut state.damage, PaintDamage::None),
-                    generation: gen,
+                    generation: current_gen,
                     erase_background: state.needs_erase && !state.opaque,
                 };
                 state.needs_paint = false;

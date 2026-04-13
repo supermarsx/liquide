@@ -18,15 +18,18 @@ mod helpers;
 mod property_trees;
 mod scene_bridge;
 mod stages;
+mod animation_bridge;
 
 #[cfg(test)]
 mod tests;
 
 use std::sync::{Arc, RwLock};
 
+use liquide_animation::{AnimationScheduler, TransitionEngine};
 use liquide_font_rasterizer::database::FontDatabase;
 use liquide_layout::{LayoutEngine, LayoutTree};
 use liquide_paint::{DisplayList, Painter};
+use liquide_style_engine::computed::ComputedStyle;
 use liquide_style_engine::{StyleEngine, StyleMap};
 
 /// Holds the full pipeline state.
@@ -39,6 +42,8 @@ pub struct DesktopPipeline {
     pub painter: Painter,
     /// Monotonic id counter for scene nodes generated from the pipeline.
     next_scene_id: u64,
+    /// Frame counter used for stable scene ID generation.
+    frame_counter: u64,
     /// Last computed styles (cached for hit-testing).
     pub last_styles: Option<Arc<StyleMap>>,
     /// Last computed layout tree (cached for hit-testing).
@@ -50,6 +55,12 @@ pub struct DesktopPipeline {
     pending_images: Vec<(u64, String)>,
     /// Optional font database for real text measurement.
     font_db: Option<Arc<RwLock<FontDatabase>>>,
+    /// CSS transition engine — detects property changes and interpolates.
+    pub transition_engine: TransitionEngine,
+    /// CSS animation scheduler — runs @keyframes animations.
+    pub animation_scheduler: AnimationScheduler,
+    /// Previous frame's computed styles for transition detection.
+    pub prev_styles: std::collections::HashMap<liquide_dom::NodeId, std::sync::Arc<ComputedStyle>>,
 }
 
 /// Configuration for the pipeline.
