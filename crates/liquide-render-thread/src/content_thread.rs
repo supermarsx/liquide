@@ -164,7 +164,7 @@ pub fn content_worker(
                 viewport_width,
                 viewport_height,
                 nodes,
-                ..
+                damage: damage_rects,
             }) => {
                 let start = Instant::now();
 
@@ -182,12 +182,18 @@ pub fn content_worker(
                 let framebuf = fb.as_mut().unwrap();
                 framebuf.clear(liquide_compositor::pixel::Color::new(0, 0, 0, 0));
 
-                // Full-damage render.
+                // Damage tracking: use compositor damage rects when available.
                 let tile_size = 64;
                 let mut damage = DamageSet::new(tile_size);
                 let grid_w = viewport_width.div_ceil(tile_size);
                 let grid_h = viewport_height.div_ceil(tile_size);
-                damage.mark_all(grid_w, grid_h);
+                if damage_rects.is_empty() {
+                    damage.mark_all(grid_w, grid_h);
+                } else {
+                    for rect in &damage_rects {
+                        damage.mark_rect(rect.x, rect.y, rect.width, rect.height, grid_w, grid_h);
+                    }
+                }
 
                 let _ = renderer.render(&nodes, framebuf, &damage);
 

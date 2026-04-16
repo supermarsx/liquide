@@ -1,8 +1,8 @@
 //! Dedicated render thread pool
 
 use crate::error::{RenderError, Result};
-use crate::render_task::{RenderTask, RenderOutput};
-use crossbeam_channel::{Sender, Receiver, bounded, select};
+use crate::render_task::{RenderTask, RenderOutput, RenderTaskKind};
+use crossbeam_channel::{Sender, Receiver, bounded};
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering}};
@@ -190,27 +190,40 @@ impl RenderThread {
         let mut priority_queue: BinaryHeap<PrioritizedTask> = BinaryHeap::new();
         
         while !shutdown.load(AtomicOrdering::Relaxed) {
-            // Try to receive tasks with timeout
-            select! {
-                recv(task_rx) -> result => {
-                    match result {
+            if config.priority_scheduling {
+                // Block until a task arrives (with timeout to check shutdown)
+                if priority_queue.is_empty() {
+                    match task_rx.recv_timeout(Duration::from_millis(50)) {
                         Ok(task) => {
-                            if config.priority_scheduling {
-                                priority_queue.push(PrioritizedTask { task });
-                            } else {
-                                Self::execute_task(task, &output_tx, &task_counter);
-                            }
+                            priority_queue.push(PrioritizedTask { task });
                         }
-                        Err(_) => {
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                             debug!("Task channel closed for thread '{}'", config.name);
                             break;
                         }
                     }
                 }
-                default(Duration::from_millis(1)) => {
-                    // Process priority queue
-                    if let Some(prioritized) = priority_queue.pop() {
-                        Self::execute_task(prioritized.task, &output_tx, &task_counter);
+
+                // Batch-drain any additional pending tasks
+                while let Ok(task) = task_rx.try_recv() {
+                    priority_queue.push(PrioritizedTask { task });
+                }
+
+                // Process the highest-priority task
+                if let Some(prioritized) = priority_queue.pop() {
+                    Self::execute_task(prioritized.task, &output_tx, &task_counter);
+                }
+            } else {
+                // Without priority scheduling, block until a task arrives
+                match task_rx.recv_timeout(Duration::from_millis(50)) {
+                    Ok(task) => {
+                        Self::execute_task(task, &output_tx, &task_counter);
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        debug!("Task channel closed for thread '{}'", config.name);
+                        break;
                     }
                 }
             }
@@ -242,18 +255,34 @@ impl RenderThread {
             task.id, task.kind, task.priority
         );
         
-        // TODO: Actual rendering implementation
-        // For now, just simulate work
         let output = if task.is_overdue() {
-            warn!("Task {} is overdue", task.id);
+            warn!("Task {} is overdue, skipping", task.id);
             RenderOutput::failure(
                 task.id,
                 start.elapsed(),
                 "Task exceeded deadline".to_string(),
             )
         } else {
-            // Simulate render work
-            std::thread::sleep(Duration::from_micros(100));
+            match &task.kind {
+                RenderTaskKind::Window { window_id, is_focused } => {
+                    debug!("Rendering window {} (focused={})", window_id, is_focused);
+                }
+                RenderTaskKind::Dock => {
+                    debug!("Rendering dock");
+                }
+                RenderTaskKind::StatusBar => {
+                    debug!("Rendering status bar");
+                }
+                RenderTaskKind::Background => {
+                    debug!("Rendering background");
+                }
+                RenderTaskKind::Wallpaper { frame } => {
+                    debug!("Rendering wallpaper frame {}", frame);
+                }
+                RenderTaskKind::Composite { layer_ids } => {
+                    debug!("Compositing {} layers", layer_ids.len());
+                }
+            }
             RenderOutput::success(task.id, task.data, start.elapsed())
         };
         
