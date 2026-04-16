@@ -15,35 +15,45 @@ fn test_initial_state_disconnected() {
     assert_eq!(runtime.quality(), ConnectionQuality::Disconnected);
 }
 
-#[test]
-fn test_connect_and_disconnect() {
+#[tokio::test]
+async fn test_connect_and_disconnect() {
+    let (addr, server) = super::helpers::mock_tls_server(true).await;
     let mut runtime = make_runtime();
-    runtime.connect("localhost:3389").unwrap();
+    runtime.connect(&addr.to_string()).await.unwrap();
     assert_eq!(runtime.state(), ConnectionState::Connected);
 
-    runtime.disconnect();
+    runtime.disconnect().await;
     assert_eq!(runtime.state(), ConnectionState::Disconnected);
+    server.await.unwrap();
 }
 
-#[test]
-fn test_audit_events_on_connect() {
+#[tokio::test]
+async fn test_audit_events_on_connect() {
+    let (addr, server) = super::helpers::mock_tls_server(true).await;
     let mut runtime = make_runtime();
-    runtime.connect("localhost:3389").unwrap();
+    runtime.connect(&addr.to_string()).await.unwrap();
 
     let events = runtime.drain_audit_events();
     assert!(events.len() >= 2);
     assert_eq!(events[0].event_name(), "connection_attempt");
     assert_eq!(events[1].event_name(), "connected");
+
+    runtime.disconnect().await;
+    server.await.unwrap();
 }
 
-#[test]
-fn test_drain_clears_events() {
+#[tokio::test]
+async fn test_drain_clears_events() {
+    let (addr, server) = super::helpers::mock_tls_server(true).await;
     let mut runtime = make_runtime();
-    runtime.connect("localhost:3389").unwrap();
+    runtime.connect(&addr.to_string()).await.unwrap();
     let events1 = runtime.drain_audit_events();
     assert!(!events1.is_empty());
     let events2 = runtime.drain_audit_events();
     assert!(events2.is_empty());
+
+    runtime.disconnect().await;
+    server.await.unwrap();
 }
 
 #[test]

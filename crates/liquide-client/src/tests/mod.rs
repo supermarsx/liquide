@@ -1,3 +1,4 @@
+mod helpers;
 mod connection_tests;
 mod cursor_tests;
 mod decoder_tests;

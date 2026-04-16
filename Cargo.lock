@@ -2535,6 +2535,7 @@ name = "liquide-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ciborium",
  "clap",
  "dirs",
  "liquide-audio",
@@ -2545,9 +2546,12 @@ dependencies = [
  "liquide-input",
  "liquide-protocol",
  "liquide-transport",
+ "rcgen",
+ "rustls",
  "serde",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2892,15 +2896,20 @@ name = "liquide-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ciborium",
  "clap",
  "liquide-auth",
  "liquide-common",
  "liquide-crypto",
  "liquide-protocol",
  "liquide-transport",
+ "rcgen",
+ "rustls",
+ "rustls-pemfile",
  "serde",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "tracing-subscriber",
 ]

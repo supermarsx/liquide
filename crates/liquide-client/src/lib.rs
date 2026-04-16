@@ -102,3 +102,6 @@ pub use color::{ColorMode, ToneMapper, ColorPipeline};
 pub use credential::{StorageMode, CredentialStore};
 pub use audit::{AuditLevel, ClientAuditEvent};
 pub use runtime::ClientRuntime;
+
+#[cfg(test)]
+mod tests;
