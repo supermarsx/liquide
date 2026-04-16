@@ -1,13 +1,12 @@
 //! Standalone compositor launcher — coordinates all subsystems.
 
 use crate::config::StandaloneConfig;
-use liquide_drm::{DrmDevice, DrmError};
-use liquide_logind::{VirtualTerminal, VtMode, Privileges, StubSeat};
-use liquide_logind::session::StubSession;
+use liquide_drm::DrmDevice;
+use liquide_logind::{VirtualTerminal, VtMode, Privileges};
 use liquide_libinput::EvdevEnumerator;
 use liquide_wayland_server::WaylandDisplay;
 use liquide_xwayland::{XWaylandProcess, XWaylandConfig};
-use tracing::{info, warn};
+use tracing::info;
 
 /// The standalone compositor launcher.
 pub struct StandaloneLauncher {

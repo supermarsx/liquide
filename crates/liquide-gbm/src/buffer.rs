@@ -8,6 +8,8 @@ pub type GbmBufferFlags = BufferUsage;
 /// A GBM buffer object backed by GPU memory.
 #[derive(Debug)]
 pub struct GbmBuffer {
+    /// Opaque handle returned by `gbm_bo_create`. Reserved for FFI.
+    #[allow(dead_code)]
     handle: usize,
     width: u32,
     height: u32,
@@ -64,13 +66,19 @@ impl GbmBuffer {
     }
 
     /// Map the buffer for CPU write access.
+    ///
+    /// # Stub
+    /// Not yet implemented — requires GBM FFI bindings (`gbm_bo_map`).
     pub fn map_write(&self) -> Result<BufferMapping> {
         #[cfg(target_os = "linux")]
         {
             // TODO: call gbm_bo_map via FFI
-            Err(GbmError::DmaBufExport(
-                "map not yet implemented".into(),
-            ))
+            Err(GbmError::BufferAlloc {
+                width: self.width,
+                height: self.height,
+                format: self.format.name().to_string(),
+                reason: "map not yet implemented".into(),
+            })
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -98,21 +106,27 @@ impl GbmBuffer {
         self.modifier
     }
 
+    #[allow(dead_code)] // will be used by FFI calls (gbm_bo_get_fd, etc.)
     pub(crate) fn handle(&self) -> usize {
         self.handle
     }
 }
 
 /// A CPU-mapped region of a GBM buffer.
+///
+/// The mapping is automatically unmapped on drop.
 #[derive(Debug)]
 pub struct BufferMapping {
-    pub ptr: *mut u8,
-    pub stride: u32,
-    pub length: usize,
+    ptr: *mut u8,
+    stride: u32,
+    length: usize,
+    /// Opaque cookie returned by `gbm_bo_map`, passed to `gbm_bo_unmap`.
+    #[allow(dead_code)]
     map_data: usize,
 }
 
 impl BufferMapping {
+    #[allow(dead_code)] // will be used when map_write() is implemented
     pub(crate) fn new(ptr: *mut u8, stride: u32, length: usize, map_data: usize) -> Self {
         Self {
             ptr,
@@ -120,6 +134,25 @@ impl BufferMapping {
             length,
             map_data,
         }
+    }
+
+    /// Returns a raw pointer to the mapped memory.
+    ///
+    /// # Safety
+    /// The caller must ensure writes through this pointer stay within
+    /// `self.length` bytes and respect the stride layout.
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.ptr
+    }
+
+    /// Row stride in bytes.
+    pub fn stride(&self) -> u32 {
+        self.stride
+    }
+
+    /// Total mapped region length in bytes.
+    pub fn length(&self) -> usize {
+        self.length
     }
 }
 

@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
+/// Unique identifier for a connected Wayland client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClientId(pub u32);
 
+/// Connection state of a Wayland client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientState {
     Connected,
@@ -12,6 +14,7 @@ pub enum ClientState {
     Disconnected,
 }
 
+/// The Wayland protocol object type that a server-side ID maps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectType {
     Surface,
@@ -32,6 +35,7 @@ pub enum ObjectType {
     DataDevice,
 }
 
+/// A single Wayland client connection, tracking its protocol objects.
 #[derive(Debug)]
 pub struct ClientConnection {
     id: ClientId,

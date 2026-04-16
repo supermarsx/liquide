@@ -34,7 +34,7 @@ use crate::keymap::{DefaultKeymap, KeymapTranslator};
 use crate::notifications::{NativeNotifications, NullNativeNotifications};
 use crate::taskbar::{NullTaskbar, TaskbarIntegration};
 use crate::tray::{NativeTray, NullNativeTray};
-use crate::window_host::{NativeWindowHandle, NativeWindowHost, NativeWindowParams, NullWindowHost};
+use crate::window_host::{NativeWindowHandle, NativeWindowHost, NativeWindowParams};
 use crate::{PlatformBackend, PlatformResult};
 
 /// Configuration for the standalone platform backend.

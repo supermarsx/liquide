@@ -41,14 +41,23 @@ pub enum XWaylandState {
 
 /// Manages the XWayland child process.
 pub struct XWaylandProcess {
+    /// Configuration used to start XWayland.
+    /// Used by `find_binary` and `start` on Linux.
+    #[allow(dead_code)]
     config: XWaylandConfig,
     state: XWaylandState,
     display_number: u32,
     /// PID of the XWayland process (0 if not running).
+    /// Reserved for the real implementation that will call `waitpid()`.
+    #[allow(dead_code)]
     pid: u32,
     /// Wayland socket fd pair (compositor end).
+    /// Reserved for the real implementation that will create a socketpair.
+    #[allow(dead_code)]
     wl_fd: i32,
     /// X11 display socket path.
+    /// Set during start, used by the real implementation for cleanup.
+    #[allow(dead_code)]
     display_socket: String,
 }
 

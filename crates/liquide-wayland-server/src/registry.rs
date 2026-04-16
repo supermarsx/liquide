@@ -1,5 +1,8 @@
 use crate::global::{self, Global, GlobalId};
 
+/// Registry of Wayland globals advertised to connecting clients.
+///
+/// Pre-populated with the standard set of globals on construction.
 #[derive(Debug)]
 pub struct GlobalRegistry {
     globals: Vec<Global>,

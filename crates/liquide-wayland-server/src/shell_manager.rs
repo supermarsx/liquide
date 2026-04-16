@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use liquide_wayland::ToplevelState;
 
+/// State for an XDG toplevel window.
 #[derive(Debug)]
 pub struct ToplevelInfo {
     pub surface_id: u32,
@@ -13,6 +14,7 @@ pub struct ToplevelInfo {
     pub pending_height: u32,
 }
 
+/// State for an XDG popup surface.
 #[derive(Debug)]
 pub struct PopupState {
     pub surface_id: u32,
@@ -23,6 +25,7 @@ pub struct PopupState {
     pub height: u32,
 }
 
+/// Manages XDG shell toplevel and popup surfaces.
 #[derive(Debug)]
 pub struct ShellManager {
     toplevels: HashMap<u32, ToplevelInfo>,

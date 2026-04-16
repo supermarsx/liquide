@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+#[allow(unused_imports)] // LogindError is used in cfg(target_os = "linux") blocks
 use crate::error::{LogindError, Result};
 
 /// Privilege management utilities for compositor session setup.

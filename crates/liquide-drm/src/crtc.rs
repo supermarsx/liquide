@@ -20,6 +20,11 @@ pub struct CrtcInfo {
 }
 
 /// Enumerates all CRTCs on the given DRM device.
+///
+/// # Stub
+/// Not yet implemented — requires DRM ioctls
+/// (`DRM_IOCTL_MODE_GETRESOURCES` + `DRM_IOCTL_MODE_GETCRTC`).
+/// Currently returns an empty list.
 #[cfg(target_os = "linux")]
 pub fn enumerate_crtcs(_device: &DrmDevice) -> Result<Vec<CrtcInfo>> {
     // TODO: implement via DRM ioctl DRM_IOCTL_MODE_GETRESOURCES + DRM_IOCTL_MODE_GETCRTC

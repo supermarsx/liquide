@@ -9,8 +9,10 @@ pub enum ShmFormat {
 
 #[derive(Debug)]
 pub struct ShmPool {
+    #[allow(dead_code)] // used in cfg(target_os = "linux") mmap/mremap/read paths
     fd: i32,
     size: usize,
+    #[allow(dead_code)] // used in cfg(target_os = "linux") mmap/mremap/read paths
     data: *mut u8,
 }
 
@@ -24,6 +26,9 @@ impl ShmPool {
         #[cfg(target_os = "linux")]
         {
             use std::ptr;
+            // SAFETY: fd is a valid file descriptor provided by the client via
+            // the Wayland protocol. We map it read-only with MAP_SHARED and check
+            // for MAP_FAILED before storing the pointer.
             let data = unsafe {
                 libc::mmap(
                     ptr::null_mut(),
@@ -56,6 +61,9 @@ impl ShmPool {
     pub fn resize(&mut self, new_size: usize) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
+            // SAFETY: self.data was obtained from a successful mmap call and self.size
+            // is the current mapping length. MREMAP_MAYMOVE allows the kernel to
+            // relocate the mapping. We check for MAP_FAILED before storing.
             let new_data = unsafe {
                 libc::mremap(self.data as *mut _, self.size, new_size, libc::MREMAP_MAYMOVE)
             };
@@ -86,6 +94,9 @@ impl ShmPool {
                     self.size
                 )));
             }
+            // SAFETY: offset + len has been bounds-checked above against self.size.
+            // self.data is a valid pointer from mmap, and the pool memory is immutable
+            // from our side (PROT_READ).
             Ok(unsafe { std::slice::from_raw_parts(self.data.add(offset), len) })
         }
 
@@ -110,6 +121,8 @@ impl Drop for ShmPool {
         #[cfg(target_os = "linux")]
         {
             if !self.data.is_null() {
+                // SAFETY: self.data and self.size were set by a successful mmap/mremap.
+                // This is the single munmap call for this mapping.
                 unsafe {
                     libc::munmap(self.data as *mut _, self.size);
                 }

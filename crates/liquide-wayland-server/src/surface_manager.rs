@@ -4,6 +4,7 @@ use crate::buffer::BufferRef;
 use crate::client::ClientId;
 use crate::error::{Result, WaylandServerError};
 
+/// Role assigned to a Wayland surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfaceRole {
     None,
@@ -14,6 +15,8 @@ pub enum SurfaceRole {
     LayerSurface,
 }
 
+/// Server-side state for a Wayland surface, combining the protocol
+/// surface object with compositor metadata (role, buffer, callbacks).
 #[derive(Debug)]
 pub struct ManagedSurface {
     pub id: u32,
@@ -24,6 +27,7 @@ pub struct ManagedSurface {
     pub pending_frame_callbacks: Vec<u32>,
 }
 
+/// Tracks all surfaces created by connected clients.
 #[derive(Debug)]
 pub struct SurfaceManager {
     surfaces: HashMap<u32, ManagedSurface>,

@@ -1,4 +1,9 @@
 //! Clipboard bridge between X11 selections and Wayland data offers.
+//!
+//! # Stub
+//! This module provides the structural scaffolding for bridging X11
+//! `CLIPBOARD` / `PRIMARY` selections with the Wayland `wl_data_device`
+//! protocol. The actual X11 event handling is not yet implemented.
 
 use crate::error::Result;
 

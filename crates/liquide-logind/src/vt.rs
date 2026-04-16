@@ -1,15 +1,25 @@
 //! Virtual terminal allocation and management.
 
+#[allow(unused_imports)] // LogindError is used in cfg(target_os = \"linux\") blocks
 use crate::error::{LogindError, Result};
 
 // Linux ioctl constants for VT/KD operations.
-pub const KD_TEXT: i32 = 0x00;
-pub const KD_GRAPHICS: i32 = 0x01;
-pub const VT_ACTIVATE: u64 = 0x5606;
-pub const VT_WAITACTIVE: u64 = 0x5607;
-pub const VT_GETSTATE: u64 = 0x5603;
-pub const KDSETMODE: u64 = 0x4B3A;
-pub const KDGETMODE: u64 = 0x4B3B;
+// Only used in cfg(target_os = "linux") blocks.
+#[cfg(target_os = "linux")]
+pub(crate) const KD_TEXT: i32 = 0x00;
+#[cfg(target_os = "linux")]
+pub(crate) const KD_GRAPHICS: i32 = 0x01;
+#[cfg(target_os = "linux")]
+pub(crate) const VT_ACTIVATE: u64 = 0x5606;
+#[cfg(target_os = "linux")]
+pub(crate) const VT_WAITACTIVE: u64 = 0x5607;
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // reserved for VT state queries
+pub(crate) const VT_GETSTATE: u64 = 0x5603;
+#[cfg(target_os = "linux")]
+pub(crate) const KDSETMODE: u64 = 0x4B3A;
+#[cfg(target_os = "linux")]
+pub(crate) const KDGETMODE: u64 = 0x4B3B;
 
 /// VT display mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

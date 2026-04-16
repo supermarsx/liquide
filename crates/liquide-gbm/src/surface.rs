@@ -6,6 +6,8 @@ use crate::format::DrmFourcc;
 /// A GBM surface used for page-flipping with DRM/KMS.
 #[derive(Debug)]
 pub struct GbmSurface {
+    /// Opaque handle returned by `gbm_surface_create`. Reserved for FFI.
+    #[allow(dead_code)]
     handle: usize,
     width: u32,
     height: u32,

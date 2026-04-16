@@ -3,7 +3,6 @@
 //! Wraps liquide-drm and liquide-gbm to provide frame presentation
 //! to physical monitors.
 
-use liquide_drm::connector::ConnectorInfo;
 use liquide_drm::mode::DrmMode;
 
 /// Information about a connected display output.

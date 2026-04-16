@@ -41,6 +41,8 @@ impl std::ops::BitOrAssign for BufferUsage {
 /// GBM device wrapping a DRM file descriptor.
 #[derive(Debug)]
 pub struct GbmDevice {
+    /// Opaque handle returned by `gbm_create_device`. Reserved for FFI.
+    #[allow(dead_code)]
     handle: usize,
     drm_fd: i32,
 }
@@ -85,6 +87,7 @@ impl GbmDevice {
         self.drm_fd
     }
 
+    #[allow(dead_code)] // will be used by FFI calls in buffer/surface creation
     pub(crate) fn handle(&self) -> usize {
         self.handle
     }

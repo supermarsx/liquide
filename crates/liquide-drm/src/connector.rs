@@ -53,6 +53,11 @@ pub struct ConnectorInfo {
 }
 
 /// Enumerates all connectors on the given DRM device.
+///
+/// # Stub
+/// Not yet implemented — requires DRM ioctls
+/// (`DRM_IOCTL_MODE_GETRESOURCES` + `DRM_IOCTL_MODE_GETCONNECTOR`).
+/// Currently returns an empty list.
 #[cfg(target_os = "linux")]
 pub fn enumerate_connectors(_device: &DrmDevice) -> Result<Vec<ConnectorInfo>> {
     // TODO: implement via DRM ioctl DRM_IOCTL_MODE_GETRESOURCES + DRM_IOCTL_MODE_GETCONNECTOR

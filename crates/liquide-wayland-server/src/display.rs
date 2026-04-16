@@ -4,6 +4,11 @@ use crate::client::{ClientConnection, ClientId, ClientState};
 use crate::error::{Result, WaylandServerError};
 use crate::registry::GlobalRegistry;
 
+/// The top-level Wayland display server.
+///
+/// Manages the Unix socket, client connections, and the global registry.
+/// On non-Linux platforms, [`bind`](WaylandDisplay::bind) returns
+/// [`WaylandServerError::NotSupported`].
 #[derive(Debug)]
 pub struct WaylandDisplay {
     socket_path: String,

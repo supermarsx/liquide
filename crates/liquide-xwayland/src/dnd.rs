@@ -1,4 +1,9 @@
 //! Drag-and-drop bridge between X11 (XDND) and Wayland DnD protocol.
+//!
+//! # Stub
+//! This module provides the structural scaffolding for bridging X11
+//! XDND drag-and-drop with the Wayland `wl_data_device` drag protocol.
+//! The actual XDND event handling is not yet implemented.
 
 use crate::error::Result;
 

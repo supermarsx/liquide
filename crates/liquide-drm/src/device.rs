@@ -8,7 +8,10 @@ pub const DRM_DEVICE_PATH_1: &str = "/dev/dri/card1";
 pub const DRM_RENDER_PATH_0: &str = "/dev/dri/renderD128";
 
 /// DRM ioctl constants (Linux-specific).
+/// Used by `set_master` / `drop_master` on Linux; unused on other platforms.
+#[allow(dead_code)]
 const DRM_IOCTL_SET_MASTER: u64 = 0x0000_641E;
+#[allow(dead_code)]
 const DRM_IOCTL_DROP_MASTER: u64 = 0x0000_641F;
 
 /// Represents an open DRM device node.

@@ -1,5 +1,6 @@
 use liquide_wayland::SeatCapability;
 
+/// Manages the Wayland seat (input focus, pointer position, capabilities).
 #[derive(Debug)]
 pub struct SeatManager {
     capabilities: SeatCapability,

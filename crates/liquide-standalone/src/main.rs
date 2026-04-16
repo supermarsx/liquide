@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
 /// Standalone LiquiDE compositor - launches from TTY.
 ///

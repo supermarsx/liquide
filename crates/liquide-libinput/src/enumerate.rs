@@ -121,6 +121,8 @@ fn query_device_info(path: &str) -> crate::error::Result<crate::classify::Device
         })?;
 
     // Open read-only, non-blocking.
+    // SAFETY: c_path is a valid null-terminated C string. We check the return value
+    // before using fd, and wrap it in a File for RAII cleanup.
     let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_NONBLOCK) };
     if fd < 0 {
         let err = std::io::Error::last_os_error();
@@ -141,6 +143,7 @@ fn query_device_info(path: &str) -> crate::error::Result<crate::classify::Device
 
     // ── Device name ─────────────────────────────────────────────────
     let mut name_buf = [0u8; 256];
+    // SAFETY: raw_fd is a valid evdev fd; name_buf is large enough for EVIOCGNAME.
     let ret = unsafe {
         libc::ioctl(
             raw_fd,
@@ -169,10 +172,12 @@ fn query_device_info(path: &str) -> crate::error::Result<crate::classify::Device
         product: 0,
         version: 0,
     };
+    // SAFETY: EVIOCGID reads an 8-byte input_id struct; input_id has #[repr(C)] layout.
     let _ = unsafe { libc::ioctl(raw_fd, linux::EVIOCGID, &mut input_id) };
 
     // ── Capability bits (EV_*) ──────────────────────────────────────
     let mut ev_bits = [0u8; 4];
+    // SAFETY: EVIOCGBIT(0, len) reads top-level event-type bits into ev_bits.
     let _ = unsafe {
         libc::ioctl(
             raw_fd,
@@ -213,6 +218,7 @@ fn query_device_info(path: &str) -> crate::error::Result<crate::classify::Device
     // ── Multi-touch detection ───────────────────────────────────────
     let has_abs_mt = if caps.contains(DeviceCapability::ABS) {
         let mut abs_bits = [0u8; 8]; // enough for ABS_MT_SLOT (0x2f = 47)
+        // SAFETY: EVIOCGBIT(EV_ABS, len) reads ABS capability bits into abs_bits.
         let _ = unsafe {
             libc::ioctl(
                 raw_fd,

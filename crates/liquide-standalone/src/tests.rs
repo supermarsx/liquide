@@ -73,8 +73,8 @@ mod tests {
     #[test]
     fn test_wayland_server_state() {
         let state = WaylandServerState::new();
-        assert!(!state.accepting_clients);
-        assert_eq!(state.client_count, 0);
+        assert!(!state.is_accepting());
+        assert_eq!(state.client_count(), 0);
     }
 
     #[test]
