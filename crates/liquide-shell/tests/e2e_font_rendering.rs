@@ -70,10 +70,42 @@ struct TextInfo {
 // Font loading & DB tests
 // ---------------------------------------------------------------------------
 
+/// Resolve the assets directory, returning `None` if no font files are present.
+fn find_assets_dir() -> Option<&'static str> {
+    for candidate in &["assets", "../../assets"] {
+        let fonts_dir = std::path::Path::new(candidate).join("fonts");
+        if fonts_dir.is_dir() {
+            // Check that at least one .ttf or .otf file exists.
+            if let Ok(entries) = std::fs::read_dir(&fonts_dir) {
+                let has_fonts = entries
+                    .filter_map(|e| e.ok())
+                    .any(|e| e.file_type().is_ok_and(|ft| ft.is_dir() || {
+                        let name = e.file_name();
+                        let n = name.to_string_lossy();
+                        n.ends_with(".ttf") || n.ends_with(".otf")
+                    }));
+                // Need actual font subdirs (e.g. Inter/)
+                if has_fonts {
+                    // Leak is fine for test — we need 'static lifetime.
+                    return Some(match *candidate {
+                        "assets" => "assets",
+                        _ => "../../assets",
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
 #[test]
 fn test_font_database_loads_default_fonts() {
+    let Some(assets) = find_assets_dir() else {
+        eprintln!("Skipping: no font files found in assets/fonts/");
+        return;
+    };
     let mut db = liquide_font_rasterizer::FontDatabase::new();
-    let count = db.load_default_fonts("../../assets");
+    let count = db.load_default_fonts(assets);
 
     println!("Loaded {count} font faces from assets/fonts/");
 
@@ -87,8 +119,12 @@ fn test_font_database_loads_default_fonts() {
 
 #[test]
 fn test_font_database_has_expected_families() {
+    let Some(assets) = find_assets_dir() else {
+        eprintln!("Skipping: no font files found");
+        return;
+    };
     let mut db = liquide_font_rasterizer::FontDatabase::new();
-    db.load_default_fonts("../../assets");
+    db.load_default_fonts(assets);
 
     let expected_families = [
         "Inter",
@@ -108,8 +144,12 @@ fn test_font_database_has_expected_families() {
 
 #[test]
 fn test_font_database_weight_selection() {
+    let Some(assets) = find_assets_dir() else {
+        eprintln!("Skipping: no font files found");
+        return;
+    };
     let mut db = liquide_font_rasterizer::FontDatabase::new();
-    db.load_default_fonts("../../assets");
+    db.load_default_fonts(assets);
 
     // Regular (400) should resolve
     let regular = db.resolve("Inter", 400, false);
