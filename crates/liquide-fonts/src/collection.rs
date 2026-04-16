@@ -208,3 +208,80 @@ impl Default for CollectionStore {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_collection_fields() {
+        let c = FontCollection::new("My Fonts");
+        assert_eq!(c.name, "My Fonts");
+        assert!(c.families.is_empty());
+        assert!(c.tags.is_empty());
+        assert!(c.created_at > 0);
+        assert_eq!(c.version, "1.0");
+    }
+
+    #[test]
+    fn add_and_remove_family() {
+        let mut c = FontCollection::new("Test");
+        c.add_family("Manrope");
+        c.add_family("Inter");
+        assert_eq!(c.families.len(), 2);
+
+        // Duplicate is ignored.
+        c.add_family("Manrope");
+        assert_eq!(c.families.len(), 2);
+
+        assert!(c.remove_family("Inter"));
+        assert_eq!(c.families, vec!["Manrope"]);
+
+        // Removing absent family returns false.
+        assert!(!c.remove_family("NoSuch"));
+    }
+
+    #[test]
+    fn json_roundtrip() {
+        let mut c = FontCollection::new("Roundtrip");
+        c.add_family("Fira Code");
+        c.description = "test".into();
+
+        let json = c.to_json().unwrap();
+        let c2 = FontCollection::from_json(&json).unwrap();
+        assert_eq!(c2.name, "Roundtrip");
+        assert_eq!(c2.families, vec!["Fira Code"]);
+        assert_eq!(c2.description, "test");
+    }
+
+    #[test]
+    fn toml_roundtrip() {
+        let mut c = FontCollection::new("TOML Test");
+        c.add_family("Manrope");
+
+        let toml_str = c.to_toml().unwrap();
+        let c2 = FontCollection::from_toml(&toml_str).unwrap();
+        assert_eq!(c2.name, "TOML Test");
+        assert_eq!(c2.families, vec!["Manrope"]);
+    }
+
+    #[test]
+    fn collection_store_crud() {
+        let mut store = CollectionStore::new();
+        assert!(store.is_empty());
+
+        store.create("Alpha");
+        store.create("Beta");
+        assert_eq!(store.len(), 2);
+
+        assert!(store.find("Alpha").is_some());
+        assert!(store.find("Gamma").is_none());
+
+        store.find_mut("Alpha").unwrap().add_family("Inter");
+        assert_eq!(store.find("Alpha").unwrap().families.len(), 1);
+
+        assert!(store.remove("Alpha"));
+        assert_eq!(store.len(), 1);
+        assert!(!store.remove("Alpha"));
+    }
+}

@@ -101,3 +101,62 @@ impl Default for TagStore {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn define_and_list_tags() {
+        let mut store = TagStore::new();
+        store.define_tag(FontTag {
+            name: "geometric".into(),
+            category: TagCategory::Style,
+            color: Some("#ff0000".into()),
+        });
+        assert_eq!(store.all_tags().len(), 1);
+
+        // Duplicate name is ignored.
+        store.define_tag(FontTag {
+            name: "geometric".into(),
+            category: TagCategory::Mood,
+            color: None,
+        });
+        assert_eq!(store.all_tags().len(), 1);
+    }
+
+    #[test]
+    fn tag_and_untag_family() {
+        let mut store = TagStore::new();
+        store.tag_family("Manrope", "ui");
+        store.tag_family("Manrope", "sans");
+
+        let tags = store.tags_for_family("Manrope");
+        assert_eq!(tags.len(), 2);
+        assert!(tags.contains(&"ui"));
+        assert!(tags.contains(&"sans"));
+
+        store.untag_family("Manrope", "ui");
+        let tags = store.tags_for_family("Manrope");
+        assert_eq!(tags.len(), 1);
+        assert!(tags.contains(&"sans"));
+    }
+
+    #[test]
+    fn families_with_tag() {
+        let mut store = TagStore::new();
+        store.tag_family("Manrope", "ui");
+        store.tag_family("Inter", "ui");
+        store.tag_family("Fira Code", "mono");
+
+        let ui_families = store.families_with_tag("ui");
+        assert_eq!(ui_families.len(), 2);
+        assert!(store.families_with_tag("missing").is_empty());
+    }
+
+    #[test]
+    fn tags_for_unknown_family() {
+        let store = TagStore::new();
+        assert!(store.tags_for_family("NoSuch").is_empty());
+    }
+}

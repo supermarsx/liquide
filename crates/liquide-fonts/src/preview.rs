@@ -113,6 +113,44 @@ pub struct PreviewResult {
     pub pixels: Vec<u8>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pangram_text() {
+        let sample = PreviewSample::Pangram;
+        let text = sample.text("Test");
+        assert!(text.contains("quick brown fox"));
+    }
+
+    #[test]
+    fn font_name_sample() {
+        let text = PreviewSample::FontName.text("Manrope");
+        assert_eq!(text, "Manrope");
+    }
+
+    #[test]
+    fn custom_sample_text() {
+        let text = PreviewSample::Custom("hello world".into()).text("Ignored");
+        assert_eq!(text, "hello world");
+    }
+
+    #[test]
+    fn preview_config_defaults() {
+        let cfg = PreviewConfig::default();
+        assert!(!cfg.sizes.is_empty());
+        assert!(cfg.show_weights);
+        assert_eq!(cfg.background, "#1e1e2e");
+    }
+
+    #[test]
+    fn code_sample_contains_fn() {
+        let text = PreviewSample::CodeSample.text("Mono");
+        assert!(text.contains("fn main()"));
+    }
+}
+
 const LOREM_IPSUM: &str = "\
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor \
 incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis \

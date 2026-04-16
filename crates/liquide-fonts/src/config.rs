@@ -84,6 +84,12 @@ impl FontConfig {
         })
     }
 
+    /// Check if a specific role has an explicit configuration.
+    #[must_use]
+    pub fn has_role(&self, role: FontRole) -> bool {
+        self.roles.contains_key(&role)
+    }
+
     /// Set or update a font stack for a role.
     pub fn set_stack(&mut self, stack: FontStack) {
         self.roles.insert(stack.role, stack);
@@ -311,5 +317,79 @@ impl Default for FontConfig {
                 "fonts.bunny.net".into(),
             ],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_has_primary_ui() {
+        let config = FontConfig::default();
+        assert!(config.has_role(FontRole::PrimaryUi));
+        let stack = config.stack_for_role(FontRole::PrimaryUi);
+        assert_eq!(stack.families[0], "Manrope");
+    }
+
+    #[test]
+    fn default_config_has_terminal() {
+        let config = FontConfig::default();
+        let stack = config.stack_for_role(FontRole::Terminal);
+        assert_eq!(stack.families[0], "JetBrains Mono");
+        assert_eq!(stack.weight, 400);
+    }
+
+    #[test]
+    fn stack_for_unconfigured_role_falls_back() {
+        // Create a config with only PrimaryUi.
+        let mut roles = std::collections::HashMap::new();
+        roles.insert(
+            FontRole::PrimaryUi,
+            FontStack::new(FontRole::PrimaryUi, vec!["Fallback".into()], 14.0),
+        );
+        let config = FontConfig {
+            roles,
+            rendering: FontRenderingConfig::default(),
+            watch_dirs: Vec::new(),
+            install_dir: PathBuf::from("/tmp"),
+            google_fonts: crate::google_fonts::GoogleFontsConfig::default(),
+            auto_activate: true,
+            drag_drop_install: true,
+            allowed_import_domains: Vec::new(),
+        };
+        // Terminal role not configured — should fall back to PrimaryUi.
+        let stack = config.stack_for_role(FontRole::Terminal);
+        assert_eq!(stack.families[0], "Fallback");
+    }
+
+    #[test]
+    fn set_and_retrieve_stack() {
+        let mut config = FontConfig::default();
+        let custom = FontStack::new(FontRole::StatusBar, vec!["CustomFont".into()], 11.0)
+            .with_weight(600);
+        config.set_stack(custom);
+
+        let got = config.stack_for_role(FontRole::StatusBar);
+        assert_eq!(got.families[0], "CustomFont");
+        assert_eq!(got.weight, 600);
+    }
+
+    #[test]
+    fn rendering_config_defaults() {
+        let r = FontRenderingConfig::default();
+        assert!(r.subpixel_aa);
+        assert!(r.hinting);
+        assert_eq!(r.hint_style, "slight");
+        assert!((r.dpi_scale - 1.0).abs() < f32::EPSILON);
+        assert!((r.min_size - 6.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn configured_roles_count() {
+        let config = FontConfig::default();
+        let roles = config.configured_roles();
+        // Default config defines all main roles.
+        assert!(roles.len() >= 6);
     }
 }

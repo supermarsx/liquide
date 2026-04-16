@@ -108,3 +108,53 @@ impl FontStack {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn font_stack_defaults() {
+        let stack = FontStack::new(
+            FontRole::PrimaryUi,
+            vec!["Manrope".into()],
+            14.0,
+        );
+        assert_eq!(stack.weight, 400);
+        assert!((stack.letter_spacing - 0.0).abs() < f32::EPSILON);
+        assert!((stack.line_height - 1.4).abs() < f32::EPSILON);
+        assert!(stack.subpixel_aa);
+        assert!(stack.hinting);
+    }
+
+    #[test]
+    fn font_stack_builder_chain() {
+        let stack = FontStack::new(FontRole::Terminal, vec!["JetBrains Mono".into()], 13.0)
+            .with_weight(700)
+            .with_letter_spacing(-0.5)
+            .with_line_height(1.2);
+
+        assert_eq!(stack.weight, 700);
+        assert!((stack.letter_spacing - (-0.5)).abs() < f32::EPSILON);
+        assert!((stack.line_height - 1.2).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn font_role_display() {
+        assert_eq!(FontRole::PrimaryUi.to_string(), "Primary UI");
+        assert_eq!(FontRole::Terminal.to_string(), "Terminal/Code");
+        assert_eq!(FontRole::Emoji.to_string(), "Emoji");
+    }
+
+    #[test]
+    fn font_stack_multiple_families_fallback() {
+        let stack = FontStack::new(
+            FontRole::PrimaryUi,
+            vec!["Manrope".into(), "Inter".into(), "sans-serif".into()],
+            14.0,
+        );
+        assert_eq!(stack.families.len(), 3);
+        assert_eq!(stack.families[0], "Manrope");
+        assert_eq!(stack.families[2], "sans-serif");
+    }
+}

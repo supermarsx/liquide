@@ -85,3 +85,86 @@ fn guess_category(name: &str) -> String {
         "sans-serif".into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::{FontEntry, FontSource};
+    use std::path::PathBuf;
+
+    fn entry(family: &str, weight: u16, italic: bool) -> FontEntry {
+        FontEntry {
+            family: family.into(),
+            style: if italic { "Italic" } else { "Regular" }.into(),
+            weight,
+            italic,
+            path: PathBuf::from("/fonts/test.ttf"),
+            format: "ttf".into(),
+            file_size: 40_000,
+            source: FontSource::System,
+            tags: Vec::new(),
+            activated: true,
+            glyph_count: 200,
+            script_coverage: Vec::new(),
+            version: "1.0".into(),
+            license: "OFL".into(),
+            designer: "Designer".into(),
+        }
+    }
+
+    #[test]
+    fn from_entries_basic() {
+        let entries = vec![
+            entry("Manrope", 400, false),
+            entry("Manrope", 700, false),
+            entry("Manrope", 400, true),
+        ];
+        let refs: Vec<&FontEntry> = entries.iter().collect();
+        let family = FontFamily::from_entries("Manrope", &refs);
+
+        assert_eq!(family.name, "Manrope");
+        assert_eq!(family.weights, vec![400, 700]);
+        assert!(family.has_italic);
+        assert_eq!(family.face_count, 3);
+        assert_eq!(family.total_size, 120_000);
+        assert_eq!(family.designer, "Designer");
+    }
+
+    #[test]
+    fn from_entries_no_italic() {
+        let entries = vec![entry("Inter", 400, false)];
+        let refs: Vec<&FontEntry> = entries.iter().collect();
+        let family = FontFamily::from_entries("Inter", &refs);
+        assert!(!family.has_italic);
+    }
+
+    #[test]
+    fn guess_category_monospace() {
+        assert_eq!(guess_category("JetBrains Mono"), "monospace");
+        assert_eq!(guess_category("Fira Code"), "monospace");
+        assert_eq!(guess_category("Windows Console"), "monospace");
+    }
+
+    #[test]
+    fn guess_category_serif() {
+        assert_eq!(guess_category("Zilla Slab Serif"), "serif");
+    }
+
+    #[test]
+    fn guess_category_display() {
+        assert_eq!(guess_category("Space Grotesk"), "display");
+        assert_eq!(guess_category("Lobster Display"), "display");
+    }
+
+    #[test]
+    fn guess_category_handwriting() {
+        assert_eq!(guess_category("Dancing Script"), "handwriting");
+        assert_eq!(guess_category("Indie Flower Cursive"), "handwriting");
+    }
+
+    #[test]
+    fn guess_category_sans_serif_default() {
+        assert_eq!(guess_category("Manrope"), "sans-serif");
+        assert_eq!(guess_category("Inter"), "sans-serif");
+    }
+}

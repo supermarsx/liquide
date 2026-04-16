@@ -199,6 +199,65 @@ fn scan_dir_recursive(dir: &Path, fonts: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_https_url_allowed() {
+        let allowed = vec!["fonts.google.com".to_string(), "github.com".to_string()];
+        assert!(validate_import_url("https://fonts.google.com/font.ttf", &allowed).is_ok());
+    }
+
+    #[test]
+    fn reject_http_url() {
+        let allowed = vec!["example.com".to_string()];
+        let result = validate_import_url("http://example.com/font.ttf", &allowed);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reject_unlisted_domain() {
+        let allowed = vec!["safe.com".to_string()];
+        let result = validate_import_url("https://evil.com/font.ttf", &allowed);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_git_url_https() {
+        assert!(validate_git_url("https://github.com/user/fonts.git").is_ok());
+    }
+
+    #[test]
+    fn reject_git_url_http() {
+        assert!(validate_git_url("http://github.com/user/fonts.git").is_err());
+    }
+
+    #[test]
+    fn scan_empty_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let fonts = scan_directory(dir.path()).unwrap();
+        assert!(fonts.is_empty());
+    }
+
+    #[test]
+    fn scan_directory_with_fonts() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("test.ttf"), b"fake").unwrap();
+        std::fs::write(dir.path().join("readme.txt"), b"text").unwrap();
+
+        let fonts = scan_directory(dir.path()).unwrap();
+        assert_eq!(fonts.len(), 1);
+        assert!(fonts[0].extension().unwrap() == "ttf");
+    }
+
+    #[test]
+    fn scan_nonexistent_directory() {
+        let fonts = scan_directory(Path::new("/nonexistent/fonts")).unwrap();
+        assert!(fonts.is_empty());
+    }
+}
+
 /// Parse a font family name, style, weight, and italic flag from a filename stem.
 fn parse_font_name(stem: &str) -> (String, String, u16, bool) {
     // Common patterns: "FontFamily-Style", "FontFamily_Style", "FontFamilyStyle"

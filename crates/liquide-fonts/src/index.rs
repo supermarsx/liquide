@@ -170,3 +170,111 @@ fn tokenize(s: &str) -> Vec<String> {
         .map(|t| t.to_string())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::{FontEntry, FontSource};
+    use std::path::PathBuf;
+
+    fn entry(family: &str, style: &str) -> FontEntry {
+        FontEntry {
+            family: family.into(),
+            style: style.into(),
+            weight: 400,
+            italic: false,
+            path: PathBuf::from("/fonts/test.ttf"),
+            format: "ttf".into(),
+            file_size: 50_000,
+            source: FontSource::System,
+            tags: vec!["ui".into()],
+            activated: true,
+            glyph_count: 200,
+            script_coverage: Vec::new(),
+            version: "1.0".into(),
+            license: "OFL".into(),
+            designer: "Test".into(),
+        }
+    }
+
+    #[test]
+    fn empty_index() {
+        let index = FontIndex::new();
+        assert!(index.is_empty());
+        assert_eq!(index.len(), 0);
+        assert!(index.search("anything").is_empty());
+    }
+
+    #[test]
+    fn add_and_search_exact() {
+        let mut index = FontIndex::new();
+        index.add_entry(&entry("Manrope", "Regular"));
+        index.add_entry(&entry("Inter", "Bold"));
+
+        assert_eq!(index.len(), 2);
+
+        let results = index.search("Manrope");
+        assert!(!results.is_empty());
+        assert_eq!(results[0], 0); // First entry added
+    }
+
+    #[test]
+    fn search_by_style() {
+        let mut index = FontIndex::new();
+        index.add_entry(&entry("Manrope", "Regular"));
+        index.add_entry(&entry("Inter", "Bold"));
+
+        let results = index.search("Bold");
+        assert!(results.contains(&1));
+    }
+
+    #[test]
+    fn search_prefix_match() {
+        let mut index = FontIndex::new();
+        index.add_entry(&entry("Manrope", "Regular"));
+
+        // "man" should prefix-match "manrope"
+        let results = index.search("man");
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn search_empty_query() {
+        let mut index = FontIndex::new();
+        index.add_entry(&entry("Manrope", "Regular"));
+        assert!(index.search("").is_empty());
+    }
+
+    #[test]
+    fn clear_index() {
+        let mut index = FontIndex::new();
+        index.add_entry(&entry("Manrope", "Regular"));
+        assert!(!index.is_empty());
+
+        index.clear();
+        assert!(index.is_empty());
+        assert_eq!(index.len(), 0);
+        assert_eq!(index.token_count(), 0);
+    }
+
+    #[test]
+    fn dirty_flag() {
+        let mut index = FontIndex::new();
+        assert!(!index.is_dirty());
+        index.mark_dirty();
+        assert!(index.is_dirty());
+        index.clear();
+        assert!(!index.is_dirty());
+    }
+
+    #[test]
+    fn tokenize_splits_on_non_alphanumeric() {
+        let tokens = tokenize("JetBrains Mono - Regular");
+        assert_eq!(tokens, vec!["jetbrains", "mono", "regular"]);
+    }
+
+    #[test]
+    fn tokenize_empty_string() {
+        assert!(tokenize("").is_empty());
+    }
+}

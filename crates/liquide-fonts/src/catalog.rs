@@ -225,3 +225,144 @@ impl Default for FontCatalog {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_entry(family: &str, style: &str, weight: u16, italic: bool) -> FontEntry {
+        FontEntry {
+            family: family.into(),
+            style: style.into(),
+            weight,
+            italic,
+            path: PathBuf::from(format!("/fonts/{family}-{style}.ttf")),
+            format: "ttf".into(),
+            file_size: 50_000,
+            source: FontSource::System,
+            tags: Vec::new(),
+            activated: true,
+            glyph_count: 200,
+            script_coverage: vec!["latin".into()],
+            version: "1.0".into(),
+            license: "OFL".into(),
+            designer: "Test Designer".into(),
+        }
+    }
+
+    #[test]
+    fn empty_catalog() {
+        let catalog = FontCatalog::new();
+        assert!(catalog.is_empty());
+        assert_eq!(catalog.len(), 0);
+        assert_eq!(catalog.family_count(), 0);
+        assert!(catalog.families().is_empty());
+    }
+
+    #[test]
+    fn add_and_query_entries() {
+        let mut catalog = FontCatalog::new();
+        catalog.add(make_entry("Manrope", "Regular", 400, false));
+        catalog.add(make_entry("Manrope", "Bold", 700, false));
+        catalog.add(make_entry("JetBrains Mono", "Regular", 400, false));
+
+        assert_eq!(catalog.len(), 3);
+        assert_eq!(catalog.family_count(), 2);
+        assert!(catalog.has_family("Manrope"));
+        assert!(catalog.has_family("JetBrains Mono"));
+        assert!(!catalog.has_family("Inter"));
+
+        let manrope = catalog.family_entries("Manrope");
+        assert_eq!(manrope.len(), 2);
+    }
+
+    #[test]
+    fn families_sorted_alphabetically() {
+        let mut catalog = FontCatalog::new();
+        catalog.add(make_entry("Zilla Slab", "Regular", 400, false));
+        catalog.add(make_entry("Arial", "Regular", 400, false));
+        catalog.add(make_entry("Manrope", "Regular", 400, false));
+
+        let families = catalog.families();
+        assert_eq!(families, vec!["Arial", "Manrope", "Zilla Slab"]);
+    }
+
+    #[test]
+    fn remove_family() {
+        let mut catalog = FontCatalog::new();
+        catalog.add(make_entry("Manrope", "Regular", 400, false));
+        catalog.add(make_entry("Manrope", "Bold", 700, false));
+        catalog.add(make_entry("Inter", "Regular", 400, false));
+
+        let removed = catalog.remove_family("Manrope");
+        assert_eq!(removed.len(), 2);
+        assert!(!catalog.has_family("Manrope"));
+        assert!(catalog.has_family("Inter"));
+        assert_eq!(catalog.len(), 1);
+    }
+
+    #[test]
+    fn remove_nonexistent_family() {
+        let mut catalog = FontCatalog::new();
+        catalog.add(make_entry("Inter", "Regular", 400, false));
+
+        let removed = catalog.remove_family("NoSuchFont");
+        assert!(removed.is_empty());
+        assert_eq!(catalog.len(), 1);
+    }
+
+    #[test]
+    fn entries_with_tag() {
+        let mut catalog = FontCatalog::new();
+        let mut entry = make_entry("Manrope", "Regular", 400, false);
+        entry.tags = vec!["ui".into(), "sans".into()];
+        catalog.add(entry);
+        catalog.add(make_entry("Inter", "Regular", 400, false));
+
+        let tagged = catalog.entries_with_tag("ui");
+        assert_eq!(tagged.len(), 1);
+        assert_eq!(tagged[0].family, "Manrope");
+
+        assert!(catalog.entries_with_tag("mono").is_empty());
+    }
+
+    #[test]
+    fn entries_from_source() {
+        let mut catalog = FontCatalog::new();
+        catalog.add(make_entry("Manrope", "Regular", 400, false));
+        let mut gf_entry = make_entry("Roboto", "Regular", 400, false);
+        gf_entry.source = FontSource::GoogleFonts;
+        catalog.add(gf_entry);
+
+        let system = catalog.entries_from_source(&FontSource::System);
+        assert_eq!(system.len(), 1);
+        let google = catalog.entries_from_source(&FontSource::GoogleFonts);
+        assert_eq!(google.len(), 1);
+        assert_eq!(google[0].family, "Roboto");
+    }
+
+    #[test]
+    fn activate_deactivate_family() {
+        let mut catalog = FontCatalog::new();
+        catalog.add(make_entry("Manrope", "Regular", 400, false));
+        catalog.add(make_entry("Manrope", "Bold", 700, false));
+
+        assert_eq!(catalog.activated_entries().len(), 2);
+
+        catalog.deactivate_family("Manrope");
+        assert!(catalog.activated_entries().is_empty());
+
+        catalog.activate_family("Manrope");
+        assert_eq!(catalog.activated_entries().len(), 2);
+    }
+
+    #[test]
+    fn font_source_display() {
+        assert_eq!(FontSource::System.to_string(), "System");
+        assert_eq!(FontSource::GoogleFonts.to_string(), "Google Fonts");
+        assert_eq!(
+            FontSource::Url { url: "https://example.com/font.ttf".into() }.to_string(),
+            "URL: https://example.com/font.ttf"
+        );
+    }
+}

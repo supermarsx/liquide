@@ -93,3 +93,40 @@ pub fn known_features() -> Vec<OpenTypeFeature> {
         OpenTypeFeature { tag: "swsh".into(), name: "Swash".into(), default_on: false },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glyph_coverage_default() {
+        let cov = GlyphCoverage::default();
+        assert_eq!(cov.total_glyphs, 0);
+        assert!(!cov.has_basic_latin);
+        assert!(!cov.has_cjk);
+    }
+
+    #[test]
+    fn known_features_not_empty() {
+        let features = known_features();
+        assert!(features.len() > 10);
+        // "liga" should be present and default_on
+        let liga = features.iter().find(|f| f.tag == "liga").unwrap();
+        assert!(liga.default_on);
+    }
+
+    #[test]
+    fn glyph_info_fields() {
+        let g = GlyphInfo {
+            codepoint: 0x41,
+            glyph_index: 36,
+            advance_width: 600,
+            lsb: 50,
+            name: "LATIN CAPITAL LETTER A".into(),
+            block: "Basic Latin".into(),
+            has_outline: true,
+        };
+        assert_eq!(g.codepoint, 0x41);
+        assert!(g.has_outline);
+    }
+}
