@@ -301,4 +301,136 @@ mod tests {
         editor.undo();
         assert_eq!(editor.edit_count(), 1);
     }
+
+    #[test]
+    fn test_insert_char() {
+        let mut editor = StyleEditor::new();
+        editor.set_target(Some(1u64));
+        editor.start_edit("color", "");
+        editor.editing_value.clear();
+        editor.editing_cursor = 0;
+
+        editor.insert_char('r');
+        editor.insert_char('e');
+        editor.insert_char('d');
+        assert_eq!(editor.editing_value(), "red");
+        assert_eq!(editor.editing_cursor(), 3);
+    }
+
+    #[test]
+    fn test_backspace() {
+        let mut editor = StyleEditor::new();
+        editor.set_target(Some(1u64));
+        editor.start_edit("color", "blue");
+
+        editor.backspace();
+        assert_eq!(editor.editing_value(), "blu");
+        assert_eq!(editor.editing_cursor(), 3);
+
+        // Backspace at position 0 is a no-op.
+        editor.editing_cursor = 0;
+        editor.backspace();
+        assert_eq!(editor.editing_value(), "blu");
+    }
+
+    #[test]
+    fn test_cursor_movement() {
+        let mut editor = StyleEditor::new();
+        editor.set_target(Some(1u64));
+        editor.start_edit("color", "red");
+
+        // Cursor starts at end.
+        assert_eq!(editor.editing_cursor(), 3);
+
+        editor.cursor_left();
+        assert_eq!(editor.editing_cursor(), 2);
+
+        editor.cursor_right();
+        assert_eq!(editor.editing_cursor(), 3);
+
+        // Right at end is a no-op.
+        editor.cursor_right();
+        assert_eq!(editor.editing_cursor(), 3);
+
+        // Left all the way to 0.
+        editor.cursor_left();
+        editor.cursor_left();
+        editor.cursor_left();
+        assert_eq!(editor.editing_cursor(), 0);
+
+        // Left at 0 is a no-op.
+        editor.cursor_left();
+        assert_eq!(editor.editing_cursor(), 0);
+    }
+
+    #[test]
+    fn test_cancel_edit() {
+        let mut editor = StyleEditor::new();
+        editor.set_target(Some(1u64));
+        editor.start_edit("color", "red");
+        assert!(editor.editing_property().is_some());
+
+        editor.cancel_edit();
+        assert!(editor.editing_property().is_none());
+        assert_eq!(editor.editing_value(), "");
+        assert_eq!(editor.editing_cursor(), 0);
+    }
+
+    #[test]
+    fn test_mark_applied() {
+        let mut editor = StyleEditor::new();
+        editor.set_target(Some(1u64));
+        editor.start_edit("color", "red");
+        editor.editing_value = "blue".to_string();
+        let edit = editor.confirm_edit().unwrap();
+        assert!(!edit.applied);
+
+        editor.mark_applied(1u64, "color");
+        let edits = editor.pending_edits();
+        assert!(edits[0].applied);
+    }
+
+    #[test]
+    fn test_toggle_auto_apply() {
+        let mut editor = StyleEditor::new();
+        assert!(editor.auto_apply());
+        editor.toggle_auto_apply();
+        assert!(!editor.auto_apply());
+        editor.toggle_auto_apply();
+        assert!(editor.auto_apply());
+    }
+
+    #[test]
+    fn test_pending_edits_no_target() {
+        let editor = StyleEditor::new();
+        assert!(editor.pending_edits().is_empty());
+    }
+
+    #[test]
+    fn test_reset_property() {
+        let mut editor = StyleEditor::new();
+        editor.set_target(Some(1u64));
+
+        editor.start_edit("color", "red");
+        editor.editing_value = "blue".to_string();
+        editor.confirm_edit();
+
+        editor.start_edit("font-size", "12px");
+        editor.editing_value = "16px".to_string();
+        editor.confirm_edit();
+
+        assert_eq!(editor.edit_count(), 2);
+        let removed = editor.reset_property("color");
+        assert!(removed.is_some());
+        assert_eq!(editor.edit_count(), 1);
+    }
+
+    #[test]
+    fn test_confirm_edit_without_target() {
+        let mut editor = StyleEditor::new();
+        editor.start_edit("color", "red");
+        // No target set, so confirm should return None.
+        let result = editor.confirm_edit();
+        assert!(result.is_none());
+    }
 }

@@ -299,4 +299,38 @@ mod tests {
         let path = PathBuf::from("/project/src/main.rs");
         assert_eq!(LiveReloadWatcher::classify_path(&path, &root), None);
     }
+
+    #[test]
+    fn config_defaults() {
+        let config = LiveReloadConfig::default();
+        assert_eq!(config.project_root, PathBuf::from("."));
+        assert_eq!(config.debounce_ms, 100);
+        assert!(config.extra_paths.is_empty());
+    }
+
+    #[test]
+    fn reload_target_equality() {
+        let t1 = ReloadTarget::Template("dock".into());
+        let t2 = ReloadTarget::Template("dock".into());
+        let t3 = ReloadTarget::ComponentCss("dock".into());
+        assert_eq!(t1, t2);
+        assert_ne!(t1, t3);
+    }
+
+    #[test]
+    fn classify_nested_template() {
+        let root = PathBuf::from("/project");
+        let path = PathBuf::from("/project/assets/templates/widgets/clock.html");
+        assert_eq!(
+            LiveReloadWatcher::classify_path(&path, &root),
+            Some(ReloadTarget::Template("clock".into()))
+        );
+    }
+
+    #[test]
+    fn classify_non_css_in_themes() {
+        let root = PathBuf::from("/project");
+        let path = PathBuf::from("/project/assets/themes/README.md");
+        assert_eq!(LiveReloadWatcher::classify_path(&path, &root), None);
+    }
 }

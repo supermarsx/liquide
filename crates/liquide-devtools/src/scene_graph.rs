@@ -277,4 +277,92 @@ mod tests {
         dbg.snapshot(&root);
         assert_eq!(dbg.len(), 2);
     }
+
+    #[test]
+    fn test_kind_filter() {
+        let mut dbg = SceneGraphDebugger::new();
+        let mut root = SceneNode::new(
+            0,
+            SceneNodeKind::Root,
+            NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)),
+        );
+        root.add_child(SceneNode::new(
+            1,
+            SceneNodeKind::Background {
+                color: Color::new(255, 0, 0, 255),
+            },
+            NodeProperties::new(Rect::new(0.0, 0.0, 50.0, 50.0)),
+        ));
+        root.add_child(SceneNode::new(
+            2,
+            SceneNodeKind::Overlay,
+            NodeProperties::new(Rect::new(0.0, 0.0, 50.0, 50.0)),
+        ));
+
+        // No filter: all visible.
+        dbg.snapshot(&root);
+        assert_eq!(dbg.len(), 3);
+
+        // Filter by "Root" — only root matches (children don't match and
+        // are skipped because the walk only adds matching nodes but still
+        // recurses into children of matching nodes).
+        dbg.set_kind_filter("root".to_string());
+        dbg.snapshot(&root);
+        assert_eq!(dbg.len(), 1);
+        assert_eq!(dbg.entries()[0].kind, "Root");
+
+        // Clear filter.
+        dbg.set_kind_filter(String::new());
+        dbg.snapshot(&root);
+        assert_eq!(dbg.len(), 3);
+    }
+
+    #[test]
+    fn test_selection() {
+        let mut dbg = SceneGraphDebugger::new();
+        let root = SceneNode::new(
+            0,
+            SceneNodeKind::Root,
+            NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)),
+        );
+        dbg.snapshot(&root);
+
+        assert!(dbg.selected().is_none());
+        assert!(dbg.selected_entry().is_none());
+
+        dbg.select(Some(0));
+        assert_eq!(dbg.selected(), Some(0));
+        let entry = dbg.selected_entry().unwrap();
+        assert_eq!(entry.kind, "Root");
+
+        dbg.select(None);
+        assert!(dbg.selected_entry().is_none());
+    }
+
+    #[test]
+    fn test_show_hidden() {
+        let mut dbg = SceneGraphDebugger::new();
+        let mut root = SceneNode::new(
+            0,
+            SceneNodeKind::Root,
+            NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)),
+        );
+        let mut hidden_props = NodeProperties::new(Rect::new(0.0, 0.0, 50.0, 50.0));
+        hidden_props.visible = false;
+        root.add_child(SceneNode::new(
+            1,
+            SceneNodeKind::Overlay,
+            hidden_props,
+        ));
+
+        // Hidden nodes excluded by default.
+        dbg.snapshot(&root);
+        assert_eq!(dbg.len(), 1);
+
+        // Show hidden.
+        dbg.toggle_show_hidden();
+        assert!(dbg.show_hidden());
+        dbg.snapshot(&root);
+        assert_eq!(dbg.len(), 2);
+    }
 }

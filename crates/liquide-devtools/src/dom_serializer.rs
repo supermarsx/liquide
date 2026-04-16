@@ -269,4 +269,66 @@ mod tests {
         assert_eq!(serializer.config.max_depth, 2);
         assert!(!serializer.config.include_attrs);
     }
+
+    #[test]
+    fn test_config_with_subtree_root() {
+        let config = SerializerConfig {
+            max_depth: 5,
+            include_attrs: true,
+            include_inline_styles: false,
+            include_pseudo_states: true,
+            subtree_root: Some(42),
+        };
+        assert_eq!(config.subtree_root, Some(42));
+        assert_eq!(config.max_depth, 5);
+        assert!(!config.include_inline_styles);
+    }
+
+    #[test]
+    fn test_serialized_node_serde_roundtrip() {
+        let node = SerializedNode {
+            id: 1,
+            tag: "div".to_string(),
+            element_id: Some("main".to_string()),
+            classes: vec!["container".to_string()],
+            attributes: vec![("role".to_string(), "main".to_string())],
+            inline_styles: vec![("color".to_string(), "red".to_string())],
+            text: Some("hello".to_string()),
+            image_src: None,
+            surface_id: None,
+            pseudo_states: vec!["hover".to_string()],
+            child_count: 0,
+            children: vec![],
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let deser: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser["id"], 1);
+        assert_eq!(deser["tag"], "div");
+        assert_eq!(deser["element_id"], "main");
+        assert_eq!(deser["classes"][0], "container");
+        assert_eq!(deser["pseudo_states"][0], "hover");
+    }
+
+    #[test]
+    fn test_serialized_node_skip_empty_fields() {
+        let node = SerializedNode {
+            id: 2,
+            tag: "span".to_string(),
+            element_id: None,
+            classes: vec![],
+            attributes: vec![],
+            inline_styles: vec![],
+            text: Some("hello".to_string()),
+            image_src: None,
+            surface_id: None,
+            pseudo_states: vec![],
+            child_count: 0,
+            children: vec![],
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        // Empty vecs and None optionals should be skipped.
+        assert!(!json.contains("classes"));
+        assert!(!json.contains("element_id"));
+        assert!(json.contains("hello"));
+    }
 }

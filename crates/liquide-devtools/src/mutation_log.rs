@@ -332,4 +332,57 @@ mod tests {
         assert!(log.is_empty());
         assert_eq!(log.total_count(), 2); // total still tracked
     }
+
+    #[test]
+    fn test_all_mutation_kinds_via_observer() {
+        use liquide_dom::class_list::ClassList;
+        use liquide_dom::pseudo::PseudoStateFlags;
+
+        let mut log = MutationLog::new();
+
+        log.on_child_added(1, 2);
+        log.on_child_removed(1, 2);
+        log.on_attribute_changed(3, "href", None, Some("https://example.com"));
+        log.on_class_changed(3, &ClassList::from_class_string("active highlighted"));
+        log.on_text_changed(4, "new text");
+        log.on_pseudo_state_changed(5, PseudoStateFlags::empty(), PseudoStateFlags::HOVER);
+        log.on_id_changed(6, None, Some("main-panel"));
+
+        assert_eq!(log.len(), 7);
+        assert_eq!(log.total_count(), 7);
+
+        // Verify each kind was recorded correctly.
+        let records: Vec<_> = log.iter().collect();
+        assert!(matches!(&records[0].kind, MutationKind::ChildAdded { parent: 1, child: 2 }));
+        assert!(matches!(&records[1].kind, MutationKind::ChildRemoved { parent: 1, child: 2 }));
+        assert!(matches!(&records[2].kind, MutationKind::AttributeChanged { node: 3, .. }));
+        assert!(matches!(&records[3].kind, MutationKind::ClassChanged { node: 3, .. }));
+        assert!(matches!(&records[4].kind, MutationKind::TextChanged { node: 4, .. }));
+        assert!(matches!(&records[5].kind, MutationKind::PseudoStateChanged { node: 5, .. }));
+        assert!(matches!(&records[6].kind, MutationKind::IdChanged { node: 6, .. }));
+    }
+
+    #[test]
+    fn test_recent() {
+        let mut log = MutationLog::new();
+        for i in 0..10 {
+            log.on_child_added(1, i + 100);
+        }
+        let recent: Vec<_> = log.recent(3).collect();
+        assert_eq!(recent.len(), 3);
+        // Most recent should be the last added.
+        match &recent[2].kind {
+            MutationKind::ChildAdded { child, .. } => assert_eq!(*child, 109),
+            _ => panic!("expected ChildAdded"),
+        }
+    }
+
+    #[test]
+    fn test_json_export() {
+        let mut log = MutationLog::new();
+        log.on_child_added(1, 2);
+        let json = log.to_json();
+        assert!(json.contains("ChildAdded"));
+        assert!(json.contains("\"parent\": 1"));
+    }
 }

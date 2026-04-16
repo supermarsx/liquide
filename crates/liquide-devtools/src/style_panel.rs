@@ -525,4 +525,87 @@ mod tests {
         assert_eq!(StyleCategory::Layout.label(), "Layout");
         assert_eq!(StyleCategory::Box.label(), "Box Model");
     }
+
+    #[test]
+    fn test_category_from_id() {
+        assert_eq!(StyleCategory::from_id("layout"), Some(StyleCategory::Layout));
+        assert_eq!(StyleCategory::from_id("box"), Some(StyleCategory::Box));
+        assert_eq!(StyleCategory::from_id("typography"), Some(StyleCategory::Typography));
+        assert_eq!(StyleCategory::from_id("background"), Some(StyleCategory::Background));
+        assert_eq!(StyleCategory::from_id("border"), Some(StyleCategory::Border));
+        assert_eq!(StyleCategory::from_id("flex"), Some(StyleCategory::Flex));
+        assert_eq!(StyleCategory::from_id("grid"), Some(StyleCategory::Grid));
+        assert_eq!(StyleCategory::from_id("position"), Some(StyleCategory::Position));
+        assert_eq!(StyleCategory::from_id("visual"), Some(StyleCategory::Visual));
+        assert_eq!(StyleCategory::from_id("transform"), Some(StyleCategory::Transform));
+        assert_eq!(StyleCategory::from_id("animation"), Some(StyleCategory::Animation));
+        assert_eq!(StyleCategory::from_id("other"), Some(StyleCategory::Other));
+        assert_eq!(StyleCategory::from_id("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_category_id_roundtrip() {
+        for cat in StyleCategory::all() {
+            let id = cat.id();
+            let parsed = StyleCategory::from_id(id);
+            assert_eq!(parsed, Some(*cat), "roundtrip failed for {:?}", cat);
+        }
+    }
+
+    #[test]
+    fn test_category_all_count() {
+        assert_eq!(StyleCategory::all().len(), 12);
+    }
+
+    #[test]
+    fn test_inspector_initial_state() {
+        let inspector = StyleInspector::new();
+        assert!(inspector.selected_node().is_none());
+        assert!(inspector.properties().is_empty());
+    }
+
+    #[test]
+    fn test_toggle_category() {
+        let mut inspector = StyleInspector::new();
+        // Insert a property manually to test visibility.
+        inspector.properties.push(StyleProperty {
+            name: "display".to_string(),
+            value: "block".to_string(),
+            inherited: false,
+            category: StyleCategory::Layout,
+        });
+
+        // Collapse Layout.
+        inspector.toggle_category(StyleCategory::Layout);
+        let visible = inspector.visible_properties();
+        assert!(visible.is_empty());
+
+        // Uncollapse.
+        inspector.toggle_category(StyleCategory::Layout);
+        let visible = inspector.visible_properties();
+        assert_eq!(visible.len(), 1);
+    }
+
+    #[test]
+    fn test_show_inherited_filter() {
+        let mut inspector = StyleInspector::new();
+        inspector.properties.push(StyleProperty {
+            name: "color".to_string(),
+            value: "red".to_string(),
+            inherited: true,
+            category: StyleCategory::Typography,
+        });
+        inspector.properties.push(StyleProperty {
+            name: "display".to_string(),
+            value: "block".to_string(),
+            inherited: false,
+            category: StyleCategory::Layout,
+        });
+
+        // By default show_inherited is true.
+        assert_eq!(inspector.visible_properties().len(), 2);
+
+        inspector.set_show_inherited(false);
+        assert_eq!(inspector.visible_properties().len(), 1);
+    }
 }
