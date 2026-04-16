@@ -29,7 +29,7 @@ struct Uniforms {
     _pad: vec2<f32>,
 };
 
-@group(0) @binding(0) var<uniform> u: Uniforms;
+@group(1) @binding(0) var<uniform> u: Uniforms;
 
 @fragment
 fn fs_rect(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
@@ -167,8 +167,8 @@ struct GradientStop {
     color: vec4<f32>,
 };
 
-@group(0) @binding(0) var<uniform> u: GradientUniforms;
-@group(0) @binding(1) var<storage, read> stops: array<GradientStop>;
+@group(1) @binding(0) var<uniform> u: GradientUniforms;
+@group(1) @binding(1) var<storage, read> stops: array<GradientStop>;
 
 fn lerp_color(a: vec4<f32>, b: vec4<f32>, t: f32) -> vec4<f32> {
     return mix(a, b, vec4<f32>(t));
@@ -322,7 +322,7 @@ struct ShadowUniforms {
     _pad: vec2<f32>,
 };
 
-@group(0) @binding(0) var<uniform> u: ShadowUniforms;
+@group(1) @binding(0) var<uniform> u: ShadowUniforms;
 
 fn sdf_rounded_rect(p: vec2<f32>, half_ext: vec2<f32>, r: f32) -> f32 {
     let q = abs(p) - half_ext + vec2<f32>(r);

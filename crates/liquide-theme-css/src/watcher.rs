@@ -57,13 +57,15 @@ impl ThemeWatcher {
     
     /// Start watching (blocking)
     pub fn start(&mut self) -> Result<()> {
-        if self.callback.is_none() {
-            error!("No callback set for theme updates");
-            return Ok(());
-        }
+        let callback = match self.callback.clone() {
+            Some(cb) => cb,
+            None => {
+                error!("No callback set for theme updates");
+                return Ok(());
+            }
+        };
         
         let (tx, rx) = channel();
-        let callback = self.callback.clone().unwrap();
         let paths = self.paths.clone();
         
         // Create watcher

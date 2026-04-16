@@ -341,6 +341,119 @@ struct ImageUniforms {
     _pad: [f32; 3],
 }
 
+/// Rect fill uniform — color + bounds for SDF rounded rect.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct RectUniforms {
+    color: [f32; 4],
+    /// bounds: x, y, w, h (used by SDF — x/y ignored in quad-positioned mode).
+    bounds: [f32; 4],
+    corner_radius: f32,
+    opacity: f32,
+    _pad: [f32; 2],
+}
+
+/// Shadow uniform — matches BOX_SHADOW_FRAG ShadowUniforms.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct ShadowUniforms {
+    bounds: [f32; 4],
+    color: [f32; 4],
+    offset: [f32; 2],
+    blur: f32,
+    spread: f32,
+    radius: f32,
+    inset: u32,
+    _pad: [f32; 2],
+}
+
+/// Gradient uniform — matches GRADIENT_FRAG GradientUniforms.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct GradientUniforms {
+    kind: u32,
+    angle: f32,
+    center: [f32; 2],
+    radius: f32,
+    stop_count: u32,
+    _pad: [f32; 2],
+}
+
+/// Gradient stop for GPU storage buffer (padded to 32 bytes for WGSL alignment).
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct GradientStopGpu {
+    position: f32,
+    _pad: [f32; 3],
+    color: [f32; 4],
+}
+
+/// Blur uniform — matches BLUR_FRAG BlurUniforms.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct BlurUniforms {
+    direction: [f32; 2],
+    radius: f32,
+    _pad: f32,
+}
+
+/// Blend uniform — matches BLEND_COMPUTE BlendUniforms.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct BlendUniforms {
+    mode: u32,
+    _pad: [u32; 3],
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+/// Convert a `Color` to normalized `[f32; 4]`.
+fn color_to_f32(c: &Color) -> [f32; 4] {
+    [
+        c.r as f32 / 255.0,
+        c.g as f32 / 255.0,
+        c.b as f32 / 255.0,
+        c.a as f32 / 255.0,
+    ]
+}
+
+/// Convert a `BlendMode` to the u32 index used by the blend compute shader.
+fn blend_mode_to_gpu(mode: &liquide_compositor::pixel::BlendMode) -> u32 {
+    use liquide_compositor::pixel::BlendMode;
+    match mode {
+        BlendMode::SrcOver => 0,
+        BlendMode::Src => 1,
+        BlendMode::SrcAtop => 2,
+        BlendMode::Multiply => 3,
+        BlendMode::Screen => 4,
+        BlendMode::Overlay => 5,
+        BlendMode::Darken => 6,
+        BlendMode::Lighten => 7,
+        BlendMode::ColorDodge => 8,
+        BlendMode::ColorBurn => 9,
+        BlendMode::HardLight => 10,
+        BlendMode::SoftLight => 11,
+        BlendMode::Difference => 12,
+        BlendMode::Exclusion => 13,
+        BlendMode::Hue => 14,
+        BlendMode::Saturation => 15,
+        BlendMode::ColorBlend => 16,
+        BlendMode::Luminosity => 17,
+    }
+}
+
+/// Build GPU gradient stops from a list of (position, Color) pairs.
+fn build_gradient_stops(stops: &[(f32, Color)]) -> Vec<GradientStopGpu> {
+    stops
+        .iter()
+        .map(|(pos, c)| GradientStopGpu {
+            position: *pos,
+            _pad: [0.0; 3],
+            color: color_to_f32(c),
+        })
+        .collect()
+}
+
 // ── Helper: compute UV rect for ImageFit ────────────────────────────────
 
 /// Compute the source UV rect for an image given its fit mode.
@@ -408,6 +521,8 @@ pub struct WgpuRenderer {
     gpu: WgpuDevice,
     pipelines: PipelineCache,
     output_texture: Option<GpuTexture>,
+    /// Intermediate texture for multi-pass effects (blur, blend).
+    intermediate_texture: Option<GpuTexture>,
     width: u32,
     height: u32,
     frame_count: u64,
@@ -422,6 +537,8 @@ impl WgpuRenderer {
     pub fn new(gpu: WgpuDevice, width: u32, height: u32) -> Result<Self> {
         let pipelines = PipelineCache::new(&gpu)?;
         let output_texture = Some(GpuTexture::new(&gpu.device, width, height, "output")?);
+        let intermediate_texture =
+            Some(GpuTexture::new(&gpu.device, width, height, "intermediate")?);
         let glyph_atlas = GpuGlyphAtlas::new(&gpu.device);
         let texture_cache = GpuTextureCache::new();
         let sampler = gpu.device.create_sampler(&wgpu::SamplerDescriptor {
@@ -438,6 +555,7 @@ impl WgpuRenderer {
             gpu,
             pipelines,
             output_texture,
+            intermediate_texture,
             width,
             height,
             frame_count: 0,
@@ -472,6 +590,12 @@ impl WgpuRenderer {
             width,
             height,
             "output",
+        )?);
+        self.intermediate_texture = Some(GpuTexture::new(
+            &self.gpu.device,
+            width,
+            height,
+            "intermediate",
         )?);
         Ok(())
     }
@@ -571,33 +695,71 @@ impl WgpuRenderer {
         for node in nodes {
             use liquide_compositor::scene::SceneNodeKind;
             match &node.kind {
-                SceneNodeKind::Background { .. }
-                | SceneNodeKind::Tint { .. }
-                | SceneNodeKind::Glass(_) => {
-                    // TODO: rect fill pipeline dispatch
-                    draw_calls += 1;
+                SceneNodeKind::Background { color } => {
+                    draw_calls += self.render_rect_node(
+                        &mut encoder, output, node,
+                        color, 0.0,
+                    );
                 }
-                SceneNodeKind::Shadow { .. } | SceneNodeKind::BoxShadows { .. } => {
-                    // TODO: shadow pipeline dispatch
-                    draw_calls += 1;
+                SceneNodeKind::Tint { color } => {
+                    draw_calls += self.render_rect_node(
+                        &mut encoder, output, node,
+                        color, 0.0,
+                    );
                 }
-                SceneNodeKind::GradientFill { .. } => {
-                    // TODO: gradient pipeline dispatch
-                    draw_calls += 1;
+                SceneNodeKind::Glass(params) => {
+                    draw_calls += self.render_rect_node(
+                        &mut encoder, output, node,
+                        &params.tint_color, 0.0,
+                    );
                 }
-                SceneNodeKind::Filter { .. } | SceneNodeKind::BackdropFilter { .. } => {
-                    // TODO: blur pipeline dispatch (multi-pass)
-                    draw_calls += 1;
+                SceneNodeKind::Shadow {
+                    spread,
+                    blur_radius,
+                    color,
+                    corner_radius,
+                } => {
+                    draw_calls += self.render_shadow_node(
+                        &mut encoder, output, node,
+                        [0.0, 0.0], *blur_radius, *spread, color, *corner_radius, false,
+                    );
                 }
-                SceneNodeKind::RenderLayer { .. } => {
-                    // TODO: blend pipeline dispatch
-                    draw_calls += 1;
+                SceneNodeKind::BoxShadows { shadows } => {
+                    for s in shadows {
+                        draw_calls += self.render_shadow_node(
+                            &mut encoder, output, node,
+                            [s.offset_x, s.offset_y],
+                            s.blur_radius, s.spread_radius,
+                            &s.color, node.corner_radius.0, s.inset,
+                        );
+                    }
+                }
+                SceneNodeKind::GradientFill { gradient } => {
+                    draw_calls += self.render_gradient_node(
+                        &mut encoder, output, node, gradient,
+                    );
+                }
+                SceneNodeKind::Filter { filters } => {
+                    draw_calls += self.render_blur_node(
+                        &mut encoder, node, filters,
+                    );
+                }
+                SceneNodeKind::BackdropFilter { filters } => {
+                    draw_calls += self.render_backdrop_blur_node(
+                        &mut encoder, node, filters,
+                    );
+                }
+                SceneNodeKind::RenderLayer { blend_mode, .. } => {
+                    draw_calls += self.render_blend_node(
+                        &mut encoder, blend_mode,
+                    );
                 }
                 SceneNodeKind::Surface { buffer, .. }
                 | SceneNodeKind::ChildSurface { buffer, .. } => {
-                    if buffer.is_some() {
-                        // TODO: texture blit
-                        draw_calls += 1;
+                    if let Some(buf) = buffer {
+                        draw_calls += self.render_surface_node(
+                            &mut encoder, output, node, buf,
+                        );
                     }
                 }
                 SceneNodeKind::Text {
@@ -649,6 +811,831 @@ impl WgpuRenderer {
         self.frame_count += 1;
 
         Ok(draw_calls)
+    }
+
+    // ── Rect fill dispatch (Background / Tint / Glass) ──────────────────
+
+    /// Render a solid-color rounded rectangle using the rect fill pipeline.
+    fn render_rect_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        node: &FlatNode,
+        color: &Color,
+        corner_radius: f32,
+    ) -> u32 {
+        let bounds = &node.absolute_bounds;
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return 0;
+        }
+
+        // Use per-node corner radius if the arg is 0
+        let cr = if corner_radius > 0.0 {
+            corner_radius
+        } else {
+            node.corner_radius.0
+        };
+
+        let quad_uniforms = QuadUniforms {
+            dst_rect: [bounds.x, bounds.y, bounds.width, bounds.height],
+            viewport: [self.width as f32, self.height as f32],
+            _pad: [0.0; 2],
+        };
+        let quad_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("rect_quad_uniform"),
+                contents: bytemuck::bytes_of(&quad_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        let rect_uniforms = RectUniforms {
+            color: color_to_f32(color),
+            bounds: [0.0, 0.0, bounds.width, bounds.height],
+            corner_radius: cr,
+            opacity: node.opacity,
+            _pad: [0.0; 2],
+        };
+        let rect_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("rect_uniform"),
+                contents: bytemuck::bytes_of(&rect_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rect_quad_bg"),
+            layout: &self.pipelines.quad_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: quad_buf.as_entire_binding(),
+            }],
+        });
+
+        let rect_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("rect_bg"),
+            layout: &self.pipelines.rect_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: rect_buf.as_entire_binding(),
+            }],
+        });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rect_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.pipelines.rect_pipeline);
+            pass.set_bind_group(0, &quad_bg, &[]);
+            pass.set_bind_group(1, &rect_bg, &[]);
+            pass.draw(0..6, 0..1);
+        }
+
+        1
+    }
+
+    // ── Shadow dispatch (Shadow / BoxShadows) ───────────────────────────
+
+    /// Render a box shadow using the shadow SDF pipeline.
+    #[allow(clippy::too_many_arguments)]
+    fn render_shadow_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        node: &FlatNode,
+        offset: [f32; 2],
+        blur_radius: f32,
+        spread: f32,
+        color: &Color,
+        corner_radius: f32,
+        inset: bool,
+    ) -> u32 {
+        let bounds = &node.absolute_bounds;
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return 0;
+        }
+
+        // Expand the draw area by blur + spread so the soft edge is visible.
+        let expand = blur_radius + spread;
+        let dst_x = bounds.x - expand;
+        let dst_y = bounds.y - expand;
+        let dst_w = bounds.width + expand * 2.0;
+        let dst_h = bounds.height + expand * 2.0;
+
+        let quad_uniforms = QuadUniforms {
+            dst_rect: [dst_x, dst_y, dst_w, dst_h],
+            viewport: [self.width as f32, self.height as f32],
+            _pad: [0.0; 2],
+        };
+        let quad_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("shadow_quad_uniform"),
+                contents: bytemuck::bytes_of(&quad_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        let shadow_uniforms = ShadowUniforms {
+            bounds: [0.0, 0.0, dst_w, dst_h],
+            color: color_to_f32(color),
+            offset,
+            blur: blur_radius,
+            spread,
+            radius: corner_radius,
+            inset: if inset { 1 } else { 0 },
+            _pad: [0.0; 2],
+        };
+        let shadow_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("shadow_uniform"),
+                contents: bytemuck::bytes_of(&shadow_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_quad_bg"),
+            layout: &self.pipelines.quad_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: quad_buf.as_entire_binding(),
+            }],
+        });
+
+        let shadow_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_bg"),
+            layout: &self.pipelines.shadow_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: shadow_buf.as_entire_binding(),
+            }],
+        });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.pipelines.shadow_pipeline);
+            pass.set_bind_group(0, &quad_bg, &[]);
+            pass.set_bind_group(1, &shadow_bg, &[]);
+            pass.draw(0..6, 0..1);
+        }
+
+        1
+    }
+
+    // ── Gradient dispatch ───────────────────────────────────────────────
+
+    /// Render a gradient fill (linear, radial, or conic) using the gradient pipeline.
+    fn render_gradient_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        node: &FlatNode,
+        gradient: &liquide_compositor::scene::GradientSpec,
+    ) -> u32 {
+        use liquide_compositor::scene::GradientSpec;
+
+        let bounds = &node.absolute_bounds;
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return 0;
+        }
+
+        let (kind, angle, center, radius, stops) = match gradient {
+            GradientSpec::Linear {
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                stops,
+            } => {
+                let dx = end_x - start_x;
+                let dy = end_y - start_y;
+                let angle = dy.atan2(dx);
+                (0u32, angle, [0.5f32, 0.5], 1.0f32, stops.as_slice())
+            }
+            GradientSpec::Radial {
+                center_x,
+                center_y,
+                radius,
+                stops,
+                ..
+            } => (1u32, 0.0, [*center_x, *center_y], *radius, stops.as_slice()),
+            GradientSpec::Conic {
+                center_x,
+                center_y,
+                start_angle,
+                stops,
+            } => (
+                2u32,
+                *start_angle,
+                [*center_x, *center_y],
+                1.0,
+                stops.as_slice(),
+            ),
+            GradientSpec::Mesh { .. } => {
+                // Mesh gradients not yet supported in the GPU shader.
+                return 0;
+            }
+        };
+
+        let gpu_stops = build_gradient_stops(stops);
+        let stop_count = gpu_stops.len().min(64) as u32; // clamp to reasonable max
+
+        let quad_uniforms = QuadUniforms {
+            dst_rect: [bounds.x, bounds.y, bounds.width, bounds.height],
+            viewport: [self.width as f32, self.height as f32],
+            _pad: [0.0; 2],
+        };
+        let quad_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("gradient_quad_uniform"),
+                contents: bytemuck::bytes_of(&quad_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        let gradient_uniforms = GradientUniforms {
+            kind,
+            angle,
+            center,
+            radius,
+            stop_count,
+            _pad: [0.0; 2],
+        };
+        let gradient_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("gradient_uniform"),
+                contents: bytemuck::bytes_of(&gradient_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        // Storage buffer for gradient stops.
+        // Ensure at least one stop so the buffer is non-empty.
+        let stops_data: Vec<GradientStopGpu> = if gpu_stops.is_empty() {
+            vec![GradientStopGpu {
+                position: 0.0,
+                _pad: [0.0; 3],
+                color: [0.0; 4],
+            }]
+        } else {
+            gpu_stops
+        };
+        let stops_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("gradient_stops"),
+                contents: bytemuck::cast_slice(&stops_data),
+                usage: wgpu::BufferUsages::STORAGE,
+            },
+        );
+
+        let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gradient_quad_bg"),
+            layout: &self.pipelines.quad_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: quad_buf.as_entire_binding(),
+            }],
+        });
+
+        let gradient_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gradient_bg"),
+            layout: &self.pipelines.gradient_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: gradient_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: stops_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("gradient_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.pipelines.gradient_pipeline);
+            pass.set_bind_group(0, &quad_bg, &[]);
+            pass.set_bind_group(1, &gradient_bg, &[]);
+            pass.draw(0..6, 0..1);
+        }
+
+        1
+    }
+
+    // ── Blur dispatch (Filter / BackdropFilter) ─────────────────────────
+
+    /// Apply filter effects. Handles Blur via two-pass Gaussian on the output.
+    fn render_blur_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        node: &FlatNode,
+        filters: &[liquide_compositor::scene::FilterSpec],
+    ) -> u32 {
+        use liquide_compositor::scene::FilterSpec;
+
+        // Find the first Blur filter (the primary GPU-accelerated one).
+        let blur_radius = filters.iter().find_map(|f| match f {
+            FilterSpec::Blur { radius } => Some(*radius),
+            _ => None,
+        });
+
+        let radius = match blur_radius {
+            Some(r) if r > 0.0 => r,
+            _ => return 0,
+        };
+
+        self.apply_blur_passes(encoder, node, radius)
+    }
+
+    /// Apply backdrop filter effects (blur behind element).
+    fn render_backdrop_blur_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        node: &FlatNode,
+        filters: &[liquide_compositor::scene::BackdropFilterSpec],
+    ) -> u32 {
+        use liquide_compositor::scene::BackdropFilterSpec;
+
+        let blur_radius = filters.iter().find_map(|f| match f {
+            BackdropFilterSpec::Blur { radius } => Some(*radius),
+            _ => None,
+        });
+
+        let radius = match blur_radius {
+            Some(r) if r > 0.0 => r,
+            _ => return 0,
+        };
+
+        self.apply_blur_passes(encoder, node, radius)
+    }
+
+    /// Execute a two-pass Gaussian blur: horizontal then vertical.
+    ///
+    /// Pass 1: copy output → intermediate, blur horizontally → output.
+    /// Pass 2: copy output → intermediate, blur vertically → output.
+    fn apply_blur_passes(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        _node: &FlatNode,
+        radius: f32,
+    ) -> u32 {
+        let output = match self.output_texture.as_ref() {
+            Some(t) => t,
+            None => return 0,
+        };
+        let intermediate = match self.intermediate_texture.as_ref() {
+            Some(t) => t,
+            None => return 0,
+        };
+
+        // Pass 1: horizontal blur — copy output to intermediate, then blur to output.
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &output.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &intermediate.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            output.size,
+        );
+
+        let blur_h = BlurUniforms {
+            direction: [1.0, 0.0],
+            radius,
+            _pad: 0.0,
+        };
+        let blur_h_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("blur_h_uniform"),
+                contents: bytemuck::bytes_of(&blur_h),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+        let blur_h_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blur_h_bg"),
+            layout: &self.pipelines.blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&intermediate.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: blur_h_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("blur_h_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.pipelines.blur_pipeline);
+            pass.set_bind_group(0, &blur_h_bg, &[]);
+            pass.draw(0..3, 0..1); // fullscreen triangle
+        }
+
+        // Pass 2: vertical blur — copy output to intermediate, then blur to output.
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &output.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &intermediate.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            output.size,
+        );
+
+        let blur_v = BlurUniforms {
+            direction: [0.0, 1.0],
+            radius,
+            _pad: 0.0,
+        };
+        let blur_v_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("blur_v_uniform"),
+                contents: bytemuck::bytes_of(&blur_v),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+        let blur_v_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blur_v_bg"),
+            layout: &self.pipelines.blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&intermediate.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: blur_v_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("blur_v_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.pipelines.blur_pipeline);
+            pass.set_bind_group(0, &blur_v_bg, &[]);
+            pass.draw(0..3, 0..1); // fullscreen triangle
+        }
+
+        2 // two draw calls (h + v passes)
+    }
+
+    // ── Blend dispatch (RenderLayer) ────────────────────────────────────
+
+    /// Dispatch blend compute shader for a RenderLayer node.
+    ///
+    /// In a full implementation this would render children to an offscreen
+    /// texture and blend it back. Since `FlatNode` is already pre-flattened,
+    /// we apply the blend as a post-process over the current output.
+    fn render_blend_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        blend_mode: &liquide_compositor::pixel::BlendMode,
+    ) -> u32 {
+        use liquide_compositor::pixel::BlendMode;
+        // SrcOver is the default compositing — no extra work needed.
+        if *blend_mode == BlendMode::SrcOver {
+            return 0;
+        }
+
+        let output = match self.output_texture.as_ref() {
+            Some(t) => t,
+            None => return 0,
+        };
+        let intermediate = match self.intermediate_texture.as_ref() {
+            Some(t) => t,
+            None => return 0,
+        };
+
+        // Snapshot current output into intermediate (as "dst" for the blend).
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &output.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &intermediate.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            output.size,
+        );
+
+        // Create a storage texture view for output (Bgra8Unorm, non-sRGB for storage).
+        let blend_out_tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("blend_out"),
+            size: output.size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let blend_out_view =
+            blend_out_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Src = output (what was just rendered), Dst = intermediate (snapshot).
+        let src_view = output.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(wgpu::TextureFormat::Bgra8Unorm),
+            ..Default::default()
+        });
+        let dst_view = intermediate.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(wgpu::TextureFormat::Bgra8Unorm),
+            ..Default::default()
+        });
+
+        let blend_uniforms = BlendUniforms {
+            mode: blend_mode_to_gpu(blend_mode),
+            _pad: [0; 3],
+        };
+        let blend_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("blend_uniform"),
+                contents: bytemuck::bytes_of(&blend_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        let blend_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("blend_bg"),
+            layout: &self.pipelines.blend_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&src_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&dst_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&blend_out_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: blend_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        {
+            let mut pass =
+                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("blend_pass"),
+                    timestamp_writes: None,
+                });
+            pass.set_pipeline(&self.pipelines.blend_pipeline);
+            pass.set_bind_group(0, &blend_bg, &[]);
+            let wg_x = (self.width + 7) / 8;
+            let wg_y = (self.height + 7) / 8;
+            pass.dispatch_workgroups(wg_x, wg_y, 1);
+        }
+
+        // Copy the blend result back to the output texture.
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &blend_out_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &output.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            output.size,
+        );
+
+        1
+    }
+
+    // ── Surface blit dispatch (Surface / ChildSurface) ──────────────────
+
+    /// Render a Wayland client surface buffer as a textured quad.
+    fn render_surface_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        node: &FlatNode,
+        buffer: &liquide_compositor::scene::SurfaceBuffer,
+    ) -> u32 {
+        if buffer.width == 0 || buffer.height == 0 || buffer.pixels.is_empty() {
+            return 0;
+        }
+
+        let bounds = &node.absolute_bounds;
+
+        // Upload the surface pixel data to a temporary GPU texture.
+        let tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("surface_tex"),
+            size: wgpu::Extent3d {
+                width: buffer.width,
+                height: buffer.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.gpu.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &buffer.pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(buffer.stride),
+                rows_per_image: Some(buffer.height),
+            },
+            wgpu::Extent3d {
+                width: buffer.width,
+                height: buffer.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let tex_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Render as a textured quad using the image pipeline.
+        let quad_uniforms = QuadUniforms {
+            dst_rect: [bounds.x, bounds.y, bounds.width, bounds.height],
+            viewport: [self.width as f32, self.height as f32],
+            _pad: [0.0; 2],
+        };
+        let quad_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("surface_quad_uniform"),
+                contents: bytemuck::bytes_of(&quad_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        let image_uniforms = ImageUniforms {
+            src_rect: [0.0, 0.0, 1.0, 1.0],
+            opacity: node.opacity,
+            _pad: [0.0; 3],
+        };
+        let image_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("surface_img_uniform"),
+                contents: bytemuck::bytes_of(&image_uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("surface_quad_bg"),
+            layout: &self.pipelines.quad_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: quad_buf.as_entire_binding(),
+            }],
+        });
+
+        let image_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("surface_img_bg"),
+            layout: &self.pipelines.image_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&tex_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: image_buf.as_entire_binding(),
+                },
+            ],
+        });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("surface_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.pipelines.image_pipeline);
+            pass.set_bind_group(0, &quad_bg, &[]);
+            pass.set_bind_group(1, &image_bg, &[]);
+            pass.draw(0..6, 0..1);
+        }
+
+        1
     }
 
     /// Render a text node by emitting one textured quad per glyph.
@@ -1119,3 +2106,269 @@ const _: () = {
         _assert_send::<WgpuRenderer>();
     }
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_compositor::pixel::BlendMode;
+    use liquide_compositor::scene::{GradientSpec, GlassParams};
+    use liquide_compositor::{BoxShadowSpec, FilterSpec, BackdropFilterSpec};
+
+    // ── Uniform struct layout tests ─────────────────────────────────────
+
+    #[test]
+    fn rect_uniforms_size_and_alignment() {
+        // Must be 48 bytes: color(16) + bounds(16) + corner_radius(4) + opacity(4) + pad(8).
+        assert_eq!(std::mem::size_of::<RectUniforms>(), 48);
+        assert_eq!(std::mem::align_of::<RectUniforms>(), 4);
+    }
+
+    #[test]
+    fn shadow_uniforms_size_and_alignment() {
+        // Must be 64 bytes:
+        // bounds(16) + color(16) + offset(8) + blur(4) + spread(4) + radius(4) + inset(4) + pad(8).
+        assert_eq!(std::mem::size_of::<ShadowUniforms>(), 64);
+    }
+
+    #[test]
+    fn gradient_uniforms_size() {
+        // kind(4) + angle(4) + center(8) + radius(4) + stop_count(4) + pad(8) = 32
+        assert_eq!(std::mem::size_of::<GradientUniforms>(), 32);
+    }
+
+    #[test]
+    fn gradient_stop_gpu_size() {
+        // position(4) + pad(12) + color(16) = 32 bytes, matching WGSL alignment.
+        assert_eq!(std::mem::size_of::<GradientStopGpu>(), 32);
+    }
+
+    #[test]
+    fn blur_uniforms_size() {
+        // direction(8) + radius(4) + pad(4) = 16
+        assert_eq!(std::mem::size_of::<BlurUniforms>(), 16);
+    }
+
+    #[test]
+    fn blend_uniforms_size() {
+        // mode(4) + pad(12) = 16
+        assert_eq!(std::mem::size_of::<BlendUniforms>(), 16);
+    }
+
+    // ── Helper function tests ───────────────────────────────────────────
+
+    #[test]
+    fn color_to_f32_white() {
+        let c = Color::WHITE;
+        let f = color_to_f32(&c);
+        assert!((f[0] - 1.0).abs() < 0.01);
+        assert!((f[1] - 1.0).abs() < 0.01);
+        assert!((f[2] - 1.0).abs() < 0.01);
+        assert!((f[3] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn color_to_f32_transparent() {
+        let c = Color::TRANSPARENT;
+        let f = color_to_f32(&c);
+        assert!((f[0]).abs() < 0.01);
+        assert!((f[3]).abs() < 0.01);
+    }
+
+    #[test]
+    fn color_to_f32_half_red() {
+        let c = Color::new(128, 0, 0, 255);
+        let f = color_to_f32(&c);
+        assert!((f[0] - 128.0 / 255.0).abs() < 0.01);
+        assert!((f[1]).abs() < 0.01);
+        assert!((f[2]).abs() < 0.01);
+        assert!((f[3] - 1.0).abs() < 0.01);
+    }
+
+    // ── Blend mode mapping tests ────────────────────────────────────────
+
+    #[test]
+    fn blend_mode_to_gpu_covers_all_modes() {
+        assert_eq!(blend_mode_to_gpu(&BlendMode::SrcOver), 0);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Src), 1);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::SrcAtop), 2);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Multiply), 3);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Screen), 4);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Overlay), 5);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Darken), 6);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Lighten), 7);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::ColorDodge), 8);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::ColorBurn), 9);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::HardLight), 10);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::SoftLight), 11);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Difference), 12);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Exclusion), 13);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Hue), 14);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Saturation), 15);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::ColorBlend), 16);
+        assert_eq!(blend_mode_to_gpu(&BlendMode::Luminosity), 17);
+    }
+
+    // ── Gradient stop builder tests ─────────────────────────────────────
+
+    #[test]
+    fn build_gradient_stops_empty() {
+        let stops = build_gradient_stops(&[]);
+        assert!(stops.is_empty());
+    }
+
+    #[test]
+    fn build_gradient_stops_two_colors() {
+        let stops = build_gradient_stops(&[
+            (0.0, Color::BLACK),
+            (1.0, Color::WHITE),
+        ]);
+        assert_eq!(stops.len(), 2);
+        assert!((stops[0].position - 0.0).abs() < f32::EPSILON);
+        assert!((stops[1].position - 1.0).abs() < f32::EPSILON);
+        // White color check
+        assert!((stops[1].color[0] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn build_gradient_stops_preserves_positions() {
+        let stops = build_gradient_stops(&[
+            (0.0, Color::BLACK),
+            (0.25, Color::new(255, 0, 0, 255)),
+            (0.75, Color::new(0, 255, 0, 255)),
+            (1.0, Color::WHITE),
+        ]);
+        assert_eq!(stops.len(), 4);
+        assert!((stops[1].position - 0.25).abs() < f32::EPSILON);
+        assert!((stops[2].position - 0.75).abs() < f32::EPSILON);
+    }
+
+    // ── Image UV rect tests ─────────────────────────────────────────────
+
+    #[test]
+    fn image_uv_fill_mode() {
+        let uv = compute_image_uv_rect(100, 50, 200.0, 100.0, &ImageFit::Fill);
+        assert_eq!(uv, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn image_uv_cover_wider_image() {
+        let uv = compute_image_uv_rect(200, 100, 100.0, 100.0, &ImageFit::Cover);
+        // Image is wider (aspect 2:1) for a square dst.
+        // visible_fraction = dst_aspect / img_aspect = 1.0 / 2.0 = 0.5
+        // offset = (1.0 - 0.5) * 0.5 = 0.25
+        assert!((uv[0] - 0.25).abs() < 0.01);
+        assert!((uv[2] - 0.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn image_uv_zero_dims_returns_default() {
+        let uv = compute_image_uv_rect(0, 0, 100.0, 100.0, &ImageFit::Cover);
+        assert_eq!(uv, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    // ── QuadUniforms byte representation ────────────────────────────────
+
+    #[test]
+    fn quad_uniforms_bytemuck_roundtrip() {
+        let q = QuadUniforms {
+            dst_rect: [10.0, 20.0, 300.0, 400.0],
+            viewport: [1920.0, 1080.0],
+            _pad: [0.0; 2],
+        };
+        let bytes = bytemuck::bytes_of(&q);
+        assert_eq!(bytes.len(), std::mem::size_of::<QuadUniforms>());
+        let q2: &QuadUniforms = bytemuck::from_bytes(bytes);
+        assert_eq!(q2.dst_rect, q.dst_rect);
+        assert_eq!(q2.viewport, q.viewport);
+    }
+
+    // ── Shadow parameter extraction tests ───────────────────────────────
+
+    #[test]
+    fn box_shadow_spec_inset_flag() {
+        let spec = BoxShadowSpec {
+            offset_x: 2.0,
+            offset_y: 4.0,
+            blur_radius: 8.0,
+            spread_radius: 1.0,
+            color: Color::BLACK,
+            inset: true,
+        };
+        assert!(spec.inset);
+        assert!((spec.blur_radius - 8.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn glass_params_default_has_blur() {
+        let g = GlassParams::default();
+        assert!(g.blur_radius > 0);
+    }
+
+    // ── Gradient spec parsing ───────────────────────────────────────────
+
+    #[test]
+    fn linear_gradient_angle_calculation() {
+        let spec = GradientSpec::Linear {
+            start_x: 0.0,
+            start_y: 0.0,
+            end_x: 1.0,
+            end_y: 0.0,
+            stops: vec![
+                (0.0, Color::BLACK),
+                (1.0, Color::WHITE),
+            ],
+        };
+        if let GradientSpec::Linear { start_x, start_y, end_x, end_y, .. } = &spec {
+            let dx = end_x - start_x;
+            let dy = end_y - start_y;
+            let angle = dy.atan2(dx);
+            // Horizontal gradient: angle should be 0
+            assert!((angle).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn radial_gradient_center_extraction() {
+        let spec = GradientSpec::Radial {
+            center_x: 0.5,
+            center_y: 0.5,
+            radius: 1.0,
+            radius_y: 1.0,
+            stops: vec![(0.0, Color::WHITE), (1.0, Color::BLACK)],
+        };
+        if let GradientSpec::Radial { center_x, center_y, radius, .. } = &spec {
+            assert!((*center_x - 0.5).abs() < f32::EPSILON);
+            assert!((*center_y - 0.5).abs() < f32::EPSILON);
+            assert!((*radius - 1.0).abs() < f32::EPSILON);
+        }
+    }
+
+    // ── Filter spec extraction tests ────────────────────────────────────
+
+    #[test]
+    fn filter_spec_extracts_blur_radius() {
+        let filters = vec![
+            FilterSpec::Brightness(1.2),
+            FilterSpec::Blur { radius: 5.0 },
+            FilterSpec::Contrast(0.9),
+        ];
+        let blur_radius = filters.iter().find_map(|f| match f {
+            FilterSpec::Blur { radius } => Some(*radius),
+            _ => None,
+        });
+        assert_eq!(blur_radius, Some(5.0));
+    }
+
+    #[test]
+    fn backdrop_filter_spec_extracts_blur() {
+        let filters = vec![
+            BackdropFilterSpec::Brightness(1.0),
+            BackdropFilterSpec::Blur { radius: 12.0 },
+        ];
+        let blur_radius = filters.iter().find_map(|f| match f {
+            BackdropFilterSpec::Blur { radius } => Some(*radius),
+            _ => None,
+        });
+        assert_eq!(blur_radius, Some(12.0));
+    }
+}

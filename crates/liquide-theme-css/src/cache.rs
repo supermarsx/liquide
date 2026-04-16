@@ -232,4 +232,49 @@ mod tests {
         assert_eq!(stats.cache_misses, 2);
         assert!((stats.hit_rate() - 0.333).abs() < 0.01);
     }
+
+    #[test]
+    fn test_cache_clear_resets_stats() {
+        let cache = QueryCache::new(100);
+        let props = PropertySet::new();
+        cache.insert("button", &[], None, &[], props.clone());
+        cache.get("button", &[], None, &[]);
+        cache.get("missing", &[], None, &[]);
+
+        cache.clear();
+        assert_eq!(cache.size(), 0);
+        let stats = cache.stats();
+        assert_eq!(stats.cache_hits, 0);
+        assert_eq!(stats.cache_misses, 0);
+    }
+
+    #[test]
+    fn test_cache_unlimited() {
+        let cache = QueryCache::new(0); // 0 = unlimited
+        let props = PropertySet::new();
+        for i in 0..100 {
+            cache.insert(&format!("el{i}"), &[], None, &[], props.clone());
+        }
+        assert_eq!(cache.size(), 100);
+        let stats = cache.stats();
+        assert_eq!(stats.evictions, 0);
+    }
+
+    #[test]
+    fn test_cache_stats_hit_rate() {
+        let stats = CacheStats {
+            total_queries: 10,
+            cache_hits: 7,
+            cache_misses: 3,
+            evictions: 0,
+        };
+        let rate = stats.hit_rate();
+        assert!((rate - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_cache_stats_hit_rate_zero() {
+        let stats = CacheStats::default();
+        assert_eq!(stats.hit_rate(), 0.0);
+    }
 }

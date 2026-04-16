@@ -8,14 +8,24 @@ use crate::Result;
 pub struct PipelineCache {
     /// Solid rect fill (rounded rect SDF + color).
     pub rect_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the rect fragment stage (uniform buffer).
+    pub rect_bind_group_layout: wgpu::BindGroupLayout,
     /// Gaussian blur (separable, two-pass).
     pub blur_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the blur stage (texture + sampler + uniform).
+    pub blur_bind_group_layout: wgpu::BindGroupLayout,
     /// CSS blend mode compute shader.
     pub blend_pipeline: wgpu::ComputePipeline,
+    /// Bind group layout for the blend compute stage.
+    pub blend_bind_group_layout: wgpu::BindGroupLayout,
     /// Gradient fill (linear / radial / conic).
     pub gradient_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the gradient fragment stage (uniform + stops storage).
+    pub gradient_bind_group_layout: wgpu::BindGroupLayout,
     /// Box shadow (SDF, supports inset).
     pub shadow_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the shadow fragment stage (uniform buffer).
+    pub shadow_bind_group_layout: wgpu::BindGroupLayout,
     /// Text glyph rendering (textured quad + alpha atlas).
     pub text_pipeline: wgpu::RenderPipeline,
     /// Bind group layout for the text fragment stage (atlas texture + sampler + uniforms).
@@ -34,13 +44,31 @@ impl PipelineCache {
         let device = &gpu.device;
         let target_format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
-        // ── Shared vertex shader module ─────────────────────────────────
+        // ── Shared vertex shader modules ────────────────────────────────
         let vert_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fullscreen_vert"),
             source: wgpu::ShaderSource::Wgsl(shader::FULLSCREEN_VERT.into()),
         });
+        let quad_vert_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("textured_quad_vert"),
+            source: wgpu::ShaderSource::Wgsl(shader::TEXTURED_QUAD_VERT.into()),
+        });
+        let quad_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("quad_bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
-        // ── Rect fill ───────────────────────────────────────────────────
+        // ── Rect fill (uses quad vertex shader) ────────────────────────
         let rect_frag = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("rect_fill_frag"),
             source: wgpu::ShaderSource::Wgsl(shader::RECT_FILL_FRAG.into()),
@@ -61,15 +89,15 @@ impl PipelineCache {
             });
         let rect_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("rect_layout"),
-            bind_group_layouts: &[&rect_bind_group_layout],
+            bind_group_layouts: &[&quad_bind_group_layout, &rect_bind_group_layout],
             push_constant_ranges: &[],
         });
         let rect_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("rect_pipeline"),
             layout: Some(&rect_layout),
             vertex: wgpu::VertexState {
-                module: &vert_module,
-                entry_point: Some("vs_main"),
+                module: &quad_vert_module,
+                entry_point: Some("vs_quad"),
                 buffers: &[],
                 compilation_options: Default::default(),
             },
@@ -228,7 +256,7 @@ impl PipelineCache {
             cache: None,
         });
 
-        // ── Gradient ────────────────────────────────────────────────────
+        // ── Gradient (uses quad vertex shader) ──────────────────────────
         let gradient_frag = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gradient_frag"),
             source: wgpu::ShaderSource::Wgsl(shader::GRADIENT_FRAG.into()),
@@ -260,7 +288,7 @@ impl PipelineCache {
         });
         let gradient_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gradient_layout"),
-            bind_group_layouts: &[&gradient_bgl],
+            bind_group_layouts: &[&quad_bind_group_layout, &gradient_bgl],
             push_constant_ranges: &[],
         });
         let gradient_pipeline =
@@ -268,8 +296,8 @@ impl PipelineCache {
                 label: Some("gradient_pipeline"),
                 layout: Some(&gradient_layout),
                 vertex: wgpu::VertexState {
-                    module: &vert_module,
-                    entry_point: Some("vs_main"),
+                    module: &quad_vert_module,
+                    entry_point: Some("vs_quad"),
                     buffers: &[],
                     compilation_options: Default::default(),
                 },
@@ -313,15 +341,15 @@ impl PipelineCache {
         });
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("shadow_layout"),
-            bind_group_layouts: &[&shadow_bgl],
+            bind_group_layouts: &[&quad_bind_group_layout, &shadow_bgl],
             push_constant_ranges: &[],
         });
         let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("shadow_pipeline"),
             layout: Some(&shadow_layout),
             vertex: wgpu::VertexState {
-                module: &vert_module,
-                entry_point: Some("vs_main"),
+                module: &quad_vert_module,
+                entry_point: Some("vs_quad"),
                 buffers: &[],
                 compilation_options: Default::default(),
             },
@@ -344,26 +372,6 @@ impl PipelineCache {
             multiview: None,
             cache: None,
         });
-
-        // ── Shared textured-quad vertex shader ────────────────────────────
-        let quad_vert_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("textured_quad_vert"),
-            source: wgpu::ShaderSource::Wgsl(shader::TEXTURED_QUAD_VERT.into()),
-        });
-        let quad_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("quad_bgl"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
 
         // ── Text pipeline ───────────────────────────────────────────────
         let text_frag_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -515,10 +523,15 @@ impl PipelineCache {
 
         Ok(Self {
             rect_pipeline,
+            rect_bind_group_layout,
             blur_pipeline,
+            blur_bind_group_layout,
             blend_pipeline,
+            blend_bind_group_layout: blend_bgl,
             gradient_pipeline,
+            gradient_bind_group_layout: gradient_bgl,
             shadow_pipeline,
+            shadow_bind_group_layout: shadow_bgl,
             text_pipeline,
             text_bind_group_layout,
             quad_bind_group_layout,

@@ -889,4 +889,46 @@ mod tests {
         ]);
         assert_eq!(max_expr.resolve(16.0, 1920.0, 1080.0), 100.0);
     }
+
+    #[test]
+    fn test_color_to_hex() {
+        let c = Color::rgb(255, 128, 0);
+        assert_eq!(c.to_hex(), "#ff8000");
+
+        let c2 = Color::new(255, 128, 0, 128);
+        assert_eq!(c2.to_hex(), "#ff800080");
+    }
+
+    #[test]
+    fn test_color_darken() {
+        let color = Color::rgb(200, 200, 200);
+        let darker = color.darken(0.5);
+        assert_eq!(darker.r, 100);
+        assert_eq!(darker.g, 100);
+        assert_eq!(darker.b, 100);
+    }
+
+    #[test]
+    fn test_color_mix() {
+        let white = Color::rgb(255, 255, 255);
+        let black = Color::rgb(0, 0, 0);
+        let mid = white.mix(&black, 0.5);
+        // 50% white + 50% black = ~127
+        assert!((mid.r as i16 - 127).abs() <= 1);
+    }
+
+    #[test]
+    fn test_color_from_hex_invalid() {
+        let result = Color::from_hex("not-a-color");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_color_rgb_constructor() {
+        let c = Color::rgb(10, 20, 30);
+        assert_eq!(c.r, 10);
+        assert_eq!(c.g, 20);
+        assert_eq!(c.b, 30);
+        assert_eq!(c.a, 255);
+    }
 }

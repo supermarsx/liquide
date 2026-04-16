@@ -336,13 +336,15 @@ impl PluginRegistry {
                 Ok(()) => {
                     self.load_counter += 1;
                     // Re-borrow after instance borrow ends
-                    let info = self.plugins.get_mut(id_str).unwrap();
+                    let info = self.plugins.get_mut(id_str)
+                        .ok_or_else(|| LibPluginError::NotFound(id.clone()))?;
                     info.load_order = self.load_counter;
                     info.state = PluginState::Enabled;
                     Ok(())
                 }
                 Err(e) => {
-                    let info = self.plugins.get_mut(id_str).unwrap();
+                    let info = self.plugins.get_mut(id_str)
+                        .ok_or_else(|| LibPluginError::NotFound(id.clone()))?;
                     info.state = PluginState::Error(e.to_string());
                     Err(e)
                 }

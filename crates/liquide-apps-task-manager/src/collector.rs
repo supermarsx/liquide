@@ -878,12 +878,17 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
     const PROC_ALL_PIDS: u32 = 1;
 
     // Get PID list
+    // SAFETY: proc_listpids with a null buffer and bufsize 0 returns the
+    // required buffer size. PROC_ALL_PIDS is a valid type constant.
     let count = unsafe { proc_listpids(PROC_ALL_PIDS, 0, std::ptr::null_mut(), 0) };
     if count <= 0 {
         return Vec::new();
     }
 
     let mut pids = vec![0i32; count as usize / 4 + 16];
+    // SAFETY: `pids` is a valid mutable buffer with length derived from the
+    // prior proc_listpids call. bufsize is computed from the actual allocation
+    // size. proc_listpids writes at most bufsize bytes into the buffer.
     let actual = unsafe {
         proc_listpids(
             PROC_ALL_PIDS,
@@ -904,6 +909,9 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
         }
 
         let mut name_buf = [0u8; 256];
+        // SAFETY: `name_buf` is a stack-allocated 256-byte array.
+        // `pid` is a positive PID from the system PID list.
+        // proc_name writes at most `bufsize` (256) bytes into the buffer.
         let name_len = unsafe { proc_name(pid, name_buf.as_mut_ptr(), 256) };
         let name = if name_len > 0 {
             String::from_utf8_lossy(&name_buf[..name_len as usize]).to_string()
