@@ -88,11 +88,17 @@ impl PlatformDpi {
     /// Uses `GetDpiForSystem` (available since Windows 10 1607).
     /// Falls back to `GetDeviceCaps(LOGPIXELSX)` on older systems.
     pub fn system_dpi(&self) -> DpiScale {
+        // SAFETY: GetDpiForSystem is a safe Win32 API that returns the system DPI
+        // with no preconditions and no memory safety implications.
         let dpi = unsafe { GetDpiForSystem() };
         if dpi > 0 {
             return DpiScale::from_dpi(dpi as f32);
         }
         // Fallback: GetDeviceCaps on the screen DC.
+        // SAFETY: GetDC(0) retrieves the screen device context; GetDeviceCaps reads
+        // an integer property from a valid DC; ReleaseDC releases the DC. All three are
+        // safe Win32 APIs with no memory safety preconditions. The DC is always released
+        // before returning.
         unsafe {
             let hdc = GetDC(0);
             if hdc != 0 {
@@ -110,6 +116,8 @@ impl PlatformDpi {
     ///
     /// Uses `GetDpiForWindow` (per-monitor v2).
     pub fn dpi_for_window(&self, hwnd: isize) -> DpiScale {
+        // SAFETY: GetDpiForWindow is a safe Win32 API; it returns 0 for invalid
+        // handles rather than causing UB, and the caller-provided hwnd is opaque.
         let dpi = unsafe { GetDpiForWindow(hwnd) };
         if dpi > 0 {
             DpiScale::from_dpi(dpi as f32)
@@ -124,6 +132,8 @@ impl PlatformDpi {
     pub fn dpi_for_monitor_handle(&self, hmonitor: isize) -> DpiScale {
         let mut dpi_x: u32 = 0;
         let mut dpi_y: u32 = 0;
+        // SAFETY: GetDpiForMonitor writes to the two u32 pointers we supply and
+        // returns an HRESULT. Both pointers are valid stack-allocated variables.
         let hr = unsafe {
             shcore::GetDpiForMonitor(hmonitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y)
         };
@@ -136,6 +146,8 @@ impl PlatformDpi {
 
     /// Get the DPI for the primary monitor.
     pub fn primary_monitor_dpi(&self) -> DpiScale {
+        // SAFETY: MonitorFromPoint is a safe Win32 API that takes a value-type Point
+        // and flag, returning an HMONITOR handle (0 on failure). No memory safety concerns.
         let hmon = unsafe { MonitorFromPoint(Point::default(), MONITOR_DEFAULTTOPRIMARY) };
         if hmon != 0 {
             self.dpi_for_monitor_handle(hmon)
@@ -160,6 +172,10 @@ impl PlatformDpi {
             _lprect: *mut i32,
             lparam: isize,
         ) -> BOOL {
+            // SAFETY: lparam is a pointer to our stack-allocated EnumData, cast to
+            // isize in the EnumDisplayMonitors call below. We reconstruct the reference
+            // here; this is safe because the EnumData outlives the enumeration callback
+            // and EnumDisplayMonitors calls this synchronously on the same thread.
             unsafe {
                 let data = &mut *(lparam as *mut EnumData);
 
@@ -190,6 +206,10 @@ impl PlatformDpi {
             next_id: 0,
         };
 
+        // SAFETY: EnumDisplayMonitors is called with null HDC/clip-rect to enumerate
+        // all monitors. The callback pointer (enum_proc) matches the expected signature.
+        // The lparam is a valid pointer to our local EnumData; the call is synchronous,
+        // so EnumData remains alive for the duration of enumeration.
         unsafe {
             EnumDisplayMonitors(
                 0,

@@ -128,7 +128,7 @@ impl MonitorDpi {
         self.scales
             .values()
             .copied()
-            .max_by(|a, b| a.factor().partial_cmp(&b.factor()).unwrap())
+            .max_by(|a, b| a.factor().total_cmp(&b.factor()))
             .unwrap_or(DpiScale::identity())
     }
 
@@ -137,7 +137,7 @@ impl MonitorDpi {
         self.scales
             .values()
             .copied()
-            .min_by(|a, b| a.factor().partial_cmp(&b.factor()).unwrap())
+            .min_by(|a, b| a.factor().total_cmp(&b.factor()))
             .unwrap_or(DpiScale::identity())
     }
 
