@@ -359,6 +359,9 @@ socket2 = "0.5"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
 # Directories
 dirs = "6"
 
