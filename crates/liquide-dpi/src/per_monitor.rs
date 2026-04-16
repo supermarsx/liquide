@@ -137,12 +137,18 @@ impl ScaleManager {
         let mut best_area: f32 = 0.0;
         let mut best_scale = self.global_scale;
 
+        let mut best_monitor_id: MonitorId = 0;
+
         for entry in self.monitors.values() {
             if let Some(overlap) = window_rect.intersection(entry.bounds) {
                 let area = overlap.area();
-                if area > best_area {
+                // On tie, prefer the monitor with the lower ID for determinism.
+                if area > best_area
+                    || (area == best_area && entry.scale.monitor_id < best_monitor_id)
+                {
                     best_area = area;
                     best_scale = entry.scale.scale_factor;
+                    best_monitor_id = entry.scale.monitor_id;
                 }
             }
         }
@@ -160,7 +166,11 @@ impl ScaleManager {
         for entry in self.monitors.values() {
             if let Some(overlap) = window_rect.intersection(entry.bounds) {
                 let area = overlap.area();
-                if area > best_area {
+                // On tie, prefer the monitor with the lower ID for determinism.
+                if area > best_area
+                    || (area == best_area
+                        && best_id.is_some_and(|id| entry.scale.monitor_id < id))
+                {
                     best_area = area;
                     best_id = Some(entry.scale.monitor_id);
                 }

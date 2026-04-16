@@ -814,7 +814,7 @@ fn scale_manager_scale_for_window_spanning_monitors() {
         LogicalRect::new(1920.0, 0.0, 1920.0, 1080.0),
     );
 
-    // Window mostly on monitor 1 (1600 px on m1, 200 px on m2).
+    // Window equally split across monitors (200 px on each); lower ID wins tie.
     let w = LogicalRect::new(1720.0, 0.0, 400.0, 1080.0);
     assert_eq!(sm.scale_for_window(w), 1.0);
 
