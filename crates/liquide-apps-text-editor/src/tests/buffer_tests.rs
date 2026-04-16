@@ -5,7 +5,7 @@ use crate::cursor::{Cursor, MultiCursor, Position, Selection};
 use crate::indent::{auto_indent, detect_indent, indent_level, leading_whitespace, IndentStyle};
 use crate::search::SearchReplace;
 use crate::undo::{EditOp, UndoHistory};
-use crate::gutter::{Diagnostic, DiagnosticSeverity, Gutter};
+use crate::gutter::{Diagnostic, Gutter};
 
 // ===========================================================================
 // TextBuffer

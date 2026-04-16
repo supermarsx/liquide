@@ -1,8 +1,23 @@
 //! Tests for keyboard handling, file I/O, undo/redo integration, and visible_lines.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::config::EditorConfig;
 use crate::document::{Document, LineEnding};
 use crate::runtime::EditorRuntime;
+
+/// Generate a unique temp directory for each test invocation to avoid
+/// cross-process and cross-run collisions during `cargo test --workspace`.
+fn unique_test_dir(name: &str) -> std::path::PathBuf {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir()
+        .join(format!("{name}_{}_{id}", std::process::id()));
+    // Clean up any stale directory from a previous run.
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("failed to create test temp dir");
+    dir
+}
 
 // ===========================================================================
 // LineEnding detection
@@ -39,8 +54,7 @@ fn test_line_ending_as_str() {
 
 #[test]
 fn test_document_open_and_save() {
-    let dir = std::env::temp_dir().join("liquide_editor_test_open_save");
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = unique_test_dir("liquide_editor_test_open_save");
     let path = dir.join("test_file.txt");
     std::fs::write(&path, "hello\nworld").unwrap();
 
@@ -66,8 +80,7 @@ fn test_document_open_and_save() {
 
 #[test]
 fn test_document_save_as() {
-    let dir = std::env::temp_dir().join("liquide_editor_test_save_as");
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = unique_test_dir("liquide_editor_test_save_as");
     let path1 = dir.join("original.txt");
     let path2 = dir.join("saved_as.rs");
     std::fs::write(&path1, "content").unwrap();
@@ -94,8 +107,7 @@ fn test_document_save_no_path() {
 
 #[test]
 fn test_runtime_open_path() {
-    let dir = std::env::temp_dir().join("liquide_editor_test_open_path");
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = unique_test_dir("liquide_editor_test_open_path");
     let path = dir.join("hello.rs");
     std::fs::write(&path, "fn main() {}").unwrap();
 
@@ -461,8 +473,7 @@ fn test_undo_join_line_via_backspace() {
 
 #[test]
 fn test_ctrl_s_save() {
-    let dir = std::env::temp_dir().join("liquide_editor_test_ctrl_s");
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = unique_test_dir("liquide_editor_test_ctrl_s");
     let path = dir.join("save_test.txt");
     std::fs::write(&path, "original").unwrap();
 
