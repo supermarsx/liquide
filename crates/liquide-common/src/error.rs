@@ -87,3 +87,43 @@ pub enum LiquideError {
 
 /// A convenience `Result` type that uses [`LiquideError`].
 pub type Result<T> = std::result::Result<T, LiquideError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn test_error_display_io() {
+        let err = LiquideError::Io(io::Error::new(io::ErrorKind::NotFound, "file missing"));
+        let msg = format!("{err}");
+        assert!(msg.contains("I/O error"));
+    }
+
+    #[test]
+    fn test_error_display_config() {
+        let err = LiquideError::Config("bad value".to_string());
+        assert_eq!(format!("{err}"), "configuration error: bad value");
+    }
+
+    #[test]
+    fn test_error_display_not_found() {
+        let err = LiquideError::NotFound("widget".to_string());
+        assert_eq!(format!("{err}"), "not found: widget");
+    }
+
+    #[test]
+    fn test_error_from_io() {
+        let io_err = io::Error::new(io::ErrorKind::PermissionDenied, "denied");
+        let err: LiquideError = io_err.into();
+        assert!(matches!(err, LiquideError::Io(_)));
+    }
+
+    #[test]
+    fn test_error_from_toml() {
+        let toml_result: std::result::Result<toml::Value, _> = toml::from_str("{{{invalid");
+        let toml_err = toml_result.unwrap_err();
+        let err: LiquideError = toml_err.into();
+        assert!(matches!(err, LiquideError::Toml(_)));
+    }
+}

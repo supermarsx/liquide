@@ -45,3 +45,32 @@ pub fn init(_config: &LogConfig) -> Result<()> {
     tracing::info!("logging subsystem initialised");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_log_config_default() {
+        let config = LogConfig::default();
+        assert_eq!(config.filter, "info");
+        assert_eq!(config.format, LogFormat::Pretty);
+    }
+
+    #[test]
+    fn test_log_format_equality() {
+        assert_ne!(LogFormat::Pretty, LogFormat::Json);
+        assert_ne!(LogFormat::Json, LogFormat::Compact);
+        assert_eq!(LogFormat::Pretty, LogFormat::Pretty);
+    }
+
+    #[test]
+    fn test_log_config_custom() {
+        let config = LogConfig {
+            filter: "debug,liquide_transport=trace".to_string(),
+            format: LogFormat::Json,
+        };
+        assert_eq!(config.filter, "debug,liquide_transport=trace");
+        assert_eq!(config.format, LogFormat::Json);
+    }
+}

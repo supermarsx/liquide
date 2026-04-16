@@ -29,3 +29,49 @@ pub fn write_or_recover<T>(rw: &std::sync::RwLock<T>) -> std::sync::RwLockWriteG
         poisoned.into_inner()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex, RwLock};
+
+    #[test]
+    fn test_lock_or_recover_normal() {
+        let m = Mutex::new(42);
+        let guard = lock_or_recover(&m);
+        assert_eq!(*guard, 42);
+    }
+
+    #[test]
+    fn test_read_or_recover_normal() {
+        let rw = RwLock::new("hello");
+        let guard = read_or_recover(&rw);
+        assert_eq!(*guard, "hello");
+    }
+
+    #[test]
+    fn test_write_or_recover_normal() {
+        let rw = RwLock::new(10u32);
+        {
+            let mut guard = write_or_recover(&rw);
+            *guard = 20;
+        }
+        let guard = read_or_recover(&rw);
+        assert_eq!(*guard, 20);
+    }
+
+    #[test]
+    fn test_lock_or_recover_poisoned() {
+        let m = Arc::new(Mutex::new(42));
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = m2.lock().unwrap();
+            panic!("intentional poison");
+        })
+        .join();
+        // Lock is poisoned now, but lock_or_recover should recover.
+        assert!(m.lock().is_err());
+        let guard = lock_or_recover(&m);
+        assert_eq!(*guard, 42);
+    }
+}
