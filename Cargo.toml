@@ -57,6 +57,7 @@ members = [
     "crates/liquide-clipboard",
     "crates/liquide-usb",
     "crates/liquide-input",
+    "crates/liquide-libinput",
 
     # Bluetooth
     "crates/liquide-bluetooth",
@@ -206,6 +207,9 @@ members = [
     # Display / output management
     "crates/liquide-display",
 
+    # DRM/KMS display output
+    "crates/liquide-drm",
+
     # Keyboard layout management
     "crates/liquide-keyboard",
 
@@ -266,8 +270,23 @@ members = [
     # Wayland protocol abstraction
     "crates/liquide-wayland",
 
+    # Wayland compositor server
+    "crates/liquide-wayland-server",
+
     # Service lifecycle manager
     "crates/liquide-service-manager",
+
+    # GBM buffer management
+    "crates/liquide-gbm",
+
+    # Logind session/VT management
+    "crates/liquide-logind",
+
+    # XWayland integration
+    "crates/liquide-xwayland",
+
+    # Standalone compositor (TTY launch)
+    "crates/liquide-standalone",
 ]
 
 [workspace.package]
@@ -351,6 +370,7 @@ windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "W
 # Testing
 criterion = { version = "0.5", features = ["html_reports"] }
 tokio-test = "0.4"
+tempfile = "3"
 
 # Internal crates
 liquide-common = { path = "crates/liquide-common" }
@@ -385,6 +405,7 @@ liquide-audio = { path = "crates/liquide-audio" }
 liquide-clipboard = { path = "crates/liquide-clipboard" }
 liquide-usb = { path = "crates/liquide-usb" }
 liquide-input = { path = "crates/liquide-input" }
+liquide-libinput = { path = "crates/liquide-libinput" }
 liquide-interop = { path = "crates/liquide-interop" }
 liquide-platform = { path = "crates/liquide-platform" }
 liquide-a11y = { path = "crates/liquide-a11y" }
@@ -419,6 +440,13 @@ liquide-icons = { path = "crates/liquide-icons" }
 liquide-devtools = { path = "crates/liquide-devtools" }
 liquide-simd = { path = "crates/liquide-simd" }
 liquide-display = { path = "crates/liquide-display" }
+liquide-drm = { path = "crates/liquide-drm" }
+liquide-gbm = { path = "crates/liquide-gbm" }
+liquide-wayland = { path = "crates/liquide-wayland" }
+liquide-wayland-server = { path = "crates/liquide-wayland-server" }
+liquide-logind = { path = "crates/liquide-logind" }
+liquide-xwayland = { path = "crates/liquide-xwayland" }
+liquide-standalone = { path = "crates/liquide-standalone" }
 liquide-desktop-model = { path = "crates/liquide-desktop-model" }
 liquide-accounts = { path = "crates/liquide-accounts" }
 liquide-storage = { path = "crates/liquide-storage" }

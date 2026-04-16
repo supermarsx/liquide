@@ -34,6 +34,9 @@ pub mod wayland;
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+// Standalone compositor backend (DRM/KMS + evdev)
+pub mod standalone;
+
 // Re-exports — common types
 pub use display::{DisplayBackend, MonitorInfo, NullDisplayBackend};
 pub use dnd::{NativeDragDrop, NullDragDrop};

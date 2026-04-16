@@ -1,0 +1,14 @@
+[package]
+name = "liquide-logind"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Logind session management and VT control for LiquiDE standalone compositor"
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]

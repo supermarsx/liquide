@@ -1,0 +1,35 @@
+[package]
+name = "liquide-standalone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Standalone compositor binary for LiquiDE - launches from TTY with DRM/KMS output"
+
+[lib]
+name = "liquide_standalone"
+path = "src/lib.rs"
+
+[[bin]]
+name = "liquid-standalone"
+path = "src/main.rs"
+
+[dependencies]
+liquide-drm = { path = "../liquide-drm" }
+liquide-gbm = { path = "../liquide-gbm" }
+liquide-logind = { path = "../liquide-logind" }
+liquide-libinput = { path = "../liquide-libinput" }
+liquide-wayland-server = { path = "../liquide-wayland-server" }
+liquide-xwayland = { path = "../liquide-xwayland" }
+liquide-compositor = { path = "../liquide-compositor" }
+liquide-input = { path = "../liquide-input" }
+liquide-common = { path = "../liquide-common" }
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]

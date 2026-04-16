@@ -1,0 +1,15 @@
+[package]
+name = "liquide-libinput"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Input device enumeration and libinput integration for LiquiDE standalone compositor"
+
+[dependencies]
+liquide-input.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]

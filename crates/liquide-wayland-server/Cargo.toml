@@ -1,0 +1,16 @@
+[package]
+name = "liquide-wayland-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Wayland compositor server for LiquiDE standalone mode"
+
+[dependencies]
+liquide-wayland = { path = "../liquide-wayland" }
+liquide-compositor = { path = "../liquide-compositor" }
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]

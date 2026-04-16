@@ -1,0 +1,15 @@
+[package]
+name = "liquide-xwayland"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "XWayland integration for running X11 applications in LiquiDE standalone compositor"
+
+[dependencies]
+liquide-compositor = { path = "../liquide-compositor" }
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]

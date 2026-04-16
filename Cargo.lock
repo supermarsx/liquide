@@ -2645,6 +2645,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-drm"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-encoder"
 version = "0.1.0"
 dependencies = [
@@ -2716,6 +2724,7 @@ dependencies = [
  "liquide-common",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "toml",
@@ -2738,6 +2747,14 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "liquide-gbm"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -2833,12 +2850,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-libinput"
+version = "0.1.0"
+dependencies = [
+ "liquide-input",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-locale"
 version = "0.1.0"
 
 [[package]]
 name = "liquide-lockscreen"
 version = "0.1.0"
+
+[[package]]
+name = "liquide-logind"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+ "tracing",
+]
 
 [[package]]
 name = "liquide-manager"
@@ -2964,6 +2998,7 @@ version = "0.1.0"
 dependencies = [
  "liquide-common",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
  "toml",
  "tracing",
@@ -3236,6 +3271,27 @@ name = "liquide-sounds"
 version = "0.1.0"
 
 [[package]]
+name = "liquide-standalone"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "liquide-common",
+ "liquide-compositor",
+ "liquide-drm",
+ "liquide-gbm",
+ "liquide-input",
+ "liquide-libinput",
+ "liquide-logind",
+ "liquide-wayland-server",
+ "liquide-xwayland",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "liquide-statusbar"
 version = "0.1.0"
 dependencies = [
@@ -3462,6 +3518,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-wayland-server"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "liquide-wayland",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-window-class"
 version = "0.1.0"
 
@@ -3491,6 +3557,15 @@ dependencies = [
 [[package]]
 name = "liquide-xdg"
 version = "0.1.0"
+
+[[package]]
+name = "liquide-xwayland"
+version = "0.1.0"
+dependencies = [
+ "liquide-compositor",
+ "thiserror 2.0.18",
+ "tracing",
+]
 
 [[package]]
 name = "litrs"
