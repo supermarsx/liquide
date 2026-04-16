@@ -152,11 +152,80 @@ impl AuthHandler {
             });
         }
 
-        // The PAM provider's `authenticate()` is async and currently a
-        // `todo!()` stub. Deny until the real PAM backend is implemented.
+        // The PAM provider's `authenticate()` is async. For the synchronous
+        // code path, return a safe denial. Use `authenticate_username_password_async`
+        // when calling from an async context (e.g. handle_tcp_connection).
         Ok(AuthResult::Denied {
-            reason: "PAM authentication backend not yet implemented".to_string(),
+            reason: "PAM authentication requires async context — use async auth path".to_string(),
         })
+    }
+
+    /// Async version of username/password authentication that calls the PAM
+    /// provider directly.
+    pub async fn authenticate_username_password_async(
+        &self,
+        credential: &str,
+    ) -> Result<AuthResult> {
+        let Some((user, pass)) = credential.split_once(':') else {
+            return Err(GatewayError::AuthenticationFailed {
+                method: "username_password".to_string(),
+                reason: "credential must be in user:pass format".to_string(),
+            });
+        };
+        if user.is_empty() || pass.is_empty() {
+            return Ok(AuthResult::Denied {
+                reason: "empty username or password".to_string(),
+            });
+        }
+
+        let creds = ProviderCredentials::Password {
+            username: user.to_string(),
+            password: pass.to_string(),
+        };
+        if !self.pam_provider.supports(&creds) {
+            return Ok(AuthResult::Denied {
+                reason: "PAM provider does not support this credential type".to_string(),
+            });
+        }
+
+        match self.pam_provider.authenticate(&creds).await {
+            Ok(liquide_auth::provider::AuthResult::Success { user_id, .. }) => {
+                Ok(AuthResult::Authenticated {
+                    user_id,
+                    roles: vec!["user".to_string()],
+                })
+            }
+            Ok(liquide_auth::provider::AuthResult::Failure { reason }) => {
+                Ok(AuthResult::Denied { reason })
+            }
+            Ok(liquide_auth::provider::AuthResult::MfaRequired { challenge }) => {
+                Ok(AuthResult::MfaRequired {
+                    challenge: AuthChallenge {
+                        challenge_type: "mfa".to_string(),
+                        challenge_data: challenge,
+                    },
+                })
+            }
+            Err(e) => Ok(AuthResult::Denied {
+                reason: format!("PAM backend error: {e}"),
+            }),
+        }
+    }
+
+    /// Async authenticate dispatcher — calls the async-capable backend for
+    /// methods that need it.
+    pub async fn authenticate_async(
+        &self,
+        method: GatewayAuthMethod,
+        credential: &str,
+    ) -> Result<AuthResult> {
+        match method {
+            GatewayAuthMethod::UsernamePassword => {
+                self.authenticate_username_password_async(credential).await
+            }
+            // All other methods are synchronous and can delegate directly.
+            other => self.authenticate(other, credential),
+        }
     }
 
     /// Validate a bearer token.

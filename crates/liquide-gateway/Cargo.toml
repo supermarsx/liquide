@@ -26,3 +26,11 @@ clap.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+rustls = { workspace = true, features = ["ring"] }
+tokio-rustls.workspace = true
+ciborium.workspace = true
+rustls-pemfile.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+rcgen.workspace = true

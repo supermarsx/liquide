@@ -108,7 +108,7 @@ async fn run(cli: Cli) -> Result<()> {
             result = listener.accept(), if listener.is_listening() => {
                 match result {
                     Ok((stream, peer_addr)) => {
-                        runtime.handle_tcp_connection(&stream, peer_addr);
+                        runtime.handle_tcp_connection(stream, peer_addr).await;
                     }
                     Err(e) => {
                         tracing::warn!(err = %e, "accept error");
