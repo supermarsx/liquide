@@ -64,13 +64,12 @@ impl QuicTransport {
     }
 
     /// Create a QUIC transport with a custom [`ClientConfig`].
-    #[must_use]
-    pub fn with_client_config(config: ClientConfig) -> Self {
+    pub fn with_client_config(config: ClientConfig) -> crate::Result<Self> {
         let mut t = Self::new();
-        let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
+        let mut endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap())?;
         endpoint.set_default_client_config(config);
         t.endpoint = Some(endpoint);
-        t
+        Ok(t)
     }
 
     /// Wrap an existing QUIC connection (server-side).

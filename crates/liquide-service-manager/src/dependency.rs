@@ -273,7 +273,7 @@ impl DependencyGraph {
                     }
                 } else if on_stack.contains(dep) {
                     // Found a cycle — extract the cycle from path
-                    let start = path.iter().position(|x| x == dep).unwrap();
+                    let start = path.iter().position(|x| x == dep)?;
                     let mut cycle: Vec<ServiceId> = path[start..].to_vec();
                     cycle.push(dep.clone()); // close the cycle
                     return Some(cycle);

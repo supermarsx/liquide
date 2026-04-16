@@ -292,7 +292,7 @@ mod quic_listener_tests {
         });
 
         let mut client =
-            QuicTransport::with_client_config(QuicTransport::insecure_client_config());
+            QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
         client.connect(addr).await.unwrap();
         client
             .send(Bytes::from_static(b"quic_listener_test"))

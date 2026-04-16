@@ -1,4 +1,5 @@
 mod heartbeat_tests;
+mod ipc_tests;
 mod persistence_tests;
 mod restart_tracker_tests;
 mod resume_tests;

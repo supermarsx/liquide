@@ -98,8 +98,8 @@ fn compute_statistics(snapshots: &[TelemetrySnapshot]) -> TelemetryStats {
         *health_dist.entry(health_str).or_insert(0) += 1;
     }
     
-    frame_times.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    fps_values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    frame_times.sort_by(|a, b| a.total_cmp(b));
+    fps_values.sort_by(|a, b| a.total_cmp(b));
     
     let p95_idx = (frame_times.len() as f64 * 0.95) as usize;
     let p99_idx = (frame_times.len() as f64 * 0.99) as usize;

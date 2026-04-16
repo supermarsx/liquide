@@ -90,7 +90,8 @@ impl ServiceRegistry {
         if info.state.is_running() || info.state.is_transitioning() {
             return Err(RegistryError::StillRunning(id.clone()));
         }
-        let info = self.services.remove(id).unwrap();
+        let info = self.services.remove(id)
+            .ok_or_else(|| RegistryError::NotFound(id.clone()))?;
         self.emit(ServiceEvent::Unregistered(id.clone()));
         Ok(info.config)
     }

@@ -88,7 +88,7 @@ pub use crash::{
     SafeMode,
 };
 pub use heartbeat::{HeartbeatConfig, HeartbeatMonitor, HeartbeatState, HeartbeatStatus};
-pub use ipc::{IpcChannel, SessionEvent, SupervisorCommand};
+pub use ipc::{IpcChannel, SessionEvent, SupervisorCommand, SupervisorHandle};
 pub use resume::{PersistenceState, ResumeManager, ResumeToken, SessionPersistence};
 pub use runtime::SessionRuntime;
 pub use sandbox::{JailType, NamespaceConfig, SandboxEnforcer};

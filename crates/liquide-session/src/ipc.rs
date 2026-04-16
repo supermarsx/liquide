@@ -1,5 +1,7 @@
 //! IPC types for supervisor-session communication.
 
+use std::sync::mpsc;
+
 use crate::crash::CrashInfo;
 use crate::state::SessionState;
 
@@ -72,16 +74,84 @@ pub enum SessionEvent {
     },
 }
 
+/// The supervisor-side handle returned by [`IpcChannel::create`].
+///
+/// Holds the receiving end for session events and the sending end for
+/// supervisor commands.
+pub struct SupervisorHandle {
+    event_rx: mpsc::Receiver<SessionEvent>,
+    command_tx: mpsc::Sender<SupervisorCommand>,
+}
+
+impl SupervisorHandle {
+    /// Send a command to the session.
+    pub fn send_command(&self, cmd: SupervisorCommand) -> crate::Result<()> {
+        self.command_tx
+            .send(cmd)
+            .map_err(|e| crate::SessionError::Internal(format!("command send failed: {e}")))
+    }
+
+    /// Try to receive the next event from the session without blocking.
+    pub fn try_recv_event(&self) -> crate::Result<Option<SessionEvent>> {
+        match self.event_rx.try_recv() {
+            Ok(event) => Ok(Some(event)),
+            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::TryRecvError::Disconnected) => Err(crate::SessionError::Internal(
+                "event channel disconnected".into(),
+            )),
+        }
+    }
+
+    /// Block until the next event arrives from the session.
+    pub fn recv_event(&self) -> crate::Result<SessionEvent> {
+        self.event_rx
+            .recv()
+            .map_err(|e| crate::SessionError::Internal(format!("event recv failed: {e}")))
+    }
+}
+
 /// IPC channel between the supervisor and session processes.
 pub struct IpcChannel {
     socket_path: String,
+    event_tx: mpsc::Sender<SessionEvent>,
+    command_rx: mpsc::Receiver<SupervisorCommand>,
 }
 
 impl IpcChannel {
-    /// Create a new IPC channel with the given socket path.
+    /// Create a new IPC channel with pre-existing channel endpoints.
     #[must_use]
-    pub fn new(socket_path: String) -> Self {
-        Self { socket_path }
+    pub fn new(
+        socket_path: String,
+        event_tx: mpsc::Sender<SessionEvent>,
+        command_rx: mpsc::Receiver<SupervisorCommand>,
+    ) -> Self {
+        Self {
+            socket_path,
+            event_tx,
+            command_rx,
+        }
+    }
+
+    /// Create a linked pair of `(IpcChannel, SupervisorHandle)`.
+    ///
+    /// The `IpcChannel` is used by the session side to send events and
+    /// receive commands.  The [`SupervisorHandle`] is used by the
+    /// supervisor side to send commands and receive events.
+    #[must_use]
+    pub fn create(socket_path: String) -> (Self, SupervisorHandle) {
+        let (event_tx, event_rx) = mpsc::channel();
+        let (command_tx, command_rx) = mpsc::channel();
+
+        let channel = Self {
+            socket_path,
+            event_tx,
+            command_rx,
+        };
+        let handle = SupervisorHandle {
+            event_rx,
+            command_tx,
+        };
+        (channel, handle)
     }
 
     /// The path to the IPC socket.
@@ -91,18 +161,20 @@ impl IpcChannel {
     }
 
     /// Send an event to the supervisor.
-    ///
-    /// In a real implementation this would serialize and write to the socket.
-    pub fn send_event(&self, _event: &SessionEvent) -> crate::Result<()> {
-        // Stub: would write to the Unix domain socket / Windows named pipe.
-        Ok(())
+    pub fn send_event(&self, event: &SessionEvent) -> crate::Result<()> {
+        self.event_tx
+            .send(event.clone())
+            .map_err(|e| crate::SessionError::Internal(format!("event send failed: {e}")))
     }
 
-    /// Try to receive a command from the supervisor.
-    ///
-    /// In a real implementation this would read from the socket.
+    /// Try to receive a command from the supervisor without blocking.
     pub fn receive_command(&self) -> crate::Result<Option<SupervisorCommand>> {
-        // Stub: would read from the socket.
-        Ok(None)
+        match self.command_rx.try_recv() {
+            Ok(cmd) => Ok(Some(cmd)),
+            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::TryRecvError::Disconnected) => Err(crate::SessionError::Internal(
+                "command channel disconnected".into(),
+            )),
+        }
     }
 }
