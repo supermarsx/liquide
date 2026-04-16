@@ -104,6 +104,26 @@ impl DamageSet {
         });
     }
 
+    /// Mark all tiles overlapping a pixel-coordinate rectangle as damaged.
+    pub fn mark_rect(&mut self, x: u32, y: u32, width: u32, height: u32, grid_width: u32, grid_height: u32) {
+        if self.tile_size == 0 || width == 0 || height == 0 {
+            return;
+        }
+        let tx_start = x / self.tile_size;
+        let ty_start = y / self.tile_size;
+        let tx_end = (x + width).div_ceil(self.tile_size).min(grid_width);
+        let ty_end = (y + height).div_ceil(self.tile_size).min(grid_height);
+        for ty in ty_start..ty_end {
+            for tx in tx_start..tx_end {
+                self.tiles.push(DamageTile {
+                    x: tx,
+                    y: ty,
+                    class: DamageClass::UiPrimitive,
+                });
+            }
+        }
+    }
+
     /// Mark all tiles in the grid as damaged (full-screen refresh).
     pub fn mark_all(&mut self, grid_width: u32, grid_height: u32) {
         self.tiles.clear();

@@ -44,7 +44,7 @@ impl Shell {
         let (pipeline_nodes, pipeline_output, _animations_active) = self.css_pipeline.render_to_scene_with_output(
             &mut self.desktop_dom.doc,
             0, // base z-order
-            16.0, // TODO: use actual frame clock delta
+            crate::DEFAULT_FRAME_DELTA_MS,
         );
 
         // Collect threaded fallback nodes. These are composited only when the

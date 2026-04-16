@@ -29,6 +29,10 @@ pub(crate) mod theme_loader;
 pub mod themes;
 pub(crate) mod threading;
 pub mod tiling;
+
+/// Default frame delta in milliseconds, assuming 60 Hz (1000 / 60 ≈ 16.667).
+/// TODO: replace with actual display refresh rate from `MonitorInfo::refresh_rate_hz`.
+pub(crate) const DEFAULT_FRAME_DELTA_MS: f32 = 16.667;
 pub mod window;
 pub mod workspace;
 

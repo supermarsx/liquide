@@ -190,32 +190,33 @@ impl GestureRecognizer {
 
                     match self.state {
                         RecognizerState::EdgeSwiping(edge) => {
-                            let start = self
+                            if let Some(start) = self
                                 .active_touches
                                 .get(&point.id)
                                 .map(|t| t.start)
-                                .unwrap();
-                            let progress = match edge {
-                                Edge::Left => (point.x - start.x) / self.screen_width,
-                                Edge::Right => (start.x - point.x) / self.screen_width,
-                                Edge::Top => (point.y - start.y) / self.screen_height,
-                                Edge::Bottom => (start.y - point.y) / self.screen_height,
-                            };
-                            events.push(GestureEvent::EdgeSwipe {
-                                edge,
-                                progress: progress.clamp(0.0, 1.0),
-                                phase: GesturePhase::Changed,
-                            });
+                            {
+                                let progress = match edge {
+                                    Edge::Left => (point.x - start.x) / self.screen_width,
+                                    Edge::Right => (start.x - point.x) / self.screen_width,
+                                    Edge::Top => (point.y - start.y) / self.screen_height,
+                                    Edge::Bottom => (start.y - point.y) / self.screen_height,
+                                };
+                                events.push(GestureEvent::EdgeSwipe {
+                                    edge,
+                                    progress: progress.clamp(0.0, 1.0),
+                                    phase: GesturePhase::Changed,
+                                });
+                            }
                         }
                         RecognizerState::Tracking
                         | RecognizerState::Scrolling
                         | RecognizerState::Pinching
                         | RecognizerState::Swiping { .. } => {
-                            let start = self
+                            if let Some(start) = self
                                 .active_touches
                                 .get(&point.id)
                                 .map(|t| t.start)
-                                .unwrap();
+                            {
                             let total_dx = point.x - start.x;
                             let total_dy = point.y - start.y;
                             let distance =
@@ -293,6 +294,7 @@ impl GestureRecognizer {
                                     }
                                     _ => {}
                                 }
+                            }
                             }
                         }
                         RecognizerState::Idle | RecognizerState::LongPressing => {}
