@@ -12,3 +12,12 @@ build_se.txt
 test_run.txt
 liquide.zip
 liquide1.zip
+
+# Build / test output dumps
+build_session.txt
+build_shell.txt
+test_all.txt
+test_session.txt
+test_shell.txt
+test_shell2.txt
+review_test_output.txt
