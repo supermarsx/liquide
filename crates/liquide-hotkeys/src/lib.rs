@@ -767,4 +767,41 @@ mod tests {
         let e = HotkeyError::PlatformError("oops".into());
         assert!(format!("{}", e).contains("oops"));
     }
+
+    /// Verifies that the poll-drain pattern used by platform backends
+    /// correctly maps raw IDs back to registered (HotkeyId, HotkeyAction) pairs
+    /// and ignores stale/unknown IDs.
+    #[test]
+    fn poll_drain_filters_unknown_ids() {
+        use std::sync::{Arc, Mutex};
+
+        // Simulate the shared pending queue that macOS/other backends use.
+        let pending: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut mgr = StubManager::new();
+        let kb = KeyBinding::new(Modifiers::CTRL, Key::A);
+        let id = mgr.register(kb, HotkeyAction::ShowLauncher).unwrap();
+
+        // Push the valid ID and a bogus one into the queue.
+        {
+            let mut q = pending.lock().unwrap();
+            q.push(id.0);
+            q.push(99999); // unknown
+        }
+
+        // Drain and resolve — mirrors the logic in platform poll() impls.
+        let ids: Vec<u32> = pending.lock().unwrap().drain(..).collect();
+        let bindings = mgr.list_bindings();
+        let map: std::collections::HashMap<_, _> = bindings.iter().map(|(id, _, a)| (*id, a.clone())).collect();
+        let resolved: Vec<_> = ids
+            .into_iter()
+            .filter_map(|raw| {
+                let hid = HotkeyId(raw);
+                map.get(&hid).map(|a| (hid, a.clone()))
+            })
+            .collect();
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].0, id);
+        assert!(matches!(resolved[0].1, HotkeyAction::ShowLauncher));
+    }
 }

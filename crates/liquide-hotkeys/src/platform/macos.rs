@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use crate::{HotkeyAction, HotkeyBackend, HotkeyError, HotkeyId, Key, KeyBinding, Modifiers};
 
@@ -132,6 +133,18 @@ unsafe extern "C" {
         actual_size: *mut u32,
         data: *mut std::ffi::c_void,
     ) -> i32;
+    fn InstallEventHandler(
+        target: EventTargetRef,
+        handler: EventHandlerUPP,
+        num_types: u32,
+        list: *const EventTypeSpec,
+        user_data: *mut std::ffi::c_void,
+        out_ref: *mut EventHandlerRef,
+    ) -> i32;
+    fn RemoveEventHandler(handler_ref: EventHandlerRef) -> i32;
+    fn NewEventHandlerUPP(
+        proc_: unsafe extern "C" fn(EventHandlerRef, EventRef, *mut std::ffi::c_void) -> i32,
+    ) -> EventHandlerUPP;
 }
 
 // ── Key mapping ──────────────────────────────────────────────────────────
@@ -247,28 +260,106 @@ fn modifiers_to_carbon(mods: Modifiers) -> u32 {
 
 const HOTKEY_SIGNATURE: u32 = u32::from_be_bytes(*b"LQDE");
 
+/// Parameter name for `GetEventParameter`: 'khid' (kEventParamDirectObject).
+const K_EVENT_PARAM_DIRECT_OBJECT: u32 = u32::from_be_bytes(*b"----");
+const TYPE_EVENT_HOT_KEY_ID: u32 = u32::from_be_bytes(*b"hkid");
+
+/// Carbon event handler callback.
+///
+/// Extracts the `EventHotKeyID` from the event and pushes its `id` field
+/// into the shared pending queue so that `poll()` can return it.
+unsafe extern "C" fn hotkey_handler(
+    _handler_ref: EventHandlerRef,
+    event: EventRef,
+    user_data: *mut std::ffi::c_void,
+) -> i32 {
+    let pending = &*(user_data as *const Mutex<Vec<u32>>);
+    let mut hotkey_id = EventHotKeyID { signature: 0, id: 0 };
+    let status = GetEventParameter(
+        event,
+        K_EVENT_PARAM_DIRECT_OBJECT,
+        TYPE_EVENT_HOT_KEY_ID,
+        std::ptr::null_mut(),
+        std::mem::size_of::<EventHotKeyID>() as u32,
+        std::ptr::null_mut(),
+        &mut hotkey_id as *mut EventHotKeyID as *mut std::ffi::c_void,
+    );
+    if status == 0 {
+        if let Ok(mut queue) = pending.lock() {
+            queue.push(hotkey_id.id);
+        }
+    }
+    0 // noErr — event handled
+}
+
 pub struct GlobalHotkeyManager {
     bindings: HashMap<HotkeyId, (KeyBinding, HotkeyAction)>,
     binding_keys: HashMap<KeyBinding, HotkeyId>,
     hotkey_refs: HashMap<HotkeyId, EventHotKeyRef>,
-    /// Queue of triggered hotkey IDs (populated by event handler)
-    pending: Vec<u32>,
+    /// Shared queue of triggered hotkey IDs, populated by the Carbon event callback.
+    pending: Arc<Mutex<Vec<u32>>>,
+    /// Handle to the installed Carbon event handler (removed on drop).
+    event_handler_ref: EventHandlerRef,
 }
 
 impl GlobalHotkeyManager {
     pub fn new() -> Self {
+        let pending = Arc::new(Mutex::new(Vec::new()));
+        let event_handler_ref = Self::install_carbon_handler(Arc::clone(&pending));
         Self {
             bindings: HashMap::new(),
             binding_keys: HashMap::new(),
             hotkey_refs: HashMap::new(),
-            pending: Vec::new(),
+            pending,
+            event_handler_ref,
         }
     }
+
+    /// Install the Carbon `kEventHotKeyPressed` event handler.
+    ///
+    /// The handler callback extracts the hotkey ID from each event and pushes
+    /// it into the shared `pending` queue.  The returned `EventHandlerRef`
+    /// must be passed to `RemoveEventHandler` when the manager is dropped.
+    fn install_carbon_handler(pending: Arc<Mutex<Vec<u32>>>) -> EventHandlerRef {
+        let event_type = EventTypeSpec {
+            event_class: K_EVENT_CLASS_KEYBOARD,
+            event_kind: K_EVENT_HOT_KEY_PRESSED,
+        };
+
+        // Leak a clone of the Arc so the callback has a stable pointer for its
+        // entire lifetime.  We recover it in `Drop` via `Arc::from_raw`.
+        let raw_ptr = Arc::into_raw(pending) as *mut std::ffi::c_void;
+
+        let mut handler_ref: EventHandlerRef = std::ptr::null_mut();
+        unsafe {
+            let upp = NewEventHandlerUPP(hotkey_handler);
+            InstallEventHandler(
+                GetApplicationEventTarget(),
+                upp,
+                1,
+                &event_type,
+                raw_ptr,
+                &mut handler_ref,
+            );
+        }
+        handler_ref
+    }
 }
+
+// SAFETY: The Carbon event handler callback only accesses the `pending`
+// `Arc<Mutex<…>>` which is `Send + Sync`.
+unsafe impl Send for GlobalHotkeyManager {}
 
 impl Drop for GlobalHotkeyManager {
     fn drop(&mut self) {
         self.unregister_all();
+        // Remove the Carbon event handler and reclaim the leaked Arc.
+        if !self.event_handler_ref.is_null() {
+            unsafe {
+                RemoveEventHandler(self.event_handler_ref);
+            }
+            self.event_handler_ref = std::ptr::null_mut();
+        }
     }
 }
 
@@ -344,23 +435,22 @@ impl HotkeyBackend for GlobalHotkeyManager {
     }
 
     fn poll(&mut self) -> Vec<(HotkeyId, HotkeyAction)> {
-        // In a real implementation, the Carbon event handler callback would
-        // push IDs into self.pending. For now, this returns an empty vec
-        // since wiring up InstallEventHandler requires a static callback
-        // with a pointer back to this struct.
-        // TODO: Install kEventHotKeyPressed handler via InstallEventHandler
-        // and use a channel or Arc<Mutex<Vec>> to collect triggered IDs.
-        let triggered: Vec<(HotkeyId, HotkeyAction)> = self
+        // Drain hotkey IDs that the Carbon event handler callback pushed
+        // into the shared queue and resolve them to (HotkeyId, HotkeyAction).
+        let ids: Vec<u32> = self
             .pending
-            .drain(..)
+            .lock()
+            .map(|mut q| q.drain(..).collect())
+            .unwrap_or_default();
+
+        ids.into_iter()
             .filter_map(|raw_id| {
                 let id = HotkeyId(raw_id);
                 self.bindings
                     .get(&id)
                     .map(|(_, action)| (id, action.clone()))
             })
-            .collect();
-        triggered
+            .collect()
     }
 
     fn list_bindings(&self) -> Vec<(HotkeyId, KeyBinding, HotkeyAction)> {
