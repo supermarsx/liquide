@@ -94,4 +94,43 @@ mod tests {
         assert_eq!(f.next(), FrameId(1));
         assert!(FrameId(2) > FrameId(1));
     }
+
+    #[test]
+    fn test_frame_id_wrapping() {
+        let f = FrameId(u64::MAX);
+        assert_eq!(f.next(), FrameId(0));
+    }
+
+    #[test]
+    fn test_frame_id_equality() {
+        assert_eq!(FrameId(5), FrameId(5));
+        assert_ne!(FrameId(5), FrameId(6));
+    }
+
+    #[test]
+    fn test_damage_rect_fields() {
+        let rect = DamageRect { x: 10, y: 20, width: 100, height: 200 };
+        assert_eq!(rect.x, 10);
+        assert_eq!(rect.y, 20);
+        assert_eq!(rect.width, 100);
+        assert_eq!(rect.height, 200);
+    }
+
+    #[test]
+    fn test_frame_complete_clone() {
+        let fc = FrameComplete {
+            frame_id: FrameId(42),
+            render_time_us: 16000,
+            dropped: false,
+            pixels: Some(Arc::new(vec![0u8; 100])),
+            width: 10,
+            height: 10,
+            stride: 40,
+        };
+        let cloned = fc.clone();
+        assert_eq!(cloned.frame_id, FrameId(42));
+        assert_eq!(cloned.render_time_us, 16000);
+        assert!(!cloned.dropped);
+        assert!(cloned.pixels.is_some());
+    }
 }

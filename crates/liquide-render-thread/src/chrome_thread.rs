@@ -290,4 +290,45 @@ mod tests {
         let msg = rx.recv().unwrap();
         assert!(matches!(msg, ChromeMessage::Shutdown));
     }
+
+    #[test]
+    fn test_chrome_resize() {
+        let (mut handle, rx, _comp_tx) = ChromeThread::new(800, 600);
+        handle.resize(1024, 768).unwrap();
+        let msg = rx.recv().unwrap();
+        assert!(matches!(msg, ChromeMessage::Resize { width: 1024, height: 768 }));
+    }
+
+    #[test]
+    fn test_chrome_set_title() {
+        let (mut handle, rx, _comp_tx) = ChromeThread::new(800, 600);
+        handle.set_title("Hello World").unwrap();
+        let msg = rx.recv().unwrap();
+        match msg {
+            ChromeMessage::SetTitle { title } => assert_eq!(title, "Hello World"),
+            _ => panic!("expected SetTitle"),
+        }
+    }
+
+    #[test]
+    fn test_chrome_initial_state() {
+        let (handle, _rx, _comp_tx) = ChromeThread::new(800, 600);
+        assert_eq!(handle.state(), ChromeThreadState::Idle);
+        assert_eq!(handle.current_frame(), FrameId(0));
+    }
+
+    #[test]
+    fn test_chrome_state_rendering() {
+        let (mut handle, _rx, _comp_tx) = ChromeThread::new(800, 600);
+        handle.request_frame(vec![], vec![]).unwrap();
+        assert_eq!(handle.state(), ChromeThreadState::Rendering);
+    }
+
+    #[test]
+    fn test_chrome_double_frame_skips() {
+        let (mut handle, _rx, _comp_tx) = ChromeThread::new(800, 600);
+        let id1 = handle.request_frame(vec![], vec![]).unwrap();
+        let id2 = handle.request_frame(vec![], vec![]).unwrap();
+        assert_eq!(id1, id2);
+    }
 }

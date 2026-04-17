@@ -270,4 +270,60 @@ mod tests {
         let c = handle.try_recv_completion().unwrap();
         assert_eq!(c.frame_id, FrameId(1));
     }
+
+    #[test]
+    fn test_content_scroll() {
+        let (mut handle, rx, _comp_tx) = ContentThread::new(800, 600);
+        handle.scroll(10.5, 20.0).unwrap();
+        let msg = rx.recv().unwrap();
+        match msg {
+            ContentMessage::Scroll { x, y } => {
+                assert!((x - 10.5).abs() < f64::EPSILON);
+                assert!((y - 20.0).abs() < f64::EPSILON);
+            }
+            _ => panic!("expected Scroll"),
+        }
+    }
+
+    #[test]
+    fn test_content_invalidate() {
+        let (mut handle, rx, _comp_tx) = ContentThread::new(800, 600);
+        handle.invalidate().unwrap();
+        let msg = rx.recv().unwrap();
+        assert!(matches!(msg, ContentMessage::Invalidate));
+    }
+
+    #[test]
+    fn test_content_resize() {
+        let (mut handle, _rx, _comp_tx) = ContentThread::new(800, 600);
+        handle.resize(1024, 768);
+        assert_eq!(handle.viewport_size(), (1024, 768));
+    }
+
+    #[test]
+    fn test_content_state_transitions() {
+        let (mut handle, _rx, comp_tx) = ContentThread::new(800, 600);
+        assert_eq!(handle.state(), ContentThreadState::Idle);
+        handle.request_frame(vec![], vec![]).unwrap();
+        assert_eq!(handle.state(), ContentThreadState::Rendering);
+        comp_tx.send(FrameComplete {
+            frame_id: FrameId(1),
+            render_time_us: 100,
+            dropped: false,
+            pixels: None,
+            width: 800,
+            height: 600,
+            stride: 3200,
+        }).unwrap();
+        let _ = handle.try_recv_completion();
+        assert_eq!(handle.state(), ContentThreadState::Idle);
+    }
+
+    #[test]
+    fn test_content_initial_state() {
+        let (handle, _rx, _comp_tx) = ContentThread::new(800, 600);
+        assert_eq!(handle.state(), ContentThreadState::Idle);
+        assert_eq!(handle.current_frame(), FrameId(0));
+        assert_eq!(handle.viewport_size(), (800, 600));
+    }
 }

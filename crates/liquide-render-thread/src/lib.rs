@@ -56,4 +56,22 @@ mod tests {
         let e = RenderThreadError::FrameTimeout(16);
         assert_eq!(format!("{e}"), "frame timeout after 16ms");
     }
+
+    #[test]
+    fn test_error_channel_disconnected() {
+        let e = RenderThreadError::ChannelDisconnected;
+        assert_eq!(format!("{e}"), "channel disconnected");
+    }
+
+    #[test]
+    fn test_error_spawn_failed() {
+        let e = RenderThreadError::SpawnFailed("out of memory".into());
+        assert!(format!("{e}").contains("out of memory"));
+    }
+
+    #[test]
+    fn test_error_thread_panicked() {
+        let e = RenderThreadError::ThreadPanicked("assertion failed".into());
+        assert!(format!("{e}").contains("assertion failed"));
+    }
 }

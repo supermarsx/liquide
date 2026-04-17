@@ -334,4 +334,91 @@ mod tests {
         coord.set_pacing(FramePacing::Capped(120));
         assert_eq!(coord.pacing(), FramePacing::Capped(120));
     }
+
+    #[test]
+    fn test_coordinator_viewport_saturating() {
+        let mut coord = RenderCoordinator::new(100, 100);
+        coord.set_chrome_insets(60, 60, 60, 60);
+        assert_eq!(coord.content_viewport(), (0, 0));
+    }
+
+    #[test]
+    fn test_coordinator_content_only() {
+        let mut coord = RenderCoordinator::new(800, 600);
+        let (content, _content_rx, content_comp_tx) = ContentThread::new(800, 600);
+        coord.attach_content(content);
+        let (cid, xid) = coord.request_frame(vec![], vec![]).unwrap();
+        assert!(cid.is_none());
+        assert!(xid.is_some());
+        content_comp_tx.send(FrameComplete {
+            frame_id: FrameId(1),
+            render_time_us: 500,
+            dropped: false,
+            pixels: None,
+            width: 800,
+            height: 600,
+            stride: 3200,
+        }).unwrap();
+        let completions = coord.poll_completions();
+        assert_eq!(completions.len(), 1);
+    }
+
+    #[test]
+    fn test_coordinator_chrome_only() {
+        let mut coord = RenderCoordinator::new(800, 600);
+        let (chrome, _chrome_rx, chrome_comp_tx) = ChromeThread::new(800, 600);
+        coord.attach_chrome(chrome);
+        let (cid, xid) = coord.request_frame(vec![], vec![]).unwrap();
+        assert!(cid.is_some());
+        assert!(xid.is_none());
+        chrome_comp_tx.send(FrameComplete {
+            frame_id: FrameId(1),
+            render_time_us: 500,
+            dropped: false,
+            pixels: None,
+            width: 800,
+            height: 600,
+            stride: 3200,
+        }).unwrap();
+        let completions = coord.poll_completions();
+        assert_eq!(completions.len(), 1);
+    }
+
+    #[test]
+    fn test_coordinator_avg_render_time_zero() {
+        let coord = RenderCoordinator::new(800, 600);
+        assert!((coord.avg_render_time_us() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_coordinator_resize() {
+        let mut coord = RenderCoordinator::new(800, 600);
+        coord.resize(1920, 1080).unwrap();
+        assert_eq!(coord.size(), (1920, 1080));
+    }
+
+    #[test]
+    fn test_coordinator_shutdown_no_threads() {
+        let mut coord = RenderCoordinator::new(800, 600);
+        coord.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_coordinator_dropped_frame() {
+        let mut coord = RenderCoordinator::new(800, 600);
+        let (chrome, _chrome_rx, chrome_comp_tx) = ChromeThread::new(800, 600);
+        coord.attach_chrome(chrome);
+        coord.request_frame(vec![], vec![]).unwrap();
+        chrome_comp_tx.send(FrameComplete {
+            frame_id: FrameId(1),
+            render_time_us: 20000,
+            dropped: true,
+            pixels: None,
+            width: 800,
+            height: 600,
+            stride: 3200,
+        }).unwrap();
+        let _ = coord.poll_completions();
+        assert_eq!(coord.frames_dropped(), 1);
+    }
 }
