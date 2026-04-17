@@ -927,4 +927,12 @@ mod tests {
         fn assert_backend<T: BluetoothBackend>() {}
         assert_backend::<BluetoothManager>();
     }
+
+    #[test]
+    fn stub_connect_nonexistent_device_returns_error() {
+        let mut mgr = platform::stub::BluetoothManager::new();
+        let result = mgr.connect("ZZ:ZZ:ZZ:ZZ:ZZ:ZZ");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), BtError::AdapterNotFound));
+    }
 }
