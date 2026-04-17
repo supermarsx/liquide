@@ -680,3 +680,229 @@ impl Margin {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // ── RenderStyle defaults ────────────────────────────────────────
+
+    #[test]
+    fn test_render_style_default_opacity() {
+        let style = RenderStyle::new();
+        assert_eq!(style.opacity, 1.0);
+    }
+
+    #[test]
+    fn test_render_style_default_visibility() {
+        let style = RenderStyle::new();
+        assert!(style.visibility);
+    }
+
+    #[test]
+    fn test_render_style_default_display() {
+        let style = RenderStyle::new();
+        assert_eq!(style.display, Display::Block);
+    }
+
+    #[test]
+    fn test_render_style_default_no_colors() {
+        let style = RenderStyle::new();
+        assert!(style.background_color.is_none());
+        assert!(style.foreground_color.is_none());
+        assert!(style.text_color.is_none());
+    }
+
+    #[test]
+    fn test_render_style_default_border() {
+        let style = RenderStyle::new();
+        assert_eq!(style.border.width, 0.0);
+        assert_eq!(style.border.style, BorderLineStyle::None);
+        assert_eq!(style.border_radius, 0.0);
+    }
+
+    #[test]
+    fn test_render_style_default_flexbox() {
+        let style = RenderStyle::new();
+        assert_eq!(style.flex_grow, 0.0);
+        assert_eq!(style.flex_shrink, 1.0);
+        assert!(style.flex_basis.is_none());
+        assert_eq!(style.flex_direction, FlexDirection::Row);
+        assert_eq!(style.flex_wrap, FlexWrap::NoWrap);
+    }
+
+    // ── Builder methods ─────────────────────────────────────────────
+
+    #[test]
+    fn test_with_background() {
+        let color = Color::new(255, 0, 0, 255);
+        let style = RenderStyle::new().with_background(color);
+        assert_eq!(style.background_color.unwrap(), color);
+    }
+
+    #[test]
+    fn test_with_opacity_clamps() {
+        let style = RenderStyle::new().with_opacity(2.0);
+        assert_eq!(style.opacity, 1.0);
+
+        let style = RenderStyle::new().with_opacity(-0.5);
+        assert_eq!(style.opacity, 0.0);
+    }
+
+    #[test]
+    fn test_with_border_radius() {
+        let style = RenderStyle::new().with_border_radius(12.0);
+        assert_eq!(style.border_radius, 12.0);
+    }
+
+    #[test]
+    fn test_with_display() {
+        let style = RenderStyle::new().with_display(Display::Flex);
+        assert_eq!(style.display, Display::Flex);
+    }
+
+    // ── should_render ───────────────────────────────────────────────
+
+    #[test]
+    fn test_should_render_default() {
+        let style = RenderStyle::new();
+        assert!(style.should_render());
+    }
+
+    #[test]
+    fn test_should_render_hidden_visibility() {
+        let mut style = RenderStyle::new();
+        style.visibility = false;
+        assert!(!style.should_render());
+    }
+
+    #[test]
+    fn test_should_render_zero_opacity() {
+        let mut style = RenderStyle::new();
+        style.opacity = 0.0;
+        assert!(!style.should_render());
+    }
+
+    #[test]
+    fn test_should_render_display_none() {
+        let style = RenderStyle::new().with_display(Display::None);
+        assert!(!style.should_render());
+    }
+
+    // ── effective_background ─────────────────────────────────────────
+
+    #[test]
+    fn test_effective_background_from_glass() {
+        let tint = Color::new(128, 128, 128, 100);
+        let glass = crate::glass::GlassStyle::new(20, tint);
+        let style = RenderStyle::new().with_glass(glass);
+        assert_eq!(style.effective_background(), tint);
+    }
+
+    #[test]
+    fn test_effective_background_from_bg_color() {
+        let bg = Color::new(10, 20, 30, 255);
+        let style = RenderStyle::new().with_background(bg);
+        assert_eq!(style.effective_background(), bg);
+    }
+
+    #[test]
+    fn test_effective_background_transparent_when_none() {
+        let style = RenderStyle::new();
+        let eff = style.effective_background();
+        assert_eq!(eff.a, 0);
+    }
+
+    // ── needs_compositing_layer ──────────────────────────────────────
+
+    #[test]
+    fn test_needs_compositing_default_false() {
+        let style = RenderStyle::new();
+        assert!(!style.needs_compositing_layer());
+    }
+
+    #[test]
+    fn test_needs_compositing_with_opacity() {
+        let style = RenderStyle::new().with_opacity(0.5);
+        assert!(style.needs_compositing_layer());
+    }
+
+    #[test]
+    fn test_needs_compositing_with_isolation() {
+        let mut style = RenderStyle::new();
+        style.isolation = true;
+        assert!(style.needs_compositing_layer());
+    }
+
+    // ── Padding ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_padding_uniform() {
+        let p = Padding::uniform(10.0);
+        assert_eq!(p.top, 10.0);
+        assert_eq!(p.right, 10.0);
+        assert_eq!(p.bottom, 10.0);
+        assert_eq!(p.left, 10.0);
+    }
+
+    #[test]
+    fn test_padding_symmetric() {
+        let p = Padding::symmetric(5.0, 10.0);
+        assert_eq!(p.top, 5.0);
+        assert_eq!(p.bottom, 5.0);
+        assert_eq!(p.left, 10.0);
+        assert_eq!(p.right, 10.0);
+    }
+
+    #[test]
+    fn test_padding_default_zero() {
+        let p = Padding::default();
+        assert_eq!(p.top, 0.0);
+        assert_eq!(p.right, 0.0);
+        assert_eq!(p.bottom, 0.0);
+        assert_eq!(p.left, 0.0);
+    }
+
+    // ── Margin ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_margin_uniform() {
+        let m = Margin::uniform(8.0);
+        assert_eq!(m.top, 8.0);
+        assert_eq!(m.right, 8.0);
+        assert_eq!(m.bottom, 8.0);
+        assert_eq!(m.left, 8.0);
+    }
+
+    #[test]
+    fn test_margin_symmetric() {
+        let m = Margin::symmetric(4.0, 16.0);
+        assert_eq!(m.top, 4.0);
+        assert_eq!(m.bottom, 4.0);
+        assert_eq!(m.left, 16.0);
+        assert_eq!(m.right, 16.0);
+    }
+
+    // ── Enum defaults ───────────────────────────────────────────────
+
+    #[test]
+    fn test_enum_defaults() {
+        assert_eq!(FontStyle::default(), FontStyle::Normal);
+        assert_eq!(TextAlign::default(), TextAlign::Start);
+        assert_eq!(TextOverflow::default(), TextOverflow::Clip);
+        assert_eq!(TextTransform::default(), TextTransform::None);
+        assert_eq!(WhiteSpace::default(), WhiteSpace::Normal);
+        assert_eq!(WordBreak::default(), WordBreak::Normal);
+        assert_eq!(Position::default(), Position::Static);
+        assert_eq!(FlexDirection::default(), FlexDirection::Row);
+        assert_eq!(FlexWrap::default(), FlexWrap::NoWrap);
+        assert_eq!(JustifyContent::default(), JustifyContent::FlexStart);
+        assert_eq!(AlignItems::default(), AlignItems::Stretch);
+        assert_eq!(AlignSelf::default(), AlignSelf::Auto);
+        assert_eq!(PointerEvents::default(), PointerEvents::Auto);
+        assert!(matches!(TimingFunction::default(), TimingFunction::Ease));
+        assert_eq!(AnimationDirection::default(), AnimationDirection::Normal);
+        assert_eq!(AnimationFillMode::default(), AnimationFillMode::None);
+        assert_eq!(AnimationPlayState::default(), AnimationPlayState::Running);
+        assert_eq!(StepPosition::default(), StepPosition::JumpEnd);
+    }
+}

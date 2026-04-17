@@ -119,3 +119,110 @@ impl TransformStyle {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_identity() {
+        let t = TransformStyle::identity();
+        assert!(t.is_identity());
+        assert_eq!(t.translate, (0.0, 0.0));
+        assert_eq!(t.rotate, 0.0);
+        assert_eq!(t.scale, (1.0, 1.0));
+        assert_eq!(t.skew, (0.0, 0.0));
+        assert_eq!(t.origin, (0.5, 0.5));
+    }
+
+    #[test]
+    fn test_translate() {
+        let t = TransformStyle::translate(10.0, 20.0);
+        assert_eq!(t.translate, (10.0, 20.0));
+        assert_eq!(t.rotate, 0.0);
+        assert_eq!(t.scale, (1.0, 1.0));
+        assert!(!t.is_identity());
+    }
+
+    #[test]
+    fn test_rotate() {
+        let t = TransformStyle::rotate(45.0);
+        assert_eq!(t.rotate, 45.0);
+        assert_eq!(t.translate, (0.0, 0.0));
+        assert!(!t.is_identity());
+    }
+
+    #[test]
+    fn test_scale() {
+        let t = TransformStyle::scale(2.0, 3.0);
+        assert_eq!(t.scale, (2.0, 3.0));
+        assert!(!t.is_identity());
+    }
+
+    #[test]
+    fn test_then_combines_translate() {
+        let a = TransformStyle::translate(5.0, 10.0);
+        let b = TransformStyle::translate(3.0, 7.0);
+        let combined = a.then(&b);
+        assert_eq!(combined.translate, (8.0, 17.0));
+    }
+
+    #[test]
+    fn test_then_combines_rotate() {
+        let a = TransformStyle::rotate(30.0);
+        let b = TransformStyle::rotate(60.0);
+        let combined = a.then(&b);
+        assert_eq!(combined.rotate, 90.0);
+    }
+
+    #[test]
+    fn test_then_combines_scale() {
+        let a = TransformStyle::scale(2.0, 3.0);
+        let b = TransformStyle::scale(0.5, 2.0);
+        let combined = a.then(&b);
+        assert_eq!(combined.scale, (1.0, 6.0));
+    }
+
+    #[test]
+    fn test_to_affine2d_identity() {
+        let t = TransformStyle::identity();
+        let affine = t.to_affine2d(100.0, 100.0);
+        // Identity transform: a=1, d=1, b=c=0, tx=ty=0
+        assert!((affine.a - 1.0).abs() < 1e-5);
+        assert!((affine.d - 1.0).abs() < 1e-5);
+        assert!(affine.b.abs() < 1e-5);
+        assert!(affine.c.abs() < 1e-5);
+        assert!(affine.tx.abs() < 1e-5);
+        assert!(affine.ty.abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_to_affine2d_translate_only() {
+        let t = TransformStyle::translate(10.0, 20.0);
+        let affine = t.to_affine2d(100.0, 100.0);
+        assert!((affine.tx - 10.0).abs() < 1e-4);
+        assert!((affine.ty - 20.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_to_affine2d_scale_only() {
+        let t = TransformStyle::scale(2.0, 2.0);
+        let affine = t.to_affine2d(100.0, 100.0);
+        assert!((affine.a - 2.0).abs() < 1e-5);
+        assert!((affine.d - 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_is_identity_with_unit_scale() {
+        let mut t = TransformStyle::default();
+        t.scale = (1.0, 1.0);
+        assert!(t.is_identity());
+    }
+
+    #[test]
+    fn test_is_identity_false_with_nonzero_skew() {
+        let mut t = TransformStyle::default();
+        t.skew = (5.0, 0.0);
+        assert!(!t.is_identity());
+    }
+}

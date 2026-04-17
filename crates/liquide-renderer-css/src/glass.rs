@@ -99,3 +99,82 @@ impl GlassStyle {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_glass_default() {
+        let g = GlassStyle::default();
+        assert_eq!(g.blur_radius, 20);
+        assert_eq!(g.inner_glow, 0.0);
+        assert_eq!(g.parallax, 0.0);
+        assert_eq!(g.opacity, 0.9);
+        assert!(g.high_quality);
+    }
+
+    #[test]
+    fn test_glass_new() {
+        let tint = Color::new(100, 100, 100, 50);
+        let g = GlassStyle::new(30, tint);
+        assert_eq!(g.blur_radius, 30);
+        assert_eq!(g.tint_color, tint);
+        assert_eq!(g.opacity, 0.9); // inherited default
+    }
+
+    #[test]
+    fn test_glass_light() {
+        let g = GlassStyle::light();
+        assert_eq!(g.blur_radius, 20);
+        assert_eq!(g.inner_glow, 0.2);
+        assert_eq!(g.tint_color.a, 220);
+    }
+
+    #[test]
+    fn test_glass_dark() {
+        let g = GlassStyle::dark();
+        assert_eq!(g.blur_radius, 25);
+        assert_eq!(g.inner_glow, 0.15);
+    }
+
+    #[test]
+    fn test_with_inner_glow_clamps() {
+        let g = GlassStyle::default().with_inner_glow(2.0);
+        assert_eq!(g.inner_glow, 1.0);
+        let g = GlassStyle::default().with_inner_glow(-1.0);
+        assert_eq!(g.inner_glow, 0.0);
+    }
+
+    #[test]
+    fn test_with_parallax_clamps() {
+        let g = GlassStyle::default().with_parallax(5.0);
+        assert_eq!(g.parallax, 1.0);
+        let g = GlassStyle::default().with_parallax(-0.5);
+        assert_eq!(g.parallax, 0.0);
+    }
+
+    #[test]
+    fn test_with_high_quality() {
+        let g = GlassStyle::default().with_high_quality(false);
+        assert!(!g.high_quality);
+    }
+
+    #[test]
+    fn test_to_compositor_params() {
+        let g = GlassStyle::default().with_inner_glow(0.5).with_parallax(0.3);
+        let params = g.to_compositor_params();
+        assert_eq!(params.blur_radius, g.blur_radius);
+        assert_eq!(params.tint_color, g.tint_color);
+        assert!(params.inner_glow);
+        assert!(params.parallax);
+    }
+
+    #[test]
+    fn test_to_compositor_params_no_effects() {
+        let g = GlassStyle::default();
+        let params = g.to_compositor_params();
+        assert!(!params.inner_glow);
+        assert!(!params.parallax);
+    }
+}
