@@ -156,4 +156,97 @@ mod tests {
         assert_eq!(stack[0], normal_id);
         assert_eq!(stack[1], top_id);
     }
+
+    #[test]
+    fn test_raise_window() {
+        let mut wm = WindowManager::new();
+        let id1 = WidgetId::new();
+        let id2 = WidgetId::new();
+        let id3 = WidgetId::new();
+
+        wm.add_window(id1, WindowLayer::Normal);
+        wm.add_window(id2, WindowLayer::Normal);
+        wm.add_window(id3, WindowLayer::Normal);
+
+        wm.raise_window(id1);
+        let stack = wm.stacking_order();
+        assert_eq!(*stack.last().unwrap(), id1);
+    }
+
+    #[test]
+    fn test_set_and_get_window_state() {
+        let mut wm = WindowManager::new();
+        let id = WidgetId::new();
+        wm.add_window(id, WindowLayer::Normal);
+
+        assert_eq!(wm.window_state(id), Some(WindowState::Normal));
+        wm.set_window_state(id, WindowState::Maximized);
+        assert_eq!(wm.window_state(id), Some(WindowState::Maximized));
+    }
+
+    #[test]
+    fn test_window_state_nonexistent() {
+        let wm = WindowManager::new();
+        let id = WidgetId::new();
+        assert_eq!(wm.window_state(id), None);
+    }
+
+    #[test]
+    fn test_focus_raises_window() {
+        let mut wm = WindowManager::new();
+        let id1 = WidgetId::new();
+        let id2 = WidgetId::new();
+
+        wm.add_window(id1, WindowLayer::Normal);
+        wm.add_window(id2, WindowLayer::Normal);
+
+        wm.focus_window(id1);
+        assert_eq!(wm.focused_window(), Some(id1));
+        assert_eq!(*wm.stacking_order().last().unwrap(), id1);
+    }
+
+    #[test]
+    fn test_remove_focused_falls_back() {
+        let mut wm = WindowManager::new();
+        let id1 = WidgetId::new();
+        let id2 = WidgetId::new();
+
+        wm.add_window(id1, WindowLayer::Normal);
+        wm.add_window(id2, WindowLayer::Normal);
+        wm.focus_window(id2);
+        wm.remove_window(id2);
+        // Focus falls to the last window in the stack
+        assert_eq!(wm.focused_window(), Some(id1));
+    }
+
+    #[test]
+    fn test_remove_all_windows() {
+        let mut wm = WindowManager::new();
+        let id = WidgetId::new();
+        wm.add_window(id, WindowLayer::Normal);
+        wm.focus_window(id);
+        wm.remove_window(id);
+        assert_eq!(wm.window_count(), 0);
+        assert_eq!(wm.focused_window(), None);
+    }
+
+    #[test]
+    fn test_layer_ordering_mixed() {
+        let mut wm = WindowManager::new();
+        let bg = WidgetId::new();
+        let normal = WidgetId::new();
+        let dialog = WidgetId::new();
+        let overlay = WidgetId::new();
+
+        wm.add_window(overlay, WindowLayer::SystemOverlay);
+        wm.add_window(normal, WindowLayer::Normal);
+        wm.add_window(bg, WindowLayer::Background);
+        wm.add_window(dialog, WindowLayer::Dialog);
+
+        let stack = wm.stacking_order();
+        assert_eq!(stack[0], bg);
+        assert_eq!(stack[1], normal);
+        assert_eq!(stack[2], dialog);
+        assert_eq!(stack[3], overlay);
+    }
 }

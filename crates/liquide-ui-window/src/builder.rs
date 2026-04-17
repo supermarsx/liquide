@@ -138,3 +138,98 @@ impl WindowBuilder {
         window
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_builder_basic() {
+        let w = WindowBuilder::new("Hello").build();
+        assert_eq!(w.title, "Hello");
+        assert_eq!(w.kind, WindowKind::Normal);
+    }
+
+    #[test]
+    fn test_builder_dialog() {
+        let w = WindowBuilder::new("Dlg").dialog().build();
+        assert_eq!(w.kind, WindowKind::Dialog);
+        assert!(w.flags.contains(WindowFlags::CLOSABLE));
+        assert!(w.flags.contains(WindowFlags::MOVABLE));
+        assert!(!w.flags.contains(WindowFlags::RESIZABLE));
+    }
+
+    #[test]
+    fn test_builder_popup() {
+        let w = WindowBuilder::new("Pop").popup().build();
+        assert_eq!(w.kind, WindowKind::Popup);
+        assert!(w.flags.contains(WindowFlags::FRAMELESS));
+    }
+
+    #[test]
+    fn test_builder_splash() {
+        let w = WindowBuilder::new("Splash").splash().build();
+        assert_eq!(w.kind, WindowKind::Splash);
+        assert!(w.flags.contains(WindowFlags::FRAMELESS));
+    }
+
+    #[test]
+    fn test_builder_size_and_position() {
+        let w = WindowBuilder::new("Test")
+            .position(200.0, 300.0)
+            .size(800.0, 600.0)
+            .build();
+        assert_eq!(w.x, 200.0);
+        assert_eq!(w.y, 300.0);
+        assert_eq!(w.width, 800.0);
+        assert_eq!(w.height, 600.0);
+    }
+
+    #[test]
+    fn test_builder_min_max_size() {
+        let w = WindowBuilder::new("Test")
+            .min_size(100.0, 80.0)
+            .max_size(2000.0, 1500.0)
+            .build();
+        assert_eq!(w.min_width, 100.0);
+        assert_eq!(w.min_height, 80.0);
+        assert_eq!(w.max_width, 2000.0);
+        assert_eq!(w.max_height, 1500.0);
+    }
+
+    #[test]
+    fn test_builder_opacity() {
+        let w = WindowBuilder::new("Test").opacity(0.8).build();
+        assert_eq!(w.opacity, 0.8);
+    }
+
+    #[test]
+    fn test_builder_flags() {
+        let w = WindowBuilder::new("Test")
+            .resizable(false)
+            .closable(false)
+            .always_on_top(true)
+            .build();
+        assert!(!w.flags.contains(WindowFlags::RESIZABLE));
+        assert!(!w.flags.contains(WindowFlags::CLOSABLE));
+        assert!(w.flags.contains(WindowFlags::ALWAYS_ON_TOP));
+    }
+
+    #[test]
+    fn test_builder_frameless() {
+        let w = WindowBuilder::new("Test").frameless(true).build();
+        assert!(w.flags.contains(WindowFlags::FRAMELESS));
+    }
+
+    #[test]
+    fn test_builder_title_bar_height() {
+        let w = WindowBuilder::new("Test").title_bar_height(40.0).build();
+        assert_eq!(w.title_bar.height, 40.0);
+    }
+
+    #[test]
+    fn test_builder_icon() {
+        let w = WindowBuilder::new("Test").icon(42).build();
+        assert_eq!(w.icon, Some(42));
+    }
+}

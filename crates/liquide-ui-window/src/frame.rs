@@ -92,3 +92,82 @@ pub enum ResizeEdge {
 impl ResizeEdge {
     pub fn is_some(&self) -> bool { *self != ResizeEdge::None }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_frame_style_default() {
+        let s = FrameStyle::default();
+        assert_eq!(s.border_width, 1.0);
+        assert_eq!(s.corner_radius, 10.0);
+        assert_eq!(s.resize_tolerance, 8.0);
+    }
+
+    #[test]
+    fn test_hit_test_none_inside() {
+        let frame = WindowFrame::new();
+        // Point well inside the window
+        let edge = frame.hit_test_resize(200.0, 200.0, 100.0, 100.0, 400.0, 300.0);
+        assert_eq!(edge, ResizeEdge::None);
+        assert!(!edge.is_some());
+    }
+
+    #[test]
+    fn test_hit_test_left_edge() {
+        let frame = WindowFrame::new();
+        let edge = frame.hit_test_resize(100.0, 250.0, 100.0, 100.0, 400.0, 300.0);
+        assert_eq!(edge, ResizeEdge::Left);
+        assert!(edge.is_some());
+    }
+
+    #[test]
+    fn test_hit_test_right_edge() {
+        let frame = WindowFrame::new();
+        let edge = frame.hit_test_resize(500.0, 250.0, 100.0, 100.0, 400.0, 300.0);
+        assert_eq!(edge, ResizeEdge::Right);
+    }
+
+    #[test]
+    fn test_hit_test_top_edge() {
+        let frame = WindowFrame::new();
+        let edge = frame.hit_test_resize(300.0, 100.0, 100.0, 100.0, 400.0, 300.0);
+        assert_eq!(edge, ResizeEdge::Top);
+    }
+
+    #[test]
+    fn test_hit_test_bottom_edge() {
+        let frame = WindowFrame::new();
+        let edge = frame.hit_test_resize(300.0, 400.0, 100.0, 100.0, 400.0, 300.0);
+        assert_eq!(edge, ResizeEdge::Bottom);
+    }
+
+    #[test]
+    fn test_hit_test_top_left_corner() {
+        let frame = WindowFrame::new();
+        let edge = frame.hit_test_resize(100.0, 100.0, 100.0, 100.0, 400.0, 300.0);
+        assert_eq!(edge, ResizeEdge::TopLeft);
+    }
+
+    #[test]
+    fn test_hit_test_top_right_corner() {
+        let frame = WindowFrame::new();
+        let edge = frame.hit_test_resize(500.0, 100.0, 100.0, 100.0, 400.0, 300.0);
+        assert_eq!(edge, ResizeEdge::TopRight);
+    }
+
+    #[test]
+    fn test_hit_test_bottom_left_corner() {
+        let frame = WindowFrame::new();
+        let edge = frame.hit_test_resize(100.0, 400.0, 100.0, 100.0, 400.0, 300.0);
+        assert_eq!(edge, ResizeEdge::BottomLeft);
+    }
+
+    #[test]
+    fn test_hit_test_bottom_right_corner() {
+        let frame = WindowFrame::new();
+        let edge = frame.hit_test_resize(500.0, 400.0, 100.0, 100.0, 400.0, 300.0);
+        assert_eq!(edge, ResizeEdge::BottomRight);
+    }
+}

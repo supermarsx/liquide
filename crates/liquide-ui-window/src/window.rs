@@ -259,3 +259,136 @@ impl Widget for Window {
         &self.children
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_window_new_defaults() {
+        let w = Window::new("Test");
+        assert_eq!(w.title, "Test");
+        assert_eq!(w.kind, WindowKind::Normal);
+        assert_eq!(w.window_state, WindowState::Normal);
+        assert_eq!(w.width, 640.0);
+        assert_eq!(w.height, 480.0);
+        assert_eq!(w.opacity, 1.0);
+        assert!(w.flags.contains(WindowFlags::CLOSABLE));
+        assert!(w.flags.contains(WindowFlags::RESIZABLE));
+    }
+
+    #[test]
+    fn test_window_close_sets_hidden() {
+        let mut w = Window::new("Test");
+        w.close();
+        assert_eq!(w.window_state, WindowState::Hidden);
+    }
+
+    #[test]
+    fn test_window_close_not_closable_noop() {
+        let mut w = Window::new("Test");
+        w.flags.remove(WindowFlags::CLOSABLE);
+        w.close();
+        assert_eq!(w.window_state, WindowState::Normal);
+    }
+
+    #[test]
+    fn test_window_minimize() {
+        let mut w = Window::new("Test");
+        w.minimize();
+        assert_eq!(w.window_state, WindowState::Minimized);
+    }
+
+    #[test]
+    fn test_window_minimize_not_minimizable_noop() {
+        let mut w = Window::new("Test");
+        w.flags.remove(WindowFlags::MINIMIZABLE);
+        w.minimize();
+        assert_eq!(w.window_state, WindowState::Normal);
+    }
+
+    #[test]
+    fn test_window_maximize_toggle() {
+        let mut w = Window::new("Test");
+        w.maximize();
+        assert_eq!(w.window_state, WindowState::Maximized);
+        w.maximize();
+        assert_eq!(w.window_state, WindowState::Normal);
+    }
+
+    #[test]
+    fn test_window_maximize_not_maximizable_noop() {
+        let mut w = Window::new("Test");
+        w.flags.remove(WindowFlags::MAXIMIZABLE);
+        w.maximize();
+        assert_eq!(w.window_state, WindowState::Normal);
+    }
+
+    #[test]
+    fn test_window_fullscreen() {
+        let mut w = Window::new("Test");
+        w.set_fullscreen(true);
+        assert_eq!(w.window_state, WindowState::Fullscreen);
+        w.set_fullscreen(false);
+        assert_eq!(w.window_state, WindowState::Normal);
+    }
+
+    #[test]
+    fn test_window_client_rect_with_frame() {
+        let w = Window::new("Test");
+        let (cx, cy, cw, ch) = w.client_rect();
+        // cx = x + border_width, cy = y + title_bar_height
+        assert!(cx > w.x);
+        assert!(cy > w.y);
+        assert!(cw < w.width);
+        assert!(ch < w.height);
+    }
+
+    #[test]
+    fn test_window_client_rect_frameless() {
+        let mut w = Window::new("Test");
+        w.flags.insert(WindowFlags::FRAMELESS);
+        let (_cx, cy, _cw, _ch) = w.client_rect();
+        // Frameless: no title bar height offset
+        assert_eq!(cy, w.y); // no title_bar offset since FRAMELESS → tb_h = 0
+    }
+
+    #[test]
+    fn test_window_add_child() {
+        let mut w = Window::new("Test");
+        let child = WidgetId::new();
+        w.add_child(child);
+        assert_eq!(w.children.len(), 1);
+        assert_eq!(w.children[0], child);
+    }
+
+    #[test]
+    fn test_window_visible_when_hidden() {
+        let mut w = Window::new("Test");
+        w.close();
+        assert!(!w.visible()); // Widget::visible() is false when Hidden
+    }
+
+    #[test]
+    fn test_window_flags_default() {
+        let flags = WindowFlags::default();
+        assert!(flags.contains(WindowFlags::CLOSABLE));
+        assert!(flags.contains(WindowFlags::MINIMIZABLE));
+        assert!(flags.contains(WindowFlags::MAXIMIZABLE));
+        assert!(flags.contains(WindowFlags::RESIZABLE));
+        assert!(flags.contains(WindowFlags::MOVABLE));
+        assert!(!flags.contains(WindowFlags::ALWAYS_ON_TOP));
+        assert!(!flags.contains(WindowFlags::FRAMELESS));
+        assert!(!flags.contains(WindowFlags::TRANSPARENT));
+    }
+
+    #[test]
+    fn test_window_kind_default() {
+        assert_eq!(WindowKind::default(), WindowKind::Normal);
+    }
+
+    #[test]
+    fn test_window_state_default() {
+        assert_eq!(WindowState::default(), WindowState::Normal);
+    }
+}
