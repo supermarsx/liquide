@@ -497,7 +497,10 @@ impl DesktopCompositor {
                             PixelFormat::Bgra8,
                         ));
                     }
-                    let framebuf = fb.as_mut().unwrap();
+                    let Some(framebuf) = fb.as_mut() else {
+                        warn!("framebuffer unexpectedly None after allocation, skipping cursor frame");
+                        continue;
+                    };
 
                     // Targeted damage: only the old and new cursor tile regions.
                     let cursor_size = 24.0_f32;
@@ -665,7 +668,7 @@ impl DesktopCompositor {
                 PixelFormat::Bgra8,
             ));
         }
-        let framebuf = fb.as_mut().unwrap();
+        let framebuf = fb.as_mut().expect("framebuffer was just allocated above");
 
         // 4b. Clear framebuffer to opaque black before rendering.
         // Without this, any region not covered by a scene node retains stale

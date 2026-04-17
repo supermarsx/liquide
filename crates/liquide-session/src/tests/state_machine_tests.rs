@@ -225,3 +225,18 @@ fn test_uptime_and_last_transition_are_non_negative() {
     assert!(sm.uptime_seconds() < 5);
     assert!(sm.seconds_since_last_transition() < 5);
 }
+
+#[test]
+fn test_invalid_transition_returns_error_with_state_names() {
+    let mut sm = make_state_machine("err_test");
+    // Created -> Running is invalid (must go through Authenticating first)
+    let result = sm.transition_to(SessionState::Running);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("Created"), "error should mention source state");
+    assert!(msg.contains("Running"), "error should mention target state");
+    // State should remain unchanged after failed transition
+    assert_eq!(sm.state(), SessionState::Created);
+    assert_eq!(sm.transition_count(), 0);
+}

@@ -54,11 +54,8 @@ impl DevToolsState {
             return;
         }
 
-        let visible = self.devtools.as_ref().map_or(false, |d| d.is_visible());
-
-        if visible {
+        if let Some(devtools) = self.devtools.as_ref().filter(|d| d.is_visible()) {
             let template = {
-                let devtools = self.devtools.as_ref().unwrap();
                 let doc = shell.document();
                 match (shell.layout_tree(), shell.style_map()) {
                     (Some(layout), Some(styles)) => devtools.render_template(doc, layout, styles),
