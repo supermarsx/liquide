@@ -401,4 +401,21 @@ mod tests {
         assert_ne!(ConnectivityState::Full, ConnectivityState::None);
         assert_ne!(ConnectivityState::Limited, ConnectivityState::Portal);
     }
+
+    #[test]
+    fn stub_connect_wifi_returns_not_supported() {
+        let mut mgr = StubManager::new();
+        let result = mgr.connect_wifi("MySSID", Some("password123"));
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), NetworkError::NotSupported));
+    }
+
+    #[test]
+    fn stub_disconnect_wifi_returns_not_supported() {
+        let mut mgr = StubManager::new();
+        let id = InterfaceId("wlan0".to_string());
+        let result = mgr.disconnect_wifi(&id);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), NetworkError::NotSupported));
+    }
 }

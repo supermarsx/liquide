@@ -848,7 +848,7 @@ fn wifi_disconnect(interface_id: &InterfaceId) -> Result<(), NetworkError> {
 fn check_connectivity_tcp() -> ConnectivityState {
     // Try connecting to Cloudflare DNS on port 443 with a short timeout.
     match TcpStream::connect_timeout(
-        &"1.1.1.1:443".parse().unwrap(),
+        &"1.1.1.1:443".parse().expect("valid socket address literal"),
         Duration::from_secs(3),
     ) {
         Ok(_) => ConnectivityState::Full,
