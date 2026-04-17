@@ -73,3 +73,36 @@ impl RenderError {
         matches!(self, RenderError::ThreadPanic(_))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_error_recoverable() {
+        assert!(RenderError::Timeout(Duration::from_millis(16)).is_recoverable());
+        assert!(RenderError::ChannelSend("test".into()).is_recoverable());
+        assert!(RenderError::ResourceExhausted("test".into()).is_recoverable());
+        assert!(!RenderError::ThreadPanic("test".into()).is_recoverable());
+        assert!(!RenderError::InvalidConfig("test".into()).is_recoverable());
+    }
+
+    #[test]
+    fn test_error_is_panic() {
+        assert!(RenderError::ThreadPanic("oh no".into()).is_panic());
+        assert!(!RenderError::Timeout(Duration::from_millis(16)).is_panic());
+    }
+
+    #[test]
+    fn test_error_display_timeout() {
+        let e = RenderError::Timeout(Duration::from_millis(16));
+        assert!(format!("{e}").contains("16ms"));
+    }
+
+    #[test]
+    fn test_error_display_invalid_config() {
+        let e = RenderError::InvalidConfig("bad config".into());
+        assert!(format!("{e}").contains("bad config"));
+    }
+}

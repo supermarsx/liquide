@@ -199,3 +199,70 @@ mod num_cpus {
             .unwrap_or(4)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_validates() {
+        let config = RenderConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_zero_threads_invalid() {
+        let config = RenderConfig::builder().window_threads(0).build();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_zero_queue_invalid() {
+        let config = RenderConfig::builder().queue_size(0).build();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_fps_zero_invalid() {
+        let config = RenderConfig::builder().target_fps(0).build();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_fps_over_1000_invalid() {
+        let config = RenderConfig::builder().target_fps(1001).build();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_builder_overrides() {
+        let config = RenderConfig::builder()
+            .window_threads(8)
+            .enable_dock(false)
+            .enable_statusbar(false)
+            .vsync(false)
+            .target_fps(144)
+            .build();
+        assert_eq!(config.window_threads, 8);
+        assert!(!config.enable_dock);
+        assert!(!config.enable_statusbar);
+        assert!(!config.vsync);
+        assert_eq!(config.target_fps, 144);
+    }
+
+    #[test]
+    fn test_frame_duration() {
+        let config = RenderConfig::builder().target_fps(60).build();
+        let dur = config.frame_duration();
+        assert_eq!(dur.as_micros(), 16666);
+    }
+
+    #[test]
+    fn test_config_builder_defaults() {
+        let config = RenderConfig::builder().build();
+        let default = RenderConfig::default();
+        assert_eq!(config.enable_dock, default.enable_dock);
+        assert_eq!(config.enable_statusbar, default.enable_statusbar);
+        assert_eq!(config.vsync, default.vsync);
+    }
+}

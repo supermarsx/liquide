@@ -255,4 +255,60 @@ mod tests {
         assert!(task.deadline.is_some());
         assert!(!task.is_overdue());
     }
+
+    #[test]
+    fn test_task_batchable() {
+        assert!(RenderTaskKind::Background.is_batchable());
+        assert!(RenderTaskKind::Wallpaper { frame: 0 }.is_batchable());
+        assert!(!RenderTaskKind::Dock.is_batchable());
+        assert!(!RenderTaskKind::Window { window_id: 1, is_focused: true }.is_batchable());
+    }
+
+    #[test]
+    fn test_render_output_success() {
+        let output = RenderOutput::success(42, None, Duration::from_micros(100));
+        assert_eq!(output.task_id, 42);
+        assert!(output.success);
+        assert!(output.error.is_none());
+    }
+
+    #[test]
+    fn test_render_output_failure() {
+        let output = RenderOutput::failure(99, Duration::from_micros(50), "boom".into());
+        assert_eq!(output.task_id, 99);
+        assert!(!output.success);
+        assert_eq!(output.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn test_task_with_priority_override() {
+        let task = RenderTask::new(1, RenderTaskKind::Dock)
+            .with_priority(RenderPriority::Critical);
+        assert_eq!(task.priority, RenderPriority::Critical);
+    }
+
+    #[test]
+    fn test_composite_default_priority() {
+        let kind = RenderTaskKind::Composite { layer_ids: vec![1, 2, 3] };
+        assert_eq!(kind.default_priority(), RenderPriority::Interactive);
+    }
+
+    #[test]
+    fn test_statusbar_default_priority() {
+        let kind = RenderTaskKind::StatusBar;
+        assert_eq!(kind.default_priority(), RenderPriority::Interactive);
+    }
+
+    #[test]
+    fn test_wallpaper_default_priority() {
+        let kind = RenderTaskKind::Wallpaper { frame: 42 };
+        assert_eq!(kind.default_priority(), RenderPriority::Decorative);
+    }
+
+    #[test]
+    fn test_render_data_format() {
+        let data = RenderData::new(vec![1, 2, 3, 4], RenderDataFormat::Rgba8);
+        assert_eq!(data.format(), RenderDataFormat::Rgba8);
+        assert_eq!(data.data().len(), 4);
+    }
 }

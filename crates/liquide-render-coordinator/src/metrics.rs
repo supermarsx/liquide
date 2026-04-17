@@ -175,4 +175,38 @@ mod tests {
         assert_eq!(metrics.tasks_failed, 1);
         assert!(metrics.avg_render_time_us > 0.0);
     }
+
+    #[test]
+    fn test_metrics_reset() {
+        let collector = MetricsCollector::new();
+        collector.record_submission();
+        collector.record_completion(Duration::from_micros(100), true);
+        collector.reset();
+        let metrics = collector.snapshot();
+        assert_eq!(metrics.tasks_submitted, 0);
+        assert_eq!(metrics.tasks_completed, 0);
+    }
+
+    #[test]
+    fn test_metrics_percentiles() {
+        let collector = MetricsCollector::new();
+        for i in 1..=100 {
+            collector.record_submission();
+            collector.record_completion(Duration::from_micros(i * 10), true);
+        }
+        let metrics = collector.snapshot();
+        assert!(metrics.p95_render_time_us > 0);
+        assert!(metrics.p99_render_time_us >= metrics.p95_render_time_us);
+        assert!(metrics.min_render_time_us <= metrics.max_render_time_us);
+    }
+
+    #[test]
+    fn test_metrics_empty_snapshot() {
+        let collector = MetricsCollector::new();
+        let metrics = collector.snapshot();
+        assert_eq!(metrics.tasks_submitted, 0);
+        assert!((metrics.avg_render_time_us - 0.0).abs() < f64::EPSILON);
+        assert_eq!(metrics.min_render_time_us, 0);
+        assert_eq!(metrics.max_render_time_us, 0);
+    }
 }

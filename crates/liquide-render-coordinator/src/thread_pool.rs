@@ -415,4 +415,50 @@ mod tests {
         
         pool.shutdown().unwrap();
     }
+
+    #[test]
+    fn test_multiple_task_outputs() {
+        let config = ThreadConfig::default();
+        let thread = RenderThread::new(config).unwrap();
+        for i in 1..=5 {
+            let task = RenderTask::new(i, RenderTaskKind::Dock);
+            thread.submit(task).unwrap();
+        }
+        let mut received = Vec::new();
+        for _ in 0..5 {
+            let output = thread.recv_output(Duration::from_secs(2)).unwrap();
+            received.push(output.task_id);
+        }
+        assert_eq!(received.len(), 5);
+        thread.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_pool_submit_to_specific() {
+        let config = ThreadConfig::default();
+        let pool = RenderThreadPool::new(2, config).unwrap();
+        let task = RenderTask::new(1, RenderTaskKind::Dock);
+        pool.submit_to(0, task).unwrap();
+        let task2 = RenderTask::new(2, RenderTaskKind::StatusBar);
+        pool.submit_to(1, task2).unwrap();
+        pool.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_pool_invalid_thread_index() {
+        let config = ThreadConfig::default();
+        let pool = RenderThreadPool::new(2, config).unwrap();
+        let task = RenderTask::new(1, RenderTaskKind::Dock);
+        let result = pool.submit_to(99, task);
+        assert!(result.is_err());
+        pool.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_thread_config_default() {
+        let config = ThreadConfig::default();
+        assert_eq!(config.name, "render-thread");
+        assert_eq!(config.queue_capacity, 128);
+        assert!(config.priority_scheduling);
+    }
 }
