@@ -646,3 +646,380 @@ impl fmt::Display for Dock {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_dock() -> Dock {
+        Dock::new(DockConfig::default())
+    }
+
+    // ── Item management ───────────────────────────────────────────
+
+    #[test]
+    fn test_dock_new_empty() {
+        let dock = default_dock();
+        assert_eq!(dock.item_count(), 0);
+        assert!(dock.items().is_empty());
+    }
+
+    #[test]
+    fn test_dock_add_pinned_item() {
+        let mut dock = default_dock();
+        let id = dock.add_pinned("files", "Files", "files-icon");
+        assert!(id > 0);
+        assert_eq!(dock.item_count(), 1);
+        assert_eq!(dock.items()[0].app_id, "files");
+        assert_eq!(dock.items()[0].kind, DockItemKind::Pinned);
+        assert_eq!(dock.items()[0].pinned_position, Some(0));
+    }
+
+    #[test]
+    fn test_dock_add_multiple_pinned() {
+        let mut dock = default_dock();
+        dock.add_pinned("files", "Files", "icon1");
+        dock.add_pinned("browser", "Browser", "icon2");
+        dock.add_pinned("terminal", "Terminal", "icon3");
+        assert_eq!(dock.item_count(), 3);
+        assert_eq!(dock.items()[0].pinned_position, Some(0));
+        assert_eq!(dock.items()[1].pinned_position, Some(1));
+        assert_eq!(dock.items()[2].pinned_position, Some(2));
+    }
+
+    #[test]
+    fn test_dock_remove_pinned_item() {
+        let mut dock = default_dock();
+        let id1 = dock.add_pinned("files", "Files", "icon1");
+        let _id2 = dock.add_pinned("browser", "Browser", "icon2");
+        assert_eq!(dock.item_count(), 2);
+
+        assert!(dock.remove_pinned(id1));
+        assert_eq!(dock.item_count(), 1);
+        assert_eq!(dock.items()[0].app_id, "browser");
+        // Pinned position should be re-indexed
+        assert_eq!(dock.items()[0].pinned_position, Some(0));
+    }
+
+    #[test]
+    fn test_dock_remove_pinned_nonexistent_returns_false() {
+        let mut dock = default_dock();
+        assert!(!dock.remove_pinned(999));
+    }
+
+    #[test]
+    fn test_dock_add_running_app() {
+        let mut dock = default_dock();
+        let id = dock.add_running("terminal");
+        assert!(id > 0);
+        assert_eq!(dock.item_count(), 1);
+        assert_eq!(dock.items()[0].kind, DockItemKind::Running);
+        assert_eq!(dock.items()[0].running_window_count, 1);
+    }
+
+    #[test]
+    fn test_dock_add_running_increments_count() {
+        let mut dock = default_dock();
+        dock.add_running("terminal");
+        dock.add_running("terminal");
+        assert_eq!(dock.item_count(), 1); // same app, one entry
+        assert_eq!(dock.items()[0].running_window_count, 2);
+    }
+
+    #[test]
+    fn test_dock_add_running_increments_pinned_count() {
+        let mut dock = default_dock();
+        dock.add_pinned("files", "Files", "icon");
+        dock.add_running("files");
+        assert_eq!(dock.item_count(), 1); // still one item
+        assert_eq!(dock.items()[0].running_window_count, 1);
+        assert_eq!(dock.items()[0].kind, DockItemKind::Pinned);
+    }
+
+    #[test]
+    fn test_dock_remove_running_decrements_count() {
+        let mut dock = default_dock();
+        dock.add_running("terminal");
+        dock.add_running("terminal");
+        dock.remove_running("terminal");
+        assert_eq!(dock.item_count(), 1);
+        assert_eq!(dock.items()[0].running_window_count, 1);
+    }
+
+    #[test]
+    fn test_dock_remove_running_removes_when_zero() {
+        let mut dock = default_dock();
+        dock.add_running("terminal");
+        dock.remove_running("terminal");
+        assert_eq!(dock.item_count(), 0);
+    }
+
+    #[test]
+    fn test_dock_remove_running_keeps_pinned() {
+        let mut dock = default_dock();
+        dock.add_pinned("files", "Files", "icon");
+        dock.add_running("files");
+        dock.remove_running("files");
+        assert_eq!(dock.item_count(), 1); // pinned stays
+        assert_eq!(dock.items()[0].running_window_count, 0);
+    }
+
+    #[test]
+    fn test_dock_set_badge() {
+        let mut dock = default_dock();
+        dock.add_running("mail");
+        dock.set_badge("mail", 5);
+        assert_eq!(dock.items()[0].badge_count, 5);
+    }
+
+    #[test]
+    fn test_dock_set_badge_nonexistent_noop() {
+        let mut dock = default_dock();
+        dock.set_badge("nonexistent", 3); // should not panic
+    }
+
+    // ── Reorder ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_dock_reorder_pinned() {
+        let mut dock = default_dock();
+        dock.add_pinned("a", "A", "icon");
+        dock.add_pinned("b", "B", "icon");
+        dock.add_pinned("c", "C", "icon");
+
+        dock.reorder_pinned(0, 2);
+        // a should now be at position 2, c at position 0
+        let a = dock.items().iter().find(|i| i.app_id == "a").unwrap();
+        let c = dock.items().iter().find(|i| i.app_id == "c").unwrap();
+        assert_eq!(a.pinned_position, Some(2));
+        assert_eq!(c.pinned_position, Some(0));
+    }
+
+    #[test]
+    fn test_dock_reorder_out_of_bounds_noop() {
+        let mut dock = default_dock();
+        dock.add_pinned("a", "A", "icon");
+        dock.reorder_pinned(0, 5); // out of bounds, should not panic
+        assert_eq!(dock.items()[0].pinned_position, Some(0));
+    }
+
+    // ── Hover ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_dock_hover() {
+        let mut dock = default_dock();
+        dock.add_running("a");
+        dock.add_running("b");
+
+        assert!(dock.hover_index().is_none());
+        dock.on_hover(1);
+        assert_eq!(dock.hover_index(), Some(1));
+        dock.on_hover_leave();
+        assert!(dock.hover_index().is_none());
+    }
+
+    #[test]
+    fn test_dock_hover_out_of_bounds_ignored() {
+        let mut dock = default_dock();
+        dock.add_running("a");
+        dock.on_hover(5); // out of bounds
+        assert!(dock.hover_index().is_none());
+    }
+
+    // ── Auto-hide ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_dock_auto_hide_disabled_is_visible() {
+        let dock = Dock::new(DockConfig { auto_hide: false, ..Default::default() });
+        assert!(dock.is_visible());
+        assert_eq!(dock.auto_hide_state(), AutoHideState::Visible);
+    }
+
+    #[test]
+    fn test_dock_auto_hide_enabled_starts_hidden() {
+        let dock = Dock::new(DockConfig { auto_hide: true, ..Default::default() });
+        assert!(!dock.is_visible());
+        assert_eq!(dock.auto_hide_state(), AutoHideState::Hidden);
+    }
+
+    #[test]
+    fn test_dock_auto_hide_state_transitions() {
+        let mut dock = Dock::new(DockConfig { auto_hide: true, ..Default::default() });
+        assert!(!dock.is_visible());
+
+        dock.set_auto_hide_state(AutoHideState::Showing);
+        assert!(dock.is_visible());
+
+        dock.set_auto_hide_state(AutoHideState::Visible);
+        assert!(dock.is_visible());
+
+        dock.set_auto_hide_state(AutoHideState::Hiding);
+        assert!(!dock.is_visible());
+
+        dock.set_auto_hide_state(AutoHideState::Hidden);
+        assert!(!dock.is_visible());
+    }
+
+    // ── Positioning & geometry ──────────────────────────────────────
+
+    #[test]
+    fn test_dock_position_display() {
+        assert_eq!(DockPosition::Bottom.to_string(), "Bottom");
+        assert_eq!(DockPosition::Left.to_string(), "Left");
+        assert_eq!(DockPosition::Right.to_string(), "Right");
+        assert_eq!(DockPosition::Top.to_string(), "Top");
+    }
+
+    #[test]
+    fn test_dock_compute_bounds_bottom() {
+        let config = DockConfig { position: DockPosition::Bottom, icon_size: 48, ..Default::default() };
+        let mut dock = Dock::new(config);
+        dock.add_running("a");
+        dock.add_running("b");
+
+        let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+        let bounds = dock.compute_bounds(screen);
+
+        // Bottom-anchored, centered horizontally
+        assert!(bounds.y > 1000.0); // near bottom
+        assert!(bounds.x > 0.0); // centered, not at 0
+        assert!(bounds.width > 0.0);
+        assert!(bounds.height > 0.0);
+    }
+
+    #[test]
+    fn test_dock_compute_bounds_left() {
+        let config = DockConfig { position: DockPosition::Left, icon_size: 48, ..Default::default() };
+        let mut dock = Dock::new(config);
+        dock.add_running("a");
+
+        let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+        let bounds = dock.compute_bounds(screen);
+
+        assert_eq!(bounds.x, 0.0); // left edge
+    }
+
+    #[test]
+    fn test_dock_compute_bounds_right() {
+        let config = DockConfig { position: DockPosition::Right, icon_size: 48, ..Default::default() };
+        let mut dock = Dock::new(config);
+        dock.add_running("a");
+
+        let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+        let bounds = dock.compute_bounds(screen);
+
+        assert!(bounds.x + bounds.width >= 1919.0); // right edge
+    }
+
+    #[test]
+    fn test_dock_compute_item_rects_count() {
+        let mut dock = default_dock();
+        dock.add_running("a");
+        dock.add_running("b");
+        dock.add_running("c");
+
+        let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+        let rects = dock.compute_item_rects(screen);
+        assert_eq!(rects.len(), 3);
+    }
+
+    // ── Magnification ───────────────────────────────────────────────
+
+    #[test]
+    fn test_magnified_size_disabled() {
+        let config = DockConfig { magnification_enabled: false, icon_size: 48, ..Default::default() };
+        let dock = Dock::new(config);
+        assert_eq!(dock.magnified_size(0, 0.0), 48);
+    }
+
+    #[test]
+    fn test_magnified_size_hovered_item() {
+        let config = DockConfig { magnification_enabled: true, magnification_factor: 1.5, icon_size: 48, ..Default::default() };
+        let dock = Dock::new(config);
+        let size = dock.magnified_size(0, 0.0);
+        // At distance 0, scale = 1 + (1.5 - 1) * 1.0 = 1.5, size = 72
+        assert_eq!(size, 72);
+    }
+
+    #[test]
+    fn test_magnified_size_decreases_with_distance() {
+        let config = DockConfig { magnification_enabled: true, magnification_factor: 1.5, icon_size: 48, ..Default::default() };
+        let dock = Dock::new(config);
+        let at_0 = dock.magnified_size(0, 0.0);
+        let at_1 = dock.magnified_size(0, 1.0);
+        let at_3 = dock.magnified_size(0, 3.0);
+        assert!(at_0 > at_1);
+        assert!(at_1 > at_3);
+    }
+
+    // ── Config defaults ───────────────────────────────────────────
+
+    #[test]
+    fn test_dock_config_defaults() {
+        let config = DockConfig::default();
+        assert_eq!(config.position, DockPosition::Bottom);
+        assert_eq!(config.icon_size, 48);
+        assert!(!config.auto_hide);
+        assert!(config.magnification_enabled);
+        assert!(config.show_running_indicators);
+        assert_eq!(config.monitor_mode, DockMonitorMode::PrimaryOnly);
+        assert_eq!(config.click_running_behavior, DockClickBehavior::SmartToggle);
+    }
+
+    // ── Display traits ─────────────────────────────────────────────
+
+    #[test]
+    fn test_dock_display_format() {
+        let mut dock = default_dock();
+        dock.add_running("a");
+        let s = format!("{}", dock);
+        assert!(s.contains("1 items"));
+        assert!(s.contains("Bottom"));
+        assert!(s.contains("Visible"));
+    }
+
+    #[test]
+    fn test_dock_item_kind_display() {
+        assert_eq!(DockItemKind::Pinned.to_string(), "Pinned");
+        assert_eq!(DockItemKind::Running.to_string(), "Running");
+        assert_eq!(DockItemKind::Separator.to_string(), "Separator");
+        assert_eq!(DockItemKind::Trash.to_string(), "Trash");
+    }
+
+    #[test]
+    fn test_dock_monitor_mode_display() {
+        assert_eq!(DockMonitorMode::PrimaryOnly.to_string(), "PrimaryOnly");
+        assert_eq!(DockMonitorMode::AllScreens.to_string(), "AllScreens");
+        assert_eq!(DockMonitorMode::FollowFocus.to_string(), "FollowFocus");
+    }
+
+    #[test]
+    fn test_auto_hide_state_display() {
+        assert_eq!(AutoHideState::Hidden.to_string(), "Hidden");
+        assert_eq!(AutoHideState::Showing.to_string(), "Showing");
+        assert_eq!(AutoHideState::Visible.to_string(), "Visible");
+        assert_eq!(AutoHideState::Hiding.to_string(), "Hiding");
+    }
+
+    // ── Unique IDs ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_dock_items_get_unique_ids() {
+        let mut dock = default_dock();
+        let id1 = dock.add_pinned("a", "A", "icon");
+        let id2 = dock.add_pinned("b", "B", "icon");
+        let id3 = dock.add_running("c");
+        assert_ne!(id1, id2);
+        assert_ne!(id2, id3);
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_dock_item_at_index() {
+        let mut dock = default_dock();
+        dock.add_running("x");
+        assert!(dock.item_at_index(0).is_some());
+        assert_eq!(dock.item_at_index(0).unwrap().app_id, "x");
+        assert!(dock.item_at_index(1).is_none());
+    }
+}
