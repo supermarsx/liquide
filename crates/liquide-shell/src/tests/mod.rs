@@ -22,3 +22,4 @@ mod window_bounds_tests;
 mod context_menu_tests;
 mod batch_tests;
 mod hook_tests;
+mod notification_panel_tests;

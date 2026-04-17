@@ -145,9 +145,13 @@ impl Shell {
             return false;
         }
 
-        // Maximized window present: always hide for now (will show on mouse hover in future)
-        // TODO: Track mouse position to reveal on top-edge hover
-        if self.status_bar_visible {
+        // Maximized window present: reveal bar when cursor is within
+        // the top 2 px of the screen (edge hover), hide otherwise.
+        let at_top_edge = self.last_cursor_y <= self.screen_rect.y + 2.0;
+        if at_top_edge && !self.status_bar_visible {
+            self.status_bar_visible = true;
+            true
+        } else if !at_top_edge && self.status_bar_visible {
             self.status_bar_visible = false;
             true
         } else {

@@ -194,6 +194,9 @@ pub struct Shell {
     pub(crate) hovered_button: Option<(WindowId, HitZone)>,
     pub(crate) cursor_shape: CursorShape,
     pub(crate) status_bar_visible: bool,
+    pub(crate) notification_panel_visible: bool,
+    /// Last known cursor Y position for status-bar auto-reveal on top-edge hover.
+    pub(crate) last_cursor_y: f32,
     pub(crate) app_menu_open: Option<String>,
     #[cfg(windows)]
     pub(crate) win32_dock: liquide_dock::Win32DockIntegration,
@@ -301,6 +304,8 @@ impl Shell {
             hovered_button: None,
             cursor_shape: CursorShape::Arrow,
             status_bar_visible: true,
+            notification_panel_visible: false,
+            last_cursor_y: 0.0,
             app_menu_open: None,
             #[cfg(windows)]
             win32_dock: liquide_dock::Win32DockIntegration::new(),
@@ -398,6 +403,8 @@ impl Shell {
             hovered_button: None,
             cursor_shape: CursorShape::Arrow,
             status_bar_visible: true,
+            notification_panel_visible: false,
+            last_cursor_y: 0.0,
             app_menu_open: None,
             #[cfg(windows)]
             win32_dock: liquide_dock::Win32DockIntegration::new(),

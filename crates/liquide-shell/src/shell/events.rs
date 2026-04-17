@@ -193,6 +193,9 @@ impl Shell {
         let pt = Point::new(x, y);
         let mut need_redraw = false;
 
+        // Track cursor Y for status-bar auto-reveal on top-edge hover.
+        self.last_cursor_y = y;
+
         // Active drag handling
         if let Some(drag) = self.drag_state {
             match drag {
@@ -583,8 +586,8 @@ impl Shell {
             let notif_x_start = self.screen_rect.width - 80.0;
             let notif_x_end = self.screen_rect.width - 36.0;
             if x >= notif_x_start && x < notif_x_end {
-                // TODO: toggle notification panel when implemented
-                return Some(ShellAction::Redraw);
+                self.notification_panel_visible = !self.notification_panel_visible;
+                return Some(ShellAction::OpenNotificationCenter);
             }
             return None;
         }
