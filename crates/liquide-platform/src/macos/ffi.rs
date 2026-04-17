@@ -275,6 +275,9 @@ unsafe extern "C" {
 /// wrapper around `sel_registerName`.
 #[inline]
 pub unsafe fn sel(name: &[u8]) -> SEL {
+    // SAFETY: The caller passes a null-terminated byte literal.
+    // sel_registerName is an ObjC runtime function that returns a
+    // valid SEL for any C string.
     unsafe { sel_registerName(name.as_ptr() as *const c_char) }
 }
 
@@ -285,6 +288,9 @@ pub unsafe fn sel(name: &[u8]) -> SEL {
 /// The name must be a valid null-terminated C string.
 #[inline]
 pub unsafe fn class(name: &[u8]) -> Class {
+    // SAFETY: The caller passes a null-terminated byte literal.
+    // objc_getClass is an ObjC runtime function that returns a valid
+    // Class (or null if the class doesn't exist).
     unsafe { objc_getClass(name.as_ptr() as *const c_char) }
 }
 
@@ -296,12 +302,23 @@ pub unsafe fn class(name: &[u8]) -> Class {
 // correct function pointer type for each call signature.  These helpers
 // provide the most commonly used signatures.  More exotic signatures
 // (e.g. returning NSRect by value) require `objc_msgSend_stret` on some
-// architectures; on 64-bit x86 and ARM64 macOS, structs up to 2 registers
-// are returned in registers so plain `objc_msgSend` suffices for NSRect.
+// architectures; on 64-bit macOS (both x86_64 and arm64), structs up to
+// 2 registers are returned in registers so plain `objc_msgSend` suffices
+// for NSRect.
+//
+// SAFETY (applies to all msg_send_* functions below):
+// Each function transmutes `objc_msgSend` to a function pointer matching
+// the ObjC method's C calling convention. The transmute is sound because:
+//   1. objc_msgSend is defined as a variadic extern "C" trampoline.
+//   2. The target signature matches the Objective-C method being invoked.
+//   3. The caller is responsible for passing a valid receiver and selector.
+// The resulting function pointer is immediately called with the provided
+// arguments.
 
 /// Send a message that returns `id` with no extra arguments.
 #[inline]
 pub unsafe fn msg_send_id(receiver: id, sel: SEL) -> id {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL) -> id =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -310,6 +327,7 @@ pub unsafe fn msg_send_id(receiver: id, sel: SEL) -> id {
 /// Send a message that returns `id` with one `id` argument.
 #[inline]
 pub unsafe fn msg_send_id_id(receiver: id, sel: SEL, arg: id) -> id {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL, id) -> id =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel, arg) }
@@ -318,6 +336,7 @@ pub unsafe fn msg_send_id_id(receiver: id, sel: SEL, arg: id) -> id {
 /// Send a message that returns `id` with one `BOOL` argument.
 #[inline]
 pub unsafe fn msg_send_id_bool(receiver: id, sel: SEL, arg: BOOL) -> id {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL, BOOL) -> id =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel, arg) }
@@ -326,6 +345,7 @@ pub unsafe fn msg_send_id_bool(receiver: id, sel: SEL, arg: BOOL) -> id {
 /// Send a message that returns nothing with no arguments.
 #[inline]
 pub unsafe fn msg_send_void(receiver: id, sel: SEL) {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL) =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -334,6 +354,7 @@ pub unsafe fn msg_send_void(receiver: id, sel: SEL) {
 /// Send a message that returns nothing with one `BOOL` argument.
 #[inline]
 pub unsafe fn msg_send_void_bool(receiver: id, sel: SEL, arg: BOOL) {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL, BOOL) =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel, arg) }
@@ -342,6 +363,7 @@ pub unsafe fn msg_send_void_bool(receiver: id, sel: SEL, arg: BOOL) {
 /// Send a message that returns nothing with one `NSInteger` argument.
 #[inline]
 pub unsafe fn msg_send_void_nsinteger(receiver: id, sel: SEL, arg: NSInteger) {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL, NSInteger) =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel, arg) }
@@ -350,6 +372,7 @@ pub unsafe fn msg_send_void_nsinteger(receiver: id, sel: SEL, arg: NSInteger) {
 /// Send a message that returns nothing with one `id` argument.
 #[inline]
 pub unsafe fn msg_send_void_id(receiver: id, sel: SEL, arg: id) {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL, id) =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel, arg) }
@@ -358,6 +381,7 @@ pub unsafe fn msg_send_void_id(receiver: id, sel: SEL, arg: id) {
 /// Send a message that returns a `BOOL` with no extra arguments.
 #[inline]
 pub unsafe fn msg_send_bool(receiver: id, sel: SEL) -> BOOL {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL) -> BOOL =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -366,6 +390,7 @@ pub unsafe fn msg_send_bool(receiver: id, sel: SEL) -> BOOL {
 /// Send a message that returns an `NSUInteger` with no extra arguments.
 #[inline]
 pub unsafe fn msg_send_nsuinteger(receiver: id, sel: SEL) -> NSUInteger {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL) -> NSUInteger =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -374,6 +399,7 @@ pub unsafe fn msg_send_nsuinteger(receiver: id, sel: SEL) -> NSUInteger {
 /// Send a message that returns an `NSInteger` with no extra arguments.
 #[inline]
 pub unsafe fn msg_send_nsinteger(receiver: id, sel: SEL) -> NSInteger {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL) -> NSInteger =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -382,6 +408,7 @@ pub unsafe fn msg_send_nsinteger(receiver: id, sel: SEL) -> NSInteger {
 /// Send a message that returns a `u16` with no extra arguments.
 #[inline]
 pub unsafe fn msg_send_u16(receiver: id, sel: SEL) -> u16 {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL) -> u16 =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -390,6 +417,7 @@ pub unsafe fn msg_send_u16(receiver: id, sel: SEL) -> u16 {
 /// Send a message that returns a `u64` with no extra arguments.
 #[inline]
 pub unsafe fn msg_send_u64(receiver: id, sel: SEL) -> u64 {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL) -> u64 =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -398,6 +426,7 @@ pub unsafe fn msg_send_u64(receiver: id, sel: SEL) -> u64 {
 /// Send a message that returns a `CGFloat` with no extra arguments.
 #[inline]
 pub unsafe fn msg_send_cgfloat(receiver: id, sel: SEL) -> CGFloat {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL) -> CGFloat =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -406,6 +435,7 @@ pub unsafe fn msg_send_cgfloat(receiver: id, sel: SEL) -> CGFloat {
 /// Send a message that returns an NSPoint with no extra arguments.
 #[inline]
 pub unsafe fn msg_send_nspoint(receiver: id, sel: SEL) -> NSPoint {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL) -> NSPoint =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -417,6 +447,8 @@ pub unsafe fn msg_send_nspoint(receiver: id, sel: SEL) -> NSPoint {
 /// is returned in registers, so plain `objc_msgSend` is correct.
 #[inline]
 pub unsafe fn msg_send_nsrect(receiver: id, sel: SEL) -> NSRect {
+    // SAFETY: See section-level SAFETY comment above. On 64-bit macOS,
+    // NSRect (4 doubles = 32 bytes) is returned in registers.
     let f: unsafe extern "C" fn(id, SEL) -> NSRect =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel) }
@@ -436,6 +468,8 @@ pub unsafe fn msg_send_init_window(
     backing: NSUInteger,
     defer: BOOL,
 ) -> id {
+    // SAFETY: See section-level SAFETY comment. This signature matches
+    // NSWindow's initWithContentRect:styleMask:backing:defer: exactly.
     let f: unsafe extern "C" fn(id, SEL, NSRect, NSUInteger, NSUInteger, BOOL) -> id =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel, content_rect, style_mask, backing, defer) }
@@ -455,6 +489,8 @@ pub unsafe fn msg_send_next_event(
     mode: id,
     dequeue: BOOL,
 ) -> id {
+    // SAFETY: See section-level SAFETY comment. This signature matches
+    // NSApplication's nextEventMatchingMask:untilDate:inMode:dequeue:.
     let f: unsafe extern "C" fn(id, SEL, u64, id, id, BOOL) -> id =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel, mask, until_date, mode, dequeue) }
@@ -463,6 +499,7 @@ pub unsafe fn msg_send_next_event(
 /// Send a message that returns nothing with one NSRect argument.
 #[inline]
 pub unsafe fn msg_send_void_nsrect(receiver: id, sel: SEL, rect: NSRect) {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL, NSRect) =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel, rect) }
@@ -471,6 +508,7 @@ pub unsafe fn msg_send_void_nsrect(receiver: id, sel: SEL, rect: NSRect) {
 /// Send a message that returns `id` with one `*const c_char` (UTF-8) argument.
 #[inline]
 pub unsafe fn msg_send_id_cstr(receiver: id, sel: SEL, arg: *const c_char) -> id {
+    // SAFETY: See section-level SAFETY comment above.
     let f: unsafe extern "C" fn(id, SEL, *const c_char) -> id =
         unsafe { std::mem::transmute(objc_msgSend as *const c_void) };
     unsafe { f(receiver, sel, arg) }
@@ -488,6 +526,9 @@ pub unsafe fn msg_send_id_cstr(receiver: id, sel: SEL, arg: *const c_char) -> id
 /// `NSAutoreleasePool` must be on the stack).
 #[inline]
 pub unsafe fn nsstring(s: &str) -> id {
+    // SAFETY: ObjC runtime calls to alloc and initWithUTF8String:.
+    // The CString ensures a valid null-terminated buffer. Must be called
+    // within an active @autoreleasepool.
     let cls = unsafe { class(b"NSString\0") };
     let alloc = unsafe { msg_send_id(cls, sel(b"alloc\0")) };
     let c_str = CString::new(s).expect("interior NUL in string passed to nsstring()");

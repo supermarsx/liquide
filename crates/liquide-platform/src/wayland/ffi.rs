@@ -44,6 +44,8 @@ pub struct wl_interface {
     pub events: *const wl_message,
 }
 
+// SAFETY: wl_interface contains only static data (name, signatures, method/event
+// counts, and pointers to static tables). It is effectively read-only after init.
 unsafe impl Send for wl_interface {}
 unsafe impl Sync for wl_interface {}
 
@@ -55,6 +57,8 @@ pub struct wl_message {
     pub types: *const *const wl_interface,
 }
 
+// SAFETY: wl_message contains only static data (name, signature, type pointers).
+// All fields point to static protocol definitions and are never mutated.
 unsafe impl Send for wl_message {}
 unsafe impl Sync for wl_message {}
 

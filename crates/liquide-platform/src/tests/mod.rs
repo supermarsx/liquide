@@ -5,3 +5,4 @@ mod tray_tests;
 mod notification_tests;
 mod dnd_tests;
 mod keymap_tests;
+mod platform_tests;

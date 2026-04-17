@@ -94,8 +94,10 @@ unsafe extern "system" fn wndproc(
     lp: ffi::LPARAM,
 ) -> ffi::LRESULT {
     // During WM_CREATE the user-data is not yet set; fall through to default.
+    // SAFETY: GetWindowLongPtrW is safe on any valid HWND; returns 0 if not yet set.
     let user_ptr = unsafe { ffi::GetWindowLongPtrW(hwnd, ffi::GWLP_USERDATA) };
     if user_ptr == 0 {
+        // SAFETY: DefWindowProcW is safe to call with any valid window message.
         return unsafe { ffi::DefWindowProcW(hwnd, msg, wp, lp) };
     }
 
@@ -108,6 +110,8 @@ unsafe extern "system" fn wndproc(
     // creating a `&mut` reference, which would be UB due to reentrancy.
     macro_rules! push_event {
         ($event:expr) => {
+            // SAFETY: The event_queue pointer is valid for the window's lifetime.
+            // We use raw pointer ops to avoid creating `&mut` references (UB due to reentrancy).
             unsafe { (*(*wd.event_queue).get()).push_back($event) }
         };
     }
@@ -157,6 +161,8 @@ unsafe extern "system" fn wndproc(
         ffi::WM_PAINT => {
             // Must call BeginPaint/EndPaint to validate the update region.
             let mut ps = ffi::PAINTSTRUCT::default();
+            // SAFETY: BeginPaint/EndPaint are safe on a valid HWND during WM_PAINT.
+            // The PAINTSTRUCT is stack-allocated and properly initialized.
             unsafe {
                 ffi::BeginPaint(hwnd, &mut ps);
                 ffi::EndPaint(hwnd, &ps);
@@ -176,6 +182,7 @@ unsafe extern "system" fn wndproc(
             // If null, hide it (software cursor mode).
             if (lp & 0xFFFF) as i32 == ffi::HTCLIENT {
                 let cursor_val = wd.cursor.load(std::sync::atomic::Ordering::Relaxed);
+                // SAFETY: SetCursor accepts any cursor handle (or null to hide).
                 unsafe {
                     ffi::SetCursor(cursor_val as ffi::HCURSOR);
                 }
@@ -207,6 +214,7 @@ unsafe extern "system" fn wndproc(
             }
             // Let DefWindowProc handle Alt+F4 etc. for SYSKEYDOWN.
             if msg == ffi::WM_SYSKEYDOWN {
+                // SAFETY: DefWindowProcW is safe for default handling of system key messages.
                 return unsafe { ffi::DefWindowProcW(hwnd, msg, wp, lp) };
             }
             return 0;
@@ -221,6 +229,7 @@ unsafe extern "system" fn wndproc(
                 push_event!(PlatformEvent::KeyInput { handle, event });
             }
             if msg == ffi::WM_SYSKEYUP {
+                // SAFETY: DefWindowProcW is safe for default handling of system key messages.
                 return unsafe { ffi::DefWindowProcW(hwnd, msg, wp, lp) };
             }
             return 0;
@@ -248,6 +257,7 @@ unsafe extern "system" fn wndproc(
                     y,
                 },
             });
+            // SAFETY: SetCapture is safe on a valid HWND to capture mouse input.
             unsafe {
                 ffi::SetCapture(hwnd);
             }
@@ -266,6 +276,7 @@ unsafe extern "system" fn wndproc(
                     y,
                 },
             });
+            // SAFETY: ReleaseCapture is always safe to call.
             unsafe {
                 ffi::ReleaseCapture();
             }
@@ -339,6 +350,7 @@ unsafe extern "system" fn wndproc(
                 x: ffi::get_x_lparam(lp),
                 y: ffi::get_y_lparam(lp),
             };
+            // SAFETY: ScreenToClient is safe on a valid HWND with a valid POINT pointer.
             unsafe {
                 ffi::ScreenToClient(hwnd, &mut pt);
             }
@@ -360,6 +372,7 @@ unsafe extern "system" fn wndproc(
                 x: ffi::get_x_lparam(lp),
                 y: ffi::get_y_lparam(lp),
             };
+            // SAFETY: ScreenToClient is safe on a valid HWND with a valid POINT pointer.
             unsafe {
                 ffi::ScreenToClient(hwnd, &mut pt);
             }
@@ -381,7 +394,10 @@ unsafe extern "system" fn wndproc(
             push_event!(PlatformEvent::DpiChanged { handle, dpi_scale });
             // Move / resize window to the suggested rectangle.
             if lp != 0 {
+                // SAFETY: lp is non-zero, so it points to the suggested RECT
+                // provided by the OS in the WM_DPICHANGED message.
                 let suggested = unsafe { &*(lp as *const ffi::RECT) };
+                // SAFETY: SetWindowPos is safe on a valid HWND with valid parameters.
                 unsafe {
                     ffi::SetWindowPos(
                         hwnd,
@@ -400,6 +416,7 @@ unsafe extern "system" fn wndproc(
         _ => {}
     }
 
+    // SAFETY: DefWindowProcW handles any unprocessed message on a valid HWND.
     unsafe { ffi::DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
@@ -455,11 +472,13 @@ unsafe extern "system" fn monitor_enum_callback(
     _lprc: *mut ffi::RECT,
     lparam: ffi::LPARAM,
 ) -> ffi::BOOL {
+    // SAFETY: lparam is a valid pointer to Vec<MonitorInfo>, guaranteed by the caller.
     let monitors = unsafe { &mut *(lparam as *mut Vec<MonitorInfo>) };
 
     let mut mi = ffi::MONITORINFOEXW::default();
     mi.base.cbSize = std::mem::size_of::<ffi::MONITORINFOEXW>() as ffi::DWORD;
 
+    // SAFETY: GetMonitorInfoW is safe with a valid HMONITOR and properly sized struct.
     if unsafe { ffi::GetMonitorInfoW(hmonitor, &mut mi) } == 0 {
         return ffi::TRUE;
     }
@@ -559,6 +578,7 @@ impl NativeWindowHost for Win32WindowHost {
 
         let (x, y, w, h) = if is_desktop {
             // Full primary screen dimensions.
+            // SAFETY: GetSystemMetrics is always safe to call.
             let sw = unsafe { ffi::GetSystemMetrics(ffi::SM_CXSCREEN) };
             let sh = unsafe { ffi::GetSystemMetrics(ffi::SM_CYSCREEN) };
             (0, 0, sw, sh)
@@ -599,6 +619,7 @@ impl NativeWindowHost for Win32WindowHost {
 
         // Allocate per-window data on the heap.
         // Load the default arrow cursor for the hardware cursor.
+        // SAFETY: LoadCursorW with null hInstance loads a system cursor.
         let default_cursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), ffi::IDC_ARROW) };
         let data = Box::new(WindowData {
             handle,
@@ -644,6 +665,7 @@ impl NativeWindowHost for Win32WindowHost {
         }
 
         // Show the window.
+        // SAFETY: ShowWindow and UpdateWindow are safe on a valid HWND.
         unsafe {
             ffi::ShowWindow(hwnd, ffi::SW_SHOW);
             ffi::UpdateWindow(hwnd);
@@ -659,6 +681,7 @@ impl NativeWindowHost for Win32WindowHost {
 
         // Push a WindowCreated event.
         let mut rc = ffi::RECT::default();
+        // SAFETY: GetClientRect is safe on a valid HWND with a valid RECT pointer.
         unsafe {
             ffi::GetClientRect(hwnd, &mut rc);
         }
@@ -681,6 +704,8 @@ impl NativeWindowHost for Win32WindowHost {
         if let Some(info) = self.windows.remove(&handle.0) {
             // Clear user-data before destroying so wndproc won't
             // dereference a dangling pointer during teardown messages.
+            // SAFETY: SetWindowLongPtrW and DestroyWindow are safe on a valid HWND.
+            // We clear user-data first to prevent the wndproc from using stale pointers.
             unsafe {
                 ffi::SetWindowLongPtrW(info.hwnd, ffi::GWLP_USERDATA, 0);
                 ffi::DestroyWindow(info.hwnd);
@@ -735,6 +760,7 @@ impl NativeWindowHost for Win32WindowHost {
                 "hidden" => ffi::SW_HIDE,
                 _ => ffi::SW_SHOW,
             };
+            // SAFETY: ShowWindow is safe on a valid HWND.
             unsafe {
                 ffi::ShowWindow(info.hwnd, cmd);
             }
@@ -749,6 +775,8 @@ impl NativeWindowHost for Win32WindowHost {
             } else {
                 ffi::HWND_TOP
             };
+            // SAFETY: SetWindowPos is safe on a valid HWND. SWP_NOMOVE | SWP_NOSIZE
+            // means only the Z-order is changed.
             unsafe {
                 ffi::SetWindowPos(
                     info.hwnd,
@@ -766,6 +794,7 @@ impl NativeWindowHost for Win32WindowHost {
 
     fn set_focus(&mut self, handle: NativeWindowHandle) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
+            // SAFETY: SetForegroundWindow is safe on a valid HWND.
             unsafe {
                 ffi::SetForegroundWindow(info.hwnd);
             }
@@ -803,6 +832,7 @@ impl TaskbarIntegration for Win32Taskbar {
     }
 }
 
+// SAFETY: Win32Taskbar is stateless and all methods are no-ops.
 unsafe impl Send for Win32Taskbar {}
 
 // ---------------------------------------------------------------------------
@@ -884,6 +914,8 @@ impl NativeTray for Win32Tray {
             nid.szTip[..copy_len].copy_from_slice(&tip[..copy_len]);
         }
 
+        // SAFETY: Shell_NotifyIconW with NIM_MODIFY updates an existing tray icon.
+        // The NOTIFYICONDATAW struct is properly initialized.
         unsafe {
             ffi::Shell_NotifyIconW(ffi::NIM_MODIFY, &mut nid);
         }
@@ -896,6 +928,7 @@ impl NativeTray for Win32Tray {
             nid.cbSize = std::mem::size_of::<ffi::NOTIFYICONDATAW>() as ffi::DWORD;
             nid.hWnd = self.msg_hwnd;
             nid.uID = info.uid;
+            // SAFETY: Shell_NotifyIconW with NIM_DELETE removes a tray icon.
             unsafe {
                 ffi::Shell_NotifyIconW(ffi::NIM_DELETE, &mut nid);
             }
@@ -916,6 +949,7 @@ struct Win32Notifications {
     next_id: u32,
 }
 
+// SAFETY: Win32Notifications is only used from the platform's owning thread.
 unsafe impl Send for Win32Notifications {}
 
 impl Win32Notifications {
@@ -945,6 +979,7 @@ impl NativeNotifications for Win32Notifications {
 /// Keymap translator that delegates to `input::scancode_to_keycode`.
 struct Win32Keymap;
 
+// SAFETY: Win32Keymap is stateless — safe to send between threads.
 unsafe impl Send for Win32Keymap {}
 
 impl KeymapTranslator for Win32Keymap {
@@ -1024,7 +1059,8 @@ impl Win32Platform {
             cbWndExtra: 0,
             hInstance: hinstance,
             hIcon: ptr::null_mut(),
-            hCursor: unsafe { ffi::LoadCursorW(ptr::null_mut(), ffi::IDC_ARROW) },
+            hCursor: // SAFETY: LoadCursorW with null hInstance loads systems cursors.
+                     unsafe { ffi::LoadCursorW(ptr::null_mut(), ffi::IDC_ARROW) },
             hbrBackground: ptr::null_mut(),
             lpszMenuName: ptr::null(),
             lpszClassName: class_name_wide.as_ptr(),
@@ -1059,11 +1095,15 @@ impl Win32Platform {
             lpszClassName: msg_class_wide.as_ptr(),
             hIconSm: ptr::null_mut(),
         };
+        // SAFETY: RegisterClassExW registers the message-only window class.
+        // The struct is fully initialised above.
         unsafe {
             ffi::RegisterClassExW(&msg_wc);
         }
 
         let msg_title = to_wide("");
+        // SAFETY: CreateWindowExW creates a hidden message-only window.
+        // All parameters are valid and the class was just registered.
         let msg_hwnd = unsafe {
             ffi::CreateWindowExW(
                 0,
@@ -1125,6 +1165,8 @@ impl Win32Platform {
         // queue. The MSG struct is valid.
         while unsafe { ffi::PeekMessageW(&mut msg, ptr::null_mut(), 0, 0, ffi::PM_REMOVE) != 0 } {
             if msg.message == ffi::WM_QUIT {
+                // SAFETY: The event_queue UnsafeCell is only accessed from
+                // the message-loop thread.  No concurrent access is possible.
                 unsafe { (*self.event_queue.get()).push_back(PlatformEvent::Quit) };
                 return;
             }
@@ -1144,6 +1186,8 @@ impl Drop for Win32Platform {
         let handles: Vec<u64> = self.window_host.windows.keys().copied().collect();
         for h in handles {
             if let Some(info) = self.window_host.windows.remove(&h) {
+                // SAFETY: Clearing user-data and destroying windows during teardown.
+                // All HWNDs are valid because they were created by this platform.
                 unsafe {
                     ffi::SetWindowLongPtrW(info.hwnd, ffi::GWLP_USERDATA, 0);
                     ffi::DestroyWindow(info.hwnd);
@@ -1159,6 +1203,7 @@ impl Drop for Win32Platform {
 
         // Destroy the hidden message window.
         if !self.msg_hwnd.is_null() {
+            // SAFETY: msg_hwnd is a valid HWND created in `new()`.
             unsafe {
                 ffi::DestroyWindow(self.msg_hwnd);
             }
@@ -1166,6 +1211,8 @@ impl Drop for Win32Platform {
 
         // Unregister the window class.
         if self.class_atom != 0 {
+            // SAFETY: UnregisterClassW is safe with the class name and hinstance
+            // that were used to register the class.
             unsafe {
                 ffi::UnregisterClassW(self.class_name_wide.as_ptr(), self.hinstance);
             }
@@ -1210,7 +1257,7 @@ impl PlatformBackend for Win32Platform {
 
     fn poll_event(&mut self) -> Option<PlatformEvent> {
         // First drain any already-queued events.
-        // Safety: we have &mut self, so no other Rust code can access
+        // SAFETY: we have &mut self, so no other Rust code can access
         // the event_queue concurrently. The wndproc only runs during
         // pump_messages below (same thread).
         let queue = unsafe { &mut *self.event_queue.get() };
@@ -1220,6 +1267,7 @@ impl PlatformBackend for Win32Platform {
         // Pump the Win32 message queue.
         self.pump_messages();
         // Return the next event, if any.
+        // SAFETY: same reasoning as above — exclusive &mut self access.
         let queue = unsafe { &mut *self.event_queue.get() };
         queue.pop_front()
     }
@@ -1232,6 +1280,7 @@ impl PlatformBackend for Win32Platform {
         // backend's looping behaviour.
         loop {
             // Drain any already-queued events first.
+            // SAFETY: exclusive &mut self access; no concurrent queue mutation.
             let queue = unsafe { &mut *self.event_queue.get() };
             if let Some(ev) = queue.pop_front() {
                 return ev;
@@ -1239,7 +1288,7 @@ impl PlatformBackend for Win32Platform {
 
             // Block until a message arrives.
             let mut msg = ffi::MSG::default();
-            // Safety: GetMessageW blocks until a message is available.
+            // SAFETY: GetMessageW blocks until a message is available.
             // Return value 0 = WM_QUIT, -1 = error.
             let ret = unsafe { ffi::GetMessageW(&mut msg, ptr::null_mut(), 0, 0) };
 
@@ -1247,6 +1296,8 @@ impl PlatformBackend for Win32Platform {
                 return PlatformEvent::Quit;
             }
 
+            // SAFETY: TranslateMessage and DispatchMessageW are standard
+            // message-loop calls; the MSG struct is valid.
             unsafe {
                 ffi::TranslateMessage(&msg);
                 ffi::DispatchMessageW(&msg);
@@ -1329,9 +1380,9 @@ impl PlatformBackend for Win32Platform {
             bmiColors: [ffi::RGBQUAD::default()],
         };
 
-        // Safety: GetDC / SetDIBitsToDevice / ReleaseDC are standard GDI
-        // calls. The pixel buffer must be valid for `width * height * 4`
-        // bytes, which is checked by the caller.
+        // SAFETY: GetDC / SetDIBitsToDevice / ReleaseDC are standard GDI
+        // calls. The pixel buffer is valid for `width * height * 4` bytes.
+        // The HWND and bitmap info are valid for the duration of this call.
         unsafe {
             let hdc = ffi::GetDC(hwnd);
             if hdc.is_null() {
@@ -1361,8 +1412,9 @@ impl PlatformBackend for Win32Platform {
 
     fn request_redraw(&mut self, handle: NativeWindowHandle) {
         if let Some(info) = self.window_host.windows.get(&handle.0) {
-            // Safety: InvalidateRect with a null RECT invalidates the entire
+            // SAFETY: InvalidateRect with a null RECT invalidates the entire
             // client area, causing a WM_PAINT message to be posted.
+            // The HWND is valid because it's in our window map.
             unsafe {
                 ffi::InvalidateRect(info.hwnd, ptr::null(), ffi::FALSE);
             }
@@ -1393,6 +1445,7 @@ impl PlatformBackend for Win32Platform {
         };
 
         if let Some(info) = self.window_host.windows.get(&handle.0) {
+            // SAFETY: LoadCursorW with null hInstance loads a system cursor.
             let hcursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), cursor_id) };
             // Store the cursor handle in the WindowData so the wndproc
             // uses it on WM_SETCURSOR.
@@ -1400,6 +1453,7 @@ impl PlatformBackend for Win32Platform {
                 .cursor
                 .store(hcursor as isize, std::sync::atomic::Ordering::Relaxed);
             // Also set it immediately (in case we're already in the client area).
+            // SAFETY: SetCursor is safe with any cursor handle.
             unsafe {
                 ffi::SetCursor(hcursor);
             }
@@ -1414,6 +1468,7 @@ impl PlatformBackend for Win32Platform {
             info._data
                 .cursor
                 .store(0, std::sync::atomic::Ordering::Relaxed);
+            // SAFETY: SetCursor(null) hides the cursor. Always safe to call.
             unsafe {
                 ffi::SetCursor(ptr::null_mut());
             }
@@ -1422,13 +1477,72 @@ impl PlatformBackend for Win32Platform {
 
     fn show_cursor(&mut self, handle: NativeWindowHandle) {
         if let Some(info) = self.window_host.windows.get(&handle.0) {
+            // SAFETY: LoadCursorW with null hInstance loads a system cursor.
             let hcursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), ffi::IDC_ARROW) };
             info._data
                 .cursor
                 .store(hcursor as isize, std::sync::atomic::Ordering::Relaxed);
+            // SAFETY: SetCursor is safe with any cursor handle.
             unsafe {
                 ffi::SetCursor(hcursor);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_wide_ascii_string() {
+        let wide = to_wide("ABC");
+        // 'A'=0x41, 'B'=0x42, 'C'=0x43, null=0x00
+        assert_eq!(wide, vec![0x41, 0x42, 0x43, 0x00]);
+    }
+
+    #[test]
+    fn to_wide_empty_string() {
+        let wide = to_wide("");
+        assert_eq!(wide, vec![0x00]);
+    }
+
+    #[test]
+    fn to_wide_unicode_string() {
+        // '€' is U+20AC → single UTF-16 code unit 0x20AC
+        let wide = to_wide("€");
+        assert_eq!(wide, vec![0x20AC, 0x00]);
+    }
+
+    #[test]
+    fn from_wide_ascii() {
+        let wide = [0x48u16, 0x69, 0x00]; // "Hi\0"
+        assert_eq!(from_wide(&wide), "Hi");
+    }
+
+    #[test]
+    fn from_wide_stops_at_null() {
+        let wide = [0x41u16, 0x42, 0x00, 0x43, 0x44];
+        assert_eq!(from_wide(&wide), "AB");
+    }
+
+    #[test]
+    fn from_wide_no_null_terminator() {
+        let wide = [0x58u16, 0x59, 0x5A]; // "XYZ" with no null
+        assert_eq!(from_wide(&wide), "XYZ");
+    }
+
+    #[test]
+    fn to_wide_roundtrip() {
+        let original = "Hello Platform";
+        let wide = to_wide(original);
+        let back = from_wide(&wide);
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn timestamp_us_is_nonzero() {
+        let ts = timestamp_us();
+        assert!(ts > 0);
     }
 }

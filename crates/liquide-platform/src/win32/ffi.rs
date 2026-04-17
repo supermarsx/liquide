@@ -94,7 +94,8 @@ pub struct MSG {
 
 impl Default for MSG {
     fn default() -> Self {
-        // Safety: MSG is a plain-old-data struct; zeroed memory is valid.
+        // SAFETY: MSG is a plain-old-data struct; zeroed memory is a valid
+        // representation (all handles are null, all integers are 0).
         unsafe { std::mem::zeroed() }
     }
 }
@@ -167,7 +168,8 @@ pub struct MONITORINFOEXW {
 
 impl Default for MONITORINFOEXW {
     fn default() -> Self {
-        // Safety: plain-old-data struct; zeroed memory is valid.
+        // SAFETY: MONITORINFOEXW is a plain-old-data struct; zeroed memory is
+        // a valid representation.
         unsafe { std::mem::zeroed() }
     }
 }
@@ -185,7 +187,8 @@ pub struct PAINTSTRUCT {
 
 impl Default for PAINTSTRUCT {
     fn default() -> Self {
-        // Safety: plain-old-data struct; zeroed memory is valid.
+        // SAFETY: PAINTSTRUCT is a plain-old-data struct; zeroed memory is a
+        // valid representation.
         unsafe { std::mem::zeroed() }
     }
 }
@@ -210,7 +213,8 @@ pub struct NOTIFYICONDATAW {
 
 impl Default for NOTIFYICONDATAW {
     fn default() -> Self {
-        // Safety: plain-old-data struct; zeroed memory is valid.
+        // SAFETY: NOTIFYICONDATAW is a plain-old-data struct; zeroed memory is
+        // a valid representation (all handles null, all integers 0).
         unsafe { std::mem::zeroed() }
     }
 }
@@ -526,6 +530,80 @@ pub fn get_y_lparam(lp: LPARAM) -> i32 {
 #[inline]
 pub fn get_wheel_delta_wparam(wp: WPARAM) -> i16 {
     hiword(wp) as i16
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loword_extracts_low_16_bits() {
+        assert_eq!(loword(0x1234_5678), 0x5678);
+    }
+
+    #[test]
+    fn loword_zero() {
+        assert_eq!(loword(0), 0);
+    }
+
+    #[test]
+    fn hiword_extracts_high_16_bits() {
+        assert_eq!(hiword(0x1234_5678), 0x1234);
+    }
+
+    #[test]
+    fn hiword_zero() {
+        assert_eq!(hiword(0), 0);
+    }
+
+    #[test]
+    fn get_x_lparam_positive() {
+        // lparam with x=100, y=200 → low word = 100
+        let lp: LPARAM = 200 << 16 | 100;
+        assert_eq!(get_x_lparam(lp), 100);
+    }
+
+    #[test]
+    fn get_x_lparam_negative() {
+        // Negative coordinates are sign-extended from 16-bit
+        let lp: LPARAM = ((-50i16 as u16) as isize) & 0xFFFF;
+        assert_eq!(get_x_lparam(lp), -50);
+    }
+
+    #[test]
+    fn get_y_lparam_positive() {
+        let lp: LPARAM = 300 << 16 | 50;
+        assert_eq!(get_y_lparam(lp), 300);
+    }
+
+    #[test]
+    fn get_y_lparam_negative() {
+        let lp: LPARAM = ((-25i16 as u16 as isize) << 16) | 10;
+        assert_eq!(get_y_lparam(lp), -25);
+    }
+
+    #[test]
+    fn get_wheel_delta_positive() {
+        // WHEEL_DELTA (120) in high word
+        let wp: WPARAM = (120u16 as usize) << 16;
+        assert_eq!(get_wheel_delta_wparam(wp), 120);
+    }
+
+    #[test]
+    fn get_wheel_delta_negative() {
+        let wp: WPARAM = ((-120i16 as u16) as usize) << 16;
+        assert_eq!(get_wheel_delta_wparam(wp), -120);
+    }
+
+    #[test]
+    fn loword_max_value() {
+        assert_eq!(loword(0xFFFF), 0xFFFF);
+    }
+
+    #[test]
+    fn hiword_max_value() {
+        assert_eq!(hiword(0xFFFF_0000), 0xFFFF);
+    }
 }
 
 // ---------------------------------------------------------------------------

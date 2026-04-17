@@ -163,6 +163,9 @@ struct IUnknownVtbl {
 
 /// Read the vtable pointer from a COM object and return the function at `slot`.
 unsafe fn vtable_fn(obj: *mut c_void, slot: usize) -> *const c_void {
+    // SAFETY: obj is a valid COM object pointer. The first pointer-sized value
+    // at obj is the vtable pointer. We index into the vtable at `slot`.
+    // Caller must ensure `slot` is within the interface's vtable bounds.
     unsafe {
         let vtbl = *(obj as *const *const *const c_void);
         *vtbl.add(slot)
@@ -227,6 +230,8 @@ impl DxgiPresenter {
     /// Returns `Err` if D3D11/DXGI initialization fails (the caller
     /// should fall back to GDI presentation).
     pub fn new(hwnd: ffi::HWND, width: u32, height: u32) -> Result<Self, String> {
+        // SAFETY: Delegates to init() which performs COM initialization.
+        // hwnd must be a valid window handle.
         unsafe { Self::init(hwnd, width, height) }
     }
 
@@ -237,6 +242,8 @@ impl DxgiPresenter {
         let mut feature_level: u32 = 0;
         let levels = [D3D_FEATURE_LEVEL_11_0];
 
+        // SAFETY: D3D11CreateDevice is called with valid parameters.
+        // Output pointers are stack-allocated and properly initialized to null.
         let hr = unsafe {
             D3D11CreateDevice(
                 ptr::null_mut(),            // default adapter
@@ -257,8 +264,11 @@ impl DxgiPresenter {
 
         // 2. Create DXGI factory.
         let mut factory: *mut c_void = ptr::null_mut();
+        // SAFETY: CreateDXGIFactory1 is called with a valid IID and output pointer.
         let hr = unsafe { CreateDXGIFactory1(&IID_IDXGI_FACTORY1, &mut factory) };
         if hr != S_OK || factory.is_null() {
+            // SAFETY: Releasing COM objects on failure path. device and context
+            // are non-null (checked above) and have a valid Release method.
             unsafe { Self::release(device); Self::release(context); }
             return Err(format!("CreateDXGIFactory1 failed: 0x{hr:08X}"));
         }
@@ -297,14 +307,19 @@ impl DxgiPresenter {
             desc: *const DXGI_SWAP_CHAIN_DESC,
             swap_chain: *mut *mut c_void,
         ) -> HRESULT;
+        // SAFETY: vtable_fn reads the CreateSwapChain function pointer from
+        // the IDXGIFactory vtable at slot 10. The factory pointer is valid.
+        // transmute is sound because we match the COM calling convention exactly.
         let create_sc: CreateSwapChainFn =
             unsafe { std::mem::transmute(vtable_fn(factory, 10)) };
+        // SAFETY: Calling CreateSwapChain through the vtable with valid params.
         let hr = unsafe { create_sc(factory, device, &sc_desc, &mut swap_chain) };
 
         // If flip-discard + tearing fails, try without tearing flag.
         if hr != S_OK || swap_chain.is_null() {
             let mut sc_desc_no_tear = sc_desc;
             sc_desc_no_tear.flags = 0;
+            // SAFETY: Retrying CreateSwapChain without tearing flag.
             let hr2 = unsafe { create_sc(factory, device, &sc_desc_no_tear, &mut swap_chain) };
 
             // If that also fails, try classic discard model.
@@ -313,8 +328,10 @@ impl DxgiPresenter {
                 sc_desc_fallback.swap_effect = DXGI_SWAP_EFFECT_DISCARD;
                 sc_desc_fallback.buffer_count = 1;
                 sc_desc_fallback.flags = 0;
+                // SAFETY: Retrying CreateSwapChain with classic discard model.
                 let hr3 = unsafe { create_sc(factory, device, &sc_desc_fallback, &mut swap_chain) };
                 if hr3 != S_OK || swap_chain.is_null() {
+                    // SAFETY: Releasing COM objects on failure path.
                     unsafe {
                         Self::release(factory);
                         Self::release(device);
@@ -331,6 +348,7 @@ impl DxgiPresenter {
         let tearing = hr == S_OK && !swap_chain.is_null();
 
         // Release factory (no longer needed).
+        // SAFETY: factory is a valid COM object.
         unsafe { Self::release(factory); }
 
         Ok(Self {
@@ -353,6 +371,10 @@ impl DxgiPresenter {
             self.resize(width, height)?;
         }
 
+        // SAFETY: All COM vtable calls below use valid interface pointers
+        // obtained during init(). Buffer bounds are validated before the
+        // UpdateSubresource call. The swap chain, context, and back buffer
+        // are all valid D3D11/DXGI objects.
         unsafe {
             // 1. Acquire the current back buffer.
             let mut back_buffer: *mut c_void = ptr::null_mut();
@@ -445,6 +467,8 @@ impl DxgiPresenter {
 
     /// Resize the swap chain buffers.
     fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
+        // SAFETY: ResizeBuffers is called through the IDXGISwapChain vtable
+        // on a valid swap chain. The transmute matches the COM ABI exactly.
         unsafe {
             // IDXGISwapChain::ResizeBuffers = vtable slot 13
             type ResizeBuffersFn = unsafe extern "system" fn(
@@ -471,6 +495,8 @@ impl DxgiPresenter {
     /// Release a COM object.
     unsafe fn release(obj: *mut c_void) {
         if !obj.is_null() {
+            // SAFETY: obj is non-null and was obtained from a COM creation
+            // function, so its vtable slot 2 is a valid IUnknown::Release.
             unsafe {
                 let vtbl = *(obj as *const *const *const c_void);
                 let release_fn: unsafe extern "system" fn(*mut c_void) -> u32 =
@@ -483,6 +509,8 @@ impl DxgiPresenter {
 
 impl Drop for DxgiPresenter {
     fn drop(&mut self) {
+        // SAFETY: All COM objects are valid and were created during init().
+        // Release in reverse order of dependency.
         unsafe {
             Self::release(self.swap_chain);
             Self::release(self.context);

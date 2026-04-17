@@ -352,66 +352,93 @@ pub struct XEvent {
 impl XEvent {
     /// Get the event type (first c_int field of every event struct).
     pub fn event_type(&self) -> c_int {
+        // SAFETY: The pad array is at least sizeof(c_int) bytes. Every
+        // X event struct starts with a c_int type_ field, so this read
+        // is always valid.
         unsafe { *(self.pad.as_ptr() as *const c_int) }
     }
 
     /// Reinterpret as a key event.
     pub fn as_key(&self) -> &XKeyEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for any X event.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XKeyEvent) }
     }
 
     /// Reinterpret as a button event.
     pub fn as_button(&self) -> &XButtonEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XButtonEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XButtonEvent) }
     }
 
     /// Reinterpret as a motion event.
     pub fn as_motion(&self) -> &XMotionEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XMotionEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XMotionEvent) }
     }
 
     /// Reinterpret as a crossing event.
     pub fn as_crossing(&self) -> &XCrossingEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XCrossingEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XCrossingEvent) }
     }
 
     /// Reinterpret as an expose event.
     pub fn as_expose(&self) -> &XExposeEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XExposeEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XExposeEvent) }
     }
 
     /// Reinterpret as a configure event.
     pub fn as_configure(&self) -> &XConfigureEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XConfigureEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XConfigureEvent) }
     }
 
     /// Reinterpret as a focus change event.
     pub fn as_focus_change(&self) -> &XFocusChangeEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XFocusChangeEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XFocusChangeEvent) }
     }
 
     /// Reinterpret as a client message event.
     pub fn as_client_message(&self) -> &XClientMessageEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XClientMessageEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XClientMessageEvent) }
     }
 
     /// Reinterpret as a property event.
     pub fn as_property(&self) -> &XPropertyEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XPropertyEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XPropertyEvent) }
     }
 
     /// Reinterpret as a map event.
     pub fn as_map(&self) -> &XMapEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XMapEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XMapEvent) }
     }
 
     /// Reinterpret as an unmap event.
     pub fn as_unmap(&self) -> &XUnmapEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XUnmapEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XUnmapEvent) }
     }
 
     /// Reinterpret as a destroy window event.
     pub fn as_destroy(&self) -> &XDestroyWindowEvent {
+        // SAFETY: XEvent's pad is 192 bytes — large enough for XDestroyWindowEvent.
+        // Caller checks event_type() before using this accessor.
         unsafe { &*(self.pad.as_ptr() as *const XDestroyWindowEvent) }
     }
 

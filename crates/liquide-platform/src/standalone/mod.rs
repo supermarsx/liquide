@@ -308,3 +308,165 @@ impl PlatformBackend for StandalonePlatform {
         // Show DRM hardware cursor plane.
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_is_1920x1080() {
+        let config = StandaloneConfig::default();
+        assert_eq!(config.width, 1920);
+        assert_eq!(config.height, 1080);
+        assert!(config.hardware_cursor);
+    }
+
+    #[test]
+    fn creates_successfully_with_default_config() {
+        let platform = StandalonePlatform::new(StandaloneConfig::default());
+        assert!(platform.is_ok());
+    }
+
+    #[test]
+    fn creates_with_custom_dimensions() {
+        let config = StandaloneConfig {
+            width: 2560,
+            height: 1440,
+            hardware_cursor: false,
+        };
+        let platform = StandalonePlatform::new(config).unwrap();
+        assert_eq!(platform.dimensions(), (2560, 1440));
+    }
+
+    #[test]
+    fn display_reports_single_monitor() {
+        let platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let monitors = platform.display().monitors();
+        assert_eq!(monitors.len(), 1);
+        assert_eq!(monitors[0].name, "DRM-1");
+        assert!(monitors[0].primary);
+        assert_eq!(monitors[0].refresh_rate_hz, 60);
+    }
+
+    #[test]
+    fn display_primary_monitor_matches_first() {
+        let platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let primary = platform.display().primary_monitor();
+        assert!(primary.is_some());
+        assert_eq!(primary.unwrap().id, 1);
+    }
+
+    #[test]
+    fn display_virtual_screen_matches_config() {
+        let config = StandaloneConfig {
+            width: 3840,
+            height: 2160,
+            hardware_cursor: true,
+        };
+        let platform = StandalonePlatform::new(config).unwrap();
+        let rect = platform.display().virtual_screen_rect();
+        assert_eq!(rect, Rect::new(0.0, 0.0, 3840.0, 2160.0));
+    }
+
+    #[test]
+    fn platform_name_is_standalone_drm() {
+        let platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        assert_eq!(platform.platform_name(), "standalone-drm");
+    }
+
+    #[test]
+    fn poll_event_returns_none_when_empty() {
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        assert!(platform.poll_event().is_none());
+    }
+
+    #[test]
+    fn push_event_and_poll() {
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let handle = NativeWindowHandle(1);
+        platform.push_event(PlatformEvent::FocusGained { handle });
+        let event = platform.poll_event();
+        assert!(event.is_some());
+        assert!(matches!(event.unwrap(), PlatformEvent::FocusGained { .. }));
+    }
+
+    #[test]
+    fn push_multiple_events_fifo_order() {
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let h = NativeWindowHandle(1);
+        platform.push_event(PlatformEvent::FocusGained { handle: h });
+        platform.push_event(PlatformEvent::FocusLost { handle: h });
+        platform.push_event(PlatformEvent::Quit);
+        assert!(matches!(
+            platform.poll_event().unwrap(),
+            PlatformEvent::FocusGained { .. }
+        ));
+        assert!(matches!(
+            platform.poll_event().unwrap(),
+            PlatformEvent::FocusLost { .. }
+        ));
+        assert!(matches!(platform.poll_event().unwrap(), PlatformEvent::Quit));
+        assert!(platform.poll_event().is_none());
+    }
+
+    #[test]
+    fn wait_event_returns_quit_when_empty() {
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let event = platform.wait_event();
+        assert!(matches!(event, PlatformEvent::Quit));
+    }
+
+    #[test]
+    fn present_frame_stores_pixels() {
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let handle = NativeWindowHandle(1);
+        let pixels = vec![0xFFu8; 100];
+        let result =
+            platform.present_frame(handle, &pixels, 10, 10, 40, PixelFormat::Bgra8);
+        assert!(result.is_ok());
+        assert_eq!(platform.last_frame().unwrap().len(), 100);
+    }
+
+    #[test]
+    fn last_frame_is_none_before_present() {
+        let platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        assert!(platform.last_frame().is_none());
+    }
+
+    #[test]
+    fn request_redraw_queues_event() {
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let handle = NativeWindowHandle(1);
+        platform.request_redraw(handle);
+        let event = platform.poll_event();
+        assert!(matches!(event, Some(PlatformEvent::WindowRedraw { .. })));
+    }
+
+    #[test]
+    fn set_cursor_shape_returns_false() {
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let handle = NativeWindowHandle(1);
+        assert!(!platform.set_cursor_shape(handle, "arrow"));
+    }
+
+    #[test]
+    fn window_host_create_and_destroy() {
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let params = crate::window_host::NativeWindowParams {
+            title: "Test".to_string(),
+            geometry: Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            window_type: "normal".to_string(),
+            parent: None,
+            app_id: "test".to_string(),
+        };
+        let handle = platform.window_host().create_window(params).unwrap();
+        assert!(platform.window_host().destroy_window(handle).is_ok());
+    }
+
+    #[test]
+    fn keymap_returns_default() {
+        let platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        assert_eq!(platform.keymap().platform_name(), "null");
+        assert!(platform.keymap().translate_scancode(42).is_none());
+    }
+}

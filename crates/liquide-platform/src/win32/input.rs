@@ -265,3 +265,201 @@ pub fn scancode_to_keycode(scancode: u32) -> Option<KeyCode> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::ffi;
+
+    // ── vk_to_keycode tests ─────────────────────────────────────────
+
+    #[test]
+    fn vk_letters_a_through_z() {
+        let expected = [
+            (ffi::VK_A, KeyCode::A),
+            (ffi::VK_B, KeyCode::B),
+            (ffi::VK_M, KeyCode::M),
+            (ffi::VK_Z, KeyCode::Z),
+        ];
+        for (vk, key) in expected {
+            assert_eq!(vk_to_keycode(vk), Some(key), "failed for VK 0x{vk:02X}");
+        }
+    }
+
+    #[test]
+    fn vk_digits_0_through_9() {
+        let expected = [
+            (ffi::VK_0, KeyCode::Digit0),
+            (ffi::VK_1, KeyCode::Digit1),
+            (ffi::VK_5, KeyCode::Digit5),
+            (ffi::VK_9, KeyCode::Digit9),
+        ];
+        for (vk, key) in expected {
+            assert_eq!(vk_to_keycode(vk), Some(key), "failed for VK 0x{vk:02X}");
+        }
+    }
+
+    #[test]
+    fn vk_function_keys_f1_through_f12() {
+        assert_eq!(vk_to_keycode(ffi::VK_F1), Some(KeyCode::F1));
+        assert_eq!(vk_to_keycode(ffi::VK_F6), Some(KeyCode::F6));
+        assert_eq!(vk_to_keycode(ffi::VK_F12), Some(KeyCode::F12));
+    }
+
+    #[test]
+    fn vk_arrow_keys() {
+        assert_eq!(vk_to_keycode(ffi::VK_UP), Some(KeyCode::ArrowUp));
+        assert_eq!(vk_to_keycode(ffi::VK_DOWN), Some(KeyCode::ArrowDown));
+        assert_eq!(vk_to_keycode(ffi::VK_LEFT), Some(KeyCode::ArrowLeft));
+        assert_eq!(vk_to_keycode(ffi::VK_RIGHT), Some(KeyCode::ArrowRight));
+    }
+
+    #[test]
+    fn vk_navigation_keys() {
+        assert_eq!(vk_to_keycode(ffi::VK_HOME), Some(KeyCode::Home));
+        assert_eq!(vk_to_keycode(ffi::VK_END), Some(KeyCode::End));
+        assert_eq!(vk_to_keycode(ffi::VK_PRIOR), Some(KeyCode::PageUp));
+        assert_eq!(vk_to_keycode(ffi::VK_NEXT), Some(KeyCode::PageDown));
+        assert_eq!(vk_to_keycode(ffi::VK_INSERT), Some(KeyCode::Insert));
+        assert_eq!(vk_to_keycode(ffi::VK_DELETE), Some(KeyCode::Delete));
+    }
+
+    #[test]
+    fn vk_modifier_keys_side_specific() {
+        assert_eq!(vk_to_keycode(ffi::VK_LSHIFT), Some(KeyCode::LeftShift));
+        assert_eq!(vk_to_keycode(ffi::VK_RSHIFT), Some(KeyCode::RightShift));
+        assert_eq!(vk_to_keycode(ffi::VK_LCONTROL), Some(KeyCode::LeftCtrl));
+        assert_eq!(vk_to_keycode(ffi::VK_RCONTROL), Some(KeyCode::RightCtrl));
+        assert_eq!(vk_to_keycode(ffi::VK_LMENU), Some(KeyCode::LeftAlt));
+        assert_eq!(vk_to_keycode(ffi::VK_RMENU), Some(KeyCode::RightAlt));
+        assert_eq!(vk_to_keycode(ffi::VK_LWIN), Some(KeyCode::LeftSuper));
+        assert_eq!(vk_to_keycode(ffi::VK_RWIN), Some(KeyCode::RightSuper));
+    }
+
+    #[test]
+    fn vk_generic_modifiers_fallback_to_left() {
+        assert_eq!(vk_to_keycode(ffi::VK_SHIFT), Some(KeyCode::LeftShift));
+        assert_eq!(vk_to_keycode(ffi::VK_CONTROL), Some(KeyCode::LeftCtrl));
+        assert_eq!(vk_to_keycode(ffi::VK_MENU), Some(KeyCode::LeftAlt));
+    }
+
+    #[test]
+    fn vk_oem_punctuation() {
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_COMMA), Some(KeyCode::Comma));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_PERIOD), Some(KeyCode::Period));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_2), Some(KeyCode::Slash));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_1), Some(KeyCode::Semicolon));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_7), Some(KeyCode::Quote));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_4), Some(KeyCode::BracketLeft));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_6), Some(KeyCode::BracketRight));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_5), Some(KeyCode::Backslash));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_MINUS), Some(KeyCode::Minus));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_PLUS), Some(KeyCode::Equal));
+        assert_eq!(vk_to_keycode(ffi::VK_OEM_3), Some(KeyCode::Grave));
+    }
+
+    #[test]
+    fn vk_common_keys() {
+        assert_eq!(vk_to_keycode(ffi::VK_ESCAPE), Some(KeyCode::Escape));
+        assert_eq!(vk_to_keycode(ffi::VK_RETURN), Some(KeyCode::Enter));
+        assert_eq!(vk_to_keycode(ffi::VK_TAB), Some(KeyCode::Tab));
+        assert_eq!(vk_to_keycode(ffi::VK_BACK), Some(KeyCode::Backspace));
+        assert_eq!(vk_to_keycode(ffi::VK_SPACE), Some(KeyCode::Space));
+    }
+
+    #[test]
+    fn vk_lock_keys() {
+        assert_eq!(vk_to_keycode(ffi::VK_CAPITAL), Some(KeyCode::CapsLock));
+        assert_eq!(vk_to_keycode(ffi::VK_NUMLOCK), Some(KeyCode::NumLock));
+        assert_eq!(vk_to_keycode(ffi::VK_SCROLL), Some(KeyCode::ScrollLock));
+    }
+
+    #[test]
+    fn vk_unknown_returns_none() {
+        assert!(vk_to_keycode(0x00).is_none());
+        assert!(vk_to_keycode(0xFF).is_none());
+        assert!(vk_to_keycode(0x07).is_none()); // undefined VK
+    }
+
+    #[test]
+    fn vk_context_menu() {
+        assert_eq!(vk_to_keycode(ffi::VK_APPS), Some(KeyCode::ContextMenu));
+    }
+
+    // ── scancode_to_keycode tests ───────────────────────────────────
+
+    #[test]
+    fn scancode_escape() {
+        assert_eq!(scancode_to_keycode(0x01), Some(KeyCode::Escape));
+    }
+
+    #[test]
+    fn scancode_digit_row() {
+        assert_eq!(scancode_to_keycode(0x02), Some(KeyCode::Digit1));
+        assert_eq!(scancode_to_keycode(0x0B), Some(KeyCode::Digit0));
+    }
+
+    #[test]
+    fn scancode_qwerty_row() {
+        assert_eq!(scancode_to_keycode(0x10), Some(KeyCode::Q));
+        assert_eq!(scancode_to_keycode(0x11), Some(KeyCode::W));
+        assert_eq!(scancode_to_keycode(0x12), Some(KeyCode::E));
+        assert_eq!(scancode_to_keycode(0x13), Some(KeyCode::R));
+        assert_eq!(scancode_to_keycode(0x14), Some(KeyCode::T));
+        assert_eq!(scancode_to_keycode(0x15), Some(KeyCode::Y));
+    }
+
+    #[test]
+    fn scancode_home_row() {
+        assert_eq!(scancode_to_keycode(0x1E), Some(KeyCode::A));
+        assert_eq!(scancode_to_keycode(0x1F), Some(KeyCode::S));
+        assert_eq!(scancode_to_keycode(0x20), Some(KeyCode::D));
+        assert_eq!(scancode_to_keycode(0x21), Some(KeyCode::F));
+    }
+
+    #[test]
+    fn scancode_function_keys() {
+        assert_eq!(scancode_to_keycode(0x3B), Some(KeyCode::F1));
+        assert_eq!(scancode_to_keycode(0x44), Some(KeyCode::F10));
+        assert_eq!(scancode_to_keycode(0x57), Some(KeyCode::F11));
+        assert_eq!(scancode_to_keycode(0x58), Some(KeyCode::F12));
+    }
+
+    #[test]
+    fn scancode_extended_arrow_keys() {
+        assert_eq!(scancode_to_keycode(0x148), Some(KeyCode::ArrowUp));
+        assert_eq!(scancode_to_keycode(0x150), Some(KeyCode::ArrowDown));
+        assert_eq!(scancode_to_keycode(0x14B), Some(KeyCode::ArrowLeft));
+        assert_eq!(scancode_to_keycode(0x14D), Some(KeyCode::ArrowRight));
+    }
+
+    #[test]
+    fn scancode_extended_navigation() {
+        assert_eq!(scancode_to_keycode(0x147), Some(KeyCode::Home));
+        assert_eq!(scancode_to_keycode(0x14F), Some(KeyCode::End));
+        assert_eq!(scancode_to_keycode(0x149), Some(KeyCode::PageUp));
+        assert_eq!(scancode_to_keycode(0x151), Some(KeyCode::PageDown));
+        assert_eq!(scancode_to_keycode(0x152), Some(KeyCode::Insert));
+        assert_eq!(scancode_to_keycode(0x153), Some(KeyCode::Delete));
+    }
+
+    #[test]
+    fn scancode_extended_modifiers() {
+        assert_eq!(scancode_to_keycode(0x11D), Some(KeyCode::RightCtrl));
+        assert_eq!(scancode_to_keycode(0x138), Some(KeyCode::RightAlt));
+        assert_eq!(scancode_to_keycode(0x15B), Some(KeyCode::LeftSuper));
+        assert_eq!(scancode_to_keycode(0x15C), Some(KeyCode::RightSuper));
+    }
+
+    #[test]
+    fn scancode_unknown_returns_none() {
+        assert!(scancode_to_keycode(0x00).is_none());
+        assert!(scancode_to_keycode(0xFFFF).is_none());
+        assert!(scancode_to_keycode(0x37).is_none()); // gap in table
+    }
+
+    #[test]
+    fn scancode_numpad_enter() {
+        assert_eq!(scancode_to_keycode(0x11C), Some(KeyCode::Enter));
+    }
+}

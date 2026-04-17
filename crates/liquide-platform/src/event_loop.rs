@@ -149,3 +149,120 @@ impl FramePresenter for NullFramePresenter {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_flow_continue_eq() {
+        assert_eq!(ControlFlow::Continue, ControlFlow::Continue);
+        assert_ne!(ControlFlow::Continue, ControlFlow::Exit);
+    }
+
+    #[test]
+    fn control_flow_exit_eq() {
+        assert_eq!(ControlFlow::Exit, ControlFlow::Exit);
+    }
+
+    #[test]
+    fn null_frame_presenter_supports_bgra8() {
+        let presenter = NullFramePresenter;
+        assert!(presenter.supports_format(PixelFormat::Bgra8));
+    }
+
+    #[test]
+    fn null_frame_presenter_supports_rgba8() {
+        let presenter = NullFramePresenter;
+        assert!(presenter.supports_format(PixelFormat::Rgba8));
+    }
+
+    #[test]
+    fn null_frame_presenter_present_ok() {
+        let mut presenter = NullFramePresenter;
+        let handle = NativeWindowHandle(1);
+        let pixels = [0u8; 16];
+        let result = presenter.present_frame(handle, &pixels, 2, 2, 8, PixelFormat::Bgra8);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn null_frame_presenter_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<NullFramePresenter>();
+    }
+
+    #[test]
+    fn null_frame_presenter_debug() {
+        let presenter = NullFramePresenter;
+        let debug = format!("{presenter:?}");
+        assert!(debug.contains("NullFramePresenter"));
+    }
+
+    #[test]
+    fn platform_event_quit_debug() {
+        let event = PlatformEvent::Quit;
+        let debug = format!("{event:?}");
+        assert!(debug.contains("Quit"));
+    }
+
+    #[test]
+    fn platform_event_window_created_fields() {
+        let handle = NativeWindowHandle(42);
+        let event = PlatformEvent::WindowCreated {
+            handle,
+            width: 800,
+            height: 600,
+        };
+        if let PlatformEvent::WindowCreated { handle: h, width, height } = event {
+            assert_eq!(h.0, 42);
+            assert_eq!(width, 800);
+            assert_eq!(height, 600);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn platform_event_dpi_changed() {
+        let event = PlatformEvent::DpiChanged {
+            handle: NativeWindowHandle(1),
+            dpi_scale: 2.0,
+        };
+        if let PlatformEvent::DpiChanged { dpi_scale, .. } = event {
+            assert!((dpi_scale - 2.0).abs() < f32::EPSILON);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn platform_event_file_drop() {
+        let event = PlatformEvent::FileDrop {
+            handle: NativeWindowHandle(1),
+            paths: vec!["/tmp/test.txt".to_string(), "/tmp/other.txt".to_string()],
+        };
+        if let PlatformEvent::FileDrop { paths, .. } = event {
+            assert_eq!(paths.len(), 2);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn platform_event_clone() {
+        let event = PlatformEvent::WindowResized {
+            handle: NativeWindowHandle(5),
+            width: 1024,
+            height: 768,
+        };
+        let cloned = event.clone();
+        if let PlatformEvent::WindowResized { handle, width, height } = cloned {
+            assert_eq!(handle.0, 5);
+            assert_eq!(width, 1024);
+            assert_eq!(height, 768);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+}

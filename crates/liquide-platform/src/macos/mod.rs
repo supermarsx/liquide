@@ -60,6 +60,8 @@ struct MacOSDisplayBackend;
 
 impl MacOSDisplayBackend {
     fn screen_size() -> (u32, u32) {
+        // SAFETY: CGMainDisplayID and CGDisplayPixels* are thread-safe
+        // Core Graphics queries that return immediate scalar values.
         unsafe {
             let display_id = ffi::CGMainDisplayID();
             let w = ffi::CGDisplayPixelsWide(display_id) as u32;
@@ -77,6 +79,9 @@ impl DisplayBackend for MacOSDisplayBackend {
 
         // Attempt to get the visible frame (work area excluding menu bar / dock).
         let work_area = unsafe {
+            // SAFETY: ObjC message sends to NSScreen class and the returned
+            // mainScreen instance. visibleFrame returns an NSRect by value.
+            // We handle a nil mainScreen by falling back to the geometry.
             let ns_screen_class = ffi::class(b"NSScreen\0");
             let main_screen = ffi::msg_send_id(ns_screen_class, ffi::sel(b"mainScreen\0"));
             if main_screen.is_null() {
@@ -94,6 +99,8 @@ impl DisplayBackend for MacOSDisplayBackend {
 
         // Get DPI scale (backing scale factor) from main screen.
         let dpi_scale = unsafe {
+            // SAFETY: ObjC message send to NSScreen for backingScaleFactor.
+            // mainScreen may return nil (handled below).
             let ns_screen_class = ffi::class(b"NSScreen\0");
             let main_screen = ffi::msg_send_id(ns_screen_class, ffi::sel(b"mainScreen\0"));
             if main_screen.is_null() {
@@ -124,6 +131,7 @@ impl DisplayBackend for MacOSDisplayBackend {
     }
 }
 
+// SAFETY: MacOSDisplayBackend is stateless — safe to send between threads.
 unsafe impl Send for MacOSDisplayBackend {}
 
 // ---------------------------------------------------------------------------
@@ -138,6 +146,7 @@ struct MacOSWindowHost {
     next_handle: u64,
 }
 
+// SAFETY: MacOSWindowHost is only accessed from the main (event-loop) thread.
 unsafe impl Send for MacOSWindowHost {}
 
 impl MacOSWindowHost {
@@ -182,6 +191,10 @@ impl NativeWindowHost for MacOSWindowHost {
 
         let style_mask = ffi::NSWindowStyleMaskDefault;
 
+        // SAFETY: All ObjC runtime calls below use valid class/selector
+        // pairs. NSAutoreleasePool, NSWindow alloc/init, setTitle, and
+        // makeKeyAndOrderFront are standard AppKit patterns. The nswindow
+        // pointer is checked for null after init.
         unsafe {
             // Create an autorelease pool for this scope.
             let pool_class = ffi::class(b"NSAutoreleasePool\0");
@@ -230,9 +243,9 @@ impl NativeWindowHost for MacOSWindowHost {
 
     fn destroy_window(&mut self, handle: NativeWindowHandle) -> PlatformResult<()> {
         if let Some(info) = self.windows.remove(&handle.0) {
+            // SAFETY: close and release are standard NSWindow cleanup messages.
+            // releasedWhenClosed was set to NO, so explicit release is required.
             unsafe {
-                // Close the window. Because we set releasedWhenClosed to NO,
-                // we must also release it explicitly.
                 ffi::msg_send_void(info.nswindow, ffi::sel(b"close\0"));
                 ffi::msg_send_void(info.nswindow, ffi::sel(b"release\0"));
             }
@@ -252,9 +265,10 @@ impl NativeWindowHost for MacOSWindowHost {
                 geometry.width as ffi::CGFloat,
                 geometry.height as ffi::CGFloat,
             );
+            // SAFETY: transmute of objc_msgSend to the correct signature
+            // for setFrame:display: (NSRect, BOOL). The nswindow pointer
+            // is valid as it comes from our tracked window map.
             unsafe {
-                // setFrame:display: with display=YES
-                let f: unsafe extern "C" fn(ffi::id, ffi::SEL, ffi::NSRect, ffi::BOOL) =
                     std::mem::transmute(ffi::objc_msgSend as *const c_void);
                 f(
                     info.nswindow,
@@ -269,11 +283,9 @@ impl NativeWindowHost for MacOSWindowHost {
 
     fn set_title(&mut self, handle: NativeWindowHandle, title: &str) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
+            // SAFETY: NSAutoreleasePool, nsstring, and setTitle are standard
+            // ObjC message sends with valid object/selector pairs.
             unsafe {
-                let pool_class = ffi::class(b"NSAutoreleasePool\0");
-                let pool = ffi::msg_send_id(pool_class, ffi::sel(b"new\0"));
-
-                let ns_title = ffi::nsstring(title);
                 ffi::msg_send_void_id(info.nswindow, ffi::sel(b"setTitle:\0"), ns_title);
 
                 ffi::msg_send_void(pool, ffi::sel(b"drain\0"));
@@ -298,9 +310,10 @@ impl NativeWindowHost for MacOSWindowHost {
         state: &str,
     ) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
+            // SAFETY: All ObjC message sends use valid NSWindow object and
+            // selector pairs for standard state changes (zoom, miniaturize,
+            // deminiaturize, orderOut, makeKeyAndOrderFront).
             unsafe {
-                match state {
-                    "maximized" => {
                         let is_zoomed = ffi::msg_send_bool(info.nswindow, ffi::sel(b"isZoomed\0"));
                         if is_zoomed == ffi::NO {
                             ffi::msg_send_void_id(
@@ -362,9 +375,9 @@ impl NativeWindowHost for MacOSWindowHost {
         z_order: i32,
     ) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
+            // SAFETY: transmute of objc_msgSend to the setLevel: signature
+            // (NSInteger). Using standard AppKit window level constants.
             unsafe {
-                if z_order > 0 {
-                    // Set the window level to floating (above normal windows).
                     // NSFloatingWindowLevel = 3
                     let f: unsafe extern "C" fn(ffi::id, ffi::SEL, ffi::NSInteger) =
                         std::mem::transmute(ffi::objc_msgSend as *const c_void);
@@ -382,9 +395,8 @@ impl NativeWindowHost for MacOSWindowHost {
 
     fn set_focus(&mut self, handle: NativeWindowHandle) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
+            // SAFETY: makeKeyAndOrderFront is a standard NSWindow message.
             unsafe {
-                ffi::msg_send_void(info.nswindow, ffi::sel(b"makeKeyAndOrderFront:\0"));
-            }
         }
         Ok(())
     }
@@ -421,6 +433,7 @@ impl TaskbarIntegration for MacOSTaskbar {
     }
 }
 
+// SAFETY: MacOSTaskbar is a stateless stub — safe to send between threads.
 unsafe impl Send for MacOSTaskbar {}
 
 // ---------------------------------------------------------------------------
@@ -436,6 +449,7 @@ struct MacOSTray {
     icons: HashMap<u64, ()>,
 }
 
+// SAFETY: MacOSTray only contains a counter and map — safe to send.
 unsafe impl Send for MacOSTray {}
 
 impl MacOSTray {
@@ -485,6 +499,7 @@ struct MacOSNotifications {
     next_id: u32,
 }
 
+// SAFETY: MacOSNotifications only contains a counter — safe to send.
 unsafe impl Send for MacOSNotifications {}
 
 impl MacOSNotifications {
@@ -512,6 +527,7 @@ impl NativeNotifications for MacOSNotifications {
 /// Keymap translator that delegates to `input::scancode_to_keycode`.
 struct MacOSKeymap;
 
+// SAFETY: MacOSKeymap is stateless — safe to send between threads.
 unsafe impl Send for MacOSKeymap {}
 
 impl KeymapTranslator for MacOSKeymap {
@@ -840,6 +856,10 @@ impl MacOSPlatform {
     /// to `Regular` (so the app gets a Dock icon and menu bar), and
     /// activates the application.
     pub fn new() -> PlatformResult<Self> {
+        // SAFETY: ObjC runtime calls to NSAutoreleasePool, NSApplication
+        // sharedApplication, setActivationPolicy, and activateIgnoringOtherApps.
+        // All selectors and classes are well-known AppKit symbols. The nsapp
+        // pointer is checked for null after sharedApplication.
         unsafe {
             // Create an autorelease pool.
             let pool_class = ffi::class(b"NSAutoreleasePool\0");
@@ -894,6 +914,9 @@ impl MacOSPlatform {
     /// `[NSDate distantFuture]`). Otherwise returns `nil` immediately if
     /// no events are pending (using `nil` / zero-timeout date).
     fn next_nsevent(&self, blocking: bool) -> ffi::id {
+        // SAFETY: ObjC message send to NSApp for nextEventMatchingMask.
+        // distantFuture returns a valid NSDate for blocking mode.
+        // All parameters use well-known AppKit constants.
         unsafe {
             let until_date = if blocking {
                 let date_class = ffi::class(b"NSDate\0");
@@ -916,6 +939,8 @@ impl MacOSPlatform {
     /// Dispatch an NSEvent back to AppKit so that standard event handling
     /// (window dragging, resizing, menu shortcuts, etc.) still works.
     fn send_event(&self, ns_event: ffi::id) {
+        // SAFETY: sendEvent: dispatches the event through standard AppKit
+        // handling. Both self.nsapp and ns_event are valid ObjC objects.
         unsafe {
             ffi::msg_send_void_id(self.nsapp, ffi::sel(b"sendEvent:\0"), ns_event);
         }
@@ -928,6 +953,8 @@ impl Drop for MacOSPlatform {
         let handles: Vec<u64> = self.window_host.windows.keys().copied().collect();
         for h in handles {
             if let Some(info) = self.window_host.windows.remove(&h) {
+                // SAFETY: close and release are standard NSWindow cleanup.
+                // releasedWhenClosed was set to NO during creation.
                 unsafe {
                     ffi::msg_send_void(info.nswindow, ffi::sel(b"close\0"));
                     ffi::msg_send_void(info.nswindow, ffi::sel(b"release\0"));
@@ -973,6 +1000,9 @@ impl PlatformBackend for MacOSPlatform {
     // -- Event loop ---------------------------------------------------------
 
     fn poll_event(&mut self) -> Option<PlatformEvent> {
+        // SAFETY: All ObjC message sends use valid object/selector pairs.
+        // NSAutoreleasePool brackets the scope to handle autoreleased objects.
+        // translate_nsevent only reads event properties via safe msg_send helpers.
         unsafe {
             let pool_class = ffi::class(b"NSAutoreleasePool\0");
             let pool = ffi::msg_send_id(pool_class, ffi::sel(b"new\0"));
@@ -997,6 +1027,8 @@ impl PlatformBackend for MacOSPlatform {
     }
 
     fn wait_event(&mut self) -> PlatformEvent {
+        // SAFETY: Same invariants as poll_event; additionally, next_nsevent
+        // blocks via [NSDate distantFuture] until an event arrives.
         unsafe {
             let pool_class = ffi::class(b"NSAutoreleasePool\0");
             let pool = ffi::msg_send_id(pool_class, ffi::sel(b"new\0"));
@@ -1050,6 +1082,12 @@ impl PlatformBackend for MacOSPlatform {
 
         let nswindow = info.nswindow;
 
+        // SAFETY: Core Graphics calls (CGColorSpaceCreateDeviceRGB,
+        // CGBitmapContextCreate, CGBitmapContextCreateImage, CGContextDrawImage)
+        // operate on the provided pixel buffer which outlives this scope.
+        // NSWindow contentView lockFocus/unlockFocus bracket the drawing.
+        // All CG objects are released at the end. Null checks guard every
+        // intermediate step.
         unsafe {
             let pool_class = ffi::class(b"NSAutoreleasePool\0");
             let pool = ffi::msg_send_id(pool_class, ffi::sel(b"new\0"));
@@ -1141,8 +1179,10 @@ impl PlatformBackend for MacOSPlatform {
 
     fn request_redraw(&mut self, handle: NativeWindowHandle) {
         if let Some(info) = self.window_host.windows.get(&handle.0) {
+            // SAFETY: contentView and setNeedsDisplay are standard AppKit
+            // message sends. The content_view nil check prevents sending
+            // to a null pointer.
             unsafe {
-                // Get the content view and mark it as needing display.
                 let content_view =
                     ffi::msg_send_id(info.nswindow, ffi::sel(b"contentView\0"));
                 if !content_view.is_null() {

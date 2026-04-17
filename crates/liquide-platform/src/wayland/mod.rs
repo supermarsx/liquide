@@ -190,7 +190,7 @@ pub struct WaylandPlatform {
     keymap_backend: WaylandKeymap,
 }
 
-// The Wayland display is used single-threaded; the struct is moved to
+// SAFETY: The Wayland display is used single-threaded; the struct is moved to
 // the event-loop thread, but never shared concurrently.
 unsafe impl Send for WaylandPlatform {}
 
@@ -200,6 +200,12 @@ impl WaylandPlatform {
     /// Returns `Err` if the connection cannot be established or if
     /// critical globals like `wl_compositor` or `xdg_wm_base` are missing.
     pub fn new() -> PlatformResult<Self> {
+        // SAFETY: All libwayland-client calls below operate on the display
+        // connection returned by wl_display_connect (checked for null).
+        // wl_proxy_marshal_flags creates Wayland protocol objects.
+        // wl_proxy_add_listener attaches callbacks with a pointer to our
+        // heap-allocated WaylandState. The Box ensures pointer stability.
+        // wl_display_roundtrip synchronously dispatches pending events.
         unsafe {
             // Connect to the display (uses $WAYLAND_DISPLAY or "wayland-0").
             let display = wl_display_connect(ptr::null());
@@ -404,6 +410,10 @@ impl WaylandPlatform {
         width: u32,
         height: u32,
     ) -> PlatformResult<ShmBuffer> {
+        // SAFETY: POSIX calls (memfd_create, ftruncate, mmap) create an
+        // anonymous shared memory region. Wayland SHM pool and buffer are
+        // created via wl_proxy_marshal_flags. Error checks guard every step;
+        // resources are cleaned up on failure paths.
         unsafe {
             let stride = width * 4; // 4 bytes per pixel (ARGB8888)
             let size = (stride * height) as usize;
@@ -491,6 +501,9 @@ impl WaylandPlatform {
 
     /// Destroy an SHM buffer and release all associated resources.
     fn destroy_shm_buffer(buf: &ShmBuffer) {
+        // SAFETY: The buffer/pool proxies are destroyed via wl_proxy_marshal
+        // and wl_proxy_destroy. The SHM mapping is unmapped and the fd closed.
+        // All pointers originate from create_shm_buffer and are valid.
         unsafe {
             wl_proxy_marshal(buf.wl_buffer, WL_BUFFER_DESTROY);
             wl_proxy_destroy(buf.wl_buffer);
@@ -504,6 +517,9 @@ impl WaylandPlatform {
 
 impl Drop for WaylandPlatform {
     fn drop(&mut self) {
+        // SAFETY: Wayland cleanup: destroy windows (surfaces, buffers, SHM),
+        // input devices, globals, registry, then disconnect. All proxies were
+        // created during new() or create_window() and are still valid.
         unsafe {
             // Destroy all windows.
             let handles: Vec<u64> = self.state.windows.keys().copied().collect();
@@ -591,6 +607,8 @@ impl PlatformBackend for WaylandPlatform {
     }
 
     fn poll_event(&mut self) -> Option<PlatformEvent> {
+        // SAFETY: wl_display_flush sends pending requests; wl_display_dispatch_pending
+        // dispatches pending events without blocking. Both use a valid display.
         unsafe {
             // Flush outgoing requests and dispatch pending events without blocking.
             wl_display_flush(self.display);
@@ -600,6 +618,9 @@ impl PlatformBackend for WaylandPlatform {
     }
 
     fn wait_event(&mut self) -> PlatformEvent {
+        // SAFETY: wl_display_flush and wl_display_dispatch are safe on a valid
+        // display connection. wl_display_dispatch blocks until events arrive.
+        // A negative return indicates a fatal error (we return Quit).
         unsafe {
             // Block until at least one event is dispatched.
             loop {
@@ -654,6 +675,9 @@ impl PlatformBackend for WaylandPlatform {
 
         // Copy pixel data into the SHM buffer.
         // Our BGRA8 format matches WL_SHM_FORMAT_ARGB8888 on little-endian.
+        // SAFETY: memcpy copies pixel rows into the SHM buffer mapping.
+        // Bounds are checked before each row copy. Wayland surface attach,
+        // damage, and commit are standard protocol operations.
         unsafe {
             let dst_stride = width * 4;
             let copy_bytes = std::cmp::min(stride, dst_stride) as usize;
@@ -691,9 +715,9 @@ impl PlatformBackend for WaylandPlatform {
 
     fn request_redraw(&mut self, handle: NativeWindowHandle) {
         if let Some(win) = self.state.windows.get(&handle.0) {
+            // SAFETY: wl_proxy_marshal sends a surface commit request.
+            // wl_display_flush ensures it is delivered to the compositor.
             unsafe {
-                // Commit the surface to trigger a frame callback on the next
-                // compositor repaint cycle.
                 wl_proxy_marshal(win.wl_surface, WL_SURFACE_COMMIT);
                 wl_display_flush(self.display);
             }
@@ -711,6 +735,10 @@ impl NativeWindowHost for WaylandPlatform {
         &mut self,
         params: NativeWindowParams,
     ) -> PlatformResult<NativeWindowHandle> {
+        // SAFETY: Wayland protocol calls to create wl_surface, xdg_surface,
+        // and xdg_toplevel via wl_proxy_marshal_flags. Listeners are heap-
+        // allocated (Box::into_raw) to ensure stable pointers for callbacks.
+        // Null checks guard every proxy creation step with proper cleanup.
         unsafe {
             let compositor = self.state.compositor;
             let xdg_wm_base = self.state.xdg_wm_base;
@@ -851,10 +879,10 @@ impl NativeWindowHost for WaylandPlatform {
                 Self::destroy_shm_buffer(buf);
             }
 
+            // SAFETY: Wayland destroy protocol for xdg_toplevel, xdg_surface,
+            // and wl_surface. The proxies are valid because they came from
+            // our tracked windows map. Flush ensures requests are sent.
             unsafe {
-                wl_proxy_marshal(win.xdg_toplevel, XDG_TOPLEVEL_DESTROY);
-                wl_proxy_destroy(win.xdg_toplevel);
-                wl_proxy_marshal(win.xdg_surface, XDG_SURFACE_DESTROY);
                 wl_proxy_destroy(win.xdg_surface);
                 wl_proxy_marshal(win.wl_surface, WL_SURFACE_DESTROY);
                 wl_proxy_destroy(win.wl_surface);
@@ -885,6 +913,8 @@ impl NativeWindowHost for WaylandPlatform {
     ) -> PlatformResult<()> {
         if let Some(win) = self.state.windows.get(&handle.0) {
             let title_c = CString::new(title).unwrap_or_default();
+            // SAFETY: wl_proxy_marshal sends the title string to the compositor.
+            // The CString ensures a valid null-terminated buffer.
             unsafe {
                 wl_proxy_marshal(
                     win.xdg_toplevel,
@@ -912,9 +942,9 @@ impl NativeWindowHost for WaylandPlatform {
         state: &str,
     ) -> PlatformResult<()> {
         if let Some(win) = self.state.windows.get(&handle.0) {
+            // SAFETY: wl_proxy_marshal sends standard xdg_toplevel state
+            // change requests. All opcodes are valid xdg_toplevel requests.
             unsafe {
-                match state {
-                    "maximized" => {
                         wl_proxy_marshal(win.xdg_toplevel, XDG_TOPLEVEL_SET_MAXIMIZED);
                     }
                     "minimized" => {

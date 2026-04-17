@@ -100,7 +100,8 @@ struct X11DisplayBackend {
     root: ffi::Window,
 }
 
-// Safety: only used from the single event-loop thread.
+// SAFETY: only used from the single event-loop thread; the X display
+// connection is never shared across threads.
 unsafe impl Send for X11DisplayBackend {}
 
 impl DisplayBackend for X11DisplayBackend {
@@ -135,6 +136,9 @@ impl X11DisplayBackend {
     fn enumerate_monitors(&self) -> Vec<MonitorInfo> {
         let mut monitors = Vec::new();
 
+        // SAFETY: All XRandR calls below use a valid display pointer and
+        // properly allocated resources. Output/crtc info pointers are freed
+        // after use. The display was successfully opened in X11Platform::new().
         unsafe {
             let resources = ffi::XRRGetScreenResourcesCurrent(self.display, self.root);
             if resources.is_null() {
@@ -225,6 +229,8 @@ impl X11DisplayBackend {
     /// Fallback when XRandR returns no outputs: use basic Xlib screen info.
     fn fallback_monitors(&self) -> Vec<MonitorInfo> {
         let mut monitors = Vec::new();
+        // SAFETY: XScreenCount, XScreenOfDisplay, XWidthOfScreen, and
+        // XHeightOfScreen are safe with a valid display pointer.
         unsafe {
             let screen_count = ffi::XScreenCount(self.display);
             for s in 0..screen_count {
@@ -294,7 +300,8 @@ struct X11WindowManager {
     pending_events: VecDeque<PlatformEvent>,
 }
 
-// Safety: only used from the single event-loop thread.
+// SAFETY: only used from the single event-loop thread; the X display
+// connection is never shared across threads.
 unsafe impl Send for X11WindowManager {}
 
 impl X11WindowManager {
@@ -321,6 +328,9 @@ impl NativeWindowHost for X11WindowManager {
         &mut self,
         params: NativeWindowParams,
     ) -> PlatformResult<NativeWindowHandle> {
+        // SAFETY: All Xlib calls use the valid display connection.
+        // XCreateWindow parameters are validated (width/height clamped to >= 1).
+        // The root window and visual are obtained from the default screen.
         unsafe {
             let visual = ffi::XDefaultVisual(self.display, self.screen);
             let depth = ffi::XDefaultDepth(self.display, self.screen);
@@ -427,6 +437,7 @@ impl NativeWindowHost for X11WindowManager {
     fn destroy_window(&mut self, handle: NativeWindowHandle) -> PlatformResult<()> {
         if let Some(state) = self.windows.remove(&handle.0) {
             self.xwindow_to_handle.remove(&state.xwindow);
+            // SAFETY: XDestroyWindow and XFlush are safe on a valid display/window.
             unsafe {
                 ffi::XDestroyWindow(self.display, state.xwindow);
                 ffi::XFlush(self.display);
@@ -443,6 +454,7 @@ impl NativeWindowHost for X11WindowManager {
         if let Some(state) = self.windows.get_mut(&handle.0) {
             let w = (geometry.width as c_uint).max(1);
             let h = (geometry.height as c_uint).max(1);
+            // SAFETY: XMoveResizeWindow and XFlush are safe on valid display/window.
             unsafe {
                 ffi::XMoveResizeWindow(
                     self.display,
@@ -466,6 +478,7 @@ impl NativeWindowHost for X11WindowManager {
         title: &str,
     ) -> PlatformResult<()> {
         if let Some(state) = self.windows.get(&handle.0) {
+            // SAFETY: set_title_raw and XFlush use valid display/window pointers.
             unsafe {
                 self.set_title_raw(state.xwindow, title);
                 ffi::XFlush(self.display);
@@ -497,6 +510,8 @@ impl NativeWindowHost for X11WindowManager {
                         let a = icon_data[p * 4 + 3] as c_long;
                         data.push((a << 24) | (r << 16) | (g << 8) | b);
                     }
+                    // SAFETY: XChangeProperty and XFlush are safe with valid
+                    // display/window. The data pointer and length are correct.
                     unsafe {
                         ffi::XChangeProperty(
                             self.display,
@@ -523,6 +538,8 @@ impl NativeWindowHost for X11WindowManager {
     ) -> PlatformResult<()> {
         if let Some(state) = self.windows.get(&handle.0) {
             let xw = state.xwindow;
+            // SAFETY: send_ewmh_state, XUnmapWindow, XMapWindow, and XFlush
+            // are safe with valid display and window handles.
             unsafe {
                 match state_name {
                     "maximized" => {
@@ -576,6 +593,8 @@ impl NativeWindowHost for X11WindowManager {
         z_order: i32,
     ) -> PlatformResult<()> {
         if let Some(state) = self.windows.get(&handle.0) {
+            // SAFETY: XRaiseWindow / XLowerWindow and XFlush are safe
+            // with a valid display and window.
             unsafe {
                 if z_order >= 0 {
                     ffi::XRaiseWindow(self.display, state.xwindow);
@@ -590,6 +609,7 @@ impl NativeWindowHost for X11WindowManager {
 
     fn set_focus(&mut self, handle: NativeWindowHandle) -> PlatformResult<()> {
         if let Some(state) = self.windows.get(&handle.0) {
+            // SAFETY: XSetInputFocus and XFlush are safe with valid display/window.
             unsafe {
                 ffi::XSetInputFocus(
                     self.display,
@@ -633,7 +653,7 @@ unsafe fn send_ewmh_state(
 /// Keymap translator that converts X11 keysyms via [`input::keysym_to_keycode`].
 struct X11Keymap;
 
-// Safety: stateless — safe to send between threads.
+// SAFETY: X11Keymap is stateless — safe to send between threads.
 unsafe impl Send for X11Keymap {}
 
 impl KeymapTranslator for X11Keymap {
@@ -679,6 +699,8 @@ pub struct X11Platform {
 // The X11 display connection is NOT thread-safe, but our trait requires
 // `Send`.  This is safe because the platform is always used from a
 // single event-loop thread.
+// SAFETY: X11Platform is only used from a single event-loop thread.
+// The X display connection is not shared across threads.
 unsafe impl Send for X11Platform {}
 
 impl X11Platform {
@@ -687,6 +709,9 @@ impl X11Platform {
     /// Connects to the X server specified by `$DISPLAY` (or the default
     /// server if the environment variable is not set).
     pub fn new() -> PlatformResult<Self> {
+        // SAFETY: XOpenDisplay, XDefaultScreen, XDefaultRootWindow,
+        // X11Atoms::new, and XCreateGC all operate on the display
+        // connection. XOpenDisplay returns null on failure (checked below).
         unsafe {
             let display = ffi::XOpenDisplay(ptr::null());
             if display.is_null() {
@@ -749,6 +774,7 @@ impl X11Platform {
             // ── Keyboard ────────────────────────────────────────────
             ffi::KeyPress | ffi::KeyRelease => {
                 let xkey = event.as_key();
+                // SAFETY: XLookupKeysym is safe with a valid XKeyEvent pointer.
                 let keysym = unsafe { ffi::XLookupKeysym(xkey, 0) };
                 if let Some(key) = input::keysym_to_keycode(keysym as u64) {
                     let state = if etype == ffi::KeyPress {
@@ -966,6 +992,8 @@ impl X11Platform {
             // ── Client message (WM_DELETE_WINDOW) ───────────────────
             ffi::ClientMessage => {
                 let xcm = event.as_client_message();
+                // SAFETY: Accessing the l[0] field of a ClientMessage data union.
+                // The XEvent was received from XNextEvent and is valid.
                 let data_l0 = unsafe { xcm.data.l[0] } as ffi::Atom;
                 if data_l0 == self.wm.atoms.wm_delete_window {
                     if let Some(&hv) = self.wm.xwindow_to_handle.get(&xcm.window) {
@@ -987,6 +1015,8 @@ impl X11Platform {
 
 impl Drop for X11Platform {
     fn drop(&mut self) {
+        // SAFETY: All Xlib cleanup calls use the valid display connection.
+        // Windows are destroyed before freeing the GC and closing the display.
         unsafe {
             // Destroy all windows we still own.
             let xwindows: Vec<ffi::Window> =
@@ -1051,6 +1081,8 @@ impl PlatformBackend for X11Platform {
         }
 
         // Process all pending X events.
+        // SAFETY: XPending and XNextEvent are safe with a valid display pointer.
+        // The XEvent is stack-allocated and properly zeroed before use.
         unsafe {
             while ffi::XPending(self.display) > 0 {
                 let mut xevent: ffi::XEvent = std::mem::zeroed();
@@ -1071,6 +1103,8 @@ impl PlatformBackend for X11Platform {
         }
 
         // Block until an X event arrives.
+        // SAFETY: XNextEvent blocks until an event is available.
+        // The display pointer is valid.
         unsafe {
             let mut xevent: ffi::XEvent = std::mem::zeroed();
             ffi::XNextEvent(self.display, &mut xevent);
@@ -1078,6 +1112,7 @@ impl PlatformBackend for X11Platform {
         }
 
         // Drain any additional pending events into the queue.
+        // SAFETY: XPending and XNextEvent are safe with a valid display.
         unsafe {
             while ffi::XPending(self.display) > 0 {
                 let mut xevent: ffi::XEvent = std::mem::zeroed();
@@ -1107,6 +1142,10 @@ impl PlatformBackend for X11Platform {
             }
         };
 
+        // SAFETY: All Xlib calls below use valid display, window, and GC.
+        // The pixel buffer is copied into a Rust-owned Vec before being
+        // passed to XCreateImage. We null out image->data before
+        // XDestroyImage to prevent double-free of Rust-owned memory.
         unsafe {
             let visual = ffi::XDefaultVisual(self.display, self.screen);
             let depth = ffi::XDefaultDepth(self.display, self.screen);
@@ -1174,8 +1213,10 @@ impl PlatformBackend for X11Platform {
 
     fn request_redraw(&mut self, handle: NativeWindowHandle) {
         if let Some(state) = self.wm.windows.get(&handle.0) {
+            // SAFETY: We construct a synthetic Expose XEvent and send it to the
+            // window via XSendEvent. All parameters are valid. XFlush ensures
+            // the event is dispatched.
             unsafe {
-                let mut event: ffi::XEvent = std::mem::zeroed();
                 let expose = &mut *(event.pad.as_mut_ptr() as *mut ffi::XExposeEvent);
                 expose.type_ = ffi::Expose;
                 expose.window = state.xwindow;
