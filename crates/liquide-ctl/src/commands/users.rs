@@ -1,7 +1,18 @@
+use serde::{Deserialize, Serialize};
+
 use crate::cli::UsersCommand;
-use crate::client::Client;
+use crate::client::{ApiResponse, Client};
 use crate::error::Result;
 use crate::output::Output;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct UserInfo {
+    pub username: String,
+    #[serde(default)]
+    pub sessions: u32,
+    #[serde(default)]
+    pub status: String,
+}
 
 pub async fn execute(client: &Client, output: &Output, cmd: &UsersCommand) -> Result<()> {
     match cmd {
@@ -12,9 +23,33 @@ pub async fn execute(client: &Client, output: &Output, cmd: &UsersCommand) -> Re
     }
 }
 
-async fn list(_client: &Client, output: &Output) -> Result<()> {
-    // TODO: GET /api/v1/users
-    output.message("No connected users.");
+async fn list(client: &Client, output: &Output) -> Result<()> {
+    let resp: ApiResponse<Vec<UserInfo>> = client.get("/api/v1/users").await?;
+    match resp.data {
+        Some(users) if users.is_empty() => {
+            output.message("No connected users.");
+        }
+        Some(users) => {
+            output.message(&format!(
+                "{:<20} {:<10} {}",
+                "USERNAME", "SESSIONS", "STATUS"
+            ));
+            for u in &users {
+                output.message(&format!(
+                    "{:<20} {:<10} {}",
+                    u.username, u.sessions, u.status
+                ));
+            }
+            output.message(&format!("\n{} user(s) total.", users.len()));
+        }
+        None => {
+            if let Some(err) = resp.error {
+                output.error(&err);
+            } else {
+                output.message("No connected users.");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -59,4 +94,26 @@ async fn avatar(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_users_list() {
+        let json = r#"{
+            "success": true,
+            "data": [
+                {"username": "alice", "sessions": 2, "status": "active"},
+                {"username": "bob", "sessions": 1, "status": "idle"}
+            ]
+        }"#;
+        let resp: ApiResponse<Vec<UserInfo>> = serde_json::from_str(json).unwrap();
+        assert!(resp.success);
+        let users = resp.data.unwrap();
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].username, "alice");
+        assert_eq!(users[0].sessions, 2);
+    }
 }

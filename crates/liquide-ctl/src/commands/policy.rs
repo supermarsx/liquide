@@ -1,5 +1,5 @@
 use crate::cli::PolicyCommand;
-use crate::client::Client;
+use crate::client::{ApiResponse, Client};
 use crate::error::Result;
 use crate::output::Output;
 
@@ -11,34 +11,64 @@ pub async fn execute(client: &Client, output: &Output, cmd: &PolicyCommand) -> R
     }
 }
 
-async fn show(_client: &Client, output: &Output) -> Result<()> {
-    // TODO: GET /api/v1/policy
-    output.message("Policy not available (not connected).");
+async fn show(client: &Client, output: &Output) -> Result<()> {
+    let resp: ApiResponse<serde_json::Value> = client.get("/api/v1/policy").await?;
+    match resp.data {
+        Some(policies) => {
+            output.message(&serde_json::to_string_pretty(&policies).unwrap_or_default());
+        }
+        None => {
+            if let Some(err) = resp.error {
+                output.error(&err);
+            } else {
+                output.message("No policies configured.");
+            }
+        }
+    }
     Ok(())
 }
 
 async fn set(
-    _client: &Client,
+    client: &Client,
     output: &Output,
     args: &crate::cli::PolicySetArgs,
 ) -> Result<()> {
-    // TODO: PUT /api/v1/policy/{scope}/{key}
-    output.message(&format!(
-        "Set {}.{} = {}",
-        args.scope, args.key, args.value
-    ));
+    let path = format!("/api/v1/policy/{}/{}", args.scope, args.key);
+    let body = serde_json::json!({ "value": args.value });
+    let resp: ApiResponse<serde_json::Value> = client.put(&path, &body).await?;
+    if resp.success {
+        output.success(&format!(
+            "Set {}.{} = {}",
+            args.scope, args.key, args.value
+        ));
+    } else if let Some(err) = resp.error {
+        output.error(&err);
+    }
     Ok(())
 }
 
 async fn effective(
-    _client: &Client,
+    client: &Client,
     output: &Output,
     args: &crate::cli::PolicyEffectiveArgs,
 ) -> Result<()> {
-    // TODO: GET /api/v1/policy/effective/{username}
-    output.message(&format!(
-        "Effective policy for {} not available (not connected).",
-        args.username
-    ));
+    let path = format!("/api/v1/policy/effective/{}", args.username);
+    let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
+    match resp.data {
+        Some(policy) => {
+            output.message(&format!("Effective policy for {}:", args.username));
+            output.message(&serde_json::to_string_pretty(&policy).unwrap_or_default());
+        }
+        None => {
+            if let Some(err) = resp.error {
+                output.error(&err);
+            } else {
+                output.message(&format!(
+                    "No effective policy for {}.",
+                    args.username
+                ));
+            }
+        }
+    }
     Ok(())
 }
