@@ -474,4 +474,46 @@ mod tests {
         let result = loader.resolve("TestFont", 400, false);
         assert_eq!(result, FontFaceResolveResult::Failed);
     }
+
+    #[test]
+    fn test_font_display_auto_block_period() {
+        assert_eq!(FontDisplay::Auto.block_period(), Duration::from_secs(3));
+        assert!(FontDisplay::Auto.swap_period().is_none());
+    }
+
+    #[test]
+    fn test_font_display_fallback_swap_period() {
+        assert_eq!(FontDisplay::Fallback.swap_period(), Some(Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn test_font_face_resolve_not_registered() {
+        let loader = FontFaceLoader::new();
+        let result = loader.resolve("Unknown", 400, false);
+        assert_eq!(result, FontFaceResolveResult::NotRegistered);
+    }
+
+    #[test]
+    fn test_font_face_loader_state_unloaded() {
+        let loader = FontFaceLoader::new();
+        assert_eq!(loader.state("Unknown"), FontLoadState::Unloaded);
+    }
+
+    #[test]
+    fn test_parse_font_face_src_local_only() {
+        let sources = parse_font_face_src(r#"local("Helvetica")"#);
+        assert_eq!(sources.len(), 1);
+        assert!(matches!(&sources[0], FontSource::Local(n) if n == "Helvetica"));
+    }
+
+    #[test]
+    fn test_parse_font_face_src_empty() {
+        let sources = parse_font_face_src("");
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn test_font_face_style_default() {
+        assert_eq!(FontFaceStyle::default(), FontFaceStyle::Normal);
+    }
 }

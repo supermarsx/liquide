@@ -453,6 +453,16 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_small_data() {
+        assert!(detect_color_formats(&[0u8; 10]).is_empty());
+    }
+
+    #[test]
+    fn test_has_color_glyph_empty() {
+        assert!(!has_color_glyph(&[], 65));
+    }
+
+    #[test]
     fn test_platform_emoji_path() {
         // Just check it doesn't panic
         let _ = platform_emoji_font_path();

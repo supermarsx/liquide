@@ -257,4 +257,55 @@ mod tests {
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 1);
     }
+
+    #[test]
+    fn test_cache_clear() {
+        let cache = GlyphCache::with_defaults();
+        let key = GlyphCacheKey::new(FontFaceId(1), 65, 16.0, 0.0, 0.0);
+        cache.insert(key, dummy_bitmap(65));
+        cache.clear();
+        assert!(cache.get(&key).is_none());
+        assert_eq!(cache.stats().entries, 0);
+    }
+
+    #[test]
+    fn test_cache_byte_limit_eviction() {
+        // Each dummy_bitmap has 120 bytes of pixel data
+        let cache = GlyphCache::new(100, 200);
+        let k1 = GlyphCacheKey::new(FontFaceId(1), 1, 16.0, 0.0, 0.0);
+        let k2 = GlyphCacheKey::new(FontFaceId(1), 2, 16.0, 0.0, 0.0);
+        cache.insert(k1, dummy_bitmap(1)); // 120 bytes
+        cache.insert(k2, dummy_bitmap(2)); // 240 > 200, should evict k1
+        assert!(cache.get(&k1).is_none());
+        assert!(cache.get(&k2).is_some());
+    }
+
+    #[test]
+    fn test_cache_key_subpixel_precision() {
+        let k1 = GlyphCacheKey::new(FontFaceId(1), 65, 16.0, 0.0, 0.0);
+        let k2 = GlyphCacheKey::new(FontFaceId(1), 65, 16.0, 0.25, 0.0);
+        let k3 = GlyphCacheKey::new(FontFaceId(1), 65, 16.0, 0.5, 0.0);
+        assert_ne!(k1, k2);
+        assert_ne!(k2, k3);
+    }
+
+    #[test]
+    fn test_cache_key_different_sizes() {
+        let k1 = GlyphCacheKey::new(FontFaceId(1), 65, 12.0, 0.0, 0.0);
+        let k2 = GlyphCacheKey::new(FontFaceId(1), 65, 16.0, 0.0, 0.0);
+        assert_ne!(k1.size_key, k2.size_key);
+    }
+
+    #[test]
+    fn test_cache_hit_rate() {
+        let cache = GlyphCache::with_defaults();
+        let key = GlyphCacheKey::new(FontFaceId(1), 65, 16.0, 0.0, 0.0);
+        cache.insert(key, dummy_bitmap(65));
+        let _ = cache.get(&key);
+        let _ = cache.get(&key);
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 2);
+        assert_eq!(stats.misses, 0);
+        assert!((stats.hit_rate - 1.0).abs() < f64::EPSILON);
+    }
 }

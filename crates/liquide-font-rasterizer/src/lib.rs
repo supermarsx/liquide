@@ -85,4 +85,16 @@ mod tests {
         };
         assert!(err.to_string().contains("Inter"));
     }
+
+    #[test]
+    fn test_error_glyph_not_found() {
+        let e = FontRasterizerError::GlyphNotFound { font_id: 1, codepoint: 0x1F600 };
+        assert!(e.to_string().contains("U+1F600"));
+    }
+
+    #[test]
+    fn test_error_size_out_of_range() {
+        let e = FontRasterizerError::SizeOutOfRange { size: 0.5, min: 1.0, max: 500.0 };
+        assert!(e.to_string().contains("0.5"));
+    }
 }

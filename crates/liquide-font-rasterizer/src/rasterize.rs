@@ -353,4 +353,35 @@ mod tests {
             Err(FontRasterizerError::SizeOutOfRange { .. })
         ));
     }
+
+    #[test]
+    fn test_size_too_large() {
+        let db = FontDatabase::new();
+        let rasterizer = GlyphRasterizer::new(&db);
+        let result = rasterizer.rasterize(FontFaceId(1), 'A', 501.0, &RasterConfig::default());
+        assert!(matches!(result, Err(FontRasterizerError::SizeOutOfRange { .. })));
+    }
+
+    #[test]
+    fn test_rasterize_string_no_font() {
+        let db = FontDatabase::new();
+        let rasterizer = GlyphRasterizer::new(&db);
+        let result = rasterizer.rasterize_string(FontFaceId(99), "Hi", 16.0, &RasterConfig::default());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_raster_config_custom() {
+        let config = RasterConfig {
+            subpixel: SubpixelMode::HorizontalRgb,
+            hinting: false,
+            hinting_mode: HintingMode::None,
+            synthetic_bold: 1.5,
+            synthetic_oblique: 12.0,
+            target_dpi: 144.0,
+        };
+        assert_eq!(config.subpixel, SubpixelMode::HorizontalRgb);
+        assert!(!config.hinting);
+        assert!((config.target_dpi - 144.0).abs() < f32::EPSILON);
+    }
 }

@@ -472,4 +472,67 @@ mod tests {
         assert!(glyphs.is_empty());
         assert!((width - 0.0).abs() < f32::EPSILON);
     }
+
+    #[test]
+    fn test_font_feature_constructors() {
+        let liga = FontFeature::ligatures(true);
+        assert_eq!(liga.tag, *b"liga");
+        assert_eq!(liga.value, 1);
+        let kern = FontFeature::kerning(false);
+        assert_eq!(kern.tag, *b"kern");
+        assert_eq!(kern.value, 0);
+        let smcp = FontFeature::small_caps(true);
+        assert_eq!(smcp.tag, *b"smcp");
+        assert_eq!(smcp.value, 1);
+    }
+
+    #[test]
+    fn test_font_feature_stylistic_set() {
+        let ss01 = FontFeature::stylistic_set(1, true);
+        assert_eq!(ss01.tag, *b"ss01");
+        let ss20 = FontFeature::stylistic_set(20, true);
+        assert_eq!(ss20.tag, *b"ss20");
+        // Clamped to range 1..20
+        let ss_over = FontFeature::stylistic_set(25, true);
+        assert_eq!(ss_over.tag, *b"ss20");
+    }
+
+    #[test]
+    fn test_shape_wrapped_hard_newline() {
+        let db = FontDatabase::new();
+        let shaper = TextShaper::new(&db);
+        let lines = shaper.shape_wrapped(FontFaceId(999), "Hello\nWorld", 16.0, 0.0, 1000.0);
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn test_font_feature_enabled_disabled() {
+        let enabled = FontFeature::enabled(b"liga");
+        assert_eq!(enabled.value, 1);
+        let disabled = FontFeature::disabled(b"liga");
+        assert_eq!(disabled.value, 0);
+    }
+
+    #[test]
+    fn test_font_feature_with_value() {
+        let feat = FontFeature::with_value(b"ss01", 3);
+        assert_eq!(feat.tag, *b"ss01");
+        assert_eq!(feat.value, 3);
+    }
+
+    #[test]
+    fn test_font_feature_special_features() {
+        let onum = FontFeature::oldstyle_figures(true);
+        assert_eq!(onum.tag, *b"onum");
+        let tnum = FontFeature::tabular_figures(true);
+        assert_eq!(tnum.tag, *b"tnum");
+        let calt = FontFeature::contextual_alternates(true);
+        assert_eq!(calt.tag, *b"calt");
+        let frac = FontFeature::fractions(true);
+        assert_eq!(frac.tag, *b"frac");
+        let ordn = FontFeature::ordinals(true);
+        assert_eq!(ordn.tag, *b"ordn");
+        let dlig = FontFeature::discretionary_ligatures(true);
+        assert_eq!(dlig.tag, *b"dlig");
+    }
 }

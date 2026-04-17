@@ -743,4 +743,76 @@ mod tests {
         // in CI, so we accept 0 loaded.
         let _count = db.load_default_fonts("../../assets");
     }
+
+    #[test]
+    fn test_load_bytes_invalid() {
+        let mut db = FontDatabase::new();
+        let result = db.load_bytes(vec![0, 1, 2, 3], "BadFont", 400, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_nonexistent_family() {
+        let db = FontDatabase::new();
+        assert!(db.resolve("NonExistent", 400, false).is_none());
+    }
+
+    #[test]
+    fn test_resolve_chain_empty() {
+        let db = FontDatabase::new();
+        assert!(db.resolve_chain(&[], 400, false).is_none());
+    }
+
+    #[test]
+    fn test_font_face_id_fallback() {
+        assert_eq!(FontFaceId::FALLBACK, FontFaceId(0));
+        assert_eq!(FontFaceId::from_raw(42), FontFaceId(42));
+    }
+
+    #[test]
+    fn test_variation_settings_from_css() {
+        let settings = VariationSettings::from_css("'wght' 700, 'wdth' 100");
+        assert_eq!(settings.values.len(), 2);
+    }
+
+    #[test]
+    fn test_variation_settings_weight() {
+        let mut settings = VariationSettings::new();
+        settings.weight(700.0);
+        assert_eq!(settings.values.len(), 1);
+        assert_eq!(settings.values[0].0.tag, *b"wght");
+    }
+
+    #[test]
+    fn test_variation_axis_clamp() {
+        let axis = VariationAxis {
+            tag: *b"wght",
+            name: "Weight".into(),
+            min_value: 100.0,
+            default_value: 400.0,
+            max_value: 900.0,
+        };
+        assert_eq!(axis.clamp(50.0), 100.0);
+        assert_eq!(axis.clamp(1000.0), 900.0);
+        assert_eq!(axis.clamp(500.0), 500.0);
+    }
+
+    #[test]
+    fn test_variation_axis_predicates() {
+        let weight = VariationAxis {
+            tag: *b"wght", name: "Weight".into(),
+            min_value: 100.0, default_value: 400.0, max_value: 900.0,
+        };
+        assert!(weight.is_weight());
+        assert!(!weight.is_width());
+        assert!(!weight.is_optical_size());
+    }
+
+    #[test]
+    fn test_add_search_dir() {
+        let mut db = FontDatabase::new();
+        db.add_search_dir("/some/path");
+        // Just ensure it doesn't panic
+        assert_eq!(db.face_count(), 0);
+    }
 }

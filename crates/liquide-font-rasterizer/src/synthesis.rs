@@ -197,4 +197,45 @@ mod tests {
         let bold = apply_synthetic_bold(&empty, 1.0);
         assert_eq!(bold.width, 0);
     }
+
+    #[test]
+    fn test_synthesis_config_defaults() {
+        let config = SynthesisConfig::default();
+        assert!(!config.bold);
+        assert!(!config.italic);
+        assert!(!config.small_caps);
+    }
+
+    #[test]
+    fn test_synthesis_config_bold() {
+        let config = SynthesisConfig::bold();
+        assert!(config.bold);
+        assert!(!config.italic);
+        assert!((config.bold_strength - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_synthesis_config_italic() {
+        let config = SynthesisConfig::italic();
+        assert!(config.italic);
+        assert!(!config.bold);
+        assert!((config.oblique_angle - 12.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_synthesis_config_bold_italic() {
+        let config = SynthesisConfig::bold_italic();
+        assert!(config.bold);
+        assert!(config.italic);
+        assert!((config.oblique_angle - 12.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_apply_synthesis_no_op() {
+        let bm = test_bitmap();
+        let config = SynthesisConfig::default();
+        let result = apply_synthesis(&bm, &config);
+        assert_eq!(result.width, bm.width);
+        assert_eq!(result.height, bm.height);
+    }
 }

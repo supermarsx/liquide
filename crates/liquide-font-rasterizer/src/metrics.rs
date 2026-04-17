@@ -190,4 +190,29 @@ mod tests {
         assert!((m.size - 14.0).abs() < 0.001);
         assert!(m.line_height > 0.0);
     }
+
+    #[test]
+    fn test_approximate_metrics_proportions() {
+        let m = RealFontMetrics::approximate(32.0);
+        assert!(m.ascent > m.descent);
+        assert!(m.line_height > m.ascent);
+        assert!(m.cap_height > m.x_height);
+    }
+
+    #[test]
+    fn test_measure_text_no_font_fallback() {
+        let db = FontDatabase::new();
+        let provider = FontMetricsProvider::new(&db);
+        let (width, height) = provider.measure_text(FontFaceId(999), 16.0, "Hello");
+        assert!(width > 0.0);
+        assert!(height > 0.0);
+    }
+
+    #[test]
+    fn test_measure_text_empty_string() {
+        let db = FontDatabase::new();
+        let provider = FontMetricsProvider::new(&db);
+        let (width, _height) = provider.measure_text(FontFaceId(999), 16.0, "");
+        assert!((width - 0.0).abs() < f32::EPSILON);
+    }
 }
