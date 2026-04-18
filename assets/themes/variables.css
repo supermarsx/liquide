@@ -1,162 +1,316 @@
 /* ===================================================
-   LiquiDE Theme: CSS Custom Property Definitions
-   Base design tokens for all themes. Override these
-   in theme-specific files (night.css, midday.css, etc.)
-   to change the entire look without touching templates.
+   LiquiDE Design Tokens
+   Single source of truth for all visual properties.
+   Override in theme files (night.css, midday.css, etc.)
+   to restyle the entire shell without touching templates.
    =================================================== */
 
 :root {
-  /* ── Surface colors ── */
-  --bg-primary: rgb(30, 30, 30);
-  --bg-secondary: rgb(45, 45, 45);
-  --bg-surface: rgb(55, 55, 55);
-  --bg-elevated: rgb(60, 60, 60);
-  --bg-overlay: rgba(0, 0, 0, 0.60);
-  --bg-glass: rgba(30, 30, 30, 0.85);
 
-  /* ── Text colors ── */
-  --text-primary: rgba(255, 255, 255, 0.95);
-  --text-secondary: rgba(255, 255, 255, 0.70);
-  --text-tertiary: rgba(255, 255, 255, 0.50);
-  --text-disabled: rgba(255, 255, 255, 0.30);
-  --text-inverse: rgba(0, 0, 0, 0.90);
+  /* ═══════════════════════════════════════════════════
+     1. COLOR PALETTE — Primitives
+     Raw values referenced by semantic & component tokens.
+     ═══════════════════════════════════════════════════ */
 
-  /* ── Accent / brand ── */
-  --accent-color: rgb(66, 133, 244);
-  --accent-hover: rgb(100, 160, 255);
-  --accent-active: rgb(50, 110, 220);
-  --accent-subtle: rgba(66, 133, 244, 0.15);
-  --accent-text: rgb(130, 180, 255);
+  /* ── Gray scale ── */
+  --gray-50:  #fafafa;
+  --gray-100: #f4f4f5;
+  --gray-200: #e4e4e7;
+  --gray-300: #d4d4d8;
+  --gray-400: #a1a1aa;
+  --gray-500: #71717a;
+  --gray-600: #52525b;
+  --gray-700: #3f3f46;
+  --gray-800: #27272a;
+  --gray-900: #18181b;
+  --gray-950: #0f0f11;
 
-  /* ── Semantic colors ── */
-  --color-success: rgb(48, 209, 88);
-  --color-success-bg: rgba(48, 209, 88, 0.12);
-  --color-warning: rgb(255, 214, 10);
-  --color-warning-bg: rgba(255, 214, 10, 0.12);
-  --color-error: rgb(255, 69, 58);
-  --color-error-bg: rgba(255, 69, 58, 0.12);
-  --color-info: rgb(100, 210, 255);
-  --color-info-bg: rgba(100, 210, 255, 0.12);
+  /* ── Blue accent scale ── */
+  --blue-50:  #eff6ff;
+  --blue-100: #dbeafe;
+  --blue-200: #bfdbfe;
+  --blue-300: #93c5fd;
+  --blue-400: #60a5fa;
+  --blue-500: #3b82f6;
+  --blue-600: #2563eb;
+
+  /* ── Red scale ── */
+  --red-400: #f87171;
+  --red-500: #ef4444;
+  --red-600: #dc2626;
+
+  /* ── Green scale ── */
+  --green-400: #4ade80;
+  --green-500: #22c55e;
+  --green-600: #16a34a;
+
+  /* ── Yellow scale ── */
+  --yellow-400: #facc15;
+  --yellow-500: #eab308;
+  --yellow-600: #ca8a04;
+
+  /* ── Orange scale ── */
+  --orange-400: #fb923c;
+  --orange-500: #f97316;
+  --orange-600: #ea580c;
+
+
+  /* ═══════════════════════════════════════════════════
+     2. SEMANTIC TOKENS
+     Contextual colors derived from primitives.
+     Dark theme defaults — override in theme files.
+     ═══════════════════════════════════════════════════ */
+
+  /* ── Surfaces ── */
+  --bg-primary:   #0f0f11;
+  --bg-secondary:  #18181b;
+  --bg-tertiary:   #27272a;
+  --bg-elevated:   #3f3f46;
+  --bg-overlay:    rgba(0, 0, 0, 0.60);
+  --bg-glass:      rgba(15, 15, 17, 0.85);
+
+  /* ── Text ── */
+  --text-primary:   rgba(250, 250, 250, 0.95);
+  --text-secondary: rgba(228, 228, 231, 0.72);
+  --text-tertiary:  rgba(161, 161, 170, 0.64);
+  --text-disabled:  rgba(113, 113, 122, 0.48);
+  --text-inverse:   rgba(15, 15, 17, 0.90);
 
   /* ── Borders ── */
-  --border-color: rgba(255, 255, 255, 0.10);
-  --border-color-strong: rgba(255, 255, 255, 0.18);
-  --border-color-subtle: rgba(255, 255, 255, 0.05);
-  --border-width: 1;
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-subtle:  rgba(255, 255, 255, 0.06);
+  --border-strong:  rgba(255, 255, 255, 0.18);
+  --border-width:   1;
+
+  /* ── Accent ── */
+  --accent-color:  #3b82f6;
+  --accent-hover:  #60a5fa;
+  --accent-active: #2563eb;
+  --accent-subtle: rgba(59, 130, 246, 0.15);
+  --accent-text:   #93c5fd;
+
+  /* ── Semantic status ── */
+  --success-color: #22c55e;
+  --success-bg:    rgba(34, 197, 94, 0.12);
+  --warning-color: #eab308;
+  --warning-bg:    rgba(234, 179, 8, 0.12);
+  --error-color:   #ef4444;
+  --error-bg:      rgba(239, 68, 68, 0.12);
+  --info-color:    #60a5fa;
+  --info-bg:       rgba(96, 165, 250, 0.12);
+
+  /* ── Interactive states ── */
+  --hover-bg:      rgba(255, 255, 255, 0.06);
+  --active-bg:     rgba(255, 255, 255, 0.10);
+  --selection-bg:  rgba(59, 130, 246, 0.30);
+  --selection-text: rgba(255, 255, 255, 1.0);
 
   /* ── Shadows ── */
-  --shadow-color: rgba(0, 0, 0, 0.50);
-  --shadow-small: 0 2 8 rgba(0, 0, 0, 0.30);
+  --shadow-color:  rgba(0, 0, 0, 0.50);
+  --shadow-small:  0 2 8 rgba(0, 0, 0, 0.30);
   --shadow-medium: 0 4 16 rgba(0, 0, 0, 0.40);
-  --shadow-large: 0 8 32 rgba(0, 0, 0, 0.50);
+  --shadow-large:  0 8 32 rgba(0, 0, 0, 0.50);
+
+
+  /* ═══════════════════════════════════════════════════
+     3. COMPONENT TOKENS
+     Per-component overrides that default to semantic
+     tokens. Themes may override these individually.
+     ═══════════════════════════════════════════════════ */
+
+  /* ── Dock ── */
+  --dock-bg:              rgba(15, 15, 17, 0.82);
+  --dock-border:          rgba(255, 255, 255, 0.10);
+  --dock-item-hover-bg:   rgba(255, 255, 255, 0.08);
+  --dock-indicator-color: #3b82f6;
+  --dock-height:          56;
+  --dock-item-size:       48;
+  --dock-icon-size:       32;
+  --dock-radius:          16;
+
+  /* ── Statusbar ── */
+  --statusbar-bg:         rgba(15, 15, 17, 0.90);
+  --statusbar-text:       rgba(250, 250, 250, 0.95);
+  --statusbar-hover-bg:   rgba(255, 255, 255, 0.08);
+  --statusbar-border:     rgba(255, 255, 255, 0.06);
+  --statusbar-height:     34;
+
+  /* ── Window ── */
+  --window-bg:            rgba(15, 15, 17, 0.95);
+  --window-border:        rgba(255, 255, 255, 0.10);
+  --window-radius:        12;
+  --window-shadow:        0 8 32 rgba(0, 0, 0, 0.50);
+
+  /* ── Titlebar ── */
+  --titlebar-bg:          rgba(24, 24, 27, 0.98);
+  --titlebar-text:        rgba(250, 250, 250, 0.95);
+  --titlebar-height:      36;
+  --titlebar-btn-size:    14;
+  --titlebar-btn-radius:  7;
+
+  /* ── Window control buttons ── */
+  --window-btn-bg:        rgba(255, 255, 255, 0.06);
+  --window-btn-hover-bg:  rgba(255, 255, 255, 0.10);
+  --close-button-bg:      rgba(239, 68, 68, 0.70);
+  --close-button-hover-bg: rgba(239, 68, 68, 0.85);
+
+  /* ── Notification ── */
+  --notification-bg:          rgba(39, 39, 42, 0.96);
+  --notification-border:      rgba(255, 255, 255, 0.10);
+  --notification-title-color: rgba(250, 250, 250, 0.95);
+  --notification-body-color:  rgba(228, 228, 231, 0.72);
+  --notification-width:       320;
+  --notification-radius:      12;
+  --notification-padding:     12;
+
+  /* ── Menu ── */
+  --menu-bg:            rgba(39, 39, 42, 0.96);
+  --menu-hover-bg:      rgba(255, 255, 255, 0.08);
+  --menu-text:          rgba(250, 250, 250, 0.92);
+  --menu-disabled-text: rgba(113, 113, 122, 0.48);
+  --menu-separator:     rgba(255, 255, 255, 0.08);
+  --menu-border:        rgba(255, 255, 255, 0.10);
+  --menu-radius:        10;
+  --menu-item-height:   30;
+  --menu-min-width:     180;
+  --menu-max-width:     320;
+  --menu-padding:       4;
+
+  /* ── Launcher ── */
+  --launcher-bg:            rgba(15, 15, 17, 0.92);
+  --launcher-border:        rgba(255, 255, 255, 0.10);
+  --launcher-search-bg:     rgba(255, 255, 255, 0.06);
+  --launcher-item-hover-bg: rgba(255, 255, 255, 0.08);
+  --launcher-width:         560;
+  --launcher-radius:        16;
+  --launcher-item-height:   40;
+  --launcher-search-height: 48;
+
+  /* ── Dialog ── */
+  --dialog-bg:          rgba(39, 39, 42, 0.98);
+  --dialog-border:      rgba(255, 255, 255, 0.10);
+  --dialog-title-color: rgba(250, 250, 250, 0.95);
+  --dialog-radius:      16;
+
+  /* ── Tab bar ── */
+  --tab-bg:            transparent;
+  --tab-active-bg:     rgba(59, 130, 246, 0.15);
+  --tab-active-border: #3b82f6;
+  --tab-text:          rgba(228, 228, 231, 0.72);
+  --tab-active-text:   rgba(250, 250, 250, 0.95);
+
+  /* ── Tooltip ── */
+  --tooltip-bg:     rgba(39, 39, 42, 0.96);
+  --tooltip-text:   rgba(250, 250, 250, 0.92);
+  --tooltip-border: rgba(255, 255, 255, 0.10);
+  --tooltip-radius: 6;
+
+  /* ── Popover ── */
+  --popover-bg:     rgba(39, 39, 42, 0.96);
+  --popover-border: rgba(255, 255, 255, 0.10);
+
+  /* ── Scrollbar ── */
+  --scrollbar-thumb:  rgba(255, 255, 255, 0.15);
+  --scrollbar-track:  transparent;
+  --scrollbar-width:  8;
+  --scrollbar-radius: 4;
+  --scrollbar-hover:  rgba(255, 255, 255, 0.25);
+
+  /* ── Search bar ── */
+  --search-bg:          rgba(255, 255, 255, 0.06);
+  --search-border:      rgba(255, 255, 255, 0.08);
+  --search-text:        rgba(250, 250, 250, 0.95);
+  --search-placeholder: rgba(161, 161, 170, 0.54);
+
+  /* ── Sidebar ── */
+  --sidebar-bg:     rgba(24, 24, 27, 0.95);
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+
+
+  /* ═══════════════════════════════════════════════════
+     4. SPACING & SIZING
+     8px-grid aligned scale. Unitless for the renderer.
+     ═══════════════════════════════════════════════════ */
+
+  --spacing-xs:  4;
+  --spacing-sm:  8;
+  --spacing-md:  12;
+  --spacing-lg:  16;
+  --spacing-xl:  24;
+  --spacing-2xl: 32;
+  --spacing-3xl: 48;
 
   /* ── Border radius ── */
-  --radius-xs: 2;
+  --radius-xs:    2;
   --radius-small: 4;
   --radius-medium: 8;
   --radius-large: 12;
-  --radius-xl: 16;
+  --radius-xl:    16;
   --radius-round: 9999;
 
-  /* ── Spacing scale ── */
-  --spacing-xxs: 2;
-  --spacing-xs: 4;
-  --spacing-sm: 8;
-  --spacing-md: 12;
-  --spacing-lg: 16;
-  --spacing-xl: 24;
-  --spacing-xxl: 32;
-  --spacing-xxxl: 48;
 
-  /* ── Typography ── */
-  --font-family-ui: "Inter", "SF Pro", system-ui, sans-serif;
-  --font-family-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
-  --font-size-xs: 10;
-  --font-size-sm: 12;
-  --font-size-md: 13;
-  --font-size-lg: 14;
-  --font-size-xl: 16;
-  --font-size-xxl: 20;
-  --font-size-title: 24;
-  --font-weight-normal: 400;
-  --font-weight-medium: 500;
+  /* ═══════════════════════════════════════════════════
+     5. TYPOGRAPHY
+     ═══════════════════════════════════════════════════ */
+
+  --font-family-ui:      "Inter", "SF Pro", system-ui, sans-serif;
+  --font-family-mono:    "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
+  --font-family-display: "Inter", "SF Pro Display", system-ui, sans-serif;
+
+  --font-size-xs:    11;
+  --font-size-sm:    12;
+  --font-size-md:    14;
+  --font-size-lg:    16;
+  --font-size-xl:    20;
+  --font-size-2xl:   24;
+
+  --font-weight-normal:   400;
+  --font-weight-medium:   500;
   --font-weight-semibold: 600;
-  --font-weight-bold: 700;
-  --line-height-tight: 1.2;
-  --line-height-normal: 1.5;
+  --font-weight-bold:     700;
+
+  --line-height-tight:   1.2;
+  --line-height-normal:  1.5;
   --line-height-relaxed: 1.75;
 
-  /* ── Z-index layers ── */
-  --z-base: 0;
-  --z-dropdown: 1000;
-  --z-sticky: 1100;
-  --z-overlay: 2000;
-  --z-modal: 3000;
-  --z-popover: 4000;
-  --z-menu: 5000;
-  --z-tooltip: 6000;
-  --z-notification: 7000;
-  --z-devtools: 9900;
-  --z-maximum: 9999;
 
-  /* ── Transitions ── */
-  --transition-fast: 0.10s ease;
-  --transition-normal: 0.15s ease;
-  --transition-slow: 0.25s ease;
+  /* ═══════════════════════════════════════════════════
+     6. TRANSITIONS
+     ═══════════════════════════════════════════════════ */
 
-  /* ── Glass / blur ── */
+  --transition-fast:   0.15s ease;
+  --transition-normal: 0.25s ease;
+  --transition-slow:   0.40s ease;
+
+
+  /* ═══════════════════════════════════════════════════
+     7. GLASS / BLUR
+     ═══════════════════════════════════════════════════ */
+
+  --glass-tint:   rgba(15, 15, 17, 0.80);
+  --glass-blur:   20;
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-shadow: 0 4 24 rgba(0, 0, 0, 0.40);
+
   --blur-subtle: 5;
   --blur-medium: 10;
   --blur-strong: 20;
-  --blur-heavy: 40;
+  --blur-heavy:  40;
 
-  /* ── Shell dimensions ── */
-  --statusbar-height: 34;
-  --dock-height: 64;
-  --titlebar-height: 36;
-  --dock-item-size: 48;
-  --dock-icon-size: 32;
 
-  /* ── Menu dimensions ── */
-  --menu-min-width: 180;
-  --menu-max-width: 320;
-  --menu-item-height: 28;
-  --menu-padding: 4;
-  --menu-radius: 10;
+  /* ═══════════════════════════════════════════════════
+     8. Z-INDEX LAYERS
+     ═══════════════════════════════════════════════════ */
 
-  /* ── Notification dimensions ── */
-  --notification-width: 320;
-  --notification-radius: 12;
-  --notification-padding: 12;
-
-  /* ── Launcher dimensions ── */
-  --launcher-width: 560;
-  --launcher-radius: 16;
-  --launcher-item-height: 40;
-  --launcher-search-height: 48;
-
-  /* ── Window dimensions ── */
-  --window-radius: 16;
-  --window-button-size: 14;
-  --window-button-radius: 7;
-
-  /* ── Scrollbar ── */
-  --scrollbar-width: 6;
-  --scrollbar-radius: 3;
-  --scrollbar-color: rgba(255, 255, 255, 0.15);
-  --scrollbar-hover-color: rgba(255, 255, 255, 0.25);
-
-  /* ── Selection ── */
-  --selection-bg: rgba(66, 133, 244, 0.30);
-  --selection-text: rgba(255, 255, 255, 1.0);
-  --hover-bg: rgba(255, 255, 255, 0.06);
-  --active-bg: rgba(255, 255, 255, 0.10);
-
-  /* ── Close button ── */
-  --close-button-bg: rgba(255, 69, 58, 0.70);
-  --close-button-hover-bg: rgba(255, 69, 58, 0.85);
-
-  /* ── Window control buttons ── */
-  --window-btn-bg: rgba(255, 255, 255, 0.06);
-  --window-btn-hover-bg: rgba(255, 255, 255, 0.10);
+  --z-base:         0;
+  --z-dropdown:     1000;
+  --z-sticky:       1100;
+  --z-overlay:      2000;
+  --z-modal:        3000;
+  --z-popover:      4000;
+  --z-menu:         5000;
+  --z-tooltip:      6000;
+  --z-notification: 7000;
+  --z-devtools:     9900;
+  --z-maximum:      9999;
 }
