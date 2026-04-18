@@ -6,29 +6,38 @@
 window-decoration {
     display: flex;
     flex-direction: column;
+    background: var(--window-bg);
+    border-width: var(--border-width);
+    border-style: solid;
+    border-color: var(--window-border);
+    border-radius: var(--window-radius);
+    box-shadow: var(--window-shadow);
+    overflow: hidden;
 }
 
 titlebar {
     display: flex;
     flex-direction: row;
     align-items: center;
-    height: 36px;
-    padding: 0 8px;
+    height: var(--titlebar-height);
+    padding: 0 var(--spacing-sm);
+    background: var(--titlebar-bg);
+    color: var(--titlebar-text);
     -webkit-app-region: drag;
     user-select: none;
 }
 
 titlebar-icon {
     display: block;
-    width: 16px;
-    height: 16px;
-    margin-right: 8px;
+    width: var(--spacing-lg);
+    height: var(--spacing-lg);
+    margin-right: var(--spacing-sm);
     flex-shrink: 0;
 }
 
 titlebar-title {
-    font-size: 13px;
-    font-weight: 500;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -44,7 +53,7 @@ titlebar-controls {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 4px;
+    gap: var(--spacing-xs);
     flex-shrink: 0;
     -webkit-app-region: no-drag;
 }
@@ -53,24 +62,30 @@ titlebar-button {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: var(--titlebar-btn-size);
+    height: var(--titlebar-btn-size);
     border-radius: 50%;
+    background: var(--window-btn-bg);
     cursor: pointer;
+    transition: background var(--transition-fast);
 }
 
 titlebar-button:hover {
-    /* Theme colors */
+    background: var(--window-btn-hover-bg);
+}
+
+titlebar-button.close {
+    background: var(--close-button-bg);
 }
 
 titlebar-button.close:hover {
-    /* Close button has distinct hover color in theme */
+    background: var(--close-button-hover-bg);
 }
 
 titlebar-button-icon {
     display: block;
-    width: 12px;
-    height: 12px;
+    width: var(--spacing-md);
+    height: var(--spacing-md);
 }
 
 /* Maximized state adjustments */

@@ -8,10 +8,10 @@ notification-area {
     flex-direction: column;
     align-items: flex-end;
     position: fixed;
-    top: 36px;
-    right: 12px;
-    z-index: 3000;
-    gap: 8px;
+    top: var(--titlebar-height);
+    right: var(--spacing-md);
+    z-index: var(--z-notification);
+    gap: var(--spacing-sm);
     max-height: calc(100vh - 100px);
     overflow-y: auto;
     pointer-events: none;
@@ -20,30 +20,34 @@ notification-area {
 notification {
     display: flex;
     flex-direction: row;
-    gap: 12px;
-    width: 320px;
-    min-height: 64px;
-    padding: 12px 16px;
-    border-radius: 12px;
-    backdrop-filter: blur(20px);
-    border-width: 1px;
+    gap: var(--spacing-md);
+    width: var(--notification-width);
+    min-height: 64;
+    padding: var(--notification-padding) var(--spacing-lg);
+    border-radius: var(--notification-radius);
+    background: var(--notification-bg);
+    border-color: var(--notification-border);
+    backdrop-filter: blur(var(--blur-strong));
+    border-width: var(--border-width);
     border-style: solid;
     pointer-events: auto;
     cursor: default;
     overflow: hidden;
+    transition: opacity var(--transition-normal), transform var(--transition-normal);
 }
 
 notification.urgency-critical {
-    border-left-width: 3px;
+    border-left-width: 3;
     border-left-style: solid;
+    border-left-color: var(--error-color);
 }
 
 notification-icon {
     display: block;
-    width: 24px;
-    height: 24px;
+    width: var(--spacing-xl);
+    height: var(--spacing-xl);
     flex-shrink: 0;
-    margin-top: 2px;
+    margin-top: 2;
 }
 
 notification-content {
@@ -51,20 +55,21 @@ notification-content {
     flex-direction: column;
     flex: 1 1 auto;
     min-width: 0;
-    gap: 2px;
+    gap: 2;
 }
 
 notification-title {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    color: var(--notification-title-color);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
 notification-body {
-    font-size: 12px;
-    opacity: 0.8;
+    font-size: var(--font-size-sm);
+    color: var(--notification-body-color);
     overflow: hidden;
     text-overflow: ellipsis;
     /* Limit to 3 lines */
@@ -76,20 +81,25 @@ notification-body {
 notification-actions {
     display: flex;
     flex-direction: row;
-    gap: 8px;
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top-width: 1px;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+    padding-top: var(--spacing-sm);
+    border-top-width: var(--border-width);
     border-top-style: solid;
+    border-top-color: var(--border-subtle);
 }
 
 notification-action {
-    padding: 4px 12px;
-    border-radius: 6px;
-    font-size: 12px;
+    padding: var(--spacing-xs) var(--spacing-md);
+    border-radius: var(--radius-small);
+    font-size: var(--font-size-sm);
+    background: var(--accent-subtle);
+    color: var(--accent-text);
     cursor: pointer;
+    transition: background var(--transition-fast), opacity var(--transition-fast);
 }
 
 notification-action:hover {
-    opacity: 0.85;
+    background: var(--accent-color);
+    color: var(--text-inverse);
 }

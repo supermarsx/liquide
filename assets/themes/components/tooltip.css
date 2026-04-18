@@ -8,9 +8,10 @@ tooltip {
     flex-direction: column;
     align-items: center;
     position: fixed;
-    z-index: 6000;
+    z-index: var(--z-tooltip);
     pointer-events: none;
-    max-width: 300px;
+    max-width: 300;
+    transition: opacity var(--transition-fast);
 }
 
 tooltip[data-position="bottom"] {
@@ -26,16 +27,22 @@ tooltip[data-position="right"] {
 }
 
 tooltip-content {
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 12px;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--tooltip-radius);
+    background: var(--tooltip-bg);
+    color: var(--tooltip-text);
+    border-width: var(--border-width);
+    border-style: solid;
+    border-color: var(--tooltip-border);
+    font-size: var(--font-size-sm);
     white-space: nowrap;
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(var(--blur-medium));
 }
 
 tooltip-arrow {
     display: block;
-    width: 8px;
-    height: 8px;
+    width: var(--spacing-sm);
+    height: var(--spacing-sm);
+    background: var(--tooltip-bg);
     transform: rotate(45deg);
 }

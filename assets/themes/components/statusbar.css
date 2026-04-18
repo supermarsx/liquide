@@ -11,20 +11,23 @@ statusbar {
     top: 0;
     left: 0;
     right: 0;
-    height: 34px;
-    padding: 0 8px;
-    z-index: 1000;
-    backdrop-filter: blur(10px);
-    border-bottom-width: 1px;
+    height: var(--statusbar-height);
+    padding: 0 var(--spacing-sm);
+    z-index: var(--z-dropdown);
+    background: var(--statusbar-bg);
+    color: var(--statusbar-text);
+    border-bottom-width: var(--border-width);
     border-bottom-style: solid;
-    font-size: 13px;
+    border-bottom-color: var(--statusbar-border);
+    backdrop-filter: blur(var(--blur-medium));
+    font-size: var(--font-size-sm);
 }
 
 statusbar-slot {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-sm);
 }
 
 statusbar-slot.left {
@@ -43,28 +46,45 @@ statusbar-slot.right {
 }
 
 statusbar-logo {
-    font-weight: 700;
-    font-size: 13px;
+    font-weight: var(--font-weight-bold);
+    font-size: var(--font-size-sm);
     cursor: pointer;
-    padding: 0 8px;
+    padding: 0 var(--spacing-sm);
+    border-radius: var(--radius-small);
+    transition: background var(--transition-fast);
+}
+
+statusbar-logo:hover {
+    background: var(--statusbar-hover-bg);
 }
 
 statusbar-item {
-    padding: 0 4px;
-    font-size: 13px;
+    padding: 0 var(--spacing-xs);
+    font-size: var(--font-size-sm);
+    border-radius: var(--radius-small);
+    transition: background var(--transition-fast);
+}
+
+statusbar-item:hover {
+    background: var(--statusbar-hover-bg);
 }
 
 notification-indicator {
     padding: 0 6px;
-    font-size: 12px;
-    border-radius: 8px;
-    min-width: 16px;
+    font-size: var(--font-size-sm);
+    border-radius: var(--radius-medium);
+    min-width: var(--spacing-lg);
     text-align: center;
     cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+notification-indicator:hover {
+    background: var(--statusbar-hover-bg);
 }
 
 notification-indicator.active {
-    font-weight: 700;
+    font-weight: var(--font-weight-bold);
 }
 
 notification-indicator.dnd {
@@ -72,41 +92,42 @@ notification-indicator.dnd {
 }
 
 status-indicator {
-    padding: 0 4px;
-    font-size: 12px;
+    padding: 0 var(--spacing-xs);
+    font-size: var(--font-size-sm);
 }
 
 status-indicator.connected::before {
     content: "●";
-    margin-right: 4px;
+    margin-right: var(--spacing-xs);
 }
 
 status-indicator.degraded::before {
     content: "◐";
-    margin-right: 4px;
+    margin-right: var(--spacing-xs);
 }
 
 status-indicator.disconnected::before {
     content: "○";
-    margin-right: 4px;
+    margin-right: var(--spacing-xs);
 }
 
 status-tray {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 4px;
-    padding: 0 4px;
-    border-radius: 4px;
+    gap: var(--spacing-xs);
+    padding: 0 var(--spacing-xs);
+    border-radius: var(--radius-small);
 }
 
 session-button {
-    padding: 2px 8px;
-    border-radius: 4px;
+    padding: 2px var(--spacing-sm);
+    border-radius: var(--radius-small);
     cursor: pointer;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
+    transition: background var(--transition-fast);
 }
 
 session-button:hover {
-    opacity: 0.85;
+    background: var(--statusbar-hover-bg);
 }
