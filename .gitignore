@@ -1,6 +1,7 @@
 # Claude artifacts
 tmpclaude-*
 .claude/
+.orchestration/
 *.jsonl
 spec.zip
 /target
