@@ -1,12 +1,18 @@
 //! Standalone compositor launcher — coordinates all subsystems.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use crate::config::StandaloneConfig;
+use crate::display::{DisplayOutput, OutputInfo};
+use crate::event_loop::{EventLoop, EventLoopConfig};
+use crate::wayland::WaylandServerState;
 use liquide_drm::DrmDevice;
 use liquide_logind::{VirtualTerminal, VtMode, Privileges};
 use liquide_libinput::EvdevEnumerator;
 use liquide_wayland_server::WaylandDisplay;
 use liquide_xwayland::{XWaylandProcess, XWaylandConfig};
-use tracing::info;
+use tracing::{debug, info, warn};
 
 /// The standalone compositor launcher.
 pub struct StandaloneLauncher {
@@ -15,7 +21,9 @@ pub struct StandaloneLauncher {
     drm: Option<DrmDevice>,
     wayland: Option<WaylandDisplay>,
     xwayland: Option<XWaylandProcess>,
-    running: bool,
+    display_output: DisplayOutput,
+    wayland_state: WaylandServerState,
+    running: Arc<AtomicBool>,
 }
 
 impl StandaloneLauncher {
@@ -27,7 +35,9 @@ impl StandaloneLauncher {
             drm: None,
             wayland: None,
             xwayland: None,
-            running: false,
+            display_output: DisplayOutput::new(),
+            wayland_state: WaylandServerState::new(),
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -127,13 +137,9 @@ impl StandaloneLauncher {
     /// - Polls Wayland server for client requests
     /// - Renders frames and presents to display
     pub fn run(&mut self) -> anyhow::Result<()> {
-        self.running = true;
+        self.running.store(true, Ordering::Release);
         info!("standalone compositor running");
 
-        // The event loop will be implemented to integrate with the
-        // existing DesktopCompositor from liquide-session. For now,
-        // log the successful initialization.
-        info!("standalone compositor initialized — event loop ready");
         info!(
             drm = self.drm.is_some(),
             wayland = self.wayland.is_some(),
@@ -141,24 +147,82 @@ impl StandaloneLauncher {
             "subsystem status"
         );
 
-        // TODO: Integrate with DesktopCompositor event loop.
-        // The plan is to create a StandalonePlatform that implements
-        // PlatformBackend using DRM for output and evdev for input,
-        // then pass it to DesktopCompositor::run() just like the
-        // existing X11/Wayland/Win32 backends.
+        // ── Determine target refresh rate from primary output ───────
+        let refresh_hz = self
+            .display_output
+            .primary()
+            .map(|o| o.mode.refresh_hz)
+            .unwrap_or(60);
 
-        self.running = false;
+        let mut loop_config = EventLoopConfig::with_refresh_hz(refresh_hz);
+        loop_config.drm_fd = self.drm.as_ref().map(|d| d.fd());
+        loop_config.wayland_active = self.wayland.as_ref().map_or(false, |w| w.is_running());
+
+        info!(
+            refresh_hz,
+            frame_interval_ms = loop_config.frame_interval.as_millis(),
+            "frame pacing configured"
+        );
+
+        // ── Create event loop ───────────────────────────────────────
+        let (mut event_loop, running_flag) = EventLoop::new(loop_config)
+            .map_err(|e| anyhow::anyhow!("failed to create event loop: {e}"))?;
+
+        // Store a reference so signal handlers / external code can stop us.
+        self.running = running_flag;
+
+        // ── Register fds ────────────────────────────────────────────
+        if let Some(ref drm) = self.drm {
+            if let Err(e) = event_loop.register_drm(drm.fd()) {
+                warn!(%e, "failed to register DRM fd — pageflip events unavailable");
+            }
+        }
+
+        // ── Run ─────────────────────────────────────────────────────
+        let result = event_loop.run(
+            // on_input: process input events
+            || {
+                debug!("processing input events");
+                // In a full implementation this would read from libinput and
+                // dispatch to the compositor input router. Return true if any
+                // input produced visual damage (e.g. cursor move, window focus).
+                false
+            },
+            // on_wayland: process Wayland client events
+            || {
+                debug!("processing Wayland client events");
+                // In a full implementation this would accept new clients and
+                // process protocol requests. Return true if surface content changed.
+                false
+            },
+            // on_render: render and present a frame
+            || {
+                // The actual rendering delegates to the compositor + renderer.
+                // Return true if a frame was successfully submitted for scanout.
+                debug!("rendering frame");
+                true
+            },
+        );
+
+        if let Err(e) = result {
+            anyhow::bail!("event loop error: {e}");
+        }
+
+        self.running.store(false, Ordering::Release);
         Ok(())
     }
 
     /// Whether the compositor is currently running.
     pub fn is_running(&self) -> bool {
-        self.running
+        self.running.load(Ordering::Acquire)
     }
 }
 
 impl Drop for StandaloneLauncher {
     fn drop(&mut self) {
+        // Signal the event loop to stop if it's still running.
+        self.running.store(false, Ordering::Release);
+
         // Stop XWayland first.
         if let Some(ref mut xwl) = self.xwayland {
             let _ = xwl.stop();
@@ -166,6 +230,14 @@ impl Drop for StandaloneLauncher {
         // Shut down Wayland server.
         if let Some(ref mut display) = self.wayland {
             display.shutdown();
+        }
+        // Release DRM master before closing the device.
+        if let Some(ref mut drm) = self.drm {
+            if drm.is_master() {
+                if let Err(e) = drm.drop_master() {
+                    warn!(%e, "failed to release DRM master");
+                }
+            }
         }
         // Restore VT mode.
         if let Some(ref mut vt) = self.vt {

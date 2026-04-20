@@ -3,6 +3,8 @@
 //! Wraps liquide-drm and liquide-gbm to provide frame presentation
 //! to physical monitors.
 
+use std::time::Duration;
+
 use liquide_drm::mode::DrmMode;
 
 /// Information about a connected display output.
@@ -20,6 +22,14 @@ pub struct OutputInfo {
     pub physical_height_mm: u32,
     /// Whether this is the primary output.
     pub primary: bool,
+}
+
+impl OutputInfo {
+    /// Frame interval derived from the display's refresh rate.
+    pub fn frame_interval(&self) -> Duration {
+        let hz = if self.mode.refresh_hz == 0 { 60 } else { self.mode.refresh_hz };
+        Duration::from_nanos(1_000_000_000 / u64::from(hz))
+    }
 }
 
 /// Display output manager for presenting frames via DRM/KMS.
@@ -48,6 +58,14 @@ impl DisplayOutput {
     /// Get the primary output (first output if none marked primary).
     pub fn primary(&self) -> Option<&OutputInfo> {
         self.outputs.iter().find(|o| o.primary).or(self.outputs.first())
+    }
+
+    /// Returns the target frame interval for the primary display.
+    /// Falls back to 60 Hz (≈16.67 ms) if no outputs are connected.
+    pub fn target_frame_interval(&self) -> Duration {
+        self.primary()
+            .map(|o| o.frame_interval())
+            .unwrap_or(Duration::from_nanos(16_666_667))
     }
 }
 

@@ -9,6 +9,7 @@
 //! existing remote path (Path A).
 
 pub mod config;
+pub mod event_loop;
 pub mod launcher;
 pub mod display;
 pub mod input;
@@ -16,6 +17,7 @@ pub mod wayland;
 pub mod xwayland_bridge;
 
 pub use config::StandaloneConfig;
+pub use event_loop::{EventLoop, EventLoopConfig, FrameStats};
 pub use launcher::StandaloneLauncher;
 
 #[cfg(test)]
