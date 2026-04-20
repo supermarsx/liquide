@@ -18,8 +18,9 @@ use liquide_layout::Rect;
 use crate::display_list::{DisplayItem, DisplayList};
 
 // Thread-local cache for flattened SVG paths, keyed by hash of the `d` attribute string.
+// Stores (original_string, segments) to detect hash collisions (CR-11).
 thread_local! {
-    static PATH_CACHE: RefCell<HashMap<u64, Vec<PathSegment>>> = RefCell::new(HashMap::new());
+    static PATH_CACHE: RefCell<HashMap<u64, (String, Vec<PathSegment>)>> = RefCell::new(HashMap::new());
 }
 
 fn hash_path_string(d: &str) -> u64 {
@@ -268,7 +269,7 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
                 last_cp_x = cx; last_cp_y = cy;
             }
             PathCommand::CubicTo { x1, y1, x2, y2, x, y } => {
-                flatten_cubic(&mut segments, cx, cy, x1, y1, x2, y2, x, y);
+                flatten_cubic(&mut segments, cx, cy, x1, y1, x2, y2, x, y, 0);
                 last_cp_x = x2; last_cp_y = y2;
                 cx = x; cy = y;
             }
@@ -276,7 +277,7 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
                 // Reflect previous control point
                 let rx1 = 2.0 * cx - last_cp_x;
                 let ry1 = 2.0 * cy - last_cp_y;
-                flatten_cubic(&mut segments, cx, cy, rx1, ry1, x2, y2, x, y);
+                flatten_cubic(&mut segments, cx, cy, rx1, ry1, x2, y2, x, y, 0);
                 last_cp_x = x2; last_cp_y = y2;
                 cx = x; cy = y;
             }
@@ -292,23 +293,14 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
                 last_cp_x = rx1; last_cp_y = ry1;
                 cx = x; cy = y;
             }
-            PathCommand::ArcTo { rx, ry, x, y, .. } => {
-                // Simplified arc: approximate with line for now.
-                // A full implementation would convert to cubic beziers.
-                if rx.abs() < 0.01 || ry.abs() < 0.01 {
+            PathCommand::ArcTo { rx, ry, rotation, large_arc, sweep, x, y } => {
+                // Degenerate arc: zero radii → straight line.
+                if rx.abs() < 1e-6 || ry.abs() < 1e-6 {
                     segments.push(PathSegment { x1: cx, y1: cy, x2: x, y2: y });
+                } else if (cx - x).abs() < 1e-6 && (cy - y).abs() < 1e-6 {
+                    // Start == end → nothing to draw.
                 } else {
-                    // Approximate arc with 8 line segments
-                    let steps = 8;
-                    for i in 0..steps {
-                        let t0 = i as f32 / steps as f32;
-                        let t1 = (i + 1) as f32 / steps as f32;
-                        let ax = cx + (x - cx) * t0;
-                        let ay = cy + (y - cy) * t0;
-                        let bx = cx + (x - cx) * t1;
-                        let by = cy + (y - cy) * t1;
-                        segments.push(PathSegment { x1: ax, y1: ay, x2: bx, y2: by });
-                    }
+                    arc_to_cubic_beziers(&mut segments, cx, cy, rx, ry, rotation, large_arc, sweep, x, y);
                 }
                 cx = x; cy = y;
                 last_cp_x = x; last_cp_y = y;
@@ -334,8 +326,16 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
 pub fn flatten_path_cached(d: &str) -> Vec<PathSegment> {
     let key = hash_path_string(d);
 
-    // Check cache first.
-    let cached = PATH_CACHE.with(|cache| cache.borrow().get(&key).cloned());
+    // Check cache first, verifying the original string matches to detect hash collisions.
+    let cached = PATH_CACHE.with(|cache| {
+        cache.borrow().get(&key).and_then(|(original, segments)| {
+            if original == d {
+                Some(segments.clone())
+            } else {
+                None
+            }
+        })
+    });
 
     if let Some(segments) = cached {
         return segments;
@@ -347,10 +347,10 @@ pub fn flatten_path_cached(d: &str) -> Vec<PathSegment> {
 
     PATH_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if cache.len() > 1024 {
+        if cache.len() > 2048 {
             cache.clear();
         }
-        cache.insert(key, segments.clone());
+        cache.insert(key, (d.to_string(), segments.clone()));
     });
 
     segments
@@ -363,7 +363,17 @@ fn flatten_cubic(
     x1: f32, y1: f32,
     x2: f32, y2: f32,
     x3: f32, y3: f32,
+    depth: u32,
 ) {
+    // Guard against infinite recursion and NaN propagation.
+    if depth >= 16
+        || x0.is_nan() || y0.is_nan()
+        || x3.is_nan() || y3.is_nan()
+    {
+        out.push(PathSegment { x1: x0, y1: y0, x2: x3, y2: y3 });
+        return;
+    }
+
     // Check if the curve is flat enough.
     let dx = x3 - x0;
     let dy = y3 - y0;
@@ -390,8 +400,135 @@ fn flatten_cubic(
     let mx = (m012x + m123x) * 0.5;
     let my = (m012y + m123y) * 0.5;
 
-    flatten_cubic(out, x0, y0, m01x, m01y, m012x, m012y, mx, my);
-    flatten_cubic(out, mx, my, m123x, m123y, m23x, m23y, x3, y3);
+    flatten_cubic(out, x0, y0, m01x, m01y, m012x, m012y, mx, my, depth + 1);
+    flatten_cubic(out, mx, my, m123x, m123y, m23x, m23y, x3, y3, depth + 1);
+}
+
+/// Convert an SVG arc (endpoint parameterization) to cubic Bézier curves.
+///
+/// Implements the SVG spec endpoint-to-center parameterization and then
+/// approximates each arc segment (≤ π/2) with a cubic Bézier.
+fn arc_to_cubic_beziers(
+    out: &mut Vec<PathSegment>,
+    x1: f32, y1: f32,
+    rx: f32, ry: f32,
+    x_rotation_deg: f32,
+    large_arc: bool,
+    sweep: bool,
+    x2: f32, y2: f32,
+) {
+    use std::f32::consts::PI;
+
+    let phi = x_rotation_deg.to_radians();
+    let cos_phi = phi.cos();
+    let sin_phi = phi.sin();
+
+    // Step 1: Compute (x1', y1') — rotated midpoint
+    let dx2 = (x1 - x2) / 2.0;
+    let dy2 = (y1 - y2) / 2.0;
+    let x1p = cos_phi * dx2 + sin_phi * dy2;
+    let y1p = -sin_phi * dx2 + cos_phi * dy2;
+
+    // Step 2: Correct out-of-range radii
+    let mut rx = rx.abs();
+    let mut ry = ry.abs();
+    let lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
+    if lambda > 1.0 {
+        let sqrt_lambda = lambda.sqrt();
+        rx *= sqrt_lambda;
+        ry *= sqrt_lambda;
+    }
+
+    // Step 3: Compute center point (cx', cy')
+    let rx_sq = rx * rx;
+    let ry_sq = ry * ry;
+    let x1p_sq = x1p * x1p;
+    let y1p_sq = y1p * y1p;
+
+    let num = (rx_sq * ry_sq - rx_sq * y1p_sq - ry_sq * x1p_sq).max(0.0);
+    let den = rx_sq * y1p_sq + ry_sq * x1p_sq;
+    let sq = if den > 0.0 { (num / den).sqrt() } else { 0.0 };
+    let sign = if large_arc == sweep { -1.0 } else { 1.0 };
+
+    let cxp = sign * sq * (rx * y1p / ry);
+    let cyp = sign * sq * -(ry * x1p / rx);
+
+    // Step 4: Compute center in original coordinates
+    let cx = cos_phi * cxp - sin_phi * cyp + (x1 + x2) / 2.0;
+    let cy = sin_phi * cxp + cos_phi * cyp + (y1 + y2) / 2.0;
+
+    // Step 5: Compute θ1 and Δθ
+    fn angle(ux: f32, uy: f32, vx: f32, vy: f32) -> f32 {
+        let n = (ux * ux + uy * uy).sqrt() * (vx * vx + vy * vy).sqrt();
+        if n < 1e-10 { return 0.0; }
+        let cos_a = ((ux * vx + uy * vy) / n).clamp(-1.0, 1.0);
+        let sign = if ux * vy - uy * vx < 0.0 { -1.0 } else { 1.0 };
+        sign * cos_a.acos()
+    }
+
+    let theta1 = angle(1.0, 0.0, (x1p - cxp) / rx, (y1p - cyp) / ry);
+    let mut d_theta = angle(
+        (x1p - cxp) / rx, (y1p - cyp) / ry,
+        (-x1p - cxp) / rx, (-y1p - cyp) / ry,
+    );
+
+    if !sweep && d_theta > 0.0 {
+        d_theta -= 2.0 * PI;
+    } else if sweep && d_theta < 0.0 {
+        d_theta += 2.0 * PI;
+    }
+
+    // Step 6: Split into segments of ≤ π/2 and approximate each with a cubic Bézier
+    let n_segs = (d_theta.abs() / (PI / 2.0)).ceil().max(1.0) as u32;
+    let seg_angle = d_theta / n_segs as f32;
+
+    let mut prev_x = x1;
+    let mut prev_y = y1;
+
+    for i in 0..n_segs {
+        let t1 = theta1 + seg_angle * i as f32;
+        let t2 = theta1 + seg_angle * (i + 1) as f32;
+
+        // Control point factor: α = sin(Δ) * (√(4 + 3 * tan²(Δ/2)) - 1) / 3
+        let half = seg_angle / 2.0;
+        let alpha = half.sin() * ((4.0 + 3.0 * (half.tan() * half.tan())).sqrt() - 1.0) / 3.0;
+
+        // Endpoint on the unit-radius ellipse
+        let cos_t1 = t1.cos();
+        let sin_t1 = t1.sin();
+        let cos_t2 = t2.cos();
+        let sin_t2 = t2.sin();
+
+        // Control point 1 (on unit ellipse, then transform)
+        let ep1x = rx * cos_t1;
+        let ep1y = ry * sin_t1;
+        let ep2x = rx * cos_t2;
+        let ep2y = ry * sin_t2;
+
+        // Tangent directions
+        let d1x = -rx * sin_t1;
+        let d1y = ry * cos_t1;
+        let d2x = -rx * sin_t2;
+        let d2y = ry * cos_t2;
+
+        // Control points in ellipse-local space
+        let cp1x = ep1x + alpha * d1x;
+        let cp1y = ep1y + alpha * d1y;
+        let cp2x = ep2x - alpha * d2x;
+        let cp2y = ep2y - alpha * d2y;
+
+        // Transform to world coordinates (rotate + translate)
+        let q1x = cos_phi * cp1x - sin_phi * cp1y + cx;
+        let q1y = sin_phi * cp1x + cos_phi * cp1y + cy;
+        let q2x = cos_phi * cp2x - sin_phi * cp2y + cx;
+        let q2y = sin_phi * cp2x + cos_phi * cp2y + cy;
+        let end_x = cos_phi * ep2x - sin_phi * ep2y + cx;
+        let end_y = sin_phi * ep2x + cos_phi * ep2y + cy;
+
+        flatten_cubic(out, prev_x, prev_y, q1x, q1y, q2x, q2y, end_x, end_y, 0);
+        prev_x = end_x;
+        prev_y = end_y;
+    }
 }
 
 /// Flatten a quadratic bezier into line segments.
@@ -406,7 +543,7 @@ fn flatten_quadratic(
     let cy1 = y0 + (y1 - y0) * 2.0 / 3.0;
     let cx2 = x2 + (x1 - x2) * 2.0 / 3.0;
     let cy2 = y2 + (y1 - y2) * 2.0 / 3.0;
-    flatten_cubic(out, x0, y0, cx1, cy1, cx2, cy2, x2, y2);
+    flatten_cubic(out, x0, y0, cx1, cy1, cx2, cy2, x2, y2, 0);
 }
 
 /// Paint an SVG path into a display list as a series of line segments.
@@ -530,5 +667,333 @@ mod tests {
         let first = flatten_path_cached(d);
         let second = flatten_path_cached(d);
         assert_eq!(first.len(), second.len());
+    }
+
+    #[test]
+    fn flatten_cubic_depth_limit_prevents_stack_overflow() {
+        // Craft a curve with NaN that would recurse infinitely without the depth guard.
+        let mut out = Vec::new();
+        flatten_cubic(&mut out, 0.0, 0.0, f32::NAN, f32::NAN, 100.0, 100.0, 200.0, 200.0, 0);
+        // Should produce a single line segment (bailout at depth 0 due to NaN).
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn flatten_cubic_deep_subdivision_terminates() {
+        // A pathological curve that causes many subdivisions.
+        let mut out = Vec::new();
+        flatten_cubic(&mut out, 0.0, 0.0, 1e6, -1e6, -1e6, 1e6, 1.0, 1.0, 0);
+        // Must terminate with at most 2^16 segments.
+        assert!(out.len() <= 65536);
+    }
+
+    #[test]
+    fn arc_to_cubic_semicircle() {
+        // A semicircular arc: M 0 0 A 50 50 0 0 1 100 0
+        let cmds = parse_svg_path("M 0 0 A 50 50 0 0 1 100 0");
+        let segs = flatten_path(&cmds);
+        // Should produce curved segments (more than the old 8-line-segment hack)
+        assert!(segs.len() > 1);
+        // First segment starts near origin, last ends near (100, 0)
+        let first = &segs[0];
+        let last = &segs[segs.len() - 1];
+        assert!((first.x1).abs() < 0.1);
+        assert!((first.y1).abs() < 0.1);
+        assert!((last.x2 - 100.0).abs() < 1.0);
+        assert!((last.y2).abs() < 1.0);
+        // The arc should bulge upward or downward — check that some point is not on the line
+        let has_curvature = segs.iter().any(|s| s.y1.abs() > 1.0 || s.y2.abs() > 1.0);
+        assert!(has_curvature, "Arc segments should show curvature, not straight lines");
+    }
+
+    #[test]
+    fn arc_degenerate_zero_radii() {
+        let cmds = parse_svg_path("M 0 0 A 0 0 0 0 1 100 100");
+        let segs = flatten_path(&cmds);
+        // Zero radii → single line segment to endpoint.
+        assert_eq!(segs.len(), 1);
+        assert!((segs[0].x2 - 100.0).abs() < 0.01);
+        assert!((segs[0].y2 - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn cache_collision_different_paths_returns_correct() {
+        // Two different paths should return different segment counts.
+        let d1 = "M 0 0 L 100 0 Z";
+        let d2 = "M 0 0 L 100 0 L 100 100 L 0 100 Z";
+        let s1 = flatten_path_cached(d1);
+        let s2 = flatten_path_cached(d2);
+        // d1 has 2 segments (line + close), d2 has 4 segments
+        assert_ne!(s1.len(), s2.len());
+    }
+
+    // ── Parse M L Z basic ──
+
+    #[test]
+    fn parse_move_line_close() {
+        let cmds = parse_svg_path("M 0 0 L 10 10");
+        assert_eq!(cmds.len(), 2);
+        match cmds[0] {
+            PathCommand::MoveTo { x, y } => { assert_eq!(x, 0.0); assert_eq!(y, 0.0); }
+            _ => panic!("expected MoveTo"),
+        }
+        match cmds[1] {
+            PathCommand::LineTo { x, y } => { assert_eq!(x, 10.0); assert_eq!(y, 10.0); }
+            _ => panic!("expected LineTo"),
+        }
+    }
+
+    // ── Parse arc commands ──
+
+    #[test]
+    fn parse_arc_command() {
+        let cmds = parse_svg_path("M 10 80 A 25 25 0 0 1 50 80");
+        assert_eq!(cmds.len(), 2);
+        match cmds[1] {
+            PathCommand::ArcTo { rx, ry, rotation, large_arc, sweep, x, y } => {
+                assert_eq!(rx, 25.0);
+                assert_eq!(ry, 25.0);
+                assert_eq!(rotation, 0.0);
+                assert!(!large_arc);
+                assert!(sweep);
+                assert_eq!(x, 50.0);
+                assert_eq!(y, 80.0);
+            }
+            _ => panic!("expected ArcTo"),
+        }
+    }
+
+    // ── Parse relative commands ──
+
+    #[test]
+    fn parse_relative_line() {
+        let cmds = parse_svg_path("M 10 20 l 5 5");
+        assert_eq!(cmds.len(), 2);
+        match cmds[1] {
+            PathCommand::LineTo { x, y } => {
+                // Relative: 10+5=15, 20+5=25
+                assert!((x - 15.0).abs() < 0.01);
+                assert!((y - 25.0).abs() < 0.01);
+            }
+            _ => panic!("expected LineTo"),
+        }
+    }
+
+    #[test]
+    fn parse_relative_move() {
+        let cmds = parse_svg_path("M 10 20 m 5 5 L 30 30");
+        assert_eq!(cmds.len(), 3);
+        match cmds[1] {
+            PathCommand::MoveTo { x, y } => {
+                assert!((x - 15.0).abs() < 0.01);
+                assert!((y - 25.0).abs() < 0.01);
+            }
+            _ => panic!("expected MoveTo"),
+        }
+    }
+
+    #[test]
+    fn parse_relative_horizontal_vertical() {
+        let cmds = parse_svg_path("M 10 20 h 30 v 40");
+        assert_eq!(cmds.len(), 3);
+        match cmds[1] {
+            PathCommand::HLineTo { x } => assert!((x - 40.0).abs() < 0.01),
+            _ => panic!("expected HLineTo"),
+        }
+        match cmds[2] {
+            PathCommand::VLineTo { y } => assert!((y - 60.0).abs() < 0.01),
+            _ => panic!("expected VLineTo"),
+        }
+    }
+
+    // ── Parse malformed/empty paths ──
+
+    #[test]
+    fn parse_empty_path() {
+        let cmds = parse_svg_path("");
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn parse_malformed_path_partial() {
+        // Missing second coordinate — parser should handle gracefully
+        let cmds = parse_svg_path("M 10");
+        // No valid command emitted since y is missing
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn parse_whitespace_only_path() {
+        let cmds = parse_svg_path("   ");
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn parse_unknown_commands_skipped() {
+        let cmds = parse_svg_path("M 0 0 X 5 5 L 10 10");
+        // M and L should parse, X is unknown and skipped
+        assert_eq!(cmds.len(), 2);
+    }
+
+    // ── Parse smooth curves ──
+
+    #[test]
+    fn parse_smooth_cubic() {
+        let cmds = parse_svg_path("M 0 0 C 10 20 30 40 50 60 S 80 90 100 110");
+        assert_eq!(cmds.len(), 3);
+        assert!(matches!(cmds[2], PathCommand::SmoothCubicTo { .. }));
+    }
+
+    #[test]
+    fn parse_quadratic() {
+        let cmds = parse_svg_path("M 0 0 Q 25 50 50 0");
+        assert_eq!(cmds.len(), 2);
+        match cmds[1] {
+            PathCommand::QuadTo { x1, y1, x, y } => {
+                assert_eq!(x1, 25.0);
+                assert_eq!(y1, 50.0);
+                assert_eq!(x, 50.0);
+                assert_eq!(y, 0.0);
+            }
+            _ => panic!("expected QuadTo"),
+        }
+    }
+
+    #[test]
+    fn parse_smooth_quad() {
+        let cmds = parse_svg_path("M 0 0 Q 25 50 50 0 T 100 0");
+        assert_eq!(cmds.len(), 3);
+        assert!(matches!(cmds[2], PathCommand::SmoothQuadTo { .. }));
+    }
+
+    // ── Flatten edge cases ──
+
+    #[test]
+    fn flatten_empty_commands() {
+        let segs = flatten_path(&[]);
+        assert!(segs.is_empty());
+    }
+
+    #[test]
+    fn flatten_move_only() {
+        let cmds = parse_svg_path("M 10 20");
+        let segs = flatten_path(&cmds);
+        assert!(segs.is_empty()); // MoveTo alone produces no segments
+    }
+
+    #[test]
+    fn flatten_horizontal_line() {
+        let cmds = parse_svg_path("M 0 0 H 100");
+        let segs = flatten_path(&cmds);
+        assert_eq!(segs.len(), 1);
+        assert!((segs[0].x1 - 0.0).abs() < 0.01);
+        assert!((segs[0].y1 - 0.0).abs() < 0.01);
+        assert!((segs[0].x2 - 100.0).abs() < 0.01);
+        assert!((segs[0].y2 - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn flatten_vertical_line() {
+        let cmds = parse_svg_path("M 0 0 V 100");
+        let segs = flatten_path(&cmds);
+        assert_eq!(segs.len(), 1);
+        assert!((segs[0].x2 - 0.0).abs() < 0.01);
+        assert!((segs[0].y2 - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn flatten_close_returns_to_start() {
+        let cmds = parse_svg_path("M 10 10 L 50 10 L 50 50 Z");
+        let segs = flatten_path(&cmds);
+        assert_eq!(segs.len(), 3);
+        let last = &segs[2];
+        assert!((last.x2 - 10.0).abs() < 0.01);
+        assert!((last.y2 - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn flatten_quadratic_produces_segments() {
+        let cmds = parse_svg_path("M 0 0 Q 50 100 100 0");
+        let segs = flatten_path(&cmds);
+        assert!(segs.len() > 1); // Quadratic should subdivide
+        // First seg starts at origin
+        assert!((segs[0].x1).abs() < 0.01);
+        assert!((segs[0].y1).abs() < 0.01);
+        // Last seg ends at (100, 0)
+        let last = &segs[segs.len() - 1];
+        assert!((last.x2 - 100.0).abs() < 0.5);
+        assert!((last.y2).abs() < 0.5);
+    }
+
+    // ── paint_svg_path ──
+
+    #[test]
+    fn paint_svg_path_with_fill() {
+        let mut dl = DisplayList::new();
+        paint_svg_path(
+            &mut dl,
+            "M 0 0 L 100 0 L 100 100 Z",
+            10.0, 20.0,
+            Color { r: 0, g: 0, b: 0, a: 255 },
+            2.0,
+            Some(Color { r: 255, g: 0, b: 0, a: 128 }),
+        );
+        // Should have fill rect + stroke lines
+        assert!(dl.len() >= 4); // 1 fill + 3 line segments
+    }
+
+    #[test]
+    fn paint_svg_path_transparent_stroke_no_lines() {
+        let mut dl = DisplayList::new();
+        paint_svg_path(
+            &mut dl,
+            "M 0 0 L 100 0 L 100 100 Z",
+            0.0, 0.0,
+            Color { r: 0, g: 0, b: 0, a: 0 }, // transparent
+            1.0,
+            None,
+        );
+        assert!(dl.is_empty());
+    }
+
+    #[test]
+    fn paint_svg_path_zero_width_no_lines() {
+        let mut dl = DisplayList::new();
+        paint_svg_path(
+            &mut dl,
+            "M 0 0 L 100 0 L 100 100 Z",
+            0.0, 0.0,
+            Color { r: 0, g: 0, b: 0, a: 255 },
+            0.0, // zero width
+            None,
+        );
+        assert!(dl.is_empty());
+    }
+
+    // ── Implicit LineTo after M ──
+
+    #[test]
+    fn implicit_lineto_after_move() {
+        // After M, subsequent coordinate pairs are treated as L
+        let cmds = parse_svg_path("M 0 0 10 10 20 20");
+        assert_eq!(cmds.len(), 3);
+        assert!(matches!(cmds[0], PathCommand::MoveTo { .. }));
+        assert!(matches!(cmds[1], PathCommand::LineTo { .. }));
+        assert!(matches!(cmds[2], PathCommand::LineTo { .. }));
+    }
+
+    // ── Scientific notation ──
+
+    #[test]
+    fn parse_scientific_notation() {
+        let cmds = parse_svg_path("M 1e1 2E1 L 1.5e2 2.0E2");
+        assert_eq!(cmds.len(), 2);
+        match cmds[0] {
+            PathCommand::MoveTo { x, y } => {
+                assert!((x - 10.0).abs() < 0.01);
+                assert!((y - 20.0).abs() < 0.01);
+            }
+            _ => panic!("expected MoveTo"),
+        }
     }
 }
