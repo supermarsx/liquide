@@ -85,7 +85,12 @@ pub fn decode_header(buf: &mut BytesMut) -> Option<FrameHeader> {
     }
     let sequence = buf.get_u32_le();
     let flags = buf.get_u8();
-    let payload_len = buf.get_u32_le() as u16;
+    let raw_payload_len = buf.get_u32_le();
+    if raw_payload_len > u16::MAX as u32 {
+        tracing::warn!(raw_len = raw_payload_len, "payload length exceeds u16 max, rejecting frame");
+        return None;
+    }
+    let payload_len = raw_payload_len as u16;
     Some(FrameHeader::new(channel, sequence, 0, 0, flags, payload_len))
 }
 
