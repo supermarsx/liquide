@@ -24,7 +24,7 @@ impl SharedMemoryOps for SharedMemory {
             // Create shared memory object (O_EXCL = fail if already exists)
             let fd = libc::shm_open(
                 c_name.as_ptr(),
-                libc::O_CREAT | libc::O_RDWR | libc::O_EXCL,
+                libc::O_CREAT | libc::O_RDWR | libc::O_EXCL | libc::O_CLOEXEC,
                 0o600,
             );
             if fd < 0 {
@@ -80,7 +80,7 @@ impl SharedMemoryOps for SharedMemory {
         };
 
         unsafe {
-            let fd = libc::shm_open(c_name.as_ptr(), flags, 0);
+            let fd = libc::shm_open(c_name.as_ptr(), flags | libc::O_CLOEXEC, 0);
             if fd < 0 {
                 let err = std::io::Error::last_os_error();
                 return Err(SharedMemoryError::OpenFailed(err.to_string()));
