@@ -1082,6 +1082,11 @@ fn emit_background_image_tiled(
     let repeat_x = matches!(repeat, "repeat" | "repeat-x");
     let repeat_y = matches!(repeat, "repeat" | "repeat-y");
 
+    // Guard against zero-size tiles which would cause infinite loops.
+    if tile.width <= 0.0 || tile.height <= 0.0 {
+        return;
+    }
+
     if !repeat_x && !repeat_y {
         // no-repeat: single tile
         list.push(DisplayItem::Image {
@@ -1117,10 +1122,16 @@ fn emit_background_image_tiled(
     let end_x = if repeat_x { clip_rect.x + clip_rect.width } else { tile.x + tile.width };
     let end_y = if repeat_y { clip_rect.y + clip_rect.height } else { tile.y + tile.height };
 
+    let mut tile_count = 0u32;
+    const MAX_TILES: u32 = 10_000;
+
     let mut y = start_y;
     while y < end_y {
         let mut x = start_x;
         while x < end_x {
+            if tile_count >= MAX_TILES {
+                break;
+            }
             list.push(DisplayItem::Image {
                 rect: liquide_layout::Rect {
                     x, y, width: tile.width, height: tile.height,
@@ -1128,8 +1139,12 @@ fn emit_background_image_tiled(
                 src: src_string.clone(),
                 radius: liquide_style_engine::dimension::Corners::all(0.0),
             });
+            tile_count += 1;
             x += tile.width;
             if !repeat_x { break; }
+        }
+        if tile_count >= MAX_TILES {
+            break;
         }
         y += tile.height;
         if !repeat_y { break; }
