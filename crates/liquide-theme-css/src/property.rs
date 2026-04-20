@@ -3,11 +3,15 @@
 use crate::value::PropertyValue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// A set of CSS properties
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PropertySet {
     properties: HashMap<String, PropertyValue>,
+    /// Properties that were declared with `!important`.
+    #[serde(default)]
+    important_keys: HashSet<String>,
 }
 
 impl PropertySet {
@@ -41,10 +45,23 @@ impl PropertySet {
         self.properties.keys().collect()
     }
     
+    /// Mark a property as `!important`.
+    pub fn mark_important(&mut self, name: &str) {
+        self.important_keys.insert(name.to_string());
+    }
+
+    /// Check whether a property was declared with `!important`.
+    pub fn is_important(&self, name: &str) -> bool {
+        self.important_keys.contains(name)
+    }
+
     /// Merge another property set (other takes precedence)
     pub fn merge(&mut self, other: &PropertySet) {
         for (key, value) in &other.properties {
             self.properties.insert(key.clone(), value.clone());
+        }
+        for key in &other.important_keys {
+            self.important_keys.insert(key.clone());
         }
     }
     
@@ -56,7 +73,10 @@ impl PropertySet {
 
 impl From<HashMap<String, PropertyValue>> for PropertySet {
     fn from(map: HashMap<String, PropertyValue>) -> Self {
-        Self { properties: map }
+        Self {
+            properties: map,
+            important_keys: HashSet::new(),
+        }
     }
 }
 

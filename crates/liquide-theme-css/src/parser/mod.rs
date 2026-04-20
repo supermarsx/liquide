@@ -88,9 +88,16 @@ impl ThemeParser {
             self.insert_property(decl, &mut properties);
         }
 
-        // Process !important declarations (these override normal ones)
+        // Process !important declarations into a temporary set so we can
+        // track which property names came from the important list.
+        let mut important_props = PropertySet::new();
         for decl in &decls.important_declarations {
-            self.insert_property(decl, &mut properties);
+            self.insert_property(decl, &mut important_props);
+        }
+        // Merge important properties and mark them
+        for (key, value) in important_props.iter() {
+            properties.insert(key.clone(), value.clone());
+            properties.mark_important(key);
         }
 
         Ok(properties)
