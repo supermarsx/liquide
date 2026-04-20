@@ -1,3 +1,11 @@
+//! Easing functions for **window management effects** (snap, minimize, maximize, etc.).
+//!
+//! These intentionally use simpler polynomial and bounce curves rather than full
+//! cubic-bezier solving, giving a snappier, more responsive feel for window
+//! management operations where sub-millisecond easing accuracy is not required.
+//!
+//! For CSS-standard easing, use `liquide_animation::easing::EasingFunction`.
+
 /// Easing function type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EasingFunction {

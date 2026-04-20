@@ -90,9 +90,31 @@ impl EffectState {
         }
     }
 
+    /// Create an effect state with an explicit start time for deterministic testing.
+    pub fn new_with_start(
+        effect: WindowEffect,
+        easing: EasingFunction,
+        duration: Duration,
+        start: Instant,
+    ) -> Self {
+        Self {
+            effect,
+            easing,
+            duration,
+            started_at: start,
+            progress: 0.0,
+            finished: false,
+        }
+    }
+
     /// Update progress based on elapsed time. Returns current interpolated values.
     pub fn update(&mut self) -> EffectFrame {
-        let elapsed = self.started_at.elapsed();
+        self.update_with_now(Instant::now())
+    }
+
+    /// Update progress using an explicit `now` instant, enabling deterministic testing.
+    pub fn update_with_now(&mut self, now: Instant) -> EffectFrame {
+        let elapsed = now.duration_since(self.started_at);
         let raw_t = if self.duration.as_secs_f32() > 0.0 {
             elapsed.as_secs_f32() / self.duration.as_secs_f32()
         } else {

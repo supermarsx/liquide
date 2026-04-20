@@ -300,6 +300,68 @@ fn manager_default() {
     assert!(!mgr.has_active_effects());
 }
 
+// ── Deterministic EffectState tests ──────────────────────────────────
+
+#[test]
+fn effect_state_new_with_start_deterministic() {
+    use std::time::Instant;
+
+    let start = Instant::now();
+    let effect = WindowEffect::Transform {
+        window_id: 42,
+        from: Rect::new(0.0, 0.0, 100.0, 100.0),
+        to: Rect::new(100.0, 100.0, 200.0, 200.0),
+    };
+    let mut state = EffectState::new_with_start(
+        effect,
+        EasingFunction::Linear,
+        Duration::from_millis(1000),
+        start,
+    );
+
+    // Immediately after creation, progress should be ~0
+    let frame = state.update_with_now(start);
+    assert!((frame.bounds.x - 0.0).abs() < 1e-3, "at t=0, x should be 0");
+    assert!(!frame.finished);
+
+    // At 500ms
+    let mid = start + Duration::from_millis(500);
+    let frame = state.update_with_now(mid);
+    assert!((frame.bounds.x - 50.0).abs() < 1.0, "at t=0.5, x should be ~50, got {}", frame.bounds.x);
+    assert!(!frame.finished);
+
+    // At 1000ms
+    let end = start + Duration::from_millis(1000);
+    let frame = state.update_with_now(end);
+    assert!((frame.bounds.x - 100.0).abs() < 1e-3, "at t=1.0, x should be 100");
+    assert!(frame.finished);
+}
+
+#[test]
+fn effect_state_update_with_now_vs_update_consistency() {
+    use std::time::Instant;
+
+    let start = Instant::now();
+    let effect = WindowEffect::Open {
+        window_id: 1,
+        from: Rect::new(0.0, 0.0, 100.0, 100.0),
+        to: Rect::new(0.0, 0.0, 200.0, 200.0),
+        opacity_from: 0.0,
+        opacity_to: 1.0,
+    };
+    let mut state = EffectState::new_with_start(
+        effect,
+        EasingFunction::Linear,
+        Duration::from_millis(200),
+        start,
+    );
+
+    // Using explicit now = start should give progress ~0
+    let frame = state.update_with_now(start);
+    assert!(frame.opacity < 0.1);
+    assert!(!frame.finished);
+}
+
 // ── SnapPreview tests ────────────────────────────────────────────────
 
 #[test]
