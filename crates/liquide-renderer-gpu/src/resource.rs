@@ -98,7 +98,7 @@ impl VramAllocator {
         purpose: AllocationPurpose,
         size_bytes: u64,
     ) -> crate::Result<String> {
-        let size_mb = size_bytes / (1024 * 1024);
+        let size_mb = (size_bytes + (1024 * 1024 - 1)) / (1024 * 1024);
         let new_total = self.budget.allocated_mb + size_mb;
 
         if new_total > self.budget.session_budget_mb {
@@ -136,7 +136,7 @@ impl VramAllocator {
     /// Returns `true` if the allocation was found and freed.
     pub fn free(&mut self, id: &str) -> bool {
         if let Some(alloc) = self.allocations.remove(id) {
-            let freed_mb = alloc.size_bytes / (1024 * 1024);
+            let freed_mb = (alloc.size_bytes + (1024 * 1024 - 1)) / (1024 * 1024);
             self.budget.allocated_mb = self.budget.allocated_mb.saturating_sub(freed_mb);
             tracing::debug!(id = %id, freed_mb, "VRAM freed");
             true
@@ -174,5 +174,53 @@ impl VramAllocator {
     #[must_use]
     pub fn allocation_count(&self) -> usize {
         self.allocations.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_allocator(budget_mb: u64) -> VramAllocator {
+        VramAllocator::new(VramBudget {
+            total_mb: budget_mb,
+            allocated_mb: 0,
+            session_budget_mb: budget_mb,
+        })
+    }
+
+    #[test]
+    fn sub_mb_allocation_rounds_up() {
+        let mut alloc = test_allocator(256);
+        // 512 KB should round up to 1 MB, not truncate to 0
+        let id = alloc.allocate(AllocationPurpose::StagingBuffer, 512 * 1024).unwrap();
+        assert_eq!(alloc.budget().allocated_mb, 1);
+        assert!(alloc.free(&id));
+        assert_eq!(alloc.budget().allocated_mb, 0);
+    }
+
+    #[test]
+    fn exact_mb_not_over_counted() {
+        let mut alloc = test_allocator(256);
+        // Exactly 1 MB should still be 1 MB
+        let id = alloc.allocate(AllocationPurpose::TextureAtlas, 1024 * 1024).unwrap();
+        assert_eq!(alloc.budget().allocated_mb, 1);
+        assert!(alloc.free(&id));
+        assert_eq!(alloc.budget().allocated_mb, 0);
+    }
+
+    #[test]
+    fn budget_exceeded() {
+        let mut alloc = test_allocator(2);
+        let _id = alloc.allocate(AllocationPurpose::RenderTarget, 2 * 1024 * 1024).unwrap();
+        // 1 more byte should round up to 1 MB, exceeding the 2 MB budget
+        let result = alloc.allocate(AllocationPurpose::StagingBuffer, 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn free_unknown_id_returns_false() {
+        let mut alloc = test_allocator(256);
+        assert!(!alloc.free("nonexistent"));
     }
 }
