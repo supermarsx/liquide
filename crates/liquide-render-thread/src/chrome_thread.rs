@@ -199,15 +199,23 @@ pub fn chrome_worker(
                     }
                 }
 
-                let _ = renderer.render(&nodes, framebuf, &damage);
+                if let Err(e) = renderer.render(&nodes, framebuf, &damage) {
+                    tracing::error!(error = %e, "chrome render failed, frame dropped");
+                    continue;
+                }
 
                 let elapsed = start.elapsed();
 
                 // Extract pixels and send back.
                 // TODO: Consider a ring buffer of 2-3 Arc buffers to avoid
                 // allocating a new Arc<Vec<u8>> per frame.
-                let pixel_data =
-                    std::mem::take(framebuf.pixels_mut().expect("CPU framebuffer required"));
+                let pixel_data = match framebuf.pixels_mut() {
+                    Some(pixels) => std::mem::take(pixels),
+                    None => {
+                        tracing::error!("CPU framebuffer pixel data unavailable, frame dropped");
+                        continue;
+                    }
+                };
                 let result = FrameComplete {
                     frame_id,
                     render_time_us: elapsed.as_micros() as u64,
