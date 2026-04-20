@@ -278,8 +278,22 @@ impl StyleEngine {
 
             // Typography
             "color" => {
-                if let Some(c) = resolve_color(val) {
-                    style.color = c;
+                // Per CSS Color Level 4, `color: currentColor` resolves to the
+                // inherited (parent) value.  At this point `style.color` already
+                // holds the inherited color, so we simply leave it unchanged.
+                let is_current_color = match val {
+                    liquide_theme_css::value::PropertyValue::Keyword(kw) => {
+                        kw.trim().eq_ignore_ascii_case("currentcolor")
+                    }
+                    liquide_theme_css::value::PropertyValue::String(s) => {
+                        s.trim().eq_ignore_ascii_case("currentcolor")
+                    }
+                    _ => false,
+                };
+                if !is_current_color {
+                    if let Some(c) = resolve_color(val) {
+                        style.color = c;
+                    }
                 }
             }
             "font-family" => {

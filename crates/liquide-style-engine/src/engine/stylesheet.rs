@@ -1,10 +1,12 @@
 //! Stylesheet parsing and compilation into prepared rules.
 //!
-//! **Known gap**: CSS `@import` rules are not currently resolved. The
-//! [`ThemeParser`] strips `@import` during parsing and the engine never
-//! fetches external stylesheets.  When `@import` support is added, cycle
-//! detection (e.g. a `HashSet<String>` of visited URLs and a max depth of
-//! 16) must be implemented to prevent infinite import loops.
+//! Supports CSS `@import` resolution when loading from files. Relative
+//! import URLs are resolved against the importing stylesheet's directory.
+//! Cycle detection (canonical path set) and a maximum import depth of 10
+//! prevent infinite loops.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use liquide_theme_css::ThemeParser;
 
@@ -14,8 +16,11 @@ use super::{
 };
 use crate::selector::ComplexSelector;
 
+/// Maximum `@import` nesting depth to prevent stack overflow.
+const MAX_IMPORT_DEPTH: usize = 10;
+
 impl StyleEngine {
-    /// Parse and add a CSS stylesheet.
+    /// Parse and add a CSS stylesheet (inline — no `@import` resolution).
     pub fn add_stylesheet(&mut self, css: &str) {
         let parser = ThemeParser::new();
         let stylesheet = match parser.parse_str(css) {
@@ -26,6 +31,120 @@ impl StyleEngine {
             }
         };
 
+        self.compile_stylesheet(&stylesheet);
+    }
+
+    /// Load and add a CSS stylesheet from a file on disk.
+    ///
+    /// Reads the file contents, resolves any `@import` rules relative to
+    /// the file's directory, and adds all resulting rules to the engine.
+    /// Returns `Err` with a human-readable message if the file cannot be
+    /// read.
+    pub fn load_stylesheet_file(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let canonical = path.canonicalize().map_err(|e| {
+            format!("Failed to resolve stylesheet path {}: {}", path.display(), e)
+        })?;
+        let mut visited = HashSet::new();
+        self.load_stylesheet_file_inner(&canonical, &mut visited, 0)
+    }
+
+    /// Internal recursive loader with cycle detection and depth limiting.
+    fn load_stylesheet_file_inner(
+        &mut self,
+        path: &Path,
+        visited: &mut HashSet<PathBuf>,
+        depth: usize,
+    ) -> Result<(), String> {
+        if depth > MAX_IMPORT_DEPTH {
+            tracing::warn!(
+                "CSS @import depth limit ({}) exceeded at {}",
+                MAX_IMPORT_DEPTH,
+                path.display()
+            );
+            return Ok(());
+        }
+
+        if !visited.insert(path.to_path_buf()) {
+            tracing::warn!(
+                "CSS @import cycle detected — skipping {}",
+                path.display()
+            );
+            return Ok(());
+        }
+
+        let css = std::fs::read_to_string(path).map_err(|e| {
+            format!("Failed to read stylesheet {}: {}", path.display(), e)
+        })?;
+        tracing::info!("Loaded stylesheet from {}", path.display());
+
+        let parser = ThemeParser::new();
+        let stylesheet = match parser.parse_str(&css) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Failed to parse stylesheet {}: {}", path.display(), e);
+                return Ok(());
+            }
+        };
+
+        // ── Resolve @import rules first (per CSS spec, @import must precede
+        //    all other rules) ─────────────────────────────────────────────
+        let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        for import_url in stylesheet.imports() {
+            let url = Self::strip_import_url(import_url);
+            if url.is_empty() {
+                continue;
+            }
+            let import_path = base_dir.join(&url);
+            let canonical = match import_path.canonicalize() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(
+                        "CSS @import: cannot resolve '{}' (from {}): {}",
+                        url,
+                        path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
+            if let Err(e) = self.load_stylesheet_file_inner(&canonical, visited, depth + 1) {
+                tracing::warn!(
+                    "CSS @import: failed to load '{}' (from {}): {}",
+                    url,
+                    path.display(),
+                    e
+                );
+            }
+        }
+
+        // ── Now compile the stylesheet's own rules ──────────────────────
+        self.compile_stylesheet(&stylesheet);
+        Ok(())
+    }
+
+    /// Strip `url(...)` wrapper and surrounding quotes from an `@import` URL
+    /// string, returning the bare path.
+    fn strip_import_url(raw: &str) -> String {
+        let mut s = raw.trim();
+        // Remove url(...) wrapper
+        if let Some(inner) = s.strip_prefix("url(") {
+            s = inner
+                .strip_suffix(')')
+                .unwrap_or(inner)
+                .trim();
+        }
+        // Remove quotes
+        if (s.starts_with('"') && s.ends_with('"'))
+            || (s.starts_with('\'') && s.ends_with('\''))
+        {
+            s = &s[1..s.len() - 1];
+        }
+        s.to_string()
+    }
+
+    /// Compile a parsed stylesheet's rules and at-rules into the engine,
+    /// without handling `@import` (those must be resolved by callers).
+    fn compile_stylesheet(&mut self, stylesheet: &liquide_theme_css::StyleSheet) {
         // ── @layer ordering ─────────────────────────────────────────────
         for layer_name in stylesheet.layer_order() {
             let next_idx = self.layer_order.len() as u32 + 1;
@@ -177,19 +296,6 @@ impl StyleEngine {
         }
 
         self.sheets.push(PreparedSheet::new(prepared_rules));
-    }
-
-    /// Load and add a CSS stylesheet from a file on disk.
-    ///
-    /// Reads the file contents and delegates to [`add_stylesheet`]. Returns
-    /// `Err` with a human-readable message if the file cannot be read.
-    pub fn load_stylesheet_file(&mut self, path: &std::path::Path) -> Result<(), String> {
-        let css = std::fs::read_to_string(path).map_err(|e| {
-            format!("Failed to read stylesheet {}: {}", path.display(), e)
-        })?;
-        tracing::info!("Loaded stylesheet from {}", path.display());
-        self.add_stylesheet(&css);
-        Ok(())
     }
 
     /// Load all `.css` files from a directory.

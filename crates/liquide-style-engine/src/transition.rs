@@ -7,6 +7,7 @@ use crate::computed::{ComputedStyle, TimingFunction};
 use liquide_dom::NodeId;
 
 /// A single running transition for one property on one node.
+#[deprecated(note = "Use liquide_animation::FloatTransition instead. This type duplicates TransitionEngine functionality.")]
 #[derive(Debug, Clone)]
 pub struct RunningTransition {
     /// CSS property being transitioned (e.g. "width", "opacity", "background-color").
@@ -51,6 +52,10 @@ impl RunningTransition {
 }
 
 /// Manages all running CSS transitions across the document.
+///
+/// **⚠️ DEPRECATED:** This is a duplicate of [`liquide_animation::TransitionEngine`].
+/// New code should use `TransitionEngine` from `liquide-animation` instead.
+#[deprecated(note = "Use liquide_animation::TransitionEngine instead. This type will be removed in a future release.")]
 #[derive(Debug, Default)]
 pub struct TransitionManager {
     /// Active transitions: node → property → transition.

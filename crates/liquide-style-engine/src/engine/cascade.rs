@@ -1,5 +1,7 @@
 //! Cascade resolution and style computation for DOM trees.
 
+use std::cell::Cell;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use liquide_dom::{Document, NodeId};
@@ -11,8 +13,62 @@ use crate::computed::*;
 use crate::style_map::StyleMap;
 use crate::value_resolve::parse_inline_value;
 
+/// Result of an incremental restyle operation.
+///
+/// Returned by [`StyleEngine::restyle_dirty`] to allow the caller to decide
+/// whether downstream work (layout, paint) can be skipped.
+#[derive(Debug, Clone)]
+pub struct RestyleResult {
+    /// Number of nodes whose computed style was recomputed.
+    pub restyled_count: usize,
+    /// Number of nodes that were skipped because they were clean.
+    pub skipped_count: usize,
+    /// `true` if at least one node's computed style was added or replaced.
+    /// When `false`, the caller can safely skip layout — the style map is
+    /// unchanged.
+    pub had_changes: bool,
+}
+
+/// Maximum recursion depth for style computation to prevent stack overflow.
+const MAX_STYLE_DEPTH: usize = 512;
+
+thread_local! {
+    static STYLE_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// RAII guard that increments depth on creation and decrements on drop.
+struct StyleDepthGuard;
+
+impl StyleDepthGuard {
+    fn try_enter() -> Option<Self> {
+        STYLE_DEPTH.with(|d| {
+            let current = d.get();
+            if current >= MAX_STYLE_DEPTH {
+                None
+            } else {
+                d.set(current + 1);
+                Some(StyleDepthGuard)
+            }
+        })
+    }
+}
+
+impl Drop for StyleDepthGuard {
+    fn drop(&mut self) {
+        STYLE_DEPTH.with(|d| d.set(d.get() - 1));
+    }
+}
+
 impl StyleEngine {
     pub fn compute_style(&self, doc: &Document, node_id: NodeId) -> ComputedStyle {
+        let _guard = match StyleDepthGuard::try_enter() {
+            Some(g) => g,
+            None => {
+                tracing::warn!("style recursion depth limit reached at node {:?}", node_id);
+                return ComputedStyle::default();
+            }
+        };
+
         let node = match doc.get(node_id) {
             Some(n) => n,
             None => return ComputedStyle::default(),
@@ -117,6 +173,292 @@ impl StyleEngine {
         }
     }
 
+    /// Incrementally restyle only the nodes in the dirty set, plus any
+    /// children whose inherited styles are affected by a parent change.
+    ///
+    /// For nodes not in `dirty.style` whose ancestors are also clean,
+    /// the existing computed style in `map` is preserved, avoiding a
+    /// full cascade recomputation.
+    ///
+    /// Returns a [`RestyleResult`] indicating how much work was done and
+    /// whether any computed style actually changed, which the caller can
+    /// use to skip layout when the result is unchanged.
+    pub fn restyle_dirty(
+        &self,
+        doc: &Document,
+        dirty: &liquide_dom::dirty::DirtySet,
+        map: &mut StyleMap,
+    ) -> RestyleResult {
+        if dirty.style.is_empty() {
+            return RestyleResult {
+                restyled_count: 0,
+                skipped_count: map.len(),
+                had_changes: false,
+            };
+        }
+
+        let mut result = RestyleResult {
+            restyled_count: 0,
+            skipped_count: 0,
+            had_changes: false,
+        };
+
+        let scope = std::collections::HashMap::new();
+        self.restyle_dirty_walk(
+            doc,
+            doc.root(),
+            None,
+            map,
+            &scope,
+            &dirty.style,
+            false,
+            &mut result,
+        );
+        result
+    }
+
+    /// Recursive tree walk for incremental restyle.
+    ///
+    /// `force_restyle` is `true` when an ancestor was dirty and had its style
+    /// recomputed — all descendants must be re-cascaded because inherited
+    /// values may have changed.
+    fn restyle_dirty_walk(
+        &self,
+        doc: &Document,
+        node_id: NodeId,
+        parent_style: Option<&ComputedStyle>,
+        map: &mut StyleMap,
+        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
+        dirty_nodes: &HashSet<NodeId>,
+        force_restyle: bool,
+        result: &mut RestyleResult,
+    ) {
+        let needs_restyle = force_restyle || dirty_nodes.contains(&node_id);
+
+        // ── Fast path: node is clean and no ancestor forced a restyle ──
+        if !needs_restyle {
+            result.skipped_count += 1;
+            // Still need to recurse into children — some descendants may be dirty.
+            let existing_style = map.get(node_id).cloned();
+            let children = doc.children(node_id).to_vec();
+            for child_id in children {
+                let is_shadow = doc
+                    .get(child_id)
+                    .map(|n| matches!(n.data, liquide_dom::node::NodeData::ShadowRoot))
+                    .unwrap_or(false);
+                let child_scope = if is_shadow {
+                    &std::collections::HashMap::new()
+                } else {
+                    scope_vars
+                };
+                self.restyle_dirty_walk(
+                    doc,
+                    child_id,
+                    existing_style.as_deref(),
+                    map,
+                    child_scope,
+                    dirty_nodes,
+                    false,
+                    result,
+                );
+            }
+            return;
+        }
+
+        // ── Slow path: recompute this node's style via full cascade ──
+        // This mirrors restyle_node() but tracks whether anything changed.
+        let _guard = match StyleDepthGuard::try_enter() {
+            Some(g) => g,
+            None => {
+                tracing::warn!("restyle_dirty recursion depth limit reached at node {:?}", node_id);
+                return;
+            }
+        };
+
+        let node = match doc.get(node_id) {
+            Some(n) => n,
+            None => return,
+        };
+
+        let mut style = ComputedStyle::default();
+        if let Some(ps) = parent_style {
+            style.inherit_from(ps);
+        }
+
+        if !node.is_text() {
+            let mut cascade = CascadeMap::new();
+            let tag_name = node.tag_name();
+
+            for sheet in &self.sheets {
+                for rule_idx in sheet.candidate_indices(&tag_name) {
+                    let rule = &sheet.rules[rule_idx];
+                    if let Some(ref cond) = rule.media_condition {
+                        if !self.evaluate_media_condition(cond) {
+                            continue;
+                        }
+                    }
+                    if let Some(ref cond) = rule.supports_condition {
+                        if !self.evaluate_supports_condition(cond) {
+                            continue;
+                        }
+                    }
+                    if let Some(ref cc) = rule.container_condition {
+                        if !self.evaluate_container_condition(cc, node_id, doc, map) {
+                            continue;
+                        }
+                    }
+                    if rule.pseudo_element.is_some() {
+                        continue;
+                    }
+                    if rule.selector.matches(doc, node_id) {
+                        let mut priority =
+                            CascadePriority::author(rule.specificity, rule.source_order);
+                        priority.layer_order = rule.layer_order;
+                        cascade.add_properties(&rule.properties, priority);
+                    }
+                }
+            }
+
+            let mut inline_order = 0u32;
+            for (prop, value) in node.inline_styles.iter() {
+                let pv = parse_inline_value(value);
+                cascade.add(CascadeDeclaration {
+                    property: prop.to_string(),
+                    value: pv,
+                    priority: CascadePriority::inline(inline_order),
+                });
+                inline_order += 1;
+            }
+
+            let resolved = cascade.resolve();
+
+            let has_custom_props = resolved.iter().any(|(p, _)| p.starts_with("--"));
+            let needs_property_overrides = !self.registered_properties.is_empty();
+            let needs_local_vars = has_custom_props || needs_property_overrides;
+
+            let mut owned_vars: Option<
+                std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
+            > = None;
+
+            if needs_local_vars {
+                let local_vars = owned_vars.insert(scope_vars.clone());
+
+                let mut explicitly_set: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for (prop, val) in &resolved {
+                    if prop.starts_with("--") {
+                        local_vars.insert(prop.clone(), val.clone());
+                        explicitly_set.insert(prop.clone());
+                    }
+                }
+
+                for (name, def) in &self.registered_properties {
+                    if !def.inherits && !explicitly_set.contains(name) {
+                        if let Some(ref initial) = def.initial_value {
+                            local_vars.insert(
+                                name.clone(),
+                                liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
+                            );
+                        } else {
+                            local_vars.remove(name);
+                        }
+                    } else if !local_vars.contains_key(name) {
+                        if let Some(ref initial) = def.initial_value {
+                            local_vars.insert(
+                                name.clone(),
+                                liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
+                            );
+                        }
+                    }
+                }
+            }
+
+            let effective_vars = owned_vars.as_ref().unwrap_or(scope_vars);
+
+            for (prop, val) in &resolved {
+                self.apply_single_property(prop, val, &mut style, effective_vars);
+            }
+
+            Self::assemble_text_decoration(&mut style);
+            Self::assemble_background(&mut style);
+            Self::assemble_mask(&mut style);
+            Self::resolve_logical_properties(&mut style);
+            consume_remaining_properties(&style);
+
+            style.transition = parse_transition_defs(&style);
+            style.animation = parse_animation_defs(&style);
+
+            let style = Arc::new(style);
+            result.restyled_count += 1;
+            result.had_changes = true;
+            map.insert_shared(node_id, style.clone());
+            let child_vars = owned_vars.as_ref().unwrap_or(scope_vars);
+            self.compute_pseudo_styles(doc, node_id, &style, map, child_vars);
+
+            // All children must be restyled since this node's style changed.
+            let children = doc.children(node_id).to_vec();
+            for child_id in children {
+                self.restyle_dirty_walk(
+                    doc,
+                    child_id,
+                    Some(&style),
+                    map,
+                    child_vars,
+                    dirty_nodes,
+                    true,
+                    result,
+                );
+            }
+            return;
+        }
+
+        // Text node path
+        Self::assemble_text_decoration(&mut style);
+        Self::assemble_background(&mut style);
+        Self::assemble_mask(&mut style);
+        Self::resolve_logical_properties(&mut style);
+        consume_remaining_properties(&style);
+
+        style.transition = parse_transition_defs(&style);
+        style.animation = parse_animation_defs(&style);
+
+        let style = Arc::new(style);
+        result.restyled_count += 1;
+        result.had_changes = true;
+        map.insert_shared(node_id, style.clone());
+
+        let children = doc.children(node_id).to_vec();
+        for child_id in children {
+            let is_shadow = doc
+                .get(child_id)
+                .map(|n| matches!(n.data, liquide_dom::node::NodeData::ShadowRoot))
+                .unwrap_or(false);
+            if is_shadow {
+                self.restyle_dirty_walk(
+                    doc,
+                    child_id,
+                    Some(&style),
+                    map,
+                    &std::collections::HashMap::new(),
+                    dirty_nodes,
+                    true,
+                    result,
+                );
+            } else {
+                self.restyle_dirty_walk(
+                    doc,
+                    child_id,
+                    Some(&style),
+                    map,
+                    scope_vars,
+                    dirty_nodes,
+                    true,
+                    result,
+                );
+            }
+        }
+    }
+
     fn restyle_node(
         &self,
         doc: &Document,
@@ -125,6 +467,14 @@ impl StyleEngine {
         map: &mut StyleMap,
         scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
     ) {
+        let _guard = match StyleDepthGuard::try_enter() {
+            Some(g) => g,
+            None => {
+                tracing::warn!("restyle recursion depth limit reached at node {:?}", node_id);
+                return;
+            }
+        };
+
         let node = match doc.get(node_id) {
             Some(n) => n,
             None => return,

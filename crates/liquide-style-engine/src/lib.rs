@@ -23,6 +23,7 @@ pub mod value_resolve;
 pub use cascade::{CascadeMap, CascadeOrigin, CascadePriority};
 pub use computed::ComputedStyle;
 pub use dimension::Dimension;
+pub use engine::RestyleResult;
 pub use engine::StyleEngine;
 pub use rules::{ElementRule, RuleEngine, Severity, ValidationReport, Violation};
 pub use selector::{Combinator, ComplexSelector, CompoundSelector, PseudoClassSelector};

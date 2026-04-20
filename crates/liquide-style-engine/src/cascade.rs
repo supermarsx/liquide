@@ -101,6 +101,18 @@ impl CascadePriority {
         }
     }
 
+    /// Create a normal user-origin declaration priority.
+    pub fn user(specificity: Specificity, source_order: u32) -> Self {
+        Self {
+            important: false,
+            origin: CascadeOrigin::User,
+            layer_order: 0,
+            specificity,
+            source_order,
+            is_inline: false,
+        }
+    }
+
     /// Create an animation-origin priority (overrides normal author).
     pub fn animation(source_order: u32) -> Self {
         Self {
@@ -206,8 +218,11 @@ impl CascadeMap {
         priority: CascadePriority,
     ) {
         for (key, val) in properties.iter() {
-            // Check for !important flag in the value
-            let (actual_val, is_important) = strip_important(val);
+            // Check for !important: first via the PropertySet flag (set by the
+            // parser for structured types like Number, Color, Length, etc.),
+            // then via text-based detection for inline-style fallback values.
+            let (actual_val, text_important) = strip_important(val);
+            let is_important = text_important || properties.is_important(key);
             let actual_priority = if is_important {
                 CascadePriority {
                     important: true,
@@ -242,6 +257,11 @@ impl CascadeMap {
     /// Sorts by (property name, priority) so same-property declarations are
     /// grouped, then takes the last (highest-priority) entry per group.
     /// Moves strings and values out of the declarations vec instead of cloning.
+    ///
+    /// CSS Cascading Level 5: `revert` and `revert-layer` keywords are resolved
+    /// within the cascade. `revert` falls back to the winning value from a
+    /// lower origin class (Author → User → UA). `revert-layer` falls back
+    /// within the same origin to a previous `@layer`.
     pub fn resolve(
         &mut self,
     ) -> Vec<(String, liquide_theme_css::value::PropertyValue)> {
@@ -258,24 +278,31 @@ impl CascadeMap {
         });
 
         let len = self.declarations.len();
-        let mut result = Vec::with_capacity(len / 2);
+
+        // First pass: determine the winning index for each property group,
+        // resolving `revert` and `revert-layer` by falling back within the group.
+        let mut winners: Vec<usize> = Vec::new();
         let mut i = 0;
         while i < len {
-            // Find end of run with the same property name
             let mut j = i + 1;
             while j < len && self.declarations[j].property == self.declarations[i].property {
                 j += 1;
             }
-            // Last in run = highest priority = winner. Move out instead of cloning.
-            let best = j - 1;
-            let decl = &mut self.declarations[best];
+            let winner_idx = resolve_winner_in_group(&self.declarations, i, j);
+            winners.push(winner_idx);
+            i = j;
+        }
+
+        // Second pass: extract values from winning declarations.
+        let mut result = Vec::with_capacity(winners.len());
+        for winner_idx in winners {
+            let decl = &mut self.declarations[winner_idx];
             let property = std::mem::take(&mut decl.property);
             let value = std::mem::replace(
                 &mut decl.value,
                 liquide_theme_css::value::PropertyValue::Keyword(String::new()),
             );
             result.push((property, value));
-            i = j;
         }
         result
     }
@@ -293,11 +320,171 @@ impl CascadeMap {
     pub fn clear(&mut self) {
         self.declarations.clear();
     }
+
+    /// Resolve the cascade per origin: for each property, return the winning
+    /// value at each cascade origin class (UA, User, Author).
+    ///
+    /// This is a read-only operation (clones declarations internally) and is
+    /// useful for inspecting what each origin contributes before revert
+    /// resolution collapses them.
+    pub fn resolve_per_origin(
+        &self,
+    ) -> std::collections::HashMap<
+        String,
+        Vec<(CascadeOrigin, liquide_theme_css::value::PropertyValue)>,
+    > {
+        let mut sorted = self.declarations.clone();
+        sorted.sort_by(|a, b| {
+            a.property
+                .cmp(&b.property)
+                .then(a.priority.cmp(&b.priority))
+        });
+
+        let mut result = std::collections::HashMap::new();
+        let len = sorted.len();
+        let mut i = 0;
+        while i < len {
+            let mut j = i + 1;
+            while j < len && sorted[j].property == sorted[i].property {
+                j += 1;
+            }
+
+            let property = sorted[i].property.clone();
+            let mut origin_winners: Vec<(
+                CascadeOrigin,
+                liquide_theme_css::value::PropertyValue,
+            )> = Vec::new();
+
+            // Representative origins for each class
+            for target_class in 0u8..=2 {
+                let mut best: Option<usize> = None;
+                for k in i..j {
+                    if cascade_origin_class(sorted[k].priority.origin) == target_class {
+                        best = Some(k);
+                    }
+                }
+                if let Some(b) = best {
+                    let origin = match target_class {
+                        0 => CascadeOrigin::UserAgent,
+                        1 => CascadeOrigin::User,
+                        _ => CascadeOrigin::Author,
+                    };
+                    origin_winners.push((origin, sorted[b].value.clone()));
+                }
+            }
+
+            result.insert(property, origin_winners);
+            i = j;
+        }
+
+        result
+    }
 }
 
 impl Default for CascadeMap {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Classify a [`CascadeOrigin`] into one of the three CSS origin classes:
+/// UA (0), User (1), Author (2). Used for `revert` resolution.
+fn cascade_origin_class(origin: CascadeOrigin) -> u8 {
+    match origin {
+        CascadeOrigin::UserAgent => 0,
+        CascadeOrigin::User => 1,
+        // Author, AuthorInline, Animation, and Transition all belong to the author origin class.
+        CascadeOrigin::Author
+        | CascadeOrigin::AuthorInline
+        | CascadeOrigin::Animation
+        | CascadeOrigin::Transition => 2,
+    }
+}
+
+/// Given a sorted group of declarations for a single property (indices `[start, end)`),
+/// determine the winning index after resolving `revert` and `revert-layer` keywords.
+///
+/// Declarations are sorted by ascending cascade priority, so the last entry is the
+/// initial winner. If it is `revert`, we fall back to the best declaration from a
+/// lower origin class; if `revert-layer`, we fall back within the same origin to a
+/// lower (for normal) or higher (for `!important`) layer.
+fn resolve_winner_in_group(
+    declarations: &[CascadeDeclaration],
+    start: usize,
+    end: usize,
+) -> usize {
+    let mut idx = end - 1;
+    // Guard against infinite loops from malformed/chained reverts.
+    let max_iterations = end - start;
+    let mut iterations = 0;
+
+    loop {
+        if iterations >= max_iterations {
+            return idx;
+        }
+        iterations += 1;
+
+        let is_revert = match &declarations[idx].value {
+            liquide_theme_css::value::PropertyValue::Keyword(kw) => match kw.as_str() {
+                "revert" => Some(true),
+                "revert-layer" => Some(false),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        match is_revert {
+            Some(true) => {
+                // `revert`: roll back to a lower origin class.
+                let winner_class = cascade_origin_class(declarations[idx].priority.origin);
+                let mut found = false;
+                for k in (start..idx).rev() {
+                    if cascade_origin_class(declarations[k].priority.origin) < winner_class {
+                        idx = k;
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    // No lower origin — keyword stays; apply_single_property
+                    // handles it with `unset` semantics (initial/inherit).
+                    return idx;
+                }
+                // Continue: the fallback itself might be revert/revert-layer.
+            }
+            Some(false) => {
+                // `revert-layer`: roll back within the same origin to a previous layer.
+                let winner = &declarations[idx].priority;
+                let winner_origin = winner.origin;
+                let winner_layer = winner.layer_order;
+                let is_important = winner.important;
+                let mut found = false;
+                for k in (start..idx).rev() {
+                    let p = &declarations[k].priority;
+                    if cascade_origin_class(p.origin) == cascade_origin_class(winner_origin) {
+                        let layer_ok = if is_important {
+                            // For !important, earlier layers (lower order) win,
+                            // so "previous" layer = higher layer_order.
+                            p.layer_order > winner_layer
+                        } else {
+                            // For normal, later layers win,
+                            // so "previous" layer = lower layer_order.
+                            p.layer_order < winner_layer
+                        };
+                        if layer_ok {
+                            idx = k;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if !found {
+                    // No lower layer — keyword stays; handled as `unset`.
+                    return idx;
+                }
+            }
+            None => return idx,
+        }
     }
 }
 
@@ -399,5 +586,228 @@ mod tests {
         let resolved = map.resolve();
         let color = resolved.iter().find(|(k, _)| k == "color").unwrap();
         assert!(matches!(&color.1, PropertyValue::Keyword(kw) if kw == "blue"));
+    }
+
+    #[test]
+    fn important_number_beats_higher_specificity_normal() {
+        // A Number(100.0) with !important (via PropertySet flag) should beat
+        // Number(200.0) at higher specificity without !important.
+        let mut props_important = liquide_theme_css::property::PropertySet::new();
+        props_important.insert("opacity".into(), PropertyValue::Number(100.0));
+        props_important.mark_important("opacity");
+
+        let mut props_normal = liquide_theme_css::property::PropertySet::new();
+        props_normal.insert("opacity".into(), PropertyValue::Number(200.0));
+
+        let mut map = CascadeMap::new();
+        // Important at low specificity
+        map.add_properties(
+            &props_important,
+            CascadePriority::author(Specificity::ZERO, 0),
+        );
+        // Normal at high specificity
+        map.add_properties(
+            &props_normal,
+            CascadePriority::author(
+                Specificity { id: 1, class: 0, type_sel: 0 },
+                1,
+            ),
+        );
+
+        let resolved = map.resolve();
+        let opacity = resolved.iter().find(|(k, _)| k == "opacity").unwrap();
+        // The important value (100.0) should win despite lower specificity
+        assert!(matches!(&opacity.1, PropertyValue::Number(n) if (*n - 100.0).abs() < f32::EPSILON));
+    }
+
+    #[test]
+    fn important_color_via_property_set_flag() {
+        use liquide_theme_css::value::Color;
+
+        let mut props_important = liquide_theme_css::property::PropertySet::new();
+        props_important.insert(
+            "background-color".into(),
+            PropertyValue::Color(Color::rgb(255, 0, 0)),
+        );
+        props_important.mark_important("background-color");
+
+        let mut props_normal = liquide_theme_css::property::PropertySet::new();
+        props_normal.insert(
+            "background-color".into(),
+            PropertyValue::Color(Color::rgb(0, 0, 255)),
+        );
+
+        let mut map = CascadeMap::new();
+        map.add_properties(
+            &props_important,
+            CascadePriority::author(Specificity::ZERO, 0),
+        );
+        map.add_properties(
+            &props_normal,
+            CascadePriority::author(
+                Specificity { id: 1, class: 0, type_sel: 0 },
+                1,
+            ),
+        );
+
+        let resolved = map.resolve();
+        let bg = resolved.iter().find(|(k, _)| k == "background-color").unwrap();
+        // Important red should win over normal blue at higher specificity
+        assert!(matches!(&bg.1, PropertyValue::Color(c) if c.r == 255 && c.b == 0));
+    }
+
+    #[test]
+    fn revert_falls_back_to_user_origin() {
+        // Author says `revert` → should fall back to User value.
+        let mut map = CascadeMap::new();
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("ua-red".into()),
+            priority: CascadePriority::ua(0),
+        });
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("user-green".into()),
+            priority: CascadePriority::user(Specificity::ZERO, 1),
+        });
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("revert".into()),
+            priority: CascadePriority::author(Specificity::ZERO, 2),
+        });
+        let resolved = map.resolve();
+        let color = resolved.iter().find(|(k, _)| k == "color").unwrap();
+        assert!(
+            matches!(&color.1, PropertyValue::Keyword(kw) if kw == "user-green"),
+            "revert from Author should fall back to User value, got {:?}",
+            color.1
+        );
+    }
+
+    #[test]
+    fn revert_falls_back_to_ua_when_no_user() {
+        // Author says `revert`, no User declarations → fall back to UA.
+        let mut map = CascadeMap::new();
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("ua-default".into()),
+            priority: CascadePriority::ua(0),
+        });
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("revert".into()),
+            priority: CascadePriority::author(Specificity::ZERO, 1),
+        });
+        let resolved = map.resolve();
+        let color = resolved.iter().find(|(k, _)| k == "color").unwrap();
+        assert!(
+            matches!(&color.1, PropertyValue::Keyword(kw) if kw == "ua-default"),
+            "revert from Author with no User should fall back to UA, got {:?}",
+            color.1
+        );
+    }
+
+    #[test]
+    fn revert_user_falls_back_to_ua() {
+        // User says `revert` → fall back to UA.
+        let mut map = CascadeMap::new();
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("ua-blue".into()),
+            priority: CascadePriority::ua(0),
+        });
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("revert".into()),
+            priority: CascadePriority::user(Specificity::ZERO, 1),
+        });
+        let resolved = map.resolve();
+        let color = resolved.iter().find(|(k, _)| k == "color").unwrap();
+        assert!(
+            matches!(&color.1, PropertyValue::Keyword(kw) if kw == "ua-blue"),
+            "revert from User should fall back to UA, got {:?}",
+            color.1
+        );
+    }
+
+    #[test]
+    fn revert_layer_falls_back_to_previous_layer() {
+        // Author layer 2 says `revert-layer` → fall back to Author layer 1.
+        let mut map = CascadeMap::new();
+        let mut p1 = CascadePriority::author(Specificity::ZERO, 0);
+        p1.layer_order = 1;
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("layer1-blue".into()),
+            priority: p1,
+        });
+        let mut p2 = CascadePriority::author(Specificity::ZERO, 1);
+        p2.layer_order = 2;
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("revert-layer".into()),
+            priority: p2,
+        });
+        let resolved = map.resolve();
+        let color = resolved.iter().find(|(k, _)| k == "color").unwrap();
+        assert!(
+            matches!(&color.1, PropertyValue::Keyword(kw) if kw == "layer1-blue"),
+            "revert-layer should fall back to previous layer, got {:?}",
+            color.1
+        );
+    }
+
+    #[test]
+    fn chained_revert_resolves() {
+        // Author `revert` → User `revert` → UA value.
+        let mut map = CascadeMap::new();
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("ua-final".into()),
+            priority: CascadePriority::ua(0),
+        });
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("revert".into()),
+            priority: CascadePriority::user(Specificity::ZERO, 1),
+        });
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("revert".into()),
+            priority: CascadePriority::author(Specificity::ZERO, 2),
+        });
+        let resolved = map.resolve();
+        let color = resolved.iter().find(|(k, _)| k == "color").unwrap();
+        assert!(
+            matches!(&color.1, PropertyValue::Keyword(kw) if kw == "ua-final"),
+            "chained revert should resolve to UA, got {:?}",
+            color.1
+        );
+    }
+
+    #[test]
+    fn resolve_per_origin_returns_all_origins() {
+        let mut map = CascadeMap::new();
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("ua-val".into()),
+            priority: CascadePriority::ua(0),
+        });
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("user-val".into()),
+            priority: CascadePriority::user(Specificity::ZERO, 1),
+        });
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("author-val".into()),
+            priority: CascadePriority::author(Specificity::ZERO, 2),
+        });
+        let per_origin = map.resolve_per_origin();
+        let color = per_origin.get("color").expect("color should be present");
+        assert_eq!(color.len(), 3, "should have UA, User, and Author entries");
+        assert!(matches!(&color[0], (CascadeOrigin::UserAgent, PropertyValue::Keyword(kw)) if kw == "ua-val"));
+        assert!(matches!(&color[1], (CascadeOrigin::User, PropertyValue::Keyword(kw)) if kw == "user-val"));
+        assert!(matches!(&color[2], (CascadeOrigin::Author, PropertyValue::Keyword(kw)) if kw == "author-val"));
     }
 }

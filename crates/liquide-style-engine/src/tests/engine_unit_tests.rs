@@ -131,3 +131,33 @@ fn scope_rules_match_dom_descendants() {
     let plain_style = engine.compute_style(&doc, unscoped_button);
     assert_eq!(plain_style.color.r, 255);
 }
+
+#[test]
+fn current_color_on_color_property_inherits_parent_value() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .parent { color: red; }
+            .child  { color: currentColor; }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let parent = doc.create_element("div");
+    doc.add_class(parent, "parent");
+    doc.append_child(root, parent);
+
+    let child = doc.create_element("span");
+    doc.add_class(child, "child");
+    doc.append_child(parent, child);
+
+    let styles = engine.restyle_all(&doc);
+    let child_style = styles.get(child).unwrap();
+    // `color: currentColor` on the `color` property must resolve to the
+    // inherited (parent) value per CSS Color Level 4.
+    assert_eq!(child_style.color.r, 255);
+    assert_eq!(child_style.color.g, 0);
+    assert_eq!(child_style.color.b, 0);
+}

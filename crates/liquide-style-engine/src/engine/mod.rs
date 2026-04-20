@@ -11,6 +11,8 @@ mod media;
 mod stylesheet;
 mod variables;
 
+pub use cascade::RestyleResult;
+
 use liquide_theme_css::property::PropertySet;
 
 /// A prepared stylesheet rule ready for matching.
