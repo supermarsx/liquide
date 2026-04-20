@@ -1,9 +1,13 @@
 //! High-level wgpu renderer that processes `FlatNode` lists.
 
 use std::collections::HashMap;
+use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use liquide_compositor::damage::{DamageSet, DamageTile};
 use liquide_compositor::framebuffer::FrameBuffer;
+use liquide_compositor::{Renderer, RenderResult};
 
 use crate::device::{GpuBackend, WgpuDevice};
 use crate::pipeline::PipelineCache;
@@ -530,6 +534,8 @@ pub struct WgpuRenderer {
     texture_cache: GpuTextureCache,
     /// Sampler shared by text and image pipelines (linear filtering).
     sampler: wgpu::Sampler,
+    /// Flag set when the GPU device is lost; triggers CPU fallback.
+    device_lost: Arc<AtomicBool>,
 }
 
 impl WgpuRenderer {
@@ -551,6 +557,8 @@ impl WgpuRenderer {
             ..Default::default()
         });
 
+        let device_lost = Arc::new(AtomicBool::new(false));
+
         Ok(Self {
             gpu,
             pipelines,
@@ -562,6 +570,7 @@ impl WgpuRenderer {
             glyph_atlas,
             texture_cache,
             sampler,
+            device_lost,
         })
     }
 
@@ -655,10 +664,29 @@ impl WgpuRenderer {
 
     // ── Frame rendering ─────────────────────────────────────────────────
 
+    /// Whether the GPU device has been lost (e.g. driver crash, TDR).
+    ///
+    /// When `true`, all rendering calls return an error and the caller
+    /// should fall back to CPU rendering or re-create the renderer.
+    pub fn is_device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::Acquire)
+    }
+
+    /// Mark the device as lost. Called internally on GPU errors or
+    /// externally when the compositor detects a device-lost event.
+    pub fn mark_device_lost(&self) {
+        self.device_lost.store(true, Ordering::Release);
+        log::error!("wgpu device marked as lost — GPU rendering disabled");
+    }
+
     /// Render a frame from the flattened scene graph.
     ///
     /// Returns the number of draw calls issued.
     pub fn render_frame(&mut self, nodes: &[FlatNode]) -> Result<u32> {
+        if self.device_lost.load(Ordering::Acquire) {
+            return Err(WgpuError::RenderFailed("GPU device lost".into()));
+        }
+
         let output = self
             .output_texture
             .as_ref()
@@ -1705,6 +1733,66 @@ impl WgpuRenderer {
             color.a as f32 / 255.0,
         ];
 
+        // ── Batched buffer allocation ───────────────────────────────
+        // Instead of creating 2*N individual buffers (one QuadUniforms +
+        // one TextUniforms per glyph), pack all uniforms into two batch
+        // buffers with aligned offsets. This reduces GPU buffer churn
+        // from O(N) allocations to O(1).
+
+        let align = self.gpu.device.limits().min_uniform_buffer_offset_alignment as usize;
+        let quad_stride = align.max(std::mem::size_of::<QuadUniforms>());
+        let text_stride = align.max(std::mem::size_of::<TextUniforms>());
+        let n = glyph_quads.len();
+
+        let mut quad_data = vec![0u8; quad_stride * n];
+        let mut text_data = vec![0u8; text_stride * n];
+
+        for (i, &(gx, gy, entry)) in glyph_quads.iter().enumerate() {
+            let qu = QuadUniforms {
+                dst_rect: [gx, gy, entry.metrics.width as f32, entry.metrics.height as f32],
+                viewport: [self.width as f32, self.height as f32],
+                _pad: [0.0; 2],
+            };
+
+            let u_min = entry.atlas_x as f32 / atlas_w;
+            let v_min = entry.atlas_y as f32 / atlas_h;
+            let u_max = (entry.atlas_x + entry.metrics.width) as f32 / atlas_w;
+            let v_max = (entry.atlas_y + entry.metrics.height) as f32 / atlas_h;
+
+            let tu = TextUniforms {
+                color: color_f,
+                src_rect: [u_min, v_min, u_max, v_max],
+                opacity: node.opacity,
+                _pad: [0.0; 3],
+            };
+
+            let q_off = i * quad_stride;
+            quad_data[q_off..q_off + std::mem::size_of::<QuadUniforms>()]
+                .copy_from_slice(bytemuck::bytes_of(&qu));
+
+            let t_off = i * text_stride;
+            text_data[t_off..t_off + std::mem::size_of::<TextUniforms>()]
+                .copy_from_slice(bytemuck::bytes_of(&tu));
+        }
+
+        let quad_batch_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("text_quad_batch"),
+                contents: &quad_data,
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+        let text_batch_buf = self.gpu.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("text_uniform_batch"),
+                contents: &text_data,
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+
+        let quad_uniform_size = NonZeroU64::new(std::mem::size_of::<QuadUniforms>() as u64);
+        let text_uniform_size = NonZeroU64::new(std::mem::size_of::<TextUniforms>() as u64);
+
         let mut draw_calls = 0u32;
 
         // Render each glyph as a separate draw call within a single render pass.
@@ -1726,45 +1814,20 @@ impl WgpuRenderer {
 
             pass.set_pipeline(&self.pipelines.text_pipeline);
 
-            for &(gx, gy, entry) in &glyph_quads {
-                let quad_uniforms = QuadUniforms {
-                    dst_rect: [gx, gy, entry.metrics.width as f32, entry.metrics.height as f32],
-                    viewport: [self.width as f32, self.height as f32],
-                    _pad: [0.0; 2],
-                };
-                let quad_buf = self.gpu.device.create_buffer_init(
-                    &wgpu::util::BufferInitDescriptor {
-                        label: Some("quad_uniform"),
-                        contents: bytemuck::bytes_of(&quad_uniforms),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    },
-                );
-
-                let u_min = entry.atlas_x as f32 / atlas_w;
-                let v_min = entry.atlas_y as f32 / atlas_h;
-                let u_max = (entry.atlas_x + entry.metrics.width) as f32 / atlas_w;
-                let v_max = (entry.atlas_y + entry.metrics.height) as f32 / atlas_h;
-
-                let text_uniforms = TextUniforms {
-                    color: color_f,
-                    src_rect: [u_min, v_min, u_max, v_max],
-                    opacity: node.opacity,
-                    _pad: [0.0; 3],
-                };
-                let text_buf = self.gpu.device.create_buffer_init(
-                    &wgpu::util::BufferInitDescriptor {
-                        label: Some("text_uniform"),
-                        contents: bytemuck::bytes_of(&text_uniforms),
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    },
-                );
+            for i in 0..n {
+                let q_off = (i * quad_stride) as u64;
+                let t_off = (i * text_stride) as u64;
 
                 let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("quad_bg"),
                     layout: &self.pipelines.quad_bind_group_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: quad_buf.as_entire_binding(),
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &quad_batch_buf,
+                            offset: q_off,
+                            size: quad_uniform_size,
+                        }),
                     }],
                 });
 
@@ -1782,7 +1845,11 @@ impl WgpuRenderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
-                            resource: text_buf.as_entire_binding(),
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &text_batch_buf,
+                                offset: t_off,
+                                size: text_uniform_size,
+                            }),
                         },
                     ],
                 });
@@ -2056,6 +2123,10 @@ impl WgpuRenderer {
 
     /// Render a filtered subset of nodes.
     fn render_frame_filtered(&mut self, nodes: &[&FlatNode]) -> Result<u32> {
+        if self.device_lost.load(Ordering::Acquire) {
+            return Err(WgpuError::RenderFailed("GPU device lost".into()));
+        }
+
         let output = self
             .output_texture
             .as_ref()
@@ -2086,16 +2157,146 @@ impl WgpuRenderer {
         }
 
         let mut draw_calls = 0u32;
-        // Delegate to the existing render_frame dispatch for now.
-        // The damage-filtered node list is handled above; individual
-        // node dispatch is the same as render_frame().
-        for _node in nodes {
-            draw_calls += 1;
+        // Dispatch each damage-visible node through the same pipelines
+        // as render_frame(). The only difference is the pre-filtered set.
+        for node in nodes {
+            use liquide_compositor::scene::SceneNodeKind;
+            match &node.kind {
+                SceneNodeKind::Background { color } => {
+                    draw_calls += self.render_rect_node(
+                        &mut encoder, output, node,
+                        color, 0.0,
+                    );
+                }
+                SceneNodeKind::Tint { color } => {
+                    draw_calls += self.render_rect_node(
+                        &mut encoder, output, node,
+                        color, 0.0,
+                    );
+                }
+                SceneNodeKind::Glass(params) => {
+                    draw_calls += self.render_rect_node(
+                        &mut encoder, output, node,
+                        &params.tint_color, 0.0,
+                    );
+                }
+                SceneNodeKind::Shadow {
+                    spread,
+                    blur_radius,
+                    color,
+                    corner_radius,
+                } => {
+                    draw_calls += self.render_shadow_node(
+                        &mut encoder, output, node,
+                        [0.0, 0.0], *blur_radius, *spread, color, *corner_radius, false,
+                    );
+                }
+                SceneNodeKind::BoxShadows { shadows } => {
+                    for s in shadows {
+                        draw_calls += self.render_shadow_node(
+                            &mut encoder, output, node,
+                            [s.offset_x, s.offset_y],
+                            s.blur_radius, s.spread_radius,
+                            &s.color, node.corner_radius.0, s.inset,
+                        );
+                    }
+                }
+                SceneNodeKind::GradientFill { gradient } => {
+                    draw_calls += self.render_gradient_node(
+                        &mut encoder, output, node, gradient,
+                    );
+                }
+                SceneNodeKind::Filter { filters } => {
+                    draw_calls += self.render_blur_node(
+                        &mut encoder, node, filters,
+                    );
+                }
+                SceneNodeKind::BackdropFilter { filters } => {
+                    draw_calls += self.render_backdrop_blur_node(
+                        &mut encoder, node, filters,
+                    );
+                }
+                SceneNodeKind::RenderLayer { blend_mode, .. } => {
+                    draw_calls += self.render_blend_node(
+                        &mut encoder, blend_mode,
+                    );
+                }
+                SceneNodeKind::Surface { buffer, .. }
+                | SceneNodeKind::ChildSurface { buffer, .. } => {
+                    if let Some(buf) = buffer {
+                        draw_calls += self.render_surface_node(
+                            &mut encoder, output, node, buf,
+                        );
+                    }
+                }
+                SceneNodeKind::Text {
+                    text,
+                    color,
+                    font_size,
+                    font_family,
+                    font_weight,
+                    font_style_italic,
+                    scale,
+                    ..
+                } => {
+                    draw_calls += self.render_text_node(
+                        &mut encoder,
+                        output,
+                        node,
+                        text,
+                        color,
+                        *font_size,
+                        font_family,
+                        *font_weight,
+                        *font_style_italic,
+                        *scale,
+                    );
+                }
+                SceneNodeKind::Image {
+                    image_id,
+                    width: img_w,
+                    height: img_h,
+                    fit,
+                } => {
+                    draw_calls += self.render_image_node(
+                        &mut encoder,
+                        output,
+                        node,
+                        *image_id,
+                        *img_w,
+                        *img_h,
+                        fit,
+                    );
+                }
+                _ => {}
+            }
         }
 
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
         self.frame_count += 1;
         Ok(draw_calls)
+    }
+}
+
+// ── Renderer trait implementation ────────────────────────────────────
+
+impl Renderer for WgpuRenderer {
+    fn render(
+        &mut self,
+        nodes: &[FlatNode],
+        fb: &mut FrameBuffer,
+        damage: &DamageSet,
+    ) -> RenderResult<Vec<DamageTile>> {
+        self.render_to_framebuffer(nodes, fb, damage)
+    }
+
+    fn blur_enabled(&self) -> bool {
+        // GPU blur is always available when the device is alive.
+        !self.is_device_lost()
+    }
+
+    fn has_pending_glyphs(&self) -> bool {
+        false
     }
 }
 

@@ -115,6 +115,69 @@ fn blend_hard_light(s: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
 fn blend_difference(s: vec3<f32>, d: vec3<f32>) -> vec3<f32> { return abs(s - d); }
 fn blend_exclusion(s: vec3<f32>, d: vec3<f32>) -> vec3<f32> { return s + d - 2.0 * s * d; }
 
+// SoftLight per CSS Compositing spec (W3C formula)
+fn blend_soft_light(s: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
+    let lo = 2.0 * s * d + d * d * (1.0 - 2.0 * s);
+    let hi = 2.0 * d * (1.0 - s) + sqrt(d) * (2.0 * s - 1.0);
+    return select(hi, lo, s <= vec3<f32>(0.5));
+}
+
+// ── Non-separable blend mode helpers (CSS Compositing §8.4) ──────────
+
+fn lum(c: vec3<f32>) -> f32 {
+    return 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+}
+
+fn clip_color(c_in: vec3<f32>) -> vec3<f32> {
+    var c = c_in;
+    let l = lum(c);
+    let n = min(c.r, min(c.g, c.b));
+    let x = max(c.r, max(c.g, c.b));
+    if (n < 0.0) {
+        c = l + (c - l) * l / (l - n);
+    }
+    if (x > 1.0) {
+        c = l + (c - l) * (1.0 - l) / (x - l);
+    }
+    return c;
+}
+
+fn set_lum(c: vec3<f32>, l: f32) -> vec3<f32> {
+    let d = l - lum(c);
+    return clip_color(c + vec3<f32>(d));
+}
+
+fn sat(c: vec3<f32>) -> f32 {
+    return max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+}
+
+// SetSat: rearranges the color so that the channel ordering is preserved
+// and the saturation (max - min) equals `s`.
+fn set_sat(c: vec3<f32>, s: f32) -> vec3<f32> {
+    let cmin = min(c.r, min(c.g, c.b));
+    let cmax = max(c.r, max(c.g, c.b));
+    if (cmax - cmin > 0.0001) {
+        return (c - cmin) * s / (cmax - cmin);
+    }
+    return vec3<f32>(0.0);
+}
+
+fn blend_hue(s: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
+    return set_lum(set_sat(s, sat(d)), lum(d));
+}
+
+fn blend_saturation(s: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
+    return set_lum(set_sat(d, sat(s)), lum(d));
+}
+
+fn blend_color(s: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
+    return set_lum(s, lum(d));
+}
+
+fn blend_luminosity(s: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
+    return set_lum(d, lum(s));
+}
+
 @compute @workgroup_size(8, 8)
 fn cs_blend(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dims = textureDimensions(t_src);
@@ -137,10 +200,14 @@ fn cs_blend(@builtin(global_invocation_id) gid: vec3<u32>) {
         case 8u: { blended = blend_color_dodge(src.rgb, dst.rgb); }
         case 9u: { blended = blend_color_burn(src.rgb, dst.rgb); }
         case 10u: { blended = blend_hard_light(src.rgb, dst.rgb); }
-        case 11u: { blended = src.rgb; }                          // SoftLight (TODO)
+        case 11u: { blended = blend_soft_light(src.rgb, dst.rgb); }
         case 12u: { blended = blend_difference(src.rgb, dst.rgb); }
         case 13u: { blended = blend_exclusion(src.rgb, dst.rgb); }
-        default: { blended = src.rgb; }                           // Non-separable (TODO)
+        case 14u: { blended = blend_hue(src.rgb, dst.rgb); }
+        case 15u: { blended = blend_saturation(src.rgb, dst.rgb); }
+        case 16u: { blended = blend_color(src.rgb, dst.rgb); }
+        case 17u: { blended = blend_luminosity(src.rgb, dst.rgb); }
+        default: { blended = src.rgb; }
     }
 
     // Compositing: result * src.a + dst * (1 - src.a)

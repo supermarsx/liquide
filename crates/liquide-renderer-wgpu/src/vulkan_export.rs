@@ -344,7 +344,7 @@ mod inner {
     pub struct ExportableImage {
         pub width: u32,
         pub height: u32,
-        /// The DMA-BUF file descriptor (owned). Caller must `close()` when done.
+        /// The DMA-BUF file descriptor (owned). Automatically closed on drop.
         pub dmabuf_fd: i32,
         /// Row stride in bytes.
         pub stride: u32,
@@ -353,6 +353,24 @@ mod inner {
         // Internal Vulkan handles for cleanup.
         image: VkImage,
         memory: VkDeviceMemory,
+    }
+
+    impl Drop for ExportableImage {
+        fn drop(&mut self) {
+            if self.dmabuf_fd >= 0 {
+                extern "C" {
+                    fn close(fd: i32) -> i32;
+                }
+                // SAFETY: `dmabuf_fd` is a valid file descriptor obtained from
+                // vkGetMemoryFdKHR. We only close it once (in Drop) and set it
+                // to -1 to prevent double-close.
+                unsafe {
+                    close(self.dmabuf_fd);
+                }
+                log::debug!("ExportableImage: closed DMA-BUF fd {}", self.dmabuf_fd);
+                self.dmabuf_fd = -1;
+            }
+        }
     }
 
     /// Vulkan DMA-BUF exporter.
@@ -893,9 +911,9 @@ mod inner {
 
         /// Destroy an exportable image, freeing its Vulkan memory and handle.
         ///
-        /// The caller is responsible for closing the `dmabuf_fd` separately
-        /// (it remains valid after Vulkan resources are freed until explicitly
-        /// closed).
+        /// The DMA-BUF fd will be closed automatically when the `ExportableImage`
+        /// is dropped (it remains valid after Vulkan resources are freed until
+        /// the struct is dropped).
         pub fn destroy_image(&self, img: &ExportableImage) {
             // SAFETY: `img.memory` and `img.image` are valid Vulkan handles
             // created by `create_exportable_image`. Caller ensures the image
