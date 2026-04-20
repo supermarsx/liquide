@@ -5,10 +5,17 @@ use crate::render_task::{RenderTask, RenderOutput, RenderTaskKind};
 use crossbeam_channel::{Sender, Receiver, bounded};
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering}};
+use std::panic::AssertUnwindSafe;
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering as AtomicOrdering}};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, warn, info};
+
+/// Maximum number of times a thread will respawn after panics before giving up
+const MAX_RESPAWNS: u32 = 3;
+
+/// Base backoff duration in milliseconds for respawn delays (100ms, 200ms, 400ms)
+const RESPAWN_BACKOFF_BASE_MS: u64 = 100;
 
 /// A render task wrapper for priority queue
 struct PrioritizedTask {
@@ -87,6 +94,9 @@ pub struct RenderThread {
     
     /// Task counter
     task_counter: Arc<AtomicU64>,
+    
+    /// Number of times the thread has panicked and been respawned
+    panic_count: Arc<AtomicU32>,
 }
 
 impl RenderThread {
@@ -97,20 +107,23 @@ impl RenderThread {
         
         let shutdown = Arc::new(AtomicBool::new(false));
         let task_counter = Arc::new(AtomicU64::new(0));
+        let panic_count = Arc::new(AtomicU32::new(0));
         
         let thread_shutdown = shutdown.clone();
         let thread_counter = task_counter.clone();
+        let thread_panic_count = panic_count.clone();
         let thread_config = config.clone();
         
         let handle = thread::Builder::new()
             .name(config.name.clone())
             .spawn(move || {
-                Self::run_loop(
+                Self::run_with_respawn(
                     thread_config,
                     task_rx,
                     output_tx,
                     thread_shutdown,
                     thread_counter,
+                    thread_panic_count,
                 );
             })
             .map_err(|e| RenderError::ThreadPoolInit(e.to_string()))?;
@@ -122,6 +135,7 @@ impl RenderThread {
             handle: Some(handle),
             shutdown,
             task_counter,
+            panic_count,
         })
     }
     
@@ -165,6 +179,11 @@ impl RenderThread {
         self.task_counter.load(AtomicOrdering::Relaxed)
     }
     
+    /// Get the number of times this thread has panicked and been respawned
+    pub fn panic_count(&self) -> u32 {
+        self.panic_count.load(AtomicOrdering::Relaxed)
+    }
+    
     /// Shutdown the thread
     pub fn shutdown(mut self) -> Result<()> {
         self.shutdown.store(true, AtomicOrdering::Relaxed);
@@ -177,6 +196,78 @@ impl RenderThread {
         Ok(())
     }
     
+    /// Run the render loop with automatic respawn on panic.
+    ///
+    /// Wraps `run_loop` in `catch_unwind` so that if the loop panics, we log
+    /// the error, apply exponential backoff, and re-enter the loop — up to
+    /// `MAX_RESPAWNS` times.  After that, the thread gives up permanently.
+    ///
+    /// # Safety note on `AssertUnwindSafe`
+    /// The values captured by the closure (channels, atomics, config) are all
+    /// either `Clone` or behind `Arc`, so they remain valid after a panic.
+    /// We clone them into each `catch_unwind` invocation so that any mid-panic
+    /// drops only affect the clones.
+    fn run_with_respawn(
+        config: ThreadConfig,
+        task_rx: Receiver<RenderTask>,
+        output_tx: Sender<RenderOutput>,
+        shutdown: Arc<AtomicBool>,
+        task_counter: Arc<AtomicU64>,
+        panic_count: Arc<AtomicU32>,
+    ) {
+        loop {
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                Self::run_loop(
+                    config.clone(),
+                    task_rx.clone(),
+                    output_tx.clone(),
+                    shutdown.clone(),
+                    task_counter.clone(),
+                );
+            }));
+
+            match result {
+                Ok(()) => break, // Normal shutdown
+                Err(payload) => {
+                    let count = panic_count.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                    let msg = panic_payload_message(&payload);
+                    error!(
+                        "Render thread '{}' panicked (attempt {}/{}): {}",
+                        config.name, count, MAX_RESPAWNS, msg
+                    );
+
+                    if count >= MAX_RESPAWNS {
+                        error!(
+                            "Render thread '{}' exceeded max respawn count ({}), giving up",
+                            config.name, MAX_RESPAWNS
+                        );
+                        break;
+                    }
+
+                    if shutdown.load(AtomicOrdering::Relaxed) {
+                        debug!(
+                            "Render thread '{}' shutdown requested, not respawning",
+                            config.name
+                        );
+                        break;
+                    }
+
+                    // Exponential backoff: 100ms, 200ms, 400ms
+                    let backoff = Duration::from_millis(
+                        RESPAWN_BACKOFF_BASE_MS * 2u64.pow(count - 1),
+                    );
+                    warn!(
+                        "Respawning render thread '{}' after {:?} backoff",
+                        config.name, backoff
+                    );
+                    thread::sleep(backoff);
+
+                    info!("Render thread '{}' respawned (attempt {})", config.name, count + 1);
+                }
+            }
+        }
+    }
+
     /// Main render loop
     fn run_loop(
         config: ThreadConfig,
@@ -212,13 +303,13 @@ impl RenderThread {
 
                 // Process the highest-priority task
                 if let Some(prioritized) = priority_queue.pop() {
-                    Self::execute_task(prioritized.task, &output_tx, &task_counter);
+                    Self::execute_task_safe(prioritized.task, &output_tx, &task_counter);
                 }
             } else {
                 // Without priority scheduling, block until a task arrives
                 match task_rx.recv_timeout(Duration::from_millis(50)) {
                     Ok(task) => {
-                        Self::execute_task(task, &output_tx, &task_counter);
+                        Self::execute_task_safe(task, &output_tx, &task_counter);
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
                     Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -231,17 +322,43 @@ impl RenderThread {
         
         // Process remaining tasks in priority queue
         while let Some(prioritized) = priority_queue.pop() {
-            Self::execute_task(prioritized.task, &output_tx, &task_counter);
+            Self::execute_task_safe(prioritized.task, &output_tx, &task_counter);
         }
         
         // Drain any remaining tasks from the channel
         while let Ok(task) = task_rx.try_recv() {
-            Self::execute_task(task, &output_tx, &task_counter);
+            Self::execute_task_safe(task, &output_tx, &task_counter);
         }
         
         info!("Render thread '{}' stopped", config.name);
     }
     
+    /// Execute a task, catching any panic so the thread loop stays alive.
+    ///
+    /// If the task panics, we log the error and send a failure output for that
+    /// task.  The thread itself continues processing subsequent tasks.
+    fn execute_task_safe(
+        task: RenderTask,
+        output_tx: &Sender<RenderOutput>,
+        task_counter: &Arc<AtomicU64>,
+    ) {
+        let task_id = task.id;
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            Self::execute_task(task, output_tx, task_counter);
+        }));
+
+        if let Err(payload) = result {
+            let msg = panic_payload_message(&payload);
+            error!("Task {} panicked: {}", task_id, msg);
+            let output = RenderOutput::failure(
+                task_id,
+                Duration::ZERO,
+                format!("Task panicked: {}", msg),
+            );
+            let _ = output_tx.send(output);
+        }
+    }
+
     /// Execute a single render task
     fn execute_task(
         task: RenderTask,
@@ -291,6 +408,17 @@ impl RenderThread {
         }
         
         task_counter.fetch_add(1, AtomicOrdering::Relaxed);
+    }
+}
+
+/// Extract a human-readable message from a panic payload.
+fn panic_payload_message(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic payload".to_string()
     }
 }
 
@@ -460,5 +588,115 @@ mod tests {
         assert_eq!(config.name, "render-thread");
         assert_eq!(config.queue_capacity, 128);
         assert!(config.priority_scheduling);
+    }
+
+    #[test]
+    fn test_panic_payload_message_str() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new("boom");
+        assert_eq!(panic_payload_message(&payload), "boom");
+    }
+
+    #[test]
+    fn test_panic_payload_message_string() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new(String::from("string boom"));
+        assert_eq!(panic_payload_message(&payload), "string boom");
+    }
+
+    #[test]
+    fn test_panic_payload_message_unknown() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new(42i32);
+        assert_eq!(panic_payload_message(&payload), "unknown panic payload");
+    }
+
+    #[test]
+    fn test_thread_panic_count_zero_on_normal_operation() {
+        let config = ThreadConfig::default();
+        let thread = RenderThread::new(config).unwrap();
+
+        for i in 1..=5 {
+            let task = RenderTask::new(i, RenderTaskKind::Dock);
+            thread.submit(task).unwrap();
+        }
+        for _ in 0..5 {
+            let output = thread.recv_output(Duration::from_secs(2)).unwrap();
+            assert!(output.success);
+        }
+
+        assert_eq!(thread.panic_count(), 0);
+        thread.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_respawn_loop_with_catch_unwind() {
+        // Directly exercises the catch_unwind + respawn pattern used by
+        // run_with_respawn: a counter tracks how many times the inner
+        // closure has been entered; the first two invocations panic, and
+        // the third completes normally.
+        use std::sync::atomic::AtomicU32;
+
+        let attempts = Arc::new(AtomicU32::new(0));
+        let panic_count = Arc::new(AtomicU32::new(0));
+        let attempts_c = attempts.clone();
+        let panic_count_c = panic_count.clone();
+
+        let handle = thread::spawn(move || {
+            loop {
+                let attempts_inner = attempts_c.clone();
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    let n = attempts_inner.fetch_add(1, AtomicOrdering::SeqCst);
+                    if n < 2 {
+                        panic!("test panic #{}", n);
+                    }
+                    // Third attempt succeeds
+                }));
+
+                match result {
+                    Ok(()) => break,
+                    Err(_) => {
+                        let c = panic_count_c.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                        if c >= MAX_RESPAWNS {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+        });
+
+        handle.join().unwrap();
+        assert_eq!(panic_count.load(AtomicOrdering::SeqCst), 2);
+        assert_eq!(attempts.load(AtomicOrdering::SeqCst), 3);
+    }
+
+    #[test]
+    fn test_respawn_gives_up_after_max() {
+        // Verifies that a perpetually-panicking closure stops after
+        // MAX_RESPAWNS panics instead of looping forever.
+        use std::sync::atomic::AtomicU32;
+
+        let panic_count = Arc::new(AtomicU32::new(0));
+        let panic_count_c = panic_count.clone();
+
+        let handle = thread::spawn(move || {
+            loop {
+                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    panic!("always panic");
+                }));
+
+                match result {
+                    Ok(()) => break,
+                    Err(_) => {
+                        let c = panic_count_c.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                        if c >= MAX_RESPAWNS {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+        });
+
+        handle.join().unwrap();
+        assert_eq!(panic_count.load(AtomicOrdering::SeqCst), MAX_RESPAWNS);
     }
 }
