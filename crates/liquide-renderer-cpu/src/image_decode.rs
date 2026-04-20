@@ -6,6 +6,11 @@
 
 use liquide_compositor::pixel::Color;
 
+/// Maximum allowed image dimension (width or height) to prevent OOM.
+const MAX_IMAGE_DIM: u32 = 16384;
+/// Maximum allowed decoded image size in bytes (256 MiB).
+const MAX_IMAGE_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Supported image formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImageFormat {
@@ -205,6 +210,15 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
         return Err(ImageDecodeError::InvalidFormat("no IHDR chunk".into()));
     }
 
+    if width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM {
+        return Err(ImageDecodeError::InvalidFormat(
+            format!("image dimensions {width}x{height} exceed maximum {MAX_IMAGE_DIM}"),
+        ));
+    }
+    if (width as u64) * (height as u64) * 4 > MAX_IMAGE_BYTES {
+        return Err(ImageDecodeError::InvalidFormat("decoded image would exceed 256 MiB".into()));
+    }
+
     let channels: usize = match color_type {
         0 => 1, // Grayscale
         2 => 3, // RGB
@@ -289,9 +303,10 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
     }
 
     // Convert to RGBA
-    let pixel_count = (width * height) as usize;
-    let alloc_size = pixel_count.checked_mul(4)
-        .ok_or(ImageDecodeError::InvalidFormat("pixel buffer overflow".into()))?;
+    let alloc_size = (width as u64).checked_mul(height as u64)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(ImageDecodeError::InvalidFormat("pixel buffer overflow".into()))? as usize;
+    let pixel_count = (width as usize) * (height as usize);
     let mut pixels = vec![0u8; alloc_size];
 
     match color_type {
@@ -355,8 +370,26 @@ pub fn decode_bmp(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
     let w = width as u32;
     let h = abs_height;
 
+    if w > MAX_IMAGE_DIM || h > MAX_IMAGE_DIM {
+        return Err(ImageDecodeError::InvalidFormat(
+            format!("image dimensions {w}x{h} exceed maximum {MAX_IMAGE_DIM}"),
+        ));
+    }
+    if (w as u64) * (h as u64) * 4 > MAX_IMAGE_BYTES {
+        return Err(ImageDecodeError::InvalidFormat("decoded image would exceed 256 MiB".into()));
+    }
+
     let row_size = ((w * bpp as u32 + 31) / 32 * 4) as usize;
-    let mut pixels = vec![0u8; (w * h * 4) as usize];
+
+    // Validate that file data is large enough for the claimed pixel data
+    if data_offset + (h as usize) * row_size > data.len() {
+        return Err(ImageDecodeError::TruncatedData);
+    }
+
+    let alloc_size = (w as u64).checked_mul(h as u64)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or(ImageDecodeError::InvalidFormat("pixel buffer overflow".into()))? as usize;
+    let mut pixels = vec![0u8; alloc_size];
 
     for row in 0..h {
         let src_row = if bottom_up { h - 1 - row } else { row };
@@ -511,5 +544,61 @@ mod tests {
         assert_eq!(img.height, 1);
         let p = img.get_pixel(0, 0).unwrap();
         assert_eq!(p.b, 255); // Blue channel
+    }
+
+    #[test]
+    fn test_png_rejects_huge_dimensions() {
+        // Craft a minimal PNG with a huge width in the IHDR chunk
+        let mut png = Vec::new();
+        // PNG signature
+        png.extend_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        // IHDR chunk: length=13
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&100_000u32.to_be_bytes()); // width = 100000
+        png.extend_from_slice(&100_000u32.to_be_bytes()); // height = 100000
+        png.push(8);  // bit depth
+        png.push(6);  // color type RGBA
+        png.extend_from_slice(&[0u8; 3]); // compression, filter, interlace
+        png.extend_from_slice(&[0u8; 4]); // CRC (ignored by decoder)
+        // IEND chunk
+        png.extend_from_slice(&0u32.to_be_bytes());
+        png.extend_from_slice(b"IEND");
+        png.extend_from_slice(&[0u8; 4]); // CRC
+
+        let err = decode_png(&png).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("exceed maximum"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn test_bmp_rejects_huge_dimensions() {
+        // Construct a BMP header with absurdly large dimensions
+        let mut bmp = vec![0u8; 54];
+        bmp[0] = b'B'; bmp[1] = b'M';
+        bmp[10..14].copy_from_slice(&54u32.to_le_bytes()); // data offset
+        bmp[14..18].copy_from_slice(&40u32.to_le_bytes()); // header size
+        bmp[18..22].copy_from_slice(&100_000i32.to_le_bytes()); // width
+        bmp[22..26].copy_from_slice(&100_000i32.to_le_bytes()); // height
+        bmp[28..30].copy_from_slice(&24u16.to_le_bytes()); // bpp
+
+        let err = decode_bmp(&bmp).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("exceed maximum"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn test_bmp_rejects_truncated_data() {
+        // Construct a valid BMP header claiming 100x100 pixels but with no pixel data
+        let mut bmp = vec![0u8; 54];
+        bmp[0] = b'B'; bmp[1] = b'M';
+        bmp[10..14].copy_from_slice(&54u32.to_le_bytes()); // data offset
+        bmp[14..18].copy_from_slice(&40u32.to_le_bytes()); // header size
+        bmp[18..22].copy_from_slice(&100i32.to_le_bytes()); // width
+        bmp[22..26].copy_from_slice(&100i32.to_le_bytes()); // height
+        bmp[28..30].copy_from_slice(&24u16.to_le_bytes()); // bpp
+
+        let err = decode_bmp(&bmp).unwrap_err();
+        assert!(matches!(err, ImageDecodeError::TruncatedData), "expected TruncatedData, got: {err}");
     }
 }

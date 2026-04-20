@@ -18,6 +18,9 @@ use tracing::debug;
 
 use crate::blur;
 
+/// Maximum number of cached blur results before eviction.
+const MAX_BLUR_CACHE: usize = 128;
+
 // ---------------------------------------------------------------------------
 // Types exchanged between renderer and worker
 // ---------------------------------------------------------------------------
@@ -185,6 +188,18 @@ impl BlurWorker {
             self.pending.remove(&node_id);
             self.cache.insert(node_id, result);
         }
+        // Evict oldest half when cache exceeds capacity.
+        if self.cache.len() > MAX_BLUR_CACHE {
+            let to_remove: Vec<NodeId> = self
+                .cache
+                .keys()
+                .take(self.cache.len() / 2)
+                .copied()
+                .collect();
+            for id in to_remove {
+                self.cache.remove(&id);
+            }
+        }
     }
 
     /// Check whether a blur request is already pending for this node.
@@ -236,6 +251,21 @@ impl BlurWorker {
     /// Clear the entire blur cache.
     pub fn clear_cache(&mut self) {
         self.cache.clear();
+    }
+
+    /// Trim the blur cache to half capacity.
+    pub fn trim_cache(&mut self) {
+        if self.cache.len() > MAX_BLUR_CACHE / 2 {
+            let to_remove: Vec<NodeId> = self
+                .cache
+                .keys()
+                .take(self.cache.len() / 2)
+                .copied()
+                .collect();
+            for id in to_remove {
+                self.cache.remove(&id);
+            }
+        }
     }
 
     /// Current frame number (for diagnostics).
@@ -396,5 +426,45 @@ mod tests {
         let cached = worker.get_cached(5, 128, 128);
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().pixels.len(), 128 * 128 * 4);
+    }
+
+    #[test]
+    fn cache_eviction_at_capacity() {
+        let mut worker = BlurWorker::new();
+
+        // Insert more entries than MAX_BLUR_CACHE by sending requests
+        // for many distinct node IDs.
+        for id in 0..(super::MAX_BLUR_CACHE as u64 + 10) {
+            let pixels = solid_rgba(4, 4, 0, 0, 0, 255);
+            worker.request_blur(id, pixels, 4, 4, 1);
+        }
+
+        thread::sleep(Duration::from_millis(500));
+        worker.poll_results();
+
+        // After eviction, cache should be at most MAX_BLUR_CACHE.
+        assert!(
+            worker.cache_len() <= super::MAX_BLUR_CACHE,
+            "cache should be bounded: {} > {}",
+            worker.cache_len(),
+            super::MAX_BLUR_CACHE,
+        );
+    }
+
+    #[test]
+    fn trim_cache_reduces_size() {
+        let mut worker = BlurWorker::new();
+
+        for id in 0..10u64 {
+            let pixels = solid_rgba(4, 4, 0, 0, 0, 255);
+            worker.request_blur(id, pixels, 4, 4, 1);
+        }
+        thread::sleep(Duration::from_millis(200));
+        worker.poll_results();
+        assert_eq!(worker.cache_len(), 10);
+
+        worker.trim_cache();
+        // trim_cache only acts when above MAX_BLUR_CACHE/2, so 10 < 64 means no change.
+        assert_eq!(worker.cache_len(), 10);
     }
 }

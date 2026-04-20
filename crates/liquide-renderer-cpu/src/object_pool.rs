@@ -127,10 +127,14 @@ pub struct ObjectPoolStats {
     pub utilization: f64,
 }
 
+/// Maximum size for the PooledObject shared free-list.
+const MAX_POOLED_FREE_LIST: usize = 64;
+
 /// A pooled object that automatically returns to the pool when dropped.
 pub struct PooledObject<T> {
     object: Option<T>,
     free_list: Arc<Mutex<VecDeque<T>>>,
+    max_capacity: usize,
 }
 
 impl<T> PooledObject<T> {
@@ -140,6 +144,7 @@ impl<T> PooledObject<T> {
         Self {
             object: Some(object),
             free_list,
+            max_capacity: MAX_POOLED_FREE_LIST,
         }
     }
 
@@ -159,7 +164,10 @@ impl<T> Drop for PooledObject<T> {
     fn drop(&mut self) {
         if let Some(object) = self.object.take() {
             if let Ok(mut list) = self.free_list.lock() {
-                list.push_back(object);
+                if list.len() < self.max_capacity {
+                    list.push_back(object);
+                }
+                // else: drop the object (free list at capacity)
             }
         }
     }
@@ -259,5 +267,29 @@ mod tests {
 
         assert_eq!(pool.available(), 0);
         assert_eq!(pool.in_use(), 0);
+    }
+
+    #[test]
+    fn test_pooled_object_free_list_bounded() {
+        let free_list = Arc::new(Mutex::new(VecDeque::<u32>::new()));
+        let capacity = 3usize;
+
+        // Drop more PooledObjects than the capacity allows.
+        for i in 0..10u32 {
+            let obj = PooledObject {
+                object: Some(i),
+                free_list: Arc::clone(&free_list),
+                max_capacity: capacity,
+            };
+            drop(obj);
+        }
+
+        let list = free_list.lock().unwrap();
+        assert!(
+            list.len() <= capacity,
+            "free list should be bounded: {} > {}",
+            list.len(),
+            capacity,
+        );
     }
 }

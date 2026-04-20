@@ -34,7 +34,7 @@ use crate::texture_cache::TextureCache;
 ///
 /// Avoids recomputing the expensive SDF + Gaussian blur every frame.
 /// Invalidated when the source window bounds change.
-struct CachedShadow {
+pub(crate) struct CachedShadow {
     mask: ShadowMask,
     /// Source bounds as integer pixels for invalidation.
     bx: i32,
@@ -42,6 +42,9 @@ struct CachedShadow {
     bw: u32,
     bh: u32,
 }
+
+/// Maximum number of entries in the shadow mask cache before eviction.
+const MAX_SHADOW_CACHE: usize = 256;
 
 // Re-export the Renderer trait from liquide-compositor so downstream crates
 // can import it from either location.
@@ -242,6 +245,38 @@ impl SoftwareRenderer {
     /// Clear the entire shadow cache.
     pub fn clear_shadow_cache(&mut self) {
         self.shadow_cache.clear();
+    }
+
+    /// Insert a shadow into the cache, evicting the oldest half when at capacity.
+    pub(crate) fn shadow_cache_insert(&mut self, node_id: NodeId, shadow: CachedShadow) {
+        if self.shadow_cache.len() >= MAX_SHADOW_CACHE {
+            let to_remove: Vec<NodeId> = self
+                .shadow_cache
+                .keys()
+                .take(MAX_SHADOW_CACHE / 2)
+                .copied()
+                .collect();
+            for id in to_remove {
+                self.shadow_cache.remove(&id);
+            }
+        }
+        self.shadow_cache.insert(node_id, shadow);
+    }
+
+    /// Trim all internal caches to reduce memory usage.
+    pub fn trim_caches(&mut self) {
+        if self.shadow_cache.len() > MAX_SHADOW_CACHE / 2 {
+            let to_remove: Vec<NodeId> = self
+                .shadow_cache
+                .keys()
+                .take(self.shadow_cache.len() / 2)
+                .copied()
+                .collect();
+            for id in to_remove {
+                self.shadow_cache.remove(&id);
+            }
+        }
+        self.blur_worker.trim_cache();
     }
 
     /// Whether real Gaussian blur is currently active.

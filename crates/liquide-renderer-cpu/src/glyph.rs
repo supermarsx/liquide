@@ -139,10 +139,18 @@ impl GlyphAtlas {
         }
 
         if self.cursor_y + height > self.height {
-            return Err(crate::RendererError::AtlasFull { size: self.width });
+            // Atlas is full — evict everything and retry once.
+            tracing::debug!(
+                entries = self.entries.len(),
+                "glyph atlas full, resetting"
+            );
+            self.clear();
+            // After clear, cursors are at (0,0). If the single glyph is
+            // larger than the entire atlas, give up.
+            if width > self.width || height > self.height {
+                return Err(crate::RendererError::AtlasFull { size: self.width });
+            }
         }
-
-        // Validate bitmap dimensions
         let _total = width.checked_mul(height)
             .ok_or(crate::RendererError::AtlasFull { size: self.width })?;
         if bitmap.len() < (width * height) as usize {
@@ -247,10 +255,16 @@ impl GlyphAtlas {
         }
 
         if self.cursor_y + height > self.height {
-            return Err(crate::RendererError::AtlasFull { size: self.width });
+            // Atlas is full — evict everything and retry once.
+            tracing::debug!(
+                entries = self.entries.len(),
+                "glyph atlas full (subpixel), resetting"
+            );
+            self.clear();
+            if atlas_width > self.width || height > self.height {
+                return Err(crate::RendererError::AtlasFull { size: self.width });
+            }
         }
-
-        // Copy subpixel bitmap into atlas (3 bytes per display pixel)
         for row in 0..height {
             let src_start = (row * atlas_width) as usize;
             let dst_start = ((self.cursor_y + row) * self.width + self.cursor_x) as usize;
@@ -382,6 +396,14 @@ impl GlyphAtlas {
         self.cursor_y = 0;
         self.row_height = 0;
     }
+
+    /// Reset the atlas, evicting all cached glyphs.
+    ///
+    /// Alias for [`clear`] — provided for semantic clarity when the caller
+    /// intends an eviction rather than a teardown.
+    pub fn reset(&mut self) {
+        self.clear();
+    }
 }
 
 /// Blend a single colour channel with per-channel alpha.
@@ -393,4 +415,86 @@ fn blend_channel(src: u8, dst: u8, alpha: u8) -> u8 {
     let d = dst as u16;
     let a = alpha as u16;
     ((s * a + d * (255 - a) + 127) / 255) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_bitmap(w: u32, h: u32) -> Vec<u8> {
+        vec![128u8; (w * h) as usize]
+    }
+
+    fn make_key(id: u32) -> GlyphKey {
+        GlyphKey {
+            font_id: 1,
+            glyph_id: id,
+            size_px: 16,
+            subpixel: false,
+        }
+    }
+
+    fn make_metrics(w: u32, h: u32) -> GlyphMetrics {
+        GlyphMetrics {
+            width: w,
+            height: h,
+            bearing_x: 0,
+            bearing_y: h as i32,
+            advance: w as f32,
+        }
+    }
+
+    #[test]
+    fn test_atlas_reset_on_full() {
+        // Small 32x32 atlas — can hold a handful of 10x10 glyphs.
+        let mut atlas = GlyphAtlas::new(32, 32);
+
+        // Fill the atlas until it's near capacity.
+        let mut inserted = 0u32;
+        for i in 0..20 {
+            let key = make_key(i);
+            let metrics = make_metrics(10, 10);
+            let bitmap = make_bitmap(10, 10);
+            match atlas.insert(key, &bitmap, &metrics) {
+                Ok(_) => inserted += 1,
+                Err(_) => break,
+            }
+        }
+        assert!(inserted > 0);
+
+        // Now insert a glyph that would overflow — the atlas should
+        // auto-reset and succeed.
+        let key = make_key(100);
+        let metrics = make_metrics(10, 10);
+        let bitmap = make_bitmap(10, 10);
+        let result = atlas.insert(key, &bitmap, &metrics);
+        assert!(result.is_ok(), "insert should succeed after atlas reset");
+
+        // Previous glyphs should have been evicted.
+        assert!(atlas.get(&make_key(0)).is_none());
+    }
+
+    #[test]
+    fn test_atlas_reset_method() {
+        let mut atlas = GlyphAtlas::new(64, 64);
+        let key = make_key(1);
+        let metrics = make_metrics(8, 8);
+        let bitmap = make_bitmap(8, 8);
+        atlas.insert(key, &bitmap, &metrics).unwrap();
+        assert_eq!(atlas.len(), 1);
+
+        atlas.reset();
+        assert_eq!(atlas.len(), 0);
+        assert!(atlas.is_empty());
+    }
+
+    #[test]
+    fn test_atlas_oversized_glyph_fails() {
+        let mut atlas = GlyphAtlas::new(16, 16);
+        let key = make_key(1);
+        let metrics = make_metrics(32, 32);
+        let bitmap = make_bitmap(32, 32);
+        let result = atlas.insert(key, &bitmap, &metrics);
+        assert!(result.is_err());
+    }
 }

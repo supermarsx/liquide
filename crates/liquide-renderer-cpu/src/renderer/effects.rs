@@ -107,7 +107,7 @@ impl SoftwareRenderer {
                     BoxShadow::generate_shadow_mask(fb.width, fb.height, &params)
                 {
                     BoxShadow::composite_shadow_mask(fb, &mask);
-                    self.shadow_cache.insert(
+                    self.shadow_cache_insert(
                         node.id,
                         CachedShadow {
                             mask,
