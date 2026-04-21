@@ -55,6 +55,35 @@ impl RealFontMetrics {
             units_per_em: 1000.0,
         }
     }
+
+    /// Resolve a CSS `ex` unit value to pixels using real x-height.
+    ///
+    /// The `ex` unit is defined as the x-height of the font. If the real
+    /// x-height is zero (missing glyph data), falls back to `font_size * 0.5`.
+    #[must_use]
+    pub fn ex_size(&self, value: f32) -> f32 {
+        let x_h = if self.x_height > 0.0 {
+            self.x_height
+        } else {
+            self.size * 0.5
+        };
+        x_h * value
+    }
+
+    /// Resolve a CSS `ch` unit value to pixels using real average character width.
+    ///
+    /// The `ch` unit is defined as the advance width of the '0' glyph. We use
+    /// `avg_char_width` as the best available approximation from font tables.
+    /// Falls back to `font_size * 0.5` when the measured width is zero.
+    #[must_use]
+    pub fn ch_size(&self, value: f32) -> f32 {
+        let ch_w = if self.avg_char_width > 0.0 {
+            self.avg_char_width
+        } else {
+            self.size * 0.5
+        };
+        ch_w * value
+    }
 }
 
 /// Provides real font metrics from loaded font faces.
@@ -214,5 +243,48 @@ mod tests {
         let provider = FontMetricsProvider::new(&db);
         let (width, _height) = provider.measure_text(FontFaceId(999), 16.0, "");
         assert!((width - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_ex_size_uses_real_x_height() {
+        let mut m = RealFontMetrics::approximate(16.0);
+        // Override x_height with a "real" value different from the approximation.
+        m.x_height = 9.0;
+        // 2ex should be 2 * 9.0 = 18.0
+        assert!((m.ex_size(2.0) - 18.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_ex_size_fallback_when_zero() {
+        let mut m = RealFontMetrics::approximate(16.0);
+        m.x_height = 0.0;
+        // Should fall back to font_size * 0.5 = 8.0
+        assert!((m.ex_size(1.0) - 8.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_ch_size_uses_real_avg_char_width() {
+        let mut m = RealFontMetrics::approximate(16.0);
+        // Override avg_char_width with a "real" value.
+        m.avg_char_width = 10.0;
+        // 3ch should be 3 * 10.0 = 30.0
+        assert!((m.ch_size(3.0) - 30.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_ch_size_fallback_when_zero() {
+        let mut m = RealFontMetrics::approximate(16.0);
+        m.avg_char_width = 0.0;
+        // Should fall back to font_size * 0.5 = 8.0
+        assert!((m.ch_size(1.0) - 8.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_approximate_ex_and_ch_consistency() {
+        let m = RealFontMetrics::approximate(20.0);
+        // Approximate x_height = 20 * 0.5 = 10, so ex_size(1) = 10
+        assert!((m.ex_size(1.0) - 10.0).abs() < f32::EPSILON);
+        // Approximate avg_char_width = 20 * 0.55 = 11, so ch_size(1) = 11
+        assert!((m.ch_size(1.0) - 11.0).abs() < f32::EPSILON);
     }
 }

@@ -38,7 +38,7 @@ pub use font_face::{FontDisplay, FontFaceLoader, FontFaceRule, FontLoadState};
 pub use glyph_cache::{CacheStats, GlyphCache, GlyphCacheKey};
 pub use metrics::FontMetricsProvider;
 pub use rasterize::{GlyphBitmap, GlyphRasterizer, HintingMode, RasterConfig, SubpixelMode};
-pub use shaper::{FontFeature, ShapedGlyph, TextShaper};
+pub use shaper::{FontFeature, ShapedGlyph, TextShaper, parse_font_feature_settings, parse_font_variation_settings};
 pub use synthesis::{SynthesisConfig, apply_synthesis, apply_synthetic_bold, apply_synthetic_oblique};
 
 use thiserror::Error;

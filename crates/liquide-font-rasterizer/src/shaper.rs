@@ -125,6 +125,118 @@ impl FontFeature {
     }
 }
 
+/// Parse a CSS `font-feature-settings` string into a list of `FontFeature`s.
+///
+/// Accepts the CSS syntax: `"liga" on`, `"kern" 1`, `"smcp" off`, `"ss01"`,
+/// `normal` (returns empty list). Multiple entries are comma-separated.
+///
+/// # Examples
+/// ```
+/// # use liquide_font_rasterizer::shaper::parse_font_feature_settings;
+/// let feats = parse_font_feature_settings("\"liga\" off, \"smcp\" on");
+/// assert_eq!(feats.len(), 2);
+/// assert_eq!(feats[0].tag, *b"liga");
+/// assert_eq!(feats[0].value, 0);
+/// assert_eq!(feats[1].tag, *b"smcp");
+/// assert_eq!(feats[1].value, 1);
+/// ```
+#[must_use]
+pub fn parse_font_feature_settings(s: &str) -> Vec<FontFeature> {
+    let s = s.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("normal") {
+        return Vec::new();
+    }
+
+    let mut features = Vec::new();
+    for entry in s.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        // Extract the tag — must be exactly 4 ASCII characters, optionally quoted.
+        let (tag_str, rest) = if entry.starts_with('"') || entry.starts_with('\'') {
+            let quote = entry.as_bytes()[0];
+            if let Some(end) = entry[1..].find(|c: char| c as u8 == quote) {
+                (&entry[1..1 + end], entry[2 + end..].trim())
+            } else {
+                continue; // malformed
+            }
+        } else {
+            // Unquoted — take first whitespace-delimited token.
+            match entry.find(char::is_whitespace) {
+                Some(i) => (&entry[..i], entry[i..].trim()),
+                None => (entry, ""),
+            }
+        };
+
+        if tag_str.len() != 4 || !tag_str.is_ascii() {
+            continue; // invalid tag
+        }
+        let tag: [u8; 4] = tag_str.as_bytes()[..4].try_into().unwrap();
+
+        let value = if rest.is_empty() {
+            1 // bare tag means enable
+        } else if rest.eq_ignore_ascii_case("on") {
+            1
+        } else if rest.eq_ignore_ascii_case("off") {
+            0
+        } else if let Ok(n) = rest.parse::<u32>() {
+            n
+        } else {
+            continue; // unparseable value
+        };
+
+        features.push(FontFeature { tag, value });
+    }
+    features
+}
+
+/// Parse a CSS `font-variation-settings` string into a list of `rustybuzz::Variation`s.
+///
+/// Accepts the CSS syntax: `"wght" 600, "wdth" 80`. `normal` returns an empty list.
+#[must_use]
+pub fn parse_font_variation_settings(s: &str) -> Vec<rustybuzz::Variation> {
+    let s = s.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("normal") {
+        return Vec::new();
+    }
+
+    let mut variations = Vec::new();
+    for entry in s.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        // Extract the axis tag — exactly 4 ASCII characters, optionally quoted.
+        let (tag_str, rest) = if entry.starts_with('"') || entry.starts_with('\'') {
+            let quote = entry.as_bytes()[0];
+            if let Some(end) = entry[1..].find(|c: char| c as u8 == quote) {
+                (&entry[1..1 + end], entry[2 + end..].trim())
+            } else {
+                continue;
+            }
+        } else {
+            match entry.find(char::is_whitespace) {
+                Some(i) => (&entry[..i], entry[i..].trim()),
+                None => continue, // variations always need a value
+            }
+        };
+
+        if tag_str.len() != 4 || !tag_str.is_ascii() {
+            continue;
+        }
+        let tag = rustybuzz::ttf_parser::Tag::from_bytes_lossy(tag_str.as_bytes());
+
+        let value = match rest.parse::<f32>() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        variations.push(rustybuzz::Variation { tag, value });
+    }
+    variations
+}
+
 /// Text shaper — computes glyph positions with full OpenType shaping.
 pub struct TextShaper<'a> {
     db: &'a FontDatabase,
@@ -534,5 +646,96 @@ mod tests {
         assert_eq!(ordn.tag, *b"ordn");
         let dlig = FontFeature::discretionary_ligatures(true);
         assert_eq!(dlig.tag, *b"dlig");
+    }
+
+    // ── parse_font_feature_settings tests ──
+
+    #[test]
+    fn test_parse_feature_settings_normal() {
+        assert!(parse_font_feature_settings("normal").is_empty());
+        assert!(parse_font_feature_settings("  Normal  ").is_empty());
+        assert!(parse_font_feature_settings("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_feature_settings_liga_off() {
+        let feats = parse_font_feature_settings("\"liga\" off");
+        assert_eq!(feats.len(), 1);
+        assert_eq!(feats[0].tag, *b"liga");
+        assert_eq!(feats[0].value, 0);
+    }
+
+    #[test]
+    fn test_parse_feature_settings_smcp_on() {
+        let feats = parse_font_feature_settings("\"smcp\" on");
+        assert_eq!(feats.len(), 1);
+        assert_eq!(feats[0].tag, *b"smcp");
+        assert_eq!(feats[0].value, 1);
+    }
+
+    #[test]
+    fn test_parse_feature_settings_bare_tag() {
+        let feats = parse_font_feature_settings("\"kern\"");
+        assert_eq!(feats.len(), 1);
+        assert_eq!(feats[0].tag, *b"kern");
+        assert_eq!(feats[0].value, 1);
+    }
+
+    #[test]
+    fn test_parse_feature_settings_numeric_value() {
+        let feats = parse_font_feature_settings("\"ss01\" 3");
+        assert_eq!(feats.len(), 1);
+        assert_eq!(feats[0].tag, *b"ss01");
+        assert_eq!(feats[0].value, 3);
+    }
+
+    #[test]
+    fn test_parse_feature_settings_multi() {
+        let feats = parse_font_feature_settings("\"liga\" off, \"smcp\" on, \"kern\" 1");
+        assert_eq!(feats.len(), 3);
+        assert_eq!(feats[0].tag, *b"liga");
+        assert_eq!(feats[0].value, 0);
+        assert_eq!(feats[1].tag, *b"smcp");
+        assert_eq!(feats[1].value, 1);
+        assert_eq!(feats[2].tag, *b"kern");
+        assert_eq!(feats[2].value, 1);
+    }
+
+    #[test]
+    fn test_parse_feature_settings_single_quotes() {
+        let feats = parse_font_feature_settings("'liga' off");
+        assert_eq!(feats.len(), 1);
+        assert_eq!(feats[0].tag, *b"liga");
+        assert_eq!(feats[0].value, 0);
+    }
+
+    // ── parse_font_variation_settings tests ──
+
+    #[test]
+    fn test_parse_variation_settings_normal() {
+        assert!(parse_font_variation_settings("normal").is_empty());
+        assert!(parse_font_variation_settings("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_variation_settings_wght() {
+        let vars = parse_font_variation_settings("\"wght\" 700");
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].value, 700.0);
+    }
+
+    #[test]
+    fn test_parse_variation_settings_multi() {
+        let vars = parse_font_variation_settings("\"wght\" 600, \"wdth\" 80");
+        assert_eq!(vars.len(), 2);
+        assert_eq!(vars[0].value, 600.0);
+        assert_eq!(vars[1].value, 80.0);
+    }
+
+    #[test]
+    fn test_parse_variation_settings_fractional() {
+        let vars = parse_font_variation_settings("\"ital\" 0.5");
+        assert_eq!(vars.len(), 1);
+        assert!((vars[0].value - 0.5).abs() < f32::EPSILON);
     }
 }
