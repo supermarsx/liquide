@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use crate::momentum::MomentumScroller;
 use crate::overscroll::OverscrollEffect;
 use crate::scrollbar::{self, AutoHideController, Orientation, Rect, ScrollbarHit, ScrollbarState, ScrollbarStyle};
-use crate::smooth::SmoothScroller;
-use crate::snap::{self, SnapConfig};
+use crate::smooth::{SmoothScroller, SNAP_ANIMATION_DURATION_MS};
+use crate::snap::{self, SnapAlignment, SnapConfig, SnapType};
 use crate::state::ScrollState;
 use crate::wheel::WheelConfig;
 
@@ -90,6 +90,14 @@ impl ScrollManager {
         }
     }
 
+    /// Enforce scroll snap for a container. Call this after any scroll
+    /// operation ends to snap to the nearest configured snap point.
+    pub fn enforce_snap(&mut self, id: u64) {
+        if let Some(c) = self.containers.get_mut(&id) {
+            try_snap(c);
+        }
+    }
+
     /// Handle a mouse wheel event for a container.
     ///
     /// `delta` is the wheel tick count (x, y). Positive = scroll down/right.
@@ -116,7 +124,13 @@ impl ScrollManager {
             let clamped = (target.0.clamp(0.0, max.0), target.1.clamp(0.0, max.1));
             c.smooth.scroll_to(current, clamped, duration);
         } else {
+            // Cancel any running snap animation before direct offset change.
+            if c.smooth.is_animating() {
+                c.smooth.cancel();
+            }
             c.state.scroll_by(dx, dy);
+            // Enforce snap after direct scroll.
+            try_snap(c);
         }
 
         c.auto_hide_v.on_activity();
@@ -191,6 +205,9 @@ impl ScrollManager {
 
         c.auto_hide_v.on_activity();
         c.auto_hide_h.on_activity();
+
+        // Enforce snap after scrollbar page/line scroll.
+        try_snap(c);
     }
 
     /// Handle dragging the scrollbar thumb.
@@ -429,6 +446,214 @@ fn try_snap(c: &mut ScrollContainer) {
 
     if snapped {
         let current = c.state.offset;
-        c.smooth.scroll_to(current, target, 250);
+        c.smooth.scroll_to(current, target, SNAP_ANIMATION_DURATION_MS);
+    }
+}
+
+/// Create snap configurations from a CSS `scroll-snap-type` value.
+///
+/// Returns `(x_config, y_config)`. Snap points should be added separately
+/// from child elements' `scroll-snap-align` values via [`parse_snap_alignment`].
+pub fn snap_config_from_css(
+    scroll_snap_type: &str,
+    proximity_threshold: f32,
+) -> (Option<SnapConfig>, Option<SnapConfig>) {
+    let parts: Vec<&str> = scroll_snap_type.split_whitespace().collect();
+    if parts.is_empty() || parts[0] == "none" {
+        return (None, None);
+    }
+
+    let (axis, strictness) = if parts.len() >= 2 {
+        (parts[0], parts[1])
+    } else {
+        (parts[0], "proximity")
+    };
+
+    let snap_type = match strictness {
+        "mandatory" => SnapType::Mandatory,
+        _ => SnapType::Proximity,
+    };
+
+    match axis {
+        "x" | "inline" => (Some(SnapConfig::new(snap_type, proximity_threshold)), None),
+        "y" | "block" => (None, Some(SnapConfig::new(snap_type, proximity_threshold))),
+        "both" => (
+            Some(SnapConfig::new(snap_type, proximity_threshold)),
+            Some(SnapConfig::new(snap_type, proximity_threshold)),
+        ),
+        _ => (None, None),
+    }
+}
+
+/// Parse a CSS `scroll-snap-align` value into a [`SnapAlignment`].
+pub fn parse_snap_alignment(value: &str) -> SnapAlignment {
+    match value.trim() {
+        "center" => SnapAlignment::Center,
+        "end" => SnapAlignment::End,
+        _ => SnapAlignment::Start,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::snap::{SnapAlignment, SnapConfig, SnapType};
+
+    fn setup_manager_with_snap() -> (ScrollManager, u64) {
+        let mut mgr = ScrollManager::new();
+        let id = 1;
+        mgr.register(id, (2000.0, 2000.0), (500.0, 500.0));
+
+        let mut snap_y = SnapConfig::new(SnapType::Mandatory, 50.0);
+        snap_y.add_point(0.0, SnapAlignment::Start);
+        snap_y.add_point(500.0, SnapAlignment::Start);
+        snap_y.add_point(1000.0, SnapAlignment::Start);
+        mgr.set_snap_config(id, None, Some(snap_y));
+
+        (mgr, id)
+    }
+
+    #[test]
+    fn enforce_snap_animates_to_nearest_point() {
+        let (mut mgr, id) = setup_manager_with_snap();
+        // Scroll to an offset between snap points.
+        mgr.state_mut(id).unwrap().set_offset(0.0, 200.0);
+
+        mgr.enforce_snap(id);
+
+        let c = mgr.containers.get(&id).unwrap();
+        assert!(c.smooth.is_animating());
+        // Nearest snap point to 200 is 0 (distance 200 vs 300 to 500).
+        assert_eq!(c.smooth.target(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn enforce_snap_closer_to_next_point() {
+        let (mut mgr, id) = setup_manager_with_snap();
+        // Scroll to offset closer to 500 than to 0.
+        mgr.state_mut(id).unwrap().set_offset(0.0, 350.0);
+
+        mgr.enforce_snap(id);
+
+        let c = mgr.containers.get(&id).unwrap();
+        assert!(c.smooth.is_animating());
+        assert_eq!(c.smooth.target(), (0.0, 500.0));
+    }
+
+    #[test]
+    fn enforce_snap_no_config_noop() {
+        let mut mgr = ScrollManager::new();
+        let id = 1;
+        mgr.register(id, (2000.0, 2000.0), (500.0, 500.0));
+        mgr.state_mut(id).unwrap().set_offset(0.0, 200.0);
+
+        mgr.enforce_snap(id);
+
+        let c = mgr.containers.get(&id).unwrap();
+        assert!(!c.smooth.is_animating());
+    }
+
+    #[test]
+    fn proximity_snap_outside_threshold() {
+        let mut mgr = ScrollManager::new();
+        let id = 1;
+        mgr.register(id, (2000.0, 2000.0), (500.0, 500.0));
+
+        let mut snap_y = SnapConfig::new(SnapType::Proximity, 50.0);
+        snap_y.add_point(0.0, SnapAlignment::Start);
+        snap_y.add_point(500.0, SnapAlignment::Start);
+        mgr.set_snap_config(id, None, Some(snap_y));
+
+        // 200 is too far from both 0 (200) and 500 (300) for threshold 50.
+        mgr.state_mut(id).unwrap().set_offset(0.0, 200.0);
+        mgr.enforce_snap(id);
+
+        let c = mgr.containers.get(&id).unwrap();
+        assert!(!c.smooth.is_animating());
+    }
+
+    #[test]
+    fn proximity_snap_within_threshold() {
+        let mut mgr = ScrollManager::new();
+        let id = 1;
+        mgr.register(id, (2000.0, 2000.0), (500.0, 500.0));
+
+        let mut snap_y = SnapConfig::new(SnapType::Proximity, 50.0);
+        snap_y.add_point(0.0, SnapAlignment::Start);
+        snap_y.add_point(500.0, SnapAlignment::Start);
+        mgr.set_snap_config(id, None, Some(snap_y));
+
+        // 480 is within 50px of snap point 500.
+        mgr.state_mut(id).unwrap().set_offset(0.0, 480.0);
+        mgr.enforce_snap(id);
+
+        let c = mgr.containers.get(&id).unwrap();
+        assert!(c.smooth.is_animating());
+        assert_eq!(c.smooth.target(), (0.0, 500.0));
+    }
+
+    #[test]
+    fn non_smooth_wheel_triggers_snap() {
+        let (mut mgr, id) = setup_manager_with_snap();
+        mgr.wheel_config.smooth_wheel = false;
+
+        // Wheel scroll: 3 ticks * 3 lines/tick * 20px/line = 180px.
+        mgr.handle_wheel(id, (0.0, 3.0), false);
+
+        let c = mgr.containers.get(&id).unwrap();
+        // After non-smooth wheel, mandatory snap should animate toward snap point 0.
+        assert!(c.smooth.is_animating());
+        assert_eq!(c.smooth.target(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn snap_config_from_css_mandatory_y() {
+        let (x, y) = snap_config_from_css("y mandatory", 50.0);
+        assert!(x.is_none());
+        let y = y.unwrap();
+        assert_eq!(y.snap_type, SnapType::Mandatory);
+    }
+
+    #[test]
+    fn snap_config_from_css_proximity_x() {
+        let (x, y) = snap_config_from_css("x proximity", 100.0);
+        let x = x.unwrap();
+        assert_eq!(x.snap_type, SnapType::Proximity);
+        assert!(y.is_none());
+    }
+
+    #[test]
+    fn snap_config_from_css_both() {
+        let (x, y) = snap_config_from_css("both mandatory", 50.0);
+        assert!(x.is_some());
+        assert!(y.is_some());
+        assert_eq!(x.unwrap().snap_type, SnapType::Mandatory);
+        assert_eq!(y.unwrap().snap_type, SnapType::Mandatory);
+    }
+
+    #[test]
+    fn snap_config_from_css_none() {
+        let (x, y) = snap_config_from_css("none", 50.0);
+        assert!(x.is_none());
+        assert!(y.is_none());
+    }
+
+    #[test]
+    fn snap_config_from_css_block_inline() {
+        let (x, y) = snap_config_from_css("block mandatory", 50.0);
+        assert!(x.is_none());
+        assert_eq!(y.unwrap().snap_type, SnapType::Mandatory);
+
+        let (x, y) = snap_config_from_css("inline proximity", 50.0);
+        assert_eq!(x.unwrap().snap_type, SnapType::Proximity);
+        assert!(y.is_none());
+    }
+
+    #[test]
+    fn parse_snap_alignment_values() {
+        assert_eq!(parse_snap_alignment("start"), SnapAlignment::Start);
+        assert_eq!(parse_snap_alignment("center"), SnapAlignment::Center);
+        assert_eq!(parse_snap_alignment("end"), SnapAlignment::End);
+        assert_eq!(parse_snap_alignment("unknown"), SnapAlignment::Start);
     }
 }

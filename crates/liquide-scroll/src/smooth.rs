@@ -1,3 +1,6 @@
+/// Default animation duration for scroll snap transitions in milliseconds.
+pub const SNAP_ANIMATION_DURATION_MS: u32 = 250;
+
 /// Smooth scroll animator using ease-out cubic easing.
 #[derive(Debug, Clone)]
 pub struct SmoothScroller {
