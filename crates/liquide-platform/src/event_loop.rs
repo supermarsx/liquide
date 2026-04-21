@@ -91,6 +91,11 @@ pub enum PlatformEvent {
         paths: Vec<String>,
     },
 
+    /// The system color scheme (light/dark mode) changed.
+    ColorSchemeChanged {
+        scheme: crate::ColorScheme,
+    },
+
     /// The application should quit.
     Quit,
 }

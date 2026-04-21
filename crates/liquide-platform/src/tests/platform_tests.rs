@@ -297,3 +297,61 @@ fn native_tray_handle_hash_consistent() {
     set.insert(NativeTrayHandle(10)); // duplicate
     assert_eq!(set.len(), 2);
 }
+
+// ── ColorScheme tests ──────────────────────────────────────────────
+
+#[test]
+fn color_scheme_as_str() {
+    use crate::ColorScheme;
+    assert_eq!(ColorScheme::Light.as_str(), "light");
+    assert_eq!(ColorScheme::Dark.as_str(), "dark");
+}
+
+#[test]
+fn color_scheme_display() {
+    use crate::ColorScheme;
+    assert_eq!(format!("{}", ColorScheme::Light), "light");
+    assert_eq!(format!("{}", ColorScheme::Dark), "dark");
+}
+
+#[test]
+fn color_scheme_default_is_light() {
+    use crate::ColorScheme;
+    assert_eq!(ColorScheme::default(), ColorScheme::Light);
+}
+
+#[test]
+fn color_scheme_equality() {
+    use crate::ColorScheme;
+    assert_eq!(ColorScheme::Light, ColorScheme::Light);
+    assert_eq!(ColorScheme::Dark, ColorScheme::Dark);
+    assert_ne!(ColorScheme::Light, ColorScheme::Dark);
+}
+
+#[test]
+fn color_scheme_debug() {
+    use crate::ColorScheme;
+    assert_eq!(format!("{:?}", ColorScheme::Light), "Light");
+    assert_eq!(format!("{:?}", ColorScheme::Dark), "Dark");
+}
+
+#[test]
+fn query_color_scheme_returns_valid_variant() {
+    use crate::query_color_scheme;
+    let scheme = query_color_scheme();
+    assert!(scheme == crate::ColorScheme::Light || scheme == crate::ColorScheme::Dark);
+}
+
+#[test]
+fn null_platform_preferred_color_scheme() {
+    let platform = NullPlatform::new();
+    let scheme = platform.preferred_color_scheme();
+    // NullPlatform uses the default trait impl which calls query_color_scheme()
+    assert!(scheme == crate::ColorScheme::Light || scheme == crate::ColorScheme::Dark);
+}
+
+#[test]
+fn color_scheme_changed_event_constructible() {
+    let event = PlatformEvent::ColorSchemeChanged { scheme: crate::ColorScheme::Dark };
+    assert!(matches!(event, PlatformEvent::ColorSchemeChanged { scheme: crate::ColorScheme::Dark }));
+}

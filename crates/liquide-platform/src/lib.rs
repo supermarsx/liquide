@@ -63,6 +63,168 @@ pub use macos::MacOSPlatform;
 use liquide_compositor::pixel::PixelFormat;
 use thiserror::Error;
 
+/// System color scheme preference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ColorScheme {
+    /// Light appearance.
+    Light,
+    /// Dark appearance.
+    Dark,
+}
+
+impl ColorScheme {
+    /// Returns `"light"` or `"dark"`.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+}
+
+impl std::fmt::Display for ColorScheme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Default for ColorScheme {
+    fn default() -> Self {
+        Self::Light
+    }
+}
+
+/// Query the operating system's preferred color scheme.
+///
+/// Platform detection strategy:
+/// - **Windows**: reads `AppsUseLightTheme` from the registry.
+/// - **macOS**: checks the `AppleInterfaceStyle` user default.
+/// - **Linux**: reads the `GTK_THEME` environment variable for a `-dark` suffix,
+///   or the `color-scheme` XDG portal setting.
+/// - **Fallback**: returns [`ColorScheme::Light`].
+#[must_use]
+pub fn query_color_scheme() -> ColorScheme {
+    platform_query_color_scheme()
+}
+
+#[cfg(target_os = "windows")]
+fn platform_query_color_scheme() -> ColorScheme {
+    // Read HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize
+    // AppsUseLightTheme: DWORD (0 = dark, 1 = light)
+    use std::ffi::c_void;
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn RegOpenKeyExW(
+            key: isize,
+            sub_key: *const u16,
+            options: u32,
+            sam: u32,
+            result: *mut isize,
+        ) -> i32;
+        fn RegQueryValueExW(
+            key: isize,
+            value_name: *const u16,
+            reserved: *mut u32,
+            reg_type: *mut u32,
+            data: *mut u8,
+            data_len: *mut u32,
+        ) -> i32;
+        fn RegCloseKey(key: isize) -> i32;
+    }
+
+    const HKEY_CURRENT_USER: isize = -2147483647i32 as isize; // 0x80000001
+    const KEY_READ: u32 = 0x20019;
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
+    }
+
+    let sub_key = to_wide("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+    let value_name = to_wide("AppsUseLightTheme");
+    let mut hkey: isize = 0;
+
+    // SAFETY: FFI call with valid pointers; hkey is written before read.
+    unsafe {
+        if RegOpenKeyExW(HKEY_CURRENT_USER, sub_key.as_ptr(), 0, KEY_READ, &mut hkey) != 0 {
+            return ColorScheme::Light;
+        }
+        let mut data: u32 = 1;
+        let mut data_len: u32 = 4;
+        let mut reg_type: u32 = 0;
+        let result = RegQueryValueExW(
+            hkey,
+            value_name.as_ptr(),
+            std::ptr::null_mut(),
+            &mut reg_type,
+            &mut data as *mut u32 as *mut u8,
+            &mut data_len,
+        );
+        RegCloseKey(hkey);
+        if result != 0 {
+            return ColorScheme::Light;
+        }
+        if data == 0 { ColorScheme::Dark } else { ColorScheme::Light }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_query_color_scheme() -> ColorScheme {
+    // `defaults read -g AppleInterfaceStyle` returns "Dark" when dark mode is on.
+    match std::process::Command::new("defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.trim().eq_ignore_ascii_case("dark") {
+                ColorScheme::Dark
+            } else {
+                ColorScheme::Light
+            }
+        }
+        Err(_) => ColorScheme::Light,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn platform_query_color_scheme() -> ColorScheme {
+    // 1. Check GTK_THEME env for a "-dark" suffix (e.g. "Adwaita-dark").
+    if let Ok(theme) = std::env::var("GTK_THEME") {
+        if theme.to_ascii_lowercase().contains("-dark") || theme.to_ascii_lowercase().contains(":dark") {
+            return ColorScheme::Dark;
+        }
+    }
+    // 2. Try the XDG Desktop Portal color-scheme setting via dbus-send.
+    //    org.freedesktop.appearance color-scheme: 0 = default, 1 = dark, 2 = light
+    if let Ok(output) = std::process::Command::new("dbus-send")
+        .args([
+            "--session",
+            "--print-reply=literal",
+            "--dest=org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Settings.Read",
+            "string:org.freedesktop.appearance",
+            "string:color-scheme",
+        ])
+        .output()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // The output contains a variant with a uint32 value.
+        // Look for the value "1" which means prefer dark.
+        if stdout.contains("uint32 1") {
+            return ColorScheme::Dark;
+        }
+    }
+    ColorScheme::Light
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn platform_query_color_scheme() -> ColorScheme {
+    ColorScheme::Light
+}
+
 /// Errors that can occur within the platform abstraction layer.
 #[derive(Debug, Error)]
 pub enum PlatformError {
@@ -209,6 +371,13 @@ pub trait PlatformBackend: Send {
 
     /// Show the OS cursor for a window.
     fn show_cursor(&mut self, _handle: NativeWindowHandle) {}
+
+    /// Query the platform's preferred color scheme.
+    ///
+    /// Default implementation delegates to [`query_color_scheme()`].
+    fn preferred_color_scheme(&self) -> ColorScheme {
+        query_color_scheme()
+    }
 }
 
 /// A [`PlatformBackend`] composed entirely of null / no-op sub-backends.
