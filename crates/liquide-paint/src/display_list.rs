@@ -17,7 +17,7 @@ use liquide_style_engine::computed::{
     ScrollSnapType, TextAlign, TextOverflow, TextTransform,
     TouchAction, WhiteSpace, WordBreak,
 };
-use liquide_style_engine::dimension::Corners;
+use liquide_style_engine::dimension::{Corners, EllipticalRadius};
 
 
 /// A single paint command — draw ops produce pixels, state ops push/pop compositor state.
@@ -31,7 +31,7 @@ pub enum DisplayItem {
     SolidColor {
         rect: Rect,
         color: Color,
-        radius: Corners<f32>,
+        radius: Corners<EllipticalRadius>,
     },
 
     /// Linear gradient fill.
@@ -39,7 +39,7 @@ pub enum DisplayItem {
         rect: Rect,
         angle_deg: f32,
         stops: Vec<GradientStop>,
-        radius: Corners<f32>,
+        radius: Corners<EllipticalRadius>,
     },
 
     /// Radial gradient fill.
@@ -68,7 +68,7 @@ pub enum DisplayItem {
         right: BorderEdge,
         bottom: BorderEdge,
         left: BorderEdge,
-        radius: Corners<f32>,
+        radius: Corners<EllipticalRadius>,
     },
 
     /// Border image (9-patch or gradient).
@@ -93,7 +93,7 @@ pub enum DisplayItem {
         spread_radius: f32,
         color: Color,
         inset: bool,
-        radius: Corners<f32>,
+        radius: Corners<EllipticalRadius>,
     },
 
     // ── Outline ──
@@ -125,9 +125,7 @@ pub enum DisplayItem {
         text_indent: f32,
         text_decoration: Option<liquide_compositor::scene::TextDecoration>,
         text_shadows: Vec<liquide_compositor::scene::TextShadow>,
-        text_emphasis_style: Option<String>,
-        text_emphasis_color: Option<Color>,
-        text_emphasis_position: Option<String>,
+        text_emphasis: Option<TextEmphasis>,
         caret_color: Option<Color>,
     },
 
@@ -146,7 +144,7 @@ pub enum DisplayItem {
     Image {
         rect: Rect,
         src: String,
-        radius: Corners<f32>,
+        radius: Corners<EllipticalRadius>,
     },
 
     /// Draw scaled image with explicit fit mode.
@@ -154,7 +152,7 @@ pub enum DisplayItem {
         rect: Rect,
         src: String,
         src_rect: Option<Rect>,
-        radius: Corners<f32>,
+        radius: Corners<EllipticalRadius>,
         fit: ImageFit,
         image_rendering: ImageRendering,
         /// EXIF auto-rotation: `FromImage` respects EXIF orientation, `None` ignores it.
@@ -177,7 +175,7 @@ pub enum DisplayItem {
     /// Draw a rounded rect outline (stroke).
     StrokeRoundedRect {
         rect: Rect,
-        radius: Corners<f32>,
+        radius: Corners<EllipticalRadius>,
         color: Color,
         width: f32,
     },
@@ -199,7 +197,7 @@ pub enum DisplayItem {
     // ── Clip ──
     PushClip {
         rect: Rect,
-        radius: Corners<f32>,
+        radius: Corners<EllipticalRadius>,
     },
     /// Clip to an arbitrary path (circle, polygon, etc.).
     PushClipPath {
@@ -368,9 +366,9 @@ pub enum BorderImageRepeat {
 pub enum ClipPath {
     Circle { cx: f32, cy: f32, r: f32 },
     Ellipse { cx: f32, cy: f32, rx: f32, ry: f32 },
-    RoundedRect { rect: Rect, radii: Corners<f32> },
+    RoundedRect { rect: Rect, radii: Corners<EllipticalRadius> },
     Polygon(Vec<(f32, f32)>),
-    Inset { top: f32, right: f32, bottom: f32, left: f32, radius: Corners<f32> },
+    Inset { top: f32, right: f32, bottom: f32, left: f32, radius: Corners<EllipticalRadius> },
 }
 
 /// A border edge for painting.
@@ -379,6 +377,117 @@ pub struct BorderEdge {
     pub width: f32,
     pub style: BorderLineStyle,
     pub color: Color,
+}
+
+// ─── Text Emphasis ──────────────────────────────────────────
+
+/// How the emphasis mark is filled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmphasisFill {
+    Filled,
+    Open,
+}
+
+/// Shape of the emphasis mark.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmphasisShape {
+    Dot,
+    Circle,
+    DoubleCircle,
+    Triangle,
+    Sesame,
+    Custom(String),
+}
+
+/// Position of emphasis marks relative to the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmphasisPosition {
+    Over,
+    Under,
+    /// For vertical writing modes (over + right).
+    OverRight,
+    /// For vertical writing modes (under + left).
+    UnderLeft,
+}
+
+/// Parsed text-emphasis properties.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextEmphasis {
+    pub fill: EmphasisFill,
+    pub shape: EmphasisShape,
+    pub color: Color,
+    pub position: EmphasisPosition,
+}
+
+impl TextEmphasis {
+    /// Parse text-emphasis from raw CSS property strings.
+    ///
+    /// `style` follows the CSS `text-emphasis-style` grammar:
+    ///   `none | [ [ filled | open ] || [ dot | circle | double-circle | triangle | sesame ] ] | <string>`
+    ///
+    /// When only a fill keyword is given the default shape is `Filled → Dot`.
+    /// When only a shape keyword is given the default fill is `Filled`.
+    pub fn parse(
+        style: &str,
+        color: Option<Color>,
+        position: Option<&str>,
+    ) -> Option<TextEmphasis> {
+        let style = style.trim();
+        if style.is_empty() || style.eq_ignore_ascii_case("none") {
+            return None;
+        }
+
+        let color = color.unwrap_or(Color { r: 0, g: 0, b: 0, a: 255 });
+        let position = Self::parse_position(position);
+
+        // Single custom character / string (quoted or single char)
+        let unquoted = style
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| style.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')));
+
+        if let Some(custom) = unquoted {
+            return Some(TextEmphasis {
+                fill: EmphasisFill::Filled,
+                shape: EmphasisShape::Custom(custom.to_string()),
+                color,
+                position,
+            });
+        }
+
+        let mut fill: Option<EmphasisFill> = None;
+        let mut shape: Option<EmphasisShape> = None;
+
+        for token in style.split_ascii_whitespace() {
+            match token.to_ascii_lowercase().as_str() {
+                "filled" => fill = Some(EmphasisFill::Filled),
+                "open" => fill = Some(EmphasisFill::Open),
+                "dot" => shape = Some(EmphasisShape::Dot),
+                "circle" => shape = Some(EmphasisShape::Circle),
+                "double-circle" => shape = Some(EmphasisShape::DoubleCircle),
+                "triangle" => shape = Some(EmphasisShape::Triangle),
+                "sesame" => shape = Some(EmphasisShape::Sesame),
+                other => {
+                    // Treat as custom string (single unquoted char, per spec)
+                    shape = Some(EmphasisShape::Custom(other.to_string()));
+                }
+            }
+        }
+
+        let fill = fill.unwrap_or(EmphasisFill::Filled);
+        let shape = shape.unwrap_or(EmphasisShape::Dot);
+
+        Some(TextEmphasis { fill, shape, color, position })
+    }
+
+    fn parse_position(pos: Option<&str>) -> EmphasisPosition {
+        match pos.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+            Some("under") => EmphasisPosition::Under,
+            Some("over right") | Some("over-right") => EmphasisPosition::OverRight,
+            Some("under left") | Some("under-left") => EmphasisPosition::UnderLeft,
+            _ => EmphasisPosition::Over,
+        }
+    }
 }
 
 impl Default for BorderEdge {
@@ -677,7 +786,7 @@ mod tests {
                     GradientStop { offset: 0.0, color: Color { r: 255, g: 0, b: 0, a: 255 } },
                     GradientStop { offset: 1.0, color: Color { r: 0, g: 0, b: 255, a: 255 } },
                 ],
-                radius: Corners::all(0.0),
+                radius: Corners::all(EllipticalRadius::from(0.0)),
             },
             DisplayItem::Outline {
                 rect: Rect { x: 0.0, y: 0.0, width: 50.0, height: 50.0 },
@@ -703,5 +812,79 @@ mod tests {
             DisplayItem::Noop,
         ];
         assert_eq!(items.len(), 8);
+    }
+
+    // ─── Text Emphasis parsing tests ───────────────────────
+
+    #[test]
+    fn parse_filled_dot() {
+        let em = TextEmphasis::parse("filled dot", None, None).unwrap();
+        assert_eq!(em.fill, EmphasisFill::Filled);
+        assert_eq!(em.shape, EmphasisShape::Dot);
+        assert_eq!(em.position, EmphasisPosition::Over);
+    }
+
+    #[test]
+    fn parse_open_circle() {
+        let em = TextEmphasis::parse("open circle", None, None).unwrap();
+        assert_eq!(em.fill, EmphasisFill::Open);
+        assert_eq!(em.shape, EmphasisShape::Circle);
+    }
+
+    #[test]
+    fn parse_triangle_default_fill() {
+        let em = TextEmphasis::parse("triangle", None, None).unwrap();
+        assert_eq!(em.fill, EmphasisFill::Filled);
+        assert_eq!(em.shape, EmphasisShape::Triangle);
+    }
+
+    #[test]
+    fn parse_sesame() {
+        let em = TextEmphasis::parse("sesame", None, None).unwrap();
+        assert_eq!(em.shape, EmphasisShape::Sesame);
+    }
+
+    #[test]
+    fn parse_double_circle() {
+        let em = TextEmphasis::parse("open double-circle", None, None).unwrap();
+        assert_eq!(em.fill, EmphasisFill::Open);
+        assert_eq!(em.shape, EmphasisShape::DoubleCircle);
+    }
+
+    #[test]
+    fn parse_custom_string() {
+        let em = TextEmphasis::parse("\"★\"", None, None).unwrap();
+        assert_eq!(em.shape, EmphasisShape::Custom("★".to_string()));
+        assert_eq!(em.fill, EmphasisFill::Filled);
+    }
+
+    #[test]
+    fn parse_none_returns_none() {
+        assert!(TextEmphasis::parse("none", None, None).is_none());
+        assert!(TextEmphasis::parse("", None, None).is_none());
+    }
+
+    #[test]
+    fn parse_with_color_and_position() {
+        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        let em = TextEmphasis::parse("filled dot", Some(red), Some("under")).unwrap();
+        assert_eq!(em.color, red);
+        assert_eq!(em.position, EmphasisPosition::Under);
+    }
+
+    #[test]
+    fn parse_position_variants() {
+        let em = TextEmphasis::parse("dot", None, Some("over right")).unwrap();
+        assert_eq!(em.position, EmphasisPosition::OverRight);
+
+        let em = TextEmphasis::parse("dot", None, Some("under left")).unwrap();
+        assert_eq!(em.position, EmphasisPosition::UnderLeft);
+    }
+
+    #[test]
+    fn parse_fill_only_defaults_to_dot() {
+        let em = TextEmphasis::parse("filled", None, None).unwrap();
+        assert_eq!(em.fill, EmphasisFill::Filled);
+        assert_eq!(em.shape, EmphasisShape::Dot);
     }
 }

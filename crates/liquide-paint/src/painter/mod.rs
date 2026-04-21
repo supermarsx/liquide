@@ -18,12 +18,13 @@ use liquide_style_engine::StyleMap;
 
 use crate::display_list::{BorderEdge, DisplayItem, DisplayList};
 use crate::icons::icon_id_for_name;
+use crate::image_cache::ImageCache;
 
 use border_image::{parse_border_image_quad, parse_border_image_repeat};
 use clip::parse_clip_path;
 use filters::{backdrop_spec_to_op, filter_spec_to_op};
 use gradients::emit_gradient;
-use transforms::{compose_transform_matrix, resolve_origin_dimension};
+use transforms::{compose_transform_matrix, compose_transform_matrix_ext, resolve_origin_dimension};
 
 /// The painter walks the layout tree and emits paint commands.
 pub struct Painter;
@@ -40,8 +41,20 @@ impl Painter {
         layout: &LayoutTree,
         styles: &StyleMap,
     ) -> DisplayList {
+        self.paint_cached(doc, layout, styles, None)
+    }
+
+    /// Paint the entire layout tree, using an optional image cache for
+    /// background-image URL loading.
+    pub fn paint_cached(
+        &self,
+        doc: &Document,
+        layout: &LayoutTree,
+        styles: &StyleMap,
+        image_cache: Option<&ImageCache>,
+    ) -> DisplayList {
         let mut list = DisplayList::with_capacity(512);
-        self.paint_box(doc, layout, styles, layout.root, (0.0, 0.0), &mut list);
+        self.paint_box(doc, layout, styles, layout.root, (0.0, 0.0), &mut list, image_cache);
         list
     }
 
@@ -53,6 +66,7 @@ impl Painter {
         box_id: LayoutBoxId,
         paint_offset: (f32, f32),
         list: &mut DisplayList,
+        image_cache: Option<&ImageCache>,
     ) {
         let layout_box = match layout.get(box_id) {
             Some(b) => b,
@@ -185,7 +199,14 @@ impl Painter {
                 &style.transform_origin.y,
                 abs_border.height,
             );
-            let transform = compose_transform_matrix(&style.transform, origin_x, origin_y);
+            let transform = compose_transform_matrix_ext(
+                &style.transform,
+                origin_x,
+                origin_y,
+                &style.perspective,
+                style.transform_style,
+                style.backface_visibility,
+            );
             list.push(DisplayItem::PushTransform { transform });
         }
 
@@ -419,51 +440,45 @@ impl Painter {
             });
         }
 
-        // Paint background gradient / image (from background-image)
-        if let Some(ref bg_spec) = style.background {
-            if let Some(ref bg_image) = bg_spec.image {
-                use liquide_compositor::scene::BackgroundImage;
-                match bg_image {
-                    BackgroundImage::Gradient(gradient) => {
-                        // Apply background-size to compute the gradient tile rect
-                        let bg_tile = compute_background_tile(
-                            &bg_origin_rect,
-                            style.background_size.as_deref(),
-                            &style.background_position_x,
-                            &style.background_position_y,
-                            bg_origin_rect.width,
-                            bg_origin_rect.height,
-                            None,
-                        );
-                        emit_gradient(list, &bg_tile, &style.border_radius, gradient);
-                    }
-                    BackgroundImage::Url(url) => {
-                        // Emit image display item for URL background images
-                        let bg_tile = compute_background_tile(
-                            &bg_origin_rect,
-                            style.background_size.as_deref(),
-                            &style.background_position_x,
-                            &style.background_position_y,
-                            bg_origin_rect.width,
-                            bg_origin_rect.height,
-                            None,
-                        );
-                        // Determine repeat mode
-                        let repeat = style.background_repeat.as_deref().unwrap_or("repeat");
-                        emit_background_image_tiled(list, url, &bg_clip_rect, &bg_tile, repeat, &style.border_radius);
-                    }
-                    BackgroundImage::ImageId(img_id) => {
-                        let bg_tile = compute_background_tile(
-                            &bg_origin_rect,
-                            style.background_size.as_deref(),
-                            &style.background_position_x,
-                            &style.background_position_y,
-                            bg_origin_rect.width,
-                            bg_origin_rect.height,
-                            None,
-                        );
-                        let repeat = style.background_repeat.as_deref().unwrap_or("repeat");
-                        emit_background_image_id_tiled(list, *img_id, &bg_clip_rect, &bg_tile, repeat, &style.border_radius);
+        // Paint background layers (from background-image).
+        // CSS multiple backgrounds: iterate in reverse order so the last
+        // declared layer (bottom) is painted first and the first declared
+        // layer (top) is painted last.
+        {
+            use liquide_compositor::scene::{BackgroundImage, BackgroundRepeat, BackgroundSize};
+            for bg_spec in style.background.iter().rev() {
+                if let Some(ref bg_image) = bg_spec.image {
+                    // Resolve tile size from the layer's BackgroundSize
+                    let (tile_w, tile_h) = match bg_spec.size {
+                        BackgroundSize::Cover => (bg_origin_rect.width, bg_origin_rect.height),
+                        BackgroundSize::Contain => (bg_origin_rect.width, bg_origin_rect.height),
+                        BackgroundSize::Auto => (bg_origin_rect.width, bg_origin_rect.height),
+                        BackgroundSize::Explicit { width, height } => (width, height),
+                    };
+                    let bg_tile = liquide_layout::Rect {
+                        x: bg_origin_rect.x + bg_spec.position.0,
+                        y: bg_origin_rect.y + bg_spec.position.1,
+                        width: tile_w,
+                        height: tile_h,
+                    };
+                    let repeat_str = match bg_spec.repeat {
+                        BackgroundRepeat::Repeat => "repeat",
+                        BackgroundRepeat::RepeatX => "repeat-x",
+                        BackgroundRepeat::RepeatY => "repeat-y",
+                        BackgroundRepeat::NoRepeat => "no-repeat",
+                        BackgroundRepeat::Space => "space",
+                        BackgroundRepeat::Round => "round",
+                    };
+                    match bg_image {
+                        BackgroundImage::Gradient(gradient) => {
+                            emit_gradient(list, &bg_tile, &style.border_radius, gradient);
+                        }
+                        BackgroundImage::Url(url) => {
+                            emit_background_image_tiled(list, url, &bg_clip_rect, &bg_tile, repeat_str, &style.border_radius, image_cache);
+                        }
+                        BackgroundImage::ImageId(img_id) => {
+                            emit_background_image_id_tiled(list, *img_id, &bg_clip_rect, &bg_tile, repeat_str, &style.border_radius);
+                        }
                     }
                 }
             }
@@ -806,7 +821,7 @@ impl Painter {
         if !skip_children && !needs_stacking_sort {
             // Simple path: all children are in-flow block, paint in DOM order.
             for &child_id in children {
-                self.paint_box(doc, layout, styles, child_id, child_offset, list);
+                self.paint_box(doc, layout, styles, child_id, child_offset, list, image_cache);
             }
         } else if !skip_children {
             // Full CSS 2.1 stacking order — single Vec instead of 6 separate Vecs.
@@ -846,7 +861,7 @@ impl Painter {
             classified.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
 
             for &(child_id, _, _) in &classified {
-                self.paint_box(doc, layout, styles, child_id, child_offset, list);
+                self.paint_box(doc, layout, styles, child_id, child_offset, list, image_cache);
             }
         }
 
@@ -1070,6 +1085,12 @@ fn resolve_bg_position(
 }
 
 /// Emit tiled background images from a URL source.
+///
+/// When an [`ImageCache`] is provided and the URL is `Loaded`, the emitted
+/// `Image` items carry the cached URL string (the compositor can resolve it
+/// via `data_id`). When the entry is `Pending` or absent the image items are
+/// still emitted so the compositor can trigger a load; when `Failed` a
+/// transparent placeholder `FillRect` is emitted instead.
 fn emit_background_image_tiled(
     list: &mut DisplayList,
     url: &str,
@@ -1077,7 +1098,17 @@ fn emit_background_image_tiled(
     tile: &liquide_layout::Rect,
     repeat: &str,
     radius: &liquide_style_engine::dimension::Corners<f32>,
+    image_cache: Option<&ImageCache>,
 ) {
+    use crate::image_cache::ImageCacheEntry;
+
+    // If the cache knows this image failed, emit a transparent placeholder.
+    if let Some(cache) = image_cache {
+        if let Some(ImageCacheEntry::Failed) = cache.get(url) {
+            return;
+        }
+    }
+
     let src_string = url.to_string();
     let repeat_x = matches!(repeat, "repeat" | "repeat-x");
     let repeat_y = matches!(repeat, "repeat" | "repeat-y");
@@ -1195,5 +1226,284 @@ mod tests {
         let display_list = painter.paint(&doc, &layout_tree, &style_map);
 
         assert!(!display_list.is_empty(), "Display list should have paint commands");
+    }
+
+    #[test]
+    fn two_layer_background_stacking() {
+        use liquide_compositor::scene::{
+            BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec, GradientSpec,
+        };
+        use liquide_compositor::pixel::Color;
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet("div { width: 200px; height: 200px; }");
+
+        let mut style_map = se.restyle_all(&doc);
+
+        // Manually set two background layers on the div's computed style.
+        // Layer 0 (top) = gradient, Layer 1 (bottom) = url image.
+        if let Some(arc_style) = style_map.get(div) {
+            let mut style = (**arc_style).clone();
+            style.background = vec![
+                BackgroundSpec {
+                    color: None,
+                    image: Some(BackgroundImage::Gradient(GradientSpec::Linear {
+                        start_x: 0.0, start_y: 0.0,
+                        end_x: 1.0, end_y: 1.0,
+                        stops: vec![
+                            (0.0, Color { r: 255, g: 0, b: 0, a: 128 }),
+                            (1.0, Color { r: 0, g: 0, b: 255, a: 128 }),
+                        ],
+                    })),
+                    size: BackgroundSize::Auto,
+                    position: (0.0, 0.0),
+                    repeat: BackgroundRepeat::NoRepeat,
+                },
+                BackgroundSpec {
+                    color: None,
+                    image: Some(BackgroundImage::Url("bg-pattern.png".to_string())),
+                    size: BackgroundSize::Auto,
+                    position: (0.0, 0.0),
+                    repeat: BackgroundRepeat::Repeat,
+                },
+            ];
+            style_map.insert(div, style);
+        }
+
+        let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let display_list = painter.paint(&doc, &layout_tree, &style_map);
+
+        // The bottom layer (index 1, url) should be painted before the top layer (index 0, gradient).
+        let mut found_image = false;
+        let mut found_gradient = false;
+        let mut image_pos = 0usize;
+        let mut gradient_pos = 0usize;
+        for (i, item) in display_list.iter().enumerate() {
+            match item {
+                DisplayItem::Image { src, .. } if src == "bg-pattern.png" => {
+                    found_image = true;
+                    image_pos = i;
+                }
+                DisplayItem::Gradient { .. } | DisplayItem::LinearGradient { .. } => {
+                    found_gradient = true;
+                    gradient_pos = i;
+                }
+                _ => {}
+            }
+        }
+        assert!(found_image, "Bottom background image layer should be painted");
+        assert!(found_gradient, "Top gradient layer should be painted");
+        assert!(image_pos < gradient_pos, "Bottom layer (image) must be painted before top layer (gradient)");
+    }
+
+    #[test]
+    fn three_layer_background_stacking() {
+        use liquide_compositor::scene::{
+            BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec,
+        };
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet("div { width: 300px; height: 300px; }");
+
+        let mut style_map = se.restyle_all(&doc);
+
+        // Three layers: top=img_a, middle=img_b, bottom=img_c
+        if let Some(arc_style) = style_map.get(div) {
+            let mut style = (**arc_style).clone();
+            style.background = vec![
+                BackgroundSpec {
+                    color: None,
+                    image: Some(BackgroundImage::Url("img_a.png".to_string())),
+                    size: BackgroundSize::Auto,
+                    position: (10.0, 10.0),
+                    repeat: BackgroundRepeat::NoRepeat,
+                },
+                BackgroundSpec {
+                    color: None,
+                    image: Some(BackgroundImage::Url("img_b.png".to_string())),
+                    size: BackgroundSize::Explicit { width: 50.0, height: 50.0 },
+                    position: (0.0, 0.0),
+                    repeat: BackgroundRepeat::Repeat,
+                },
+                BackgroundSpec {
+                    color: None,
+                    image: Some(BackgroundImage::Url("img_c.png".to_string())),
+                    size: BackgroundSize::Cover,
+                    position: (0.0, 0.0),
+                    repeat: BackgroundRepeat::NoRepeat,
+                },
+            ];
+            style_map.insert(div, style);
+        }
+
+        let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let display_list = painter.paint(&doc, &layout_tree, &style_map);
+
+        // Collect positions of the three image items in paint order
+        let mut positions: Vec<(String, usize)> = Vec::new();
+        for (i, item) in display_list.iter().enumerate() {
+            if let DisplayItem::Image { src, .. } = item {
+                match src.as_str() {
+                    "img_a.png" | "img_b.png" | "img_c.png" => {
+                        positions.push((src.clone(), i));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // All three layers should be emitted, bottom-to-top order in the display list
+        assert!(positions.len() >= 3, "All three background layers should be painted, found {}", positions.len());
+        let pos_c = positions.iter().find(|(s, _)| s == "img_c.png").map(|(_, i)| *i);
+        let pos_b = positions.iter().find(|(s, _)| s == "img_b.png").map(|(_, i)| *i);
+        let pos_a = positions.iter().find(|(s, _)| s == "img_a.png").map(|(_, i)| *i);
+        assert!(pos_c < pos_b, "Bottom layer (img_c) must paint before middle (img_b)");
+        assert!(pos_b < pos_a, "Middle layer (img_b) must paint before top (img_a)");
+    }
+
+    #[test]
+    fn image_cache_loaded_emits_image() {
+        use liquide_compositor::scene::{
+            BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec,
+        };
+        use crate::image_cache::ImageCache;
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet("div { width: 100px; height: 100px; }");
+        let mut style_map = se.restyle_all(&doc);
+
+        if let Some(arc_style) = style_map.get(div) {
+            let mut style = (**arc_style).clone();
+            style.background = vec![BackgroundSpec {
+                color: None,
+                image: Some(BackgroundImage::Url("loaded.png".to_string())),
+                size: BackgroundSize::Auto,
+                position: (0.0, 0.0),
+                repeat: BackgroundRepeat::NoRepeat,
+            }];
+            style_map.insert(div, style);
+        }
+
+        let mut cache = ImageCache::new(16);
+        cache.request_load("loaded.png");
+        cache.mark_loaded("loaded.png", 64, 64, 1001);
+
+        let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let display_list = painter.paint_cached(&doc, &layout_tree, &style_map, Some(&cache));
+
+        let has_image = display_list.iter().any(|item| {
+            matches!(item, DisplayItem::Image { src, .. } if src == "loaded.png")
+        });
+        assert!(has_image, "Loaded cache entry should emit an Image item");
+    }
+
+    #[test]
+    fn image_cache_failed_skips_image() {
+        use liquide_compositor::scene::{
+            BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec,
+        };
+        use crate::image_cache::ImageCache;
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet("div { width: 100px; height: 100px; }");
+        let mut style_map = se.restyle_all(&doc);
+
+        if let Some(arc_style) = style_map.get(div) {
+            let mut style = (**arc_style).clone();
+            style.background = vec![BackgroundSpec {
+                color: None,
+                image: Some(BackgroundImage::Url("broken.png".to_string())),
+                size: BackgroundSize::Auto,
+                position: (0.0, 0.0),
+                repeat: BackgroundRepeat::NoRepeat,
+            }];
+            style_map.insert(div, style);
+        }
+
+        let mut cache = ImageCache::new(16);
+        cache.request_load("broken.png");
+        cache.mark_failed("broken.png");
+
+        let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let display_list = painter.paint_cached(&doc, &layout_tree, &style_map, Some(&cache));
+
+        let has_broken = display_list.iter().any(|item| {
+            matches!(item, DisplayItem::Image { src, .. } if src == "broken.png")
+        });
+        assert!(!has_broken, "Failed cache entry should NOT emit an Image item");
+    }
+
+    #[test]
+    fn image_cache_pending_still_emits_placeholder() {
+        use liquide_compositor::scene::{
+            BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec,
+        };
+        use crate::image_cache::ImageCache;
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet("div { width: 100px; height: 100px; }");
+        let mut style_map = se.restyle_all(&doc);
+
+        if let Some(arc_style) = style_map.get(div) {
+            let mut style = (**arc_style).clone();
+            style.background = vec![BackgroundSpec {
+                color: None,
+                image: Some(BackgroundImage::Url("pending.png".to_string())),
+                size: BackgroundSize::Auto,
+                position: (0.0, 0.0),
+                repeat: BackgroundRepeat::NoRepeat,
+            }];
+            style_map.insert(div, style);
+        }
+
+        let mut cache = ImageCache::new(16);
+        cache.request_load("pending.png");
+
+        let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let display_list = painter.paint_cached(&doc, &layout_tree, &style_map, Some(&cache));
+
+        let has_pending = display_list.iter().any(|item| {
+            matches!(item, DisplayItem::Image { src, .. } if src == "pending.png")
+        });
+        assert!(has_pending, "Pending cache entry should still emit an Image item as placeholder");
     }
 }

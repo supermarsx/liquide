@@ -3,12 +3,68 @@
 use crate::display_list::{DisplayItem, DisplayList, GradientStop};
 use liquide_compositor::scene::GradientSpec;
 
+/// Tile gradient stops to fill the full [0, 1] range for repeating gradients.
+///
+/// If the stops span only a sub-range (e.g. 0.0..0.3), the pattern is
+/// replicated forward and backward until the entire [0, 1] interval is
+/// covered.  For non-repeating gradients (or when stops already span ≥1.0)
+/// the original stops are returned unchanged.
+fn tile_stops(stops: &[(f32, liquide_compositor::pixel::Color)], repeating: bool) -> Vec<GradientStop> {
+    let mut grad_stops: Vec<GradientStop> = stops
+        .iter()
+        .map(|&(offset, color)| GradientStop { offset, color })
+        .collect();
+
+    if !repeating || grad_stops.len() < 2 {
+        return grad_stops;
+    }
+
+    let first = grad_stops.first().unwrap().offset;
+    let last = grad_stops.last().unwrap().offset;
+    let span = last - first;
+
+    // Nothing to tile if the span already covers the full range or is zero.
+    if span <= 0.0 || span >= 1.0 {
+        return grad_stops;
+    }
+
+    let mut tiled = Vec::new();
+
+    // Start tiling from the largest negative multiple that could reach 0.
+    let mut base = first;
+    while base > 0.0 {
+        base -= span;
+    }
+
+    // Tile forward until we pass 1.0.
+    while base < 1.0 {
+        for stop in &grad_stops {
+            let offset = (stop.offset - first) + base;
+            if offset >= -0.001 && offset <= 1.001 {
+                tiled.push(GradientStop {
+                    offset: offset.clamp(0.0, 1.0),
+                    color: stop.color,
+                });
+            }
+        }
+        base += span;
+    }
+
+    tiled.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap_or(std::cmp::Ordering::Equal));
+    tiled
+}
+
 /// Emit a gradient display item from a `GradientSpec`.
+///
+/// When `repeating` is `true` the colour-stop pattern is tiled across the
+/// full gradient extent, matching the CSS `repeating-linear-gradient` /
+/// `repeating-radial-gradient` / `repeating-conic-gradient` behaviour.
 pub(crate) fn emit_gradient(
     list: &mut DisplayList,
     rect: &liquide_layout::Rect,
     radius: &liquide_style_engine::dimension::Corners<f32>,
     gradient: &GradientSpec,
+    repeating: bool,
 ) {
     match gradient {
         GradientSpec::Linear { start_x, start_y, end_x, end_y, stops } => {
@@ -16,10 +72,7 @@ pub(crate) fn emit_gradient(
             let dx = end_x - start_x;
             let dy = end_y - start_y;
             let angle_deg = dy.atan2(dx).to_degrees();
-            let mut grad_stops = Vec::with_capacity(stops.len());
-            for &(offset, color) in stops {
-                grad_stops.push(GradientStop { offset, color });
-            }
+            let grad_stops = tile_stops(stops, repeating);
             list.push(DisplayItem::LinearGradient {
                 rect: *rect,
                 angle_deg,
@@ -28,10 +81,7 @@ pub(crate) fn emit_gradient(
             });
         }
         GradientSpec::Radial { center_x, center_y, radius: grad_radius, radius_y: grad_radius_y, stops } => {
-            let mut grad_stops = Vec::with_capacity(stops.len());
-            for &(offset, color) in stops {
-                grad_stops.push(GradientStop { offset, color });
-            }
+            let grad_stops = tile_stops(stops, repeating);
             list.push(DisplayItem::RadialGradient {
                 rect: *rect,
                 center_x: *center_x,
@@ -42,10 +92,7 @@ pub(crate) fn emit_gradient(
             });
         }
         GradientSpec::Conic { center_x, center_y, start_angle, stops } => {
-            let mut grad_stops = Vec::with_capacity(stops.len());
-            for &(offset, color) in stops {
-                grad_stops.push(GradientStop { offset, color });
-            }
+            let grad_stops = tile_stops(stops, repeating);
             list.push(DisplayItem::ConicGradient {
                 rect: *rect,
                 center_x: *center_x,
