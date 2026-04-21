@@ -11,6 +11,26 @@ pub enum Transform {
     Rotate(f32),
     Skew(f32, f32),
     Matrix(f32, f32, f32, f32, f32, f32),
+    // 3D transform functions
+    Translate3d(f32, f32, f32),
+    Rotate3d(f32, f32, f32, f32),
+    Scale3d(f32, f32, f32),
+    Matrix3d([f32; 16]),
+    PerspectiveFn(f32),
+}
+
+impl Transform {
+    /// Returns `true` if this transform function requires 3D composition.
+    pub fn is_3d(&self) -> bool {
+        matches!(
+            self,
+            Transform::Translate3d(..)
+                | Transform::Rotate3d(..)
+                | Transform::Scale3d(..)
+                | Transform::Matrix3d(..)
+                | Transform::PerspectiveFn(..)
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

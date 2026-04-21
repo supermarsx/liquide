@@ -1,7 +1,38 @@
 //! CSS `var()` and `env()` variable resolution.
 
 use super::StyleEngine;
+use crate::dimension::Sides;
 use crate::value_resolve::parse_inline_value;
+
+/// Platform-provided environment values for CSS `env()` resolution.
+///
+/// All values default to zero, matching a standard desktop environment with no
+/// safe-area insets, no virtual keyboard, and a zero-height titlebar area.
+#[derive(Debug, Clone)]
+pub struct EnvironmentValues {
+    /// Safe-area insets (notch, rounded corners, etc.) in CSS px.
+    pub safe_area_insets: Sides<f32>,
+    /// Titlebar area geometry: (x, y, width, height) in CSS px.
+    pub titlebar_area: (f32, f32, f32, f32),
+    /// Virtual keyboard insets in CSS px.
+    pub keyboard_insets: Sides<f32>,
+    /// Virtual keyboard total width in CSS px.
+    pub keyboard_inset_width: f32,
+    /// Virtual keyboard total height in CSS px.
+    pub keyboard_inset_height: f32,
+}
+
+impl Default for EnvironmentValues {
+    fn default() -> Self {
+        Self {
+            safe_area_insets: Sides::default(),
+            titlebar_area: (0.0, 0.0, 0.0, 0.0),
+            keyboard_insets: Sides::default(),
+            keyboard_inset_width: 0.0,
+            keyboard_inset_height: 0.0,
+        }
+    }
+}
 
 impl StyleEngine {
     /// Resolve all `var(--name)` / `var(--name, fallback)` references in a value string.
@@ -212,7 +243,7 @@ impl StyleEngine {
                 (inner.trim(), None)
             };
 
-            let env_value = Self::resolve_env_variable(env_name);
+            let env_value = self.resolve_env_variable(env_name);
             let replacement = if let Some(val) = env_value {
                 val
             } else if let Some(fb) = fallback {
@@ -229,27 +260,44 @@ impl StyleEngine {
 
     /// Resolve a CSS `env()` variable name to its value.
     /// Returns `None` for unknown variables (fallback will be used).
-    fn resolve_env_variable(name: &str) -> Option<String> {
+    fn resolve_env_variable(&self, name: &str) -> Option<String> {
+        /// Format a pixel value, eliding the decimal when it's zero.
+        fn px(v: f32) -> String {
+            if v == 0.0 {
+                "0px".into()
+            } else if v.fract() == 0.0 {
+                format!("{}px", v as i32)
+            } else {
+                format!("{:.2}px", v)
+            }
+        }
+
+        let env = &self.env_values;
         match name {
-            // Safe area insets (for notch/rounded corners) -- default to 0 for desktop
-            "safe-area-inset-top"
-            | "safe-area-inset-right"
-            | "safe-area-inset-bottom"
-            | "safe-area-inset-left" => Some("0px".into()),
+            // Safe area insets (for notch/rounded corners)
+            "safe-area-inset-top" => Some(px(env.safe_area_insets.top)),
+            "safe-area-inset-right" => Some(px(env.safe_area_insets.right)),
+            "safe-area-inset-bottom" => Some(px(env.safe_area_insets.bottom)),
+            "safe-area-inset-left" => Some(px(env.safe_area_insets.left)),
             // Titlebar area (PWA window controls overlay)
-            "titlebar-area-x" => Some("0px".into()),
-            "titlebar-area-y" => Some("0px".into()),
-            "titlebar-area-width" => Some("100%".into()),
-            "titlebar-area-height" => Some("0px".into()),
+            "titlebar-area-x" => Some(px(env.titlebar_area.0)),
+            "titlebar-area-y" => Some(px(env.titlebar_area.1)),
+            "titlebar-area-width" => Some(px(env.titlebar_area.2)),
+            "titlebar-area-height" => Some(px(env.titlebar_area.3)),
             // Keyboard insets (virtual keyboard)
-            "keyboard-inset-top"
-            | "keyboard-inset-right"
-            | "keyboard-inset-bottom"
-            | "keyboard-inset-left"
-            | "keyboard-inset-width"
-            | "keyboard-inset-height" => Some("0px".into()),
+            "keyboard-inset-top" => Some(px(env.keyboard_insets.top)),
+            "keyboard-inset-right" => Some(px(env.keyboard_insets.right)),
+            "keyboard-inset-bottom" => Some(px(env.keyboard_insets.bottom)),
+            "keyboard-inset-left" => Some(px(env.keyboard_insets.left)),
+            "keyboard-inset-width" => Some(px(env.keyboard_inset_width)),
+            "keyboard-inset-height" => Some(px(env.keyboard_inset_height)),
             _ => None,
         }
+    }
+
+    /// Update the platform-provided environment values used by CSS `env()`.
+    pub fn set_environment_values(&mut self, values: EnvironmentValues) {
+        self.env_values = values;
     }
 
     /// Find the first top-level comma (not inside nested parens).
@@ -264,5 +312,88 @@ impl StyleEngine {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dimension::Sides;
+    use crate::engine::ViewportSize;
+
+    fn make_engine() -> StyleEngine {
+        StyleEngine::new(ViewportSize::default(), 16.0)
+    }
+
+    #[test]
+    fn env_defaults_to_zero() {
+        let engine = make_engine();
+        let vars = std::collections::HashMap::new();
+        // safe-area-inset-top should resolve to 0px by default
+        let result = engine.resolve_var_in_value("env(safe-area-inset-top)", &vars);
+        assert!(result.is_some());
+        let s = format!("{}", result.unwrap());
+        assert!(s.contains("0px"), "expected 0px, got: {}", s);
+    }
+
+    #[test]
+    fn env_reads_platform_values() {
+        let mut engine = make_engine();
+        engine.set_environment_values(EnvironmentValues {
+            safe_area_insets: Sides {
+                top: 44.0,
+                right: 0.0,
+                bottom: 34.0,
+                left: 0.0,
+            },
+            titlebar_area: (10.0, 0.0, 500.0, 32.0),
+            keyboard_insets: Sides {
+                top: 0.0,
+                right: 0.0,
+                bottom: 300.0,
+                left: 0.0,
+            },
+            keyboard_inset_width: 360.0,
+            keyboard_inset_height: 300.0,
+        });
+        let vars = std::collections::HashMap::new();
+
+        let top = engine.resolve_var_in_value("env(safe-area-inset-top)", &vars).unwrap();
+        assert_eq!(format!("{}", top), "44px");
+
+        let bottom = engine.resolve_var_in_value("env(safe-area-inset-bottom)", &vars).unwrap();
+        assert_eq!(format!("{}", bottom), "34px");
+
+        let tw = engine.resolve_var_in_value("env(titlebar-area-width)", &vars).unwrap();
+        assert_eq!(format!("{}", tw), "500px");
+
+        let th = engine.resolve_var_in_value("env(titlebar-area-height)", &vars).unwrap();
+        assert_eq!(format!("{}", th), "32px");
+
+        let kb = engine.resolve_var_in_value("env(keyboard-inset-bottom)", &vars).unwrap();
+        assert_eq!(format!("{}", kb), "300px");
+
+        let kw = engine.resolve_var_in_value("env(keyboard-inset-width)", &vars).unwrap();
+        assert_eq!(format!("{}", kw), "360px");
+    }
+
+    #[test]
+    fn env_unknown_uses_fallback() {
+        let engine = make_engine();
+        let vars = std::collections::HashMap::new();
+        let result = engine.resolve_var_in_value("env(unknown-thing, 10px)", &vars);
+        assert!(result.is_some());
+        let s = format!("{}", result.unwrap());
+        assert!(s.contains("10px"), "expected fallback 10px, got: {}", s);
+    }
+
+    #[test]
+    fn env_unknown_no_fallback_returns_zero() {
+        let engine = make_engine();
+        let vars = std::collections::HashMap::new();
+        let result = engine.resolve_var_in_value("env(unknown-thing)", &vars);
+        assert!(result.is_some());
+        let s = format!("{}", result.unwrap());
+        assert!(s.contains("0px"), "expected 0px default, got: {}", s);
     }
 }

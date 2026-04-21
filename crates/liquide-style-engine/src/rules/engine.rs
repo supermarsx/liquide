@@ -275,7 +275,7 @@ impl RuleEngine {
                 }
 
                 PropertyRequirement::BackgroundVisible => {
-                    if style.background_color.a == 0 && style.background.is_none() {
+                    if style.background_color.a == 0 && style.background.is_empty() {
                         Some((
                             "background".to_string(),
                             "background is fully transparent".to_string(),

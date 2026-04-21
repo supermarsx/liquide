@@ -9,7 +9,7 @@ use crate::computed::ComputedStyle;
 /// - Multiple concatenated strings: `"a" "b"` -> `ab`
 /// - attr(): `attr(data-title)` -> extracts attribute name for later resolution
 /// - open-quote / close-quote -> left/right double quotation marks
-/// - Counters: `counter(name)` / `counters(name, sep)` -> placeholder
+/// - Counters: `counter(name)` -> `[counter:name]`, `counters(name, sep)` -> `[counters:name:sep]` placeholder
 /// - Unicode escapes: `\2022` -> bullet
 pub fn evaluate_content_value(raw: &str) -> String {
     let raw = raw.trim();
@@ -92,8 +92,43 @@ pub fn evaluate_content_value(raw: &str) -> String {
                 result.push_str(attr_name.trim());
                 result.push(']');
             }
+            'c' if { let mut c = chars.clone(); c.next(); matches!((c.next(), c.next(), c.next(), c.next(), c.next(), c.next(), c.next(), c.next()), (Some('o'), Some('u'), Some('n'), Some('t'), Some('e'), Some('r'), Some('s'), Some('('))) } => {
+                // counters() function — emit placeholder for layout-time resolution
+                for _ in 0..9 {
+                    chars.next();
+                }
+                let mut inner = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c == ')' {
+                        chars.next();
+                        break;
+                    }
+                    inner.push(c);
+                    chars.next();
+                }
+                // Parse: counters(name, "separator")
+                let parts: Vec<&str> = inner.splitn(2, ',').collect();
+                let counter_name = parts[0].trim();
+                let separator = if parts.len() > 1 {
+                    let sep = parts[1].trim();
+                    if (sep.starts_with('"') && sep.ends_with('"'))
+                        || (sep.starts_with('\'') && sep.ends_with('\''))
+                    {
+                        &sep[1..sep.len() - 1]
+                    } else {
+                        sep
+                    }
+                } else {
+                    "."
+                };
+                result.push_str("[counters:");
+                result.push_str(counter_name);
+                result.push(':');
+                result.push_str(separator);
+                result.push(']');
+            }
             'c' if { let mut c = chars.clone(); c.next(); matches!((c.next(), c.next(), c.next(), c.next(), c.next(), c.next(), c.next()), (Some('o'), Some('u'), Some('n'), Some('t'), Some('e'), Some('r'), Some('('))) } => {
-                // counter() function
+                // counter() function — emit placeholder for layout-time resolution
                 for _ in 0..8 {
                     chars.next();
                 }
@@ -106,10 +141,9 @@ pub fn evaluate_content_value(raw: &str) -> String {
                     counter_name.push(c);
                     chars.next();
                 }
-                // True counter resolution requires layout-time state;
-                // emit "0" as a reasonable default.
-                let _ = counter_name;
-                result.push_str("0");
+                result.push_str("[counter:");
+                result.push_str(counter_name.trim());
+                result.push(']');
             }
             ' ' | '\t' | '\n' | '\r' => {
                 chars.next(); // skip whitespace between tokens
@@ -362,4 +396,58 @@ pub fn consume_remaining_properties(style: &ComputedStyle) {
     let _border_start_end_radius = style.border_start_end_radius;
     let _border_end_start_radius = style.border_end_start_radius;
     let _border_end_end_radius = style.border_end_end_radius;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counter_placeholder() {
+        assert_eq!(
+            evaluate_content_value("counter(section)"),
+            "[counter:section]"
+        );
+    }
+
+    #[test]
+    fn counter_in_quoted_context() {
+        // counter() outside quotes is a function call
+        assert_eq!(
+            evaluate_content_value("counter(item)"),
+            "[counter:item]"
+        );
+    }
+
+    #[test]
+    fn counters_placeholder() {
+        assert_eq!(
+            evaluate_content_value("counters(section, \".\")"),
+            "[counters:section:.]"
+        );
+    }
+
+    #[test]
+    fn counters_custom_separator() {
+        assert_eq!(
+            evaluate_content_value("counters(item, \" > \")"),
+            "[counters:item: > ]"
+        );
+    }
+
+    #[test]
+    fn counter_with_prefix_string() {
+        assert_eq!(
+            evaluate_content_value("\"Chapter \" counter(chapter)"),
+            "Chapter [counter:chapter]"
+        );
+    }
+
+    #[test]
+    fn counters_with_suffix_string() {
+        assert_eq!(
+            evaluate_content_value("counters(section, \".\") \". \""),
+            "[counters:section:.]. "
+        );
+    }
 }

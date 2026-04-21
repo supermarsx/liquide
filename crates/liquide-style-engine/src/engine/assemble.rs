@@ -60,7 +60,7 @@ impl StyleEngine {
         // Only assemble if there's an image or existing background spec
         let has_image = style.background_image.is_some();
 
-        if has_image || style.background.is_some() {
+        if has_image || !style.background.is_empty() {
             // Parse background-size
             let size = style
                 .background_size
@@ -131,12 +131,12 @@ impl StyleEngine {
                 } else {
                     None
                 },
-                image: image.or_else(|| style.background.as_ref().and_then(|b| b.image.clone())),
+                image: image.or_else(|| style.background.first().and_then(|b| b.image.clone())),
                 size,
                 position: (pos_x, pos_y),
                 repeat,
             };
-            style.background = Some(spec);
+            style.background = vec![spec];
         }
     }
 

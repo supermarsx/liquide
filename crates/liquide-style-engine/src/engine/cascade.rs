@@ -748,6 +748,107 @@ impl StyleEngine {
 
             map.insert_pseudo(node_id, kind, Arc::new(pseudo_style));
         }
+
+        // ── ::first-line and ::first-letter pseudo-elements ─────────────
+        //
+        // Unlike ::before/::after, these do not require a `content` property.
+        // ::first-line: allowed properties — font, color, background,
+        //   text-decoration, letter-spacing, word-spacing, line-height,
+        //   text-transform.
+        // ::first-letter: all ::first-line properties plus margin, padding,
+        //   border, float.
+        for (pseudo_name, kind) in [
+            ("first-line", PseudoKind::FirstLine),
+            ("first-letter", PseudoKind::FirstLetter),
+        ] {
+            let mut cascade = CascadeMap::new();
+            let mut has_rules = false;
+
+            for sheet in &self.sheets {
+                for rule_idx in sheet.candidate_indices(&tag_name) {
+                    let rule = &sheet.rules[rule_idx];
+                    if rule.pseudo_element.as_deref() != Some(pseudo_name) {
+                        continue;
+                    }
+                    if let Some(ref cond) = rule.media_condition {
+                        if !self.evaluate_media_condition(cond) {
+                            continue;
+                        }
+                    }
+                    if let Some(ref cond) = rule.supports_condition {
+                        if !self.evaluate_supports_condition(cond) {
+                            continue;
+                        }
+                    }
+                    if let Some(ref cc) = rule.container_condition {
+                        if !self.evaluate_container_condition(cc, node_id, doc, map) {
+                            continue;
+                        }
+                    }
+                    if rule.selector.matches(doc, node_id) {
+                        let mut priority =
+                            CascadePriority::author(rule.specificity, rule.source_order);
+                        priority.layer_order = rule.layer_order;
+                        cascade.add_properties(&rule.properties, priority);
+                        has_rules = true;
+                    }
+                }
+            }
+
+            if !has_rules {
+                continue;
+            }
+
+            let mut resolved = cascade.resolve();
+
+            // Filter to spec-allowed properties for each pseudo-element.
+            resolved.retain(|(prop, _)| is_allowed_pseudo_property(pseudo_name, prop));
+
+            if resolved.is_empty() {
+                continue;
+            }
+
+            let mut pseudo_style = ComputedStyle::default();
+            pseudo_style.inherit_from(host_style);
+
+            for (prop, val) in &resolved {
+                self.apply_single_property(prop, val, &mut pseudo_style, scope_vars);
+            }
+
+            map.insert_pseudo(node_id, kind, Arc::new(pseudo_style));
+        }
+    }
+}
+
+/// Check whether a CSS property is allowed on `::first-line` or `::first-letter`.
+///
+/// Per CSS Pseudo-Elements Module Level 4:
+/// - `::first-line` allowed: font-*, color, background-*, text-decoration-*,
+///   letter-spacing, word-spacing, line-height, text-transform, vertical-align.
+/// - `::first-letter` allowed: everything in `::first-line` plus margin-*,
+///   padding-*, border-*, float.
+fn is_allowed_pseudo_property(pseudo_name: &str, property: &str) -> bool {
+    // Properties allowed for both ::first-line and ::first-letter
+    let first_line_ok = property.starts_with("font")
+        || property == "color"
+        || property.starts_with("background")
+        || property.starts_with("text-decoration")
+        || property == "letter-spacing"
+        || property == "word-spacing"
+        || property == "line-height"
+        || property == "text-transform"
+        || property == "vertical-align";
+
+    match pseudo_name {
+        "first-line" => first_line_ok,
+        "first-letter" => {
+            first_line_ok
+                || property.starts_with("margin")
+                || property.starts_with("padding")
+                || property.starts_with("border")
+                || property == "float"
+        }
+        _ => true,
     }
 }
 

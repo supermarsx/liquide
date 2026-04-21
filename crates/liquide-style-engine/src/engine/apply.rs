@@ -128,12 +128,12 @@ impl StyleEngine {
             // Border radius
             "border-radius" => {
                 let r = resolve_number(val);
-                style.border_radius = crate::dimension::Corners::all(r);
+                style.border_radius = crate::dimension::Corners::all(crate::dimension::EllipticalRadius::from(r));
             }
-            "border-top-left-radius" => style.border_radius.top_left = resolve_number(val),
-            "border-top-right-radius" => style.border_radius.top_right = resolve_number(val),
-            "border-bottom-left-radius" => style.border_radius.bottom_left = resolve_number(val),
-            "border-bottom-right-radius" => style.border_radius.bottom_right = resolve_number(val),
+            "border-top-left-radius" => style.border_radius.top_left = resolve_elliptical_radius(val),
+            "border-top-right-radius" => style.border_radius.top_right = resolve_elliptical_radius(val),
+            "border-bottom-left-radius" => style.border_radius.bottom_left = resolve_elliptical_radius(val),
+            "border-bottom-right-radius" => style.border_radius.bottom_right = resolve_elliptical_radius(val),
 
             // Border color
             "border-color" => {
@@ -1895,6 +1895,26 @@ impl StyleEngine {
 
             // Remaining properties delegated to apply_extended_property
             _ => self.apply_extended_property(key, val, style),
+        }
+    }
+}
+/// Resolve a property value to an `EllipticalRadius`.
+///
+/// Handles both single-value (`10px` → equal x/y) and two-value
+/// (`List([10px, 20px])` → separate horizontal/vertical radii).
+fn resolve_elliptical_radius(val: &liquide_theme_css::value::PropertyValue) -> crate::dimension::EllipticalRadius {
+    use crate::dimension::EllipticalRadius;
+    use crate::value_resolve::resolve_number;
+
+    match val {
+        liquide_theme_css::value::PropertyValue::List(items) if items.len() >= 2 => {
+            let x = resolve_number(&items[0]);
+            let y = resolve_number(&items[1]);
+            EllipticalRadius { x, y }
+        }
+        _ => {
+            let v = resolve_number(val);
+            EllipticalRadius::from(v)
         }
     }
 }

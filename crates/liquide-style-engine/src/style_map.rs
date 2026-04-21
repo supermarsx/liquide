@@ -12,6 +12,10 @@ use crate::computed::ComputedStyle;
 pub enum PseudoKind {
     Before,
     After,
+    /// `::first-line` — applies to the first formatted line of a block container.
+    FirstLine,
+    /// `::first-letter` — applies to the first typographic letter of a block container.
+    FirstLetter,
 }
 
 /// Computed styles for every node in the document.
@@ -57,6 +61,8 @@ impl StyleMap {
         self.styles.remove(&node_id);
         self.pseudo_styles.remove(&(node_id, PseudoKind::Before));
         self.pseudo_styles.remove(&(node_id, PseudoKind::After));
+        self.pseudo_styles.remove(&(node_id, PseudoKind::FirstLine));
+        self.pseudo_styles.remove(&(node_id, PseudoKind::FirstLetter));
         self.container_sizes.remove(&node_id);
     }
 
@@ -95,6 +101,29 @@ impl StyleMap {
         self.container_sizes.get(&node_id).copied()
     }
 
+    /// Get `::first-line` style overrides for a node.
+    ///
+    /// Per CSS spec, only a restricted set of properties apply to `::first-line`:
+    /// font properties, color, background properties, text-decoration,
+    /// letter-spacing, word-spacing, line-height, text-transform.
+    pub fn get_first_line_overrides(
+        &self,
+        node_id: NodeId,
+    ) -> Option<&Arc<ComputedStyle>> {
+        self.pseudo_styles.get(&(node_id, PseudoKind::FirstLine))
+    }
+
+    /// Get `::first-letter` style overrides for a node.
+    ///
+    /// Per CSS spec, `::first-letter` accepts the same properties as
+    /// `::first-line` plus: margin, padding, border, and float.
+    pub fn get_first_letter_overrides(
+        &self,
+        node_id: NodeId,
+    ) -> Option<&Arc<ComputedStyle>> {
+        self.pseudo_styles.get(&(node_id, PseudoKind::FirstLetter))
+    }
+
     /// Number of styled nodes.
     pub fn len(&self) -> usize {
         self.styles.len()
@@ -114,5 +143,69 @@ impl StyleMap {
 impl Default for StyleMap {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(id: u64) -> NodeId {
+        id
+    }
+
+    #[test]
+    fn first_line_stored_and_retrieved() {
+        let mut map = StyleMap::new();
+        let n = node(1);
+        let style = Arc::new(ComputedStyle::default());
+        map.insert_pseudo(n, PseudoKind::FirstLine, style.clone());
+
+        assert!(map.get_first_line_overrides(n).is_some());
+        assert!(map.get_first_letter_overrides(n).is_none());
+        assert!(map.get_pseudo(n, PseudoKind::FirstLine).is_some());
+    }
+
+    #[test]
+    fn first_letter_stored_and_retrieved() {
+        let mut map = StyleMap::new();
+        let n = node(2);
+        let style = Arc::new(ComputedStyle::default());
+        map.insert_pseudo(n, PseudoKind::FirstLetter, style.clone());
+
+        assert!(map.get_first_letter_overrides(n).is_some());
+        assert!(map.get_first_line_overrides(n).is_none());
+        assert!(map.get_pseudo(n, PseudoKind::FirstLetter).is_some());
+    }
+
+    #[test]
+    fn remove_clears_first_line_and_first_letter() {
+        let mut map = StyleMap::new();
+        let n = node(3);
+        map.insert(n, ComputedStyle::default());
+        map.insert_pseudo(n, PseudoKind::Before, Arc::new(ComputedStyle::default()));
+        map.insert_pseudo(n, PseudoKind::After, Arc::new(ComputedStyle::default()));
+        map.insert_pseudo(n, PseudoKind::FirstLine, Arc::new(ComputedStyle::default()));
+        map.insert_pseudo(n, PseudoKind::FirstLetter, Arc::new(ComputedStyle::default()));
+
+        map.remove(n);
+
+        assert!(map.get(n).is_none());
+        assert!(map.get_pseudo(n, PseudoKind::Before).is_none());
+        assert!(map.get_pseudo(n, PseudoKind::After).is_none());
+        assert!(map.get_pseudo(n, PseudoKind::FirstLine).is_none());
+        assert!(map.get_pseudo(n, PseudoKind::FirstLetter).is_none());
+    }
+
+    #[test]
+    fn pseudo_iter_includes_first_line_and_letter() {
+        let mut map = StyleMap::new();
+        let n = node(4);
+        map.insert_pseudo(n, PseudoKind::FirstLine, Arc::new(ComputedStyle::default()));
+        map.insert_pseudo(n, PseudoKind::FirstLetter, Arc::new(ComputedStyle::default()));
+
+        let kinds: Vec<PseudoKind> = map.pseudo_iter().map(|((_, k), _)| *k).collect();
+        assert!(kinds.contains(&PseudoKind::FirstLine));
+        assert!(kinds.contains(&PseudoKind::FirstLetter));
     }
 }

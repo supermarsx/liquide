@@ -12,8 +12,15 @@ mod stylesheet;
 mod variables;
 
 pub use cascade::RestyleResult;
+pub use variables::EnvironmentValues;
 
+use std::cell::RefCell;
+
+use liquide_dom::NodeId;
 use liquide_theme_css::property::PropertySet;
+
+#[allow(deprecated)]
+use crate::transition::TransitionManager;
 
 /// A prepared stylesheet rule ready for matching.
 #[derive(Debug)]
@@ -128,6 +135,15 @@ pub struct StyleEngine {
     pub(crate) sheets: Vec<PreparedSheet>,
     /// Viewport size for viewport units.
     pub viewport: ViewportSize,
+    /// Dynamic viewport size (accounts for dynamic UI chrome like virtual keyboards).
+    /// Defaults to the standard viewport size.
+    pub dynamic_viewport: Option<(f32, f32)>,
+    /// Small viewport size (smallest possible viewport when all UI chrome is visible).
+    /// Defaults to the standard viewport size.
+    pub small_viewport: Option<(f32, f32)>,
+    /// Large viewport size (largest possible viewport when all UI chrome is hidden).
+    /// Defaults to the standard viewport size.
+    pub large_viewport: Option<(f32, f32)>,
     /// Base font size for `rem` units.
     pub base_font_size: f32,
     /// CSS variables.
@@ -146,6 +162,11 @@ pub struct StyleEngine {
     pub prefers_reduced_motion: bool,
     /// `@keyframes` rules keyed by animation name.
     pub keyframes: std::collections::HashMap<String, liquide_theme_css::value::KeyframesRule>,
+    /// Platform-provided environment values for CSS `env()` resolution.
+    pub env_values: EnvironmentValues,
+    /// CSS transition manager — detects property changes and interpolates values.
+    #[allow(deprecated)]
+    pub transition_manager: RefCell<TransitionManager>,
 }
 
 /// A registered custom property definition (from `@property`).
@@ -160,20 +181,42 @@ pub struct RegisteredPropertyDef {
 }
 
 impl StyleEngine {
-    /// Create a new style engine.
+    /// Create a new style engine with the default `"light"` color scheme.
     pub fn new(viewport: ViewportSize, base_font_size: f32) -> Self {
+        Self::new_with_color_scheme(viewport, base_font_size, "light")
+    }
+
+    /// Create a new style engine with an explicit initial color scheme.
+    ///
+    /// `color_scheme` should be `"light"` or `"dark"`. Any other value is
+    /// normalised to `"light"`.
+    pub fn new_with_color_scheme(
+        viewport: ViewportSize,
+        base_font_size: f32,
+        color_scheme: &str,
+    ) -> Self {
+        let preferred = if color_scheme.trim().eq_ignore_ascii_case("dark") {
+            "dark".to_string()
+        } else {
+            "light".to_string()
+        };
         Self {
             sheets: Vec::new(),
             viewport,
+            dynamic_viewport: None,
+            small_viewport: None,
+            large_viewport: None,
             base_font_size,
             variables: std::collections::HashMap::new(),
             layer_order: std::collections::HashMap::new(),
             font_faces: Vec::new(),
             supported_properties: Self::build_supported_properties(),
             registered_properties: std::collections::HashMap::new(),
-            preferred_color_scheme: "light".into(),
+            preferred_color_scheme: preferred,
             prefers_reduced_motion: false,
             keyframes: std::collections::HashMap::new(),
+            env_values: EnvironmentValues::default(),
+            transition_manager: RefCell::new(TransitionManager::new()),
         }
     }
 
@@ -190,6 +233,55 @@ impl StyleEngine {
     /// Update viewport size (triggers re-resolution of viewport units).
     pub fn set_viewport(&mut self, size: ViewportSize) {
         self.viewport = size;
+    }
+
+    /// Set the dynamic viewport size.
+    ///
+    /// The dynamic viewport reflects the current state of dynamic UI chrome
+    /// (e.g. virtual keyboards, expanding/collapsing URL bars).
+    pub fn set_dynamic_viewport(&mut self, width: f32, height: f32) {
+        self.dynamic_viewport = Some((width, height));
+    }
+
+    /// Set the small viewport size.
+    ///
+    /// The small viewport is the smallest possible viewport when all dynamic
+    /// UI chrome (virtual keyboard, URL bar, etc.) is visible.
+    pub fn set_small_viewport(&mut self, width: f32, height: f32) {
+        self.small_viewport = Some((width, height));
+    }
+
+    /// Set the large viewport size.
+    ///
+    /// The large viewport is the largest possible viewport when all dynamic
+    /// UI chrome is hidden.
+    pub fn set_large_viewport(&mut self, width: f32, height: f32) {
+        self.large_viewport = Some((width, height));
+    }
+
+    /// Build a [`ViewportSizes`](crate::dimension::ViewportSizes) from the
+    /// configured viewport tiers, falling back to the standard viewport for
+    /// any tier that has not been explicitly set.
+    pub fn viewport_sizes(&self) -> crate::dimension::ViewportSizes {
+        let (dw, dh) = self
+            .dynamic_viewport
+            .unwrap_or((self.viewport.width, self.viewport.height));
+        let (sw, sh) = self
+            .small_viewport
+            .unwrap_or((self.viewport.width, self.viewport.height));
+        let (lw, lh) = self
+            .large_viewport
+            .unwrap_or((self.viewport.width, self.viewport.height));
+        crate::dimension::ViewportSizes {
+            width: self.viewport.width,
+            height: self.viewport.height,
+            dynamic_width: dw,
+            dynamic_height: dh,
+            small_width: sw,
+            small_height: sh,
+            large_width: lw,
+            large_height: lh,
+        }
     }
 
     /// Set the preferred color scheme used by media queries such as
@@ -235,6 +327,141 @@ impl StyleEngine {
         self.registered_properties.clear();
         self.keyframes.clear();
         self.layer_order.clear();
+        self.transition_manager.borrow_mut().clear();
+    }
+
+    /// Feed the transition manager with updated computed styles from the style map.
+    ///
+    /// Call this **after** `restyle_all()` or `restyle_dirty()`. For each node
+    /// in the map, the transition manager compares the new style against its
+    /// stored previous values and starts `RunningTransition`s when transitionable
+    /// properties change.
+    ///
+    /// Then, for any nodes with active transitions, the interpolated values
+    /// are written back into the style map — overriding the cascade result
+    /// with the in-flight transition value.
+    #[allow(deprecated)]
+    pub fn apply_transitions(&self, map: &mut crate::style_map::StyleMap) {
+        use std::sync::Arc;
+
+        let mut tm = self.transition_manager.borrow_mut();
+
+        // Phase 1: Feed new styles into the transition manager.
+        let node_ids: Vec<NodeId> = map.iter().map(|(&nid, _)| nid).collect();
+        for &node_id in &node_ids {
+            if let Some(style) = map.get(node_id) {
+                tm.update_node(node_id, style);
+            }
+        }
+
+        // Phase 2: Override computed style for nodes with running transitions.
+        if !tm.has_running_transitions() {
+            return;
+        }
+
+        for &node_id in &node_ids {
+            let style_arc = match map.get(node_id) {
+                Some(s) => s.clone(),
+                None => continue,
+            };
+
+            // Collect overrides for this node.
+            let overrides = collect_transition_overrides(&tm, node_id, &style_arc);
+            if overrides.is_empty() {
+                continue;
+            }
+
+            // Clone the style, apply overrides, and replace in the map.
+            let mut style = (*style_arc).clone();
+            for (prop, val) in &overrides {
+                apply_numeric_override(&mut style, prop, *val);
+            }
+            map.insert_shared(node_id, Arc::new(style));
+        }
+    }
+
+    /// Advance all running CSS transitions by `dt_ms` milliseconds.
+    ///
+    /// Call this once per frame (typically from the compositor frame callback).
+    /// After ticking, call [`apply_transitions`](Self::apply_transitions) to
+    /// write interpolated values into the style map.
+    #[allow(deprecated)]
+    pub fn tick_transitions(&self, dt_ms: f32) {
+        self.transition_manager.borrow_mut().tick_all(dt_ms);
+    }
+
+    /// Check if any CSS transitions are currently running.
+    #[allow(deprecated)]
+    pub fn has_running_transitions(&self) -> bool {
+        self.transition_manager.borrow().has_running_transitions()
+    }
+
+    /// Remove transition tracking for a node (e.g. when the node is removed from the DOM).
+    #[allow(deprecated)]
+    pub fn remove_transition_node(&self, node_id: NodeId) {
+        self.transition_manager.borrow_mut().remove_node(node_id);
+    }
+}
+
+/// Collect interpolated transition overrides for a single node.
+#[allow(deprecated)]
+fn collect_transition_overrides(
+    tm: &TransitionManager,
+    node_id: NodeId,
+    style: &crate::computed::ComputedStyle,
+) -> Vec<(String, f32)> {
+    let mut overrides = Vec::new();
+    for def in &style.transition {
+        if let Some(val) = tm.get_value(node_id, &def.property) {
+            overrides.push((def.property.clone(), val));
+        }
+    }
+    overrides
+}
+
+/// Write a numeric override into a `ComputedStyle`.
+///
+/// Mirrors the property set recognized by `extract_numeric_property` in
+/// `transition.rs` so that every property the transition engine can detect
+/// can also be written back.
+fn apply_numeric_override(style: &mut crate::computed::ComputedStyle, property: &str, val: f32) {
+    use crate::dimension::Dimension;
+    match property {
+        "opacity" => style.opacity = val,
+        "width" => style.width = Dimension::Px(val),
+        "height" => style.height = Dimension::Px(val),
+        "min-width" => style.min_width = Dimension::Px(val),
+        "min-height" => style.min_height = Dimension::Px(val),
+        "max-width" => style.max_width = Dimension::Px(val),
+        "max-height" => style.max_height = Dimension::Px(val),
+        "top" => style.top = Dimension::Px(val),
+        "right" => style.right = Dimension::Px(val),
+        "bottom" => style.bottom = Dimension::Px(val),
+        "left" => style.left = Dimension::Px(val),
+        "margin-top" => style.margin.top = Dimension::Px(val),
+        "margin-right" => style.margin.right = Dimension::Px(val),
+        "margin-bottom" => style.margin.bottom = Dimension::Px(val),
+        "margin-left" => style.margin.left = Dimension::Px(val),
+        "padding-top" => style.padding.top = Dimension::Px(val),
+        "padding-right" => style.padding.right = Dimension::Px(val),
+        "padding-bottom" => style.padding.bottom = Dimension::Px(val),
+        "padding-left" => style.padding.left = Dimension::Px(val),
+        "font-size" => style.font_size = val,
+        "letter-spacing" => style.letter_spacing = val,
+        "word-spacing" => style.word_spacing = val,
+        "border-top-width" => style.border_width.top = val,
+        "border-right-width" => style.border_width.right = val,
+        "border-bottom-width" => style.border_width.bottom = val,
+        "border-left-width" => style.border_width.left = val,
+        "flex-grow" => style.flex_grow = val,
+        "flex-shrink" => style.flex_shrink = val,
+        "gap" => {
+            style.gap.width = Dimension::Px(val);
+            style.gap.height = Dimension::Px(val);
+        }
+        "column-gap" => style.column_gap = Dimension::Px(val),
+        "row-gap" => style.row_gap = Dimension::Px(val),
+        _ => {} // Unsupported property — silently skip
     }
 }
 
@@ -250,3 +477,71 @@ use crate::computed::*;
 #[cfg(test)]
 #[path = "../tests/engine_unit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/css_conformance.rs"]
+mod css_conformance_tests;
+
+#[cfg(test)]
+mod transition_integration_tests {
+    use super::*;
+    use liquide_dom::Document;
+
+    #[test]
+    fn apply_transitions_detects_opacity_change() {
+        let mut engine = StyleEngine::default();
+        engine.add_stylesheet(
+            r#"
+            div {
+                opacity: 1.0;
+                transition-property: opacity;
+                transition-duration: 300ms;
+                transition-timing-function: linear;
+            }
+            "#,
+        );
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+
+        // First restyle: establish initial opacity = 1.0.
+        let mut map = engine.restyle_all(&doc);
+        engine.apply_transitions(&mut map);
+
+        assert!(
+            !engine.has_running_transitions(),
+            "no transition yet — first frame"
+        );
+
+        // Change opacity via inline style.
+        doc.set_inline_style(div, "opacity", "0.5");
+        let mut map = engine.restyle_all(&doc);
+        engine.apply_transitions(&mut map);
+
+        assert!(
+            engine.has_running_transitions(),
+            "transition should have started after opacity change"
+        );
+
+        // The transition should override the style map value.
+        let style = map.get(div).expect("style exists");
+        // At t=0 with linear timing, the interpolated value should be the old value (1.0).
+        assert!(
+            (style.opacity - 1.0).abs() < f32::EPSILON,
+            "at t=0, opacity should still be 1.0 (from), got {}",
+            style.opacity
+        );
+
+        // Tick halfway and re-apply.
+        engine.tick_transitions(150.0);
+        engine.apply_transitions(&mut map);
+        let style = map.get(div).expect("style exists");
+        assert!(
+            (style.opacity - 0.75).abs() < 0.02,
+            "at 150ms, opacity should be ~0.75, got {}",
+            style.opacity
+        );
+    }
+}

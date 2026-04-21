@@ -35,7 +35,7 @@ use liquide_compositor::scene::{
     OutlineSpec, TextDecoration, TextShadow,
 };
 
-use crate::dimension::{Corners, Dimension, Sides, Size};
+use crate::dimension::{Corners, Dimension, EllipticalRadius, Sides, Size};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // The ComputedStyle
@@ -63,7 +63,7 @@ pub struct ComputedStyle {
     pub border_width: Sides<f32>,
     pub border_style: Sides<BorderLineStyle>,
     pub border_color: Sides<Color>,
-    pub border_radius: Corners<f32>,
+    pub border_radius: Corners<EllipticalRadius>,
     pub border_image: Option<BorderImageSpec>,
 
     // ── Flexbox ──
@@ -126,7 +126,7 @@ pub struct ComputedStyle {
 
     // ── Visual ──
     pub background_color: Color,
-    pub background: Option<BackgroundSpec>,
+    pub background: Vec<BackgroundSpec>,
     pub box_shadow: Vec<BoxShadowSpec>,
     pub opacity: f32,
     pub visibility: Visibility,
@@ -590,7 +590,7 @@ impl Default for ComputedStyle {
                 b: 0,
                 a: 0,
             },
-            background: None,
+            background: Vec::new(),
             box_shadow: Vec::new(),
             opacity: 1.0,
             visibility: Visibility::default(),

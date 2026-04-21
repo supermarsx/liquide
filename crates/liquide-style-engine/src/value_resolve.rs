@@ -93,9 +93,13 @@ fn length_unit_to_dimension(lu: &liquide_theme_css::value::LengthUnit) -> Dimens
         LengthUnit::Vmax(v) => Dimension::Vmax(*v),
         LengthUnit::Ch(v) => Dimension::Ch(*v),
         LengthUnit::Ex(v) => Dimension::Em(*v * 0.5), // approximate
-        // Dynamic viewport units — map to regular viewport (no dynamic chrome distinction yet)
-        LengthUnit::Dvw(v) | LengthUnit::Svw(v) | LengthUnit::Lvw(v) => Dimension::Vw(*v),
-        LengthUnit::Dvh(v) | LengthUnit::Svh(v) | LengthUnit::Lvh(v) => Dimension::Vh(*v),
+        // Dynamic viewport units — map to distinct Dimension variants
+        LengthUnit::Dvw(v) => Dimension::Dvw(*v),
+        LengthUnit::Dvh(v) => Dimension::Dvh(*v),
+        LengthUnit::Svw(v) => Dimension::Svw(*v),
+        LengthUnit::Svh(v) => Dimension::Svh(*v),
+        LengthUnit::Lvw(v) => Dimension::Lvw(*v),
+        LengthUnit::Lvh(v) => Dimension::Lvh(*v),
         // Container query units — approximate as percentage of parent
         LengthUnit::Cqw(v) | LengthUnit::Cqi(v) => Dimension::Percent(*v),
         LengthUnit::Cqh(v) | LengthUnit::Cqb(v) => Dimension::Percent(*v),
@@ -127,9 +131,13 @@ fn length_unit_to_calc(lu: &liquide_theme_css::value::LengthUnit) -> CalcExpr {
         } else {
             *v
         }),
-        // Dynamic viewport units → regular viewport
-        LengthUnit::Dvw(v) | LengthUnit::Svw(v) | LengthUnit::Lvw(v) => CalcExpr::Vw(*v),
-        LengthUnit::Dvh(v) | LengthUnit::Svh(v) | LengthUnit::Lvh(v) => CalcExpr::Vh(*v),
+        // Dynamic viewport units → distinct CalcExpr variants
+        LengthUnit::Dvw(v) => CalcExpr::Dvw(*v),
+        LengthUnit::Dvh(v) => CalcExpr::Dvh(*v),
+        LengthUnit::Svw(v) => CalcExpr::Svw(*v),
+        LengthUnit::Svh(v) => CalcExpr::Svh(*v),
+        LengthUnit::Lvw(v) => CalcExpr::Lvw(*v),
+        LengthUnit::Lvh(v) => CalcExpr::Lvh(*v),
         // Container query units → percentage approximation
         LengthUnit::Cqw(v)
         | LengthUnit::Cqi(v)
@@ -684,6 +692,71 @@ pub fn parse_transform_list(css: &str) -> Vec<Transform> {
                     "skewY" => {
                         if let Some(deg) = parse_degrees(args) {
                             result.push(Transform::Skew(0.0, deg));
+                        }
+                    }
+                    "translate3d" => {
+                        let parts: Vec<&str> = args.split(',').collect();
+                        let x = parts.first().and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
+                        let y = parts.get(1).and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
+                        let z = parts.get(2).and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
+                        result.push(Transform::Translate3d(x, y, z));
+                    }
+                    "translateZ" => {
+                        if let Some(px) = parse_px(args) {
+                            result.push(Transform::Translate3d(0.0, 0.0, px));
+                        }
+                    }
+                    "rotate3d" => {
+                        let parts: Vec<&str> = args.split(',').collect();
+                        let x = parts.first().and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
+                        let y = parts.get(1).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
+                        let z = parts.get(2).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
+                        let angle = parts.get(3).and_then(|s| parse_degrees(s.trim())).unwrap_or(0.0);
+                        result.push(Transform::Rotate3d(x, y, z, angle));
+                    }
+                    "rotateX" => {
+                        if let Some(deg) = parse_degrees(args) {
+                            result.push(Transform::Rotate3d(1.0, 0.0, 0.0, deg));
+                        }
+                    }
+                    "rotateY" => {
+                        if let Some(deg) = parse_degrees(args) {
+                            result.push(Transform::Rotate3d(0.0, 1.0, 0.0, deg));
+                        }
+                    }
+                    "rotateZ" => {
+                        if let Some(deg) = parse_degrees(args) {
+                            result.push(Transform::Rotate3d(0.0, 0.0, 1.0, deg));
+                        }
+                    }
+                    "scale3d" => {
+                        let parts: Vec<&str> = args.split(',').collect();
+                        let x = parts.first().and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(1.0);
+                        let y = parts.get(1).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(1.0);
+                        let z = parts.get(2).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(1.0);
+                        result.push(Transform::Scale3d(x, y, z));
+                    }
+                    "scaleZ" => {
+                        if let Ok(v) = args.parse::<f32>() {
+                            result.push(Transform::Scale3d(1.0, 1.0, v));
+                        }
+                    }
+                    "matrix3d" => {
+                        let parts: Vec<f32> = args
+                            .split(',')
+                            .filter_map(|s| s.trim().parse::<f32>().ok())
+                            .collect();
+                        if parts.len() == 16 {
+                            let mut m = [0.0f32; 16];
+                            m.copy_from_slice(&parts);
+                            result.push(Transform::Matrix3d(m));
+                        }
+                    }
+                    "perspective" => {
+                        if let Some(px) = parse_px(args) {
+                            if px > 0.0 {
+                                result.push(Transform::PerspectiveFn(px));
+                            }
                         }
                     }
                     _ => {}
