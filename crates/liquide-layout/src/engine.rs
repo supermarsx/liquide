@@ -1,11 +1,15 @@
 //! Layout engine — the main entry point for computing layout.
 
 use liquide_dom::{Document, NodeId};
+use liquide_layout_cache::{
+    DirtyPropagation, LayoutCache, LayoutConstraints, LayoutDirtyFlags,
+    LayoutResult as CachedLayoutResult,
+};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{Display, Position};
 
 use crate::geometry::{Rect, Size};
-use crate::tree::{LayoutBoxId, LayoutTree};
+use crate::tree::{LayoutBox, LayoutBoxId, LayoutTree};
 use crate::writing_mode::WritingModeContext;
 use crate::{ImageMeasurer, TextMeasurer};
 
@@ -15,6 +19,12 @@ pub struct LayoutEngine {
     pub viewport: Size,
     /// Root font size for `rem` units.
     pub base_font_size: f32,
+    /// Per-node layout result cache for incremental optimization.
+    cache: LayoutCache,
+    /// Tracks which nodes need re-layout for incremental optimization.
+    dirty: DirtyPropagation,
+    /// When `true`, skip all cache lookups (useful for debugging/testing).
+    bypass_cache: bool,
 }
 
 /// Bundled input for layout and relayout APIs.
@@ -47,6 +57,9 @@ impl LayoutEngine {
         Self {
             viewport,
             base_font_size,
+            cache: LayoutCache::new(),
+            dirty: DirtyPropagation::new(),
+            bypass_cache: false,
         }
     }
 
@@ -58,6 +71,9 @@ impl LayoutEngine {
         text_measurer: &TM,
         image_measurer: &IM,
     ) -> LayoutTree {
+        // Advance the cache generation and evict entries older than 3 frames.
+        self.cache.advance_generation(3);
+
         let mut tree = LayoutTree::new();
 
         // Reset the thread-local counter registry for this layout pass.
@@ -209,6 +225,12 @@ impl LayoutEngine {
 
         // Fourth pass: adjust sticky-positioned elements based on scroll offsets
         Self::apply_sticky_offsets(&mut tree, styles, doc, self.base_font_size);
+
+        // Populate the layout cache with results from this pass.
+        self.populate_cache_from_tree(&tree);
+
+        // All nodes have been laid out; clear dirty flags for next frame.
+        self.dirty.clear_all();
 
         tree
     }
@@ -383,7 +405,7 @@ impl LayoutEngine {
     }
 
     fn layout_node_in_context<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
-        &self,
+        &mut self,
         input: &LayoutInput<'_, TM, IM>,
         node_id: NodeId,
         tree: &mut LayoutTree,
@@ -392,6 +414,39 @@ impl LayoutEngine {
         offset_x: f32,
         offset_y: f32,
     ) -> LayoutBoxId {
+        // ── Cache-accelerated fast path ──────────────────────────────
+        //
+        // If dirty tracking is active (at least one node has been marked)
+        // and this node — plus all its descendants — are clean, try the
+        // cache.  On hit we reconstruct a leaf box and skip the expensive
+        // recursive layout entirely.
+        if !self.bypass_cache && self.dirty.dirty_count() > 0 {
+            let needs_layout = self.dirty.needs_layout(node_id);
+            let has_any_dirty = self.dirty.has_dirty_flags(node_id);
+            if !needs_layout && !has_any_dirty {
+                let constraints = LayoutConstraints::fixed(container_width, container_height);
+                if let Some(cached) = self.cache.lookup(node_id, &constraints) {
+                    let cached = cached.clone();
+                    let box_id = tree.alloc(node_id, crate::tree::BoxType::Block);
+                    if let Some(b) = tree.get_mut(box_id) {
+                        let (w, h) = cached.size;
+                        let (mt, mr, mb, ml) = cached.margins;
+                        b.border_rect = Rect::new(offset_x + ml, offset_y + mt, w, h);
+                        b.margin_rect = Rect::new(
+                            offset_x,
+                            offset_y,
+                            ml + w + mr,
+                            mt + h + mb,
+                        );
+                        b.padding_rect = b.border_rect;
+                        b.content_rect = b.border_rect;
+                        b.baseline = cached.baseline;
+                    }
+                    return box_id;
+                }
+            }
+        }
+
         let style = input.styles.get(node_id).cloned().unwrap_or_default();
 
         // display: contents — skip this node, promote children.
@@ -425,10 +480,20 @@ impl LayoutEngine {
                 b.border_rect = b.content_rect;
                 b.margin_rect = b.content_rect;
             }
+
+            // Store display:contents wrapper in cache before returning.
+            if !self.bypass_cache {
+                let constraints = LayoutConstraints::fixed(container_width, container_height);
+                if let Some(layout_box) = tree.get(wrapper) {
+                    let cached_result = Self::extract_cached_result(layout_box, tree);
+                    self.cache.store(node_id, constraints, cached_result);
+                }
+                self.dirty.clear(node_id);
+            }
             return wrapper;
         }
 
-        if style.is_flex_container() {
+        let result_box_id = if style.is_flex_container() {
             crate::flex::layout_flex(
                 input.doc,
                 node_id,
@@ -519,7 +584,19 @@ impl LayoutEngine {
                 self.viewport.height,
                 self.base_font_size,
             )
+        };
+
+        // ── Post-layout: store result in cache and clear dirty flag ──
+        if !self.bypass_cache {
+            let constraints = LayoutConstraints::fixed(container_width, container_height);
+            if let Some(layout_box) = tree.get(result_box_id) {
+                let cached_result = Self::extract_cached_result(layout_box, tree);
+                self.cache.store(node_id, constraints, cached_result);
+            }
+            self.dirty.clear(node_id);
         }
+
+        result_box_id
     }
 
     fn collect_subtree_box_ids(tree: &LayoutTree, box_id: LayoutBoxId, out: &mut Vec<LayoutBoxId>) {
@@ -975,6 +1052,126 @@ impl LayoutEngine {
                 image_measurer,
                 child_fixed_cb,
             );
+        }
+    }
+
+    // ── Cache management ──────────────────────────────────────────────
+
+    /// Clear the layout cache entirely.
+    pub fn clear_cache(&mut self) {
+        self.cache.invalidate_all();
+    }
+
+    /// Invalidate the cached layout result for a specific node.
+    pub fn invalidate_node(&mut self, node_id: NodeId) {
+        self.cache.invalidate(node_id);
+    }
+
+    /// Invalidate a node and all its descendants in the cache.
+    pub fn invalidate_subtree(&mut self, node_id: NodeId, doc: &Document) {
+        self.cache.invalidate_subtree(node_id, |id| doc.children(id).to_vec());
+    }
+
+    /// Access the layout cache (read-only).
+    pub fn cache(&self) -> &LayoutCache {
+        &self.cache
+    }
+
+    /// Access the layout cache (mutable).
+    pub fn cache_mut(&mut self) -> &mut LayoutCache {
+        &mut self.cache
+    }
+
+    // ── Dirty tracking ────────────────────────────────────────────────
+
+    /// Access dirty propagation state (read-only).
+    pub fn dirty(&self) -> &DirtyPropagation {
+        &self.dirty
+    }
+
+    /// Access dirty propagation state (mutable).
+    pub fn dirty_mut(&mut self) -> &mut DirtyPropagation {
+        &mut self.dirty
+    }
+
+    /// Mark a node as needing re-layout.
+    pub fn mark_dirty(&mut self, node_id: NodeId, flags: LayoutDirtyFlags) {
+        self.dirty.mark_dirty(node_id, flags);
+    }
+
+    /// Mark a node dirty and propagate `CHILD_NEEDS_LAYOUT` up through ancestors.
+    pub fn mark_dirty_and_propagate(&mut self, doc: &Document, node_id: NodeId, flags: LayoutDirtyFlags) {
+        self.dirty.mark_dirty_and_propagate(node_id, flags, |id| doc.parent(id));
+    }
+
+    // ── Debug bypass ──────────────────────────────────────────────────
+
+    /// Whether the layout cache is currently bypassed.
+    pub fn bypass_cache(&self) -> bool {
+        self.bypass_cache
+    }
+
+    /// Enable or disable the cache bypass (skips all cache lookups/stores).
+    pub fn set_bypass_cache(&mut self, bypass: bool) {
+        self.bypass_cache = bypass;
+    }
+
+    // ── Cache population helpers ──────────────────────────────────────
+
+    /// Walk the completed layout tree and store every node's result in the cache.
+    ///
+    /// Constraints are derived from the parent's content rect (or viewport for root).
+    fn populate_cache_from_tree(&mut self, tree: &LayoutTree) {
+        let viewport_w = self.viewport.width;
+        let viewport_h = self.viewport.height;
+
+        for layout_box in &tree.boxes {
+            let (avail_w, avail_h) = if let Some(parent_id) = layout_box.parent {
+                tree.get(parent_id)
+                    .map(|p| (p.content_rect.width, p.content_rect.height))
+                    .unwrap_or((viewport_w, viewport_h))
+            } else {
+                (viewport_w, viewport_h)
+            };
+
+            let constraints = LayoutConstraints::fixed(avail_w, avail_h);
+            let result = Self::extract_cached_result(layout_box, tree);
+            self.cache.store(layout_box.node, constraints, result);
+        }
+    }
+
+    /// Extract a [`CachedLayoutResult`] from a completed [`LayoutBox`].
+    fn extract_cached_result(layout_box: &LayoutBox, tree: &LayoutTree) -> CachedLayoutResult {
+        let br = &layout_box.border_rect;
+        let mr = &layout_box.margin_rect;
+        let cr = &layout_box.content_rect;
+
+        let margin_top = br.y - mr.y;
+        let margin_left = br.x - mr.x;
+        let margin_bottom = (mr.y + mr.height) - (br.y + br.height);
+        let margin_right = (mr.x + mr.width) - (br.x + br.width);
+
+        let child_offsets: Vec<(f32, f32)> = layout_box
+            .children
+            .iter()
+            .filter_map(|&cid| {
+                tree.get(cid)
+                    .map(|cb| (cb.margin_rect.x - cr.x, cb.margin_rect.y - cr.y))
+            })
+            .collect();
+
+        let overflow = layout_box
+            .scroll_size
+            .map(|s| (s.width, s.height))
+            .unwrap_or((cr.width, cr.height));
+
+        CachedLayoutResult {
+            size: (br.width, br.height),
+            baseline: layout_box.baseline,
+            margins: (margin_top, margin_right, margin_bottom, margin_left),
+            child_offsets,
+            overflow,
+            intrinsic_sizes: Default::default(),
         }
     }
 }

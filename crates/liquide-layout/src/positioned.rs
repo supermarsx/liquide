@@ -252,7 +252,7 @@ pub fn layout_positioned<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     // ── Calculate position ──────────────────────────────────────────────
     let (x, y) = if let Some(anchor) = anchor_rect {
         // Anchor positioning: place relative to the anchor element's rect.
-        anchor_position(anchor, outer_w, outer_h, position_area.as_deref())
+        anchor_position(anchor, cb, outer_w, outer_h, position_area.as_deref(), viewport_w, viewport_h)
     } else if is_sticky {
         // Sticky positioning: the element is first laid out in normal flow,
         // then clamped to stay within the containing block's visible area.
@@ -528,74 +528,416 @@ fn layout_children_in_positioned(
 ///   - `"center"` — centered over the anchor
 ///   - `"top left"` / `"top right"` / `"bottom left"` / `"bottom right"`
 ///
-/// If `position_area` is None or unrecognized, defaults to placing the
-/// element directly below the anchor, horizontally aligned to its start.
+/// If `position_area` is None or empty, defaults to placing the element
+/// directly below the anchor, horizontally aligned to its start.
 fn anchor_position(
     anchor: Rect,
+    cb: Rect,
     elem_w: f32,
     elem_h: f32,
     position_area: Option<&str>,
+    viewport_w: f32,
+    viewport_h: f32,
 ) -> (f32, f32) {
     let area = position_area.unwrap_or("");
-    // Normalize: lowercase, trim
-    let area = area.trim();
+    if area.trim().is_empty() {
+        // No position-area: default below anchor, left-aligned.
+        return (anchor.x, anchor.y + anchor.height);
+    }
 
-    match area {
-        "top" => {
-            // Center above the anchor.
-            let x = anchor.x + (anchor.width - elem_w) / 2.0;
-            let y = anchor.y - elem_h;
-            (x, y)
+    let (row, col) = parse_position_area(area);
+    let imcb = compute_grid_rect(anchor, cb, row, col);
+    let (x, y) = align_in_rect(imcb, elem_w, elem_h, row, col);
+
+    // ── Viewport overflow fallback ──────────────────────────────────
+    let overflows_x = x < 0.0 || x + elem_w > viewport_w;
+    let overflows_y = y < 0.0 || y + elem_h > viewport_h;
+
+    if !overflows_x && !overflows_y {
+        return (x, y);
+    }
+
+    let flipped_row = if overflows_y { row.flip() } else { row };
+    let flipped_col = if overflows_x { col.flip() } else { col };
+
+    if flipped_row == row && flipped_col == col {
+        return (x, y);
+    }
+
+    let flipped_imcb = compute_grid_rect(anchor, cb, flipped_row, flipped_col);
+    let (fx, fy) = align_in_rect(flipped_imcb, elem_w, elem_h, flipped_row, flipped_col);
+
+    // Use flipped position if it reduces overflow.
+    let flipped_ox = fx < 0.0 || fx + elem_w > viewport_w;
+    let flipped_oy = fy < 0.0 || fy + elem_h > viewport_h;
+    let orig_overflow = overflows_x as u8 + overflows_y as u8;
+    let flip_overflow = flipped_ox as u8 + flipped_oy as u8;
+
+    if flip_overflow < orig_overflow {
+        (fx, fy)
+    } else {
+        (x, y)
+    }
+}
+
+// ── Position-area grid model (CSS Anchor Positioning Level 1) ───────
+
+/// Grid span along one axis for CSS `position-area`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum GridSpan {
+    /// Before the anchor (top / left).
+    Start,
+    /// The anchor itself.
+    Center,
+    /// After the anchor (bottom / right).
+    End,
+    /// Two adjacent cells: start + center.
+    SpanStart,
+    /// Two adjacent cells: center + end.
+    SpanEnd,
+    /// All three cells.
+    SpanAll,
+}
+
+impl GridSpan {
+    /// Flip to the opposite side (for overflow fallback).
+    fn flip(self) -> Self {
+        match self {
+            Self::Start => Self::End,
+            Self::End => Self::Start,
+            Self::SpanStart => Self::SpanEnd,
+            Self::SpanEnd => Self::SpanStart,
+            Self::Center | Self::SpanAll => self,
         }
-        "bottom" => {
-            // Center below the anchor.
-            let x = anchor.x + (anchor.width - elem_w) / 2.0;
-            let y = anchor.y + anchor.height;
-            (x, y)
+    }
+}
+
+/// Parse a `position-area` value into `(row, col)` grid spans.
+///
+/// Accepts one or two keywords.  Row keywords: top, bottom, span-top,
+/// span-bottom.  Column keywords: left, right, span-left, span-right.
+/// Ambiguous keywords (center, span-all, start, end) are assigned to
+/// whichever axis is still unset.
+fn parse_position_area(area: &str) -> (GridSpan, GridSpan) {
+    let area = area.trim();
+    if area.is_empty() {
+        return (GridSpan::End, GridSpan::SpanAll);
+    }
+
+    let parts: Vec<&str> = area.split_whitespace().collect();
+
+    // Single keyword — unambiguous keywords fill one axis and default the
+    // other to SpanAll; ambiguous keywords fill both axes.
+    if parts.len() == 1 {
+        return match parts[0] {
+            "top" => (GridSpan::Start, GridSpan::SpanAll),
+            "bottom" => (GridSpan::End, GridSpan::SpanAll),
+            "span-top" => (GridSpan::SpanStart, GridSpan::SpanAll),
+            "span-bottom" => (GridSpan::SpanEnd, GridSpan::SpanAll),
+            "left" => (GridSpan::SpanAll, GridSpan::Start),
+            "right" => (GridSpan::SpanAll, GridSpan::End),
+            "span-left" => (GridSpan::SpanAll, GridSpan::SpanStart),
+            "span-right" => (GridSpan::SpanAll, GridSpan::SpanEnd),
+            "center" => (GridSpan::Center, GridSpan::Center),
+            "span-all" => (GridSpan::SpanAll, GridSpan::SpanAll),
+            "start" | "self-start" => (GridSpan::Start, GridSpan::Start),
+            "end" | "self-end" => (GridSpan::End, GridSpan::End),
+            _ => (GridSpan::End, GridSpan::SpanAll),
+        };
+    }
+
+    // Two-keyword syntax — first assign unambiguous keywords, then fill
+    // ambiguous ones into whichever axis is still free.
+    let mut row: Option<GridSpan> = None;
+    let mut col: Option<GridSpan> = None;
+    let mut ambiguous: Vec<GridSpan> = Vec::new();
+
+    for &kw in parts.iter().take(2) {
+        match kw {
+            "top" => { row = row.or(Some(GridSpan::Start)); }
+            "bottom" => { row = row.or(Some(GridSpan::End)); }
+            "span-top" => { row = row.or(Some(GridSpan::SpanStart)); }
+            "span-bottom" => { row = row.or(Some(GridSpan::SpanEnd)); }
+            "left" => { col = col.or(Some(GridSpan::Start)); }
+            "right" => { col = col.or(Some(GridSpan::End)); }
+            "span-left" => { col = col.or(Some(GridSpan::SpanStart)); }
+            "span-right" => { col = col.or(Some(GridSpan::SpanEnd)); }
+            "center" => ambiguous.push(GridSpan::Center),
+            "span-all" => ambiguous.push(GridSpan::SpanAll),
+            "start" | "self-start" => ambiguous.push(GridSpan::Start),
+            "end" | "self-end" => ambiguous.push(GridSpan::End),
+            _ => {}
         }
-        "left" => {
-            // To the left, vertically centered.
-            let x = anchor.x - elem_w;
-            let y = anchor.y + (anchor.height - elem_h) / 2.0;
-            (x, y)
+    }
+
+    for span in ambiguous {
+        if row.is_none() {
+            row = Some(span);
+        } else if col.is_none() {
+            col = Some(span);
         }
-        "right" => {
-            // To the right, vertically centered.
-            let x = anchor.x + anchor.width;
-            let y = anchor.y + (anchor.height - elem_h) / 2.0;
-            (x, y)
-        }
-        "center" => {
-            // Centered over the anchor.
-            let x = anchor.x + (anchor.width - elem_w) / 2.0;
-            let y = anchor.y + (anchor.height - elem_h) / 2.0;
-            (x, y)
-        }
-        "top left" => {
-            let x = anchor.x - elem_w;
-            let y = anchor.y - elem_h;
-            (x, y)
-        }
-        "top right" => {
-            let x = anchor.x + anchor.width;
-            let y = anchor.y - elem_h;
-            (x, y)
-        }
-        "bottom left" => {
-            let x = anchor.x - elem_w;
-            let y = anchor.y + anchor.height;
-            (x, y)
-        }
-        "bottom right" => {
-            let x = anchor.x + anchor.width;
-            let y = anchor.y + anchor.height;
-            (x, y)
-        }
-        _ => {
-            // Default: place below the anchor, aligned to its left edge.
-            let x = anchor.x;
-            let y = anchor.y + anchor.height;
-            (x, y)
-        }
+    }
+
+    (row.unwrap_or(GridSpan::SpanAll), col.unwrap_or(GridSpan::SpanAll))
+}
+
+/// Compute the inset-modified containing block (IMCB) rectangle for a
+/// grid span pair relative to the anchor within a containing block.
+///
+/// The 3×3 grid divides the containing block around the anchor:
+///   Row: `[CB.top → anchor.top] [anchor] [anchor.bottom → CB.bottom]`
+///   Col: `[CB.left → anchor.left] [anchor] [anchor.right → CB.right]`
+fn compute_grid_rect(anchor: Rect, cb: Rect, row: GridSpan, col: GridSpan) -> Rect {
+    let anchor_top = anchor.y;
+    let anchor_bottom = anchor.y + anchor.height;
+    let anchor_left = anchor.x;
+    let anchor_right = anchor.x + anchor.width;
+    let cb_top = cb.y;
+    let cb_bottom = cb.y + cb.height;
+    let cb_left = cb.x;
+    let cb_right = cb.x + cb.width;
+
+    let (ry, rh) = match row {
+        GridSpan::Start => (cb_top, (anchor_top - cb_top).max(0.0)),
+        GridSpan::Center => (anchor_top, anchor.height),
+        GridSpan::End => (anchor_bottom, (cb_bottom - anchor_bottom).max(0.0)),
+        GridSpan::SpanStart => (cb_top, (anchor_bottom - cb_top).max(0.0)),
+        GridSpan::SpanEnd => (anchor_top, (cb_bottom - anchor_top).max(0.0)),
+        GridSpan::SpanAll => (cb_top, cb.height),
+    };
+
+    let (rx, rw) = match col {
+        GridSpan::Start => (cb_left, (anchor_left - cb_left).max(0.0)),
+        GridSpan::Center => (anchor_left, anchor.width),
+        GridSpan::End => (anchor_right, (cb_right - anchor_right).max(0.0)),
+        GridSpan::SpanStart => (cb_left, (anchor_right - cb_left).max(0.0)),
+        GridSpan::SpanEnd => (anchor_left, (cb_right - anchor_left).max(0.0)),
+        GridSpan::SpanAll => (cb_left, cb.width),
+    };
+
+    Rect::new(rx, ry, rw, rh)
+}
+
+/// Align an element within the IMCB based on which grid span is active.
+///
+/// Start-side spans align to the end (closest to anchor), end-side spans
+/// align to the start (closest to anchor), and center/span-all center.
+fn align_in_rect(
+    rect: Rect,
+    elem_w: f32,
+    elem_h: f32,
+    row: GridSpan,
+    col: GridSpan,
+) -> (f32, f32) {
+    let x = match col {
+        GridSpan::Start | GridSpan::SpanStart => rect.x + rect.width - elem_w,
+        GridSpan::End | GridSpan::SpanEnd => rect.x,
+        GridSpan::Center | GridSpan::SpanAll => rect.x + (rect.width - elem_w) / 2.0,
+    };
+    let y = match row {
+        GridSpan::Start | GridSpan::SpanStart => rect.y + rect.height - elem_h,
+        GridSpan::End | GridSpan::SpanEnd => rect.y,
+        GridSpan::Center | GridSpan::SpanAll => rect.y + (rect.height - elem_h) / 2.0,
+    };
+    (x, y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geometry::Rect;
+
+    // ── parse_position_area ────────────────────────────────────────────
+
+    #[test]
+    fn parse_single_row_keywords() {
+        assert_eq!(parse_position_area("top"), (GridSpan::Start, GridSpan::SpanAll));
+        assert_eq!(parse_position_area("bottom"), (GridSpan::End, GridSpan::SpanAll));
+        assert_eq!(parse_position_area("span-top"), (GridSpan::SpanStart, GridSpan::SpanAll));
+        assert_eq!(parse_position_area("span-bottom"), (GridSpan::SpanEnd, GridSpan::SpanAll));
+    }
+
+    #[test]
+    fn parse_single_col_keywords() {
+        assert_eq!(parse_position_area("left"), (GridSpan::SpanAll, GridSpan::Start));
+        assert_eq!(parse_position_area("right"), (GridSpan::SpanAll, GridSpan::End));
+        assert_eq!(parse_position_area("span-left"), (GridSpan::SpanAll, GridSpan::SpanStart));
+        assert_eq!(parse_position_area("span-right"), (GridSpan::SpanAll, GridSpan::SpanEnd));
+    }
+
+    #[test]
+    fn parse_single_ambiguous() {
+        assert_eq!(parse_position_area("center"), (GridSpan::Center, GridSpan::Center));
+        assert_eq!(parse_position_area("span-all"), (GridSpan::SpanAll, GridSpan::SpanAll));
+        assert_eq!(parse_position_area("start"), (GridSpan::Start, GridSpan::Start));
+        assert_eq!(parse_position_area("end"), (GridSpan::End, GridSpan::End));
+    }
+
+    #[test]
+    fn parse_two_keywords() {
+        assert_eq!(parse_position_area("top left"), (GridSpan::Start, GridSpan::Start));
+        assert_eq!(parse_position_area("top right"), (GridSpan::Start, GridSpan::End));
+        assert_eq!(parse_position_area("bottom left"), (GridSpan::End, GridSpan::Start));
+        assert_eq!(parse_position_area("bottom right"), (GridSpan::End, GridSpan::End));
+        assert_eq!(parse_position_area("top center"), (GridSpan::Start, GridSpan::Center));
+        assert_eq!(parse_position_area("bottom center"), (GridSpan::End, GridSpan::Center));
+        assert_eq!(parse_position_area("center left"), (GridSpan::Center, GridSpan::Start));
+        assert_eq!(parse_position_area("center right"), (GridSpan::Center, GridSpan::End));
+    }
+
+    #[test]
+    fn parse_reversed_order() {
+        // Column keyword first, row keyword second — should still resolve correctly.
+        assert_eq!(parse_position_area("left top"), (GridSpan::Start, GridSpan::Start));
+        assert_eq!(parse_position_area("right bottom"), (GridSpan::End, GridSpan::End));
+    }
+
+    #[test]
+    fn parse_span_combinations() {
+        assert_eq!(parse_position_area("span-top right"), (GridSpan::SpanStart, GridSpan::End));
+        assert_eq!(parse_position_area("bottom span-left"), (GridSpan::End, GridSpan::SpanStart));
+    }
+
+    #[test]
+    fn parse_empty_and_unknown() {
+        assert_eq!(parse_position_area(""), (GridSpan::End, GridSpan::SpanAll));
+        assert_eq!(parse_position_area("  "), (GridSpan::End, GridSpan::SpanAll));
+        assert_eq!(parse_position_area("bogus"), (GridSpan::End, GridSpan::SpanAll));
+    }
+
+    // ── compute_grid_rect ──────────────────────────────────────────────
+
+    fn test_anchor() -> Rect {
+        Rect::new(100.0, 200.0, 50.0, 30.0)
+    }
+
+    fn test_cb() -> Rect {
+        Rect::new(0.0, 0.0, 800.0, 600.0)
+    }
+
+    #[test]
+    fn grid_rect_start_center() {
+        // Top row, anchor column.
+        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::Start, GridSpan::Center);
+        assert_eq!(r, Rect::new(100.0, 0.0, 50.0, 200.0));
+    }
+
+    #[test]
+    fn grid_rect_end_center() {
+        // Bottom row, anchor column.
+        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::End, GridSpan::Center);
+        assert_eq!(r, Rect::new(100.0, 230.0, 50.0, 370.0));
+    }
+
+    #[test]
+    fn grid_rect_center_start() {
+        // Anchor row, left column.
+        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::Center, GridSpan::Start);
+        assert_eq!(r, Rect::new(0.0, 200.0, 100.0, 30.0));
+    }
+
+    #[test]
+    fn grid_rect_center_end() {
+        // Anchor row, right column.
+        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::Center, GridSpan::End);
+        assert_eq!(r, Rect::new(150.0, 200.0, 650.0, 30.0));
+    }
+
+    #[test]
+    fn grid_rect_span_all() {
+        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::SpanAll, GridSpan::SpanAll);
+        assert_eq!(r, Rect::new(0.0, 0.0, 800.0, 600.0));
+    }
+
+    #[test]
+    fn grid_rect_span_start() {
+        // SpanStart row = CB.top through anchor.bottom.
+        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::SpanStart, GridSpan::Center);
+        assert_eq!(r, Rect::new(100.0, 0.0, 50.0, 230.0));
+    }
+
+    #[test]
+    fn grid_rect_span_end() {
+        // SpanEnd row = anchor.top through CB.bottom.
+        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::SpanEnd, GridSpan::Center);
+        assert_eq!(r, Rect::new(100.0, 200.0, 50.0, 400.0));
+    }
+
+    // ── anchor_position (integration) ──────────────────────────────────
+
+    #[test]
+    fn default_below_anchor() {
+        let (x, y) = anchor_position(
+            test_anchor(), test_cb(), 40.0, 20.0, None, 800.0, 600.0,
+        );
+        assert_eq!(x, 100.0);
+        assert_eq!(y, 230.0);
+    }
+
+    #[test]
+    fn position_area_top() {
+        let (x, y) = anchor_position(
+            test_anchor(), test_cb(), 40.0, 20.0, Some("top"), 800.0, 600.0,
+        );
+        // IMCB: (0, 0, 800, 200) — row Start, col SpanAll.
+        // Align: y = 200-20 = 180 (end of IMCB), x = (800-40)/2 = 380 (centered).
+        assert_eq!(x, 380.0);
+        assert_eq!(y, 180.0);
+    }
+
+    #[test]
+    fn position_area_bottom_right() {
+        let (x, y) = anchor_position(
+            test_anchor(), test_cb(), 40.0, 20.0, Some("bottom right"), 800.0, 600.0,
+        );
+        // IMCB: (150, 230, 650, 370) — row End, col End.
+        // Align: y = 230 (start of IMCB), x = 150 (start of IMCB).
+        assert_eq!(x, 150.0);
+        assert_eq!(y, 230.0);
+    }
+
+    #[test]
+    fn position_area_top_left() {
+        let (x, y) = anchor_position(
+            test_anchor(), test_cb(), 40.0, 20.0, Some("top left"), 800.0, 600.0,
+        );
+        // IMCB: (0, 0, 100, 200) — row Start, col Start.
+        // Align: y = 200-20 = 180 (end toward anchor), x = 100-40 = 60.
+        assert_eq!(x, 60.0);
+        assert_eq!(y, 180.0);
+    }
+
+    #[test]
+    fn fallback_flips_bottom_to_top() {
+        // Anchor near the bottom — "bottom" should overflow and flip to "top".
+        let anchor = Rect::new(100.0, 550.0, 50.0, 30.0);
+        let cb = Rect::new(0.0, 0.0, 800.0, 600.0);
+        let (x, y) = anchor_position(anchor, cb, 40.0, 40.0, Some("bottom"), 800.0, 600.0);
+        // Original IMCB (bottom): (0, 580, 800, 20) — elem 40px overflows.
+        // Flipped to top: IMCB (0, 0, 800, 550).
+        // Align: y = 550-40 = 510, x = (800-40)/2 = 380.
+        assert_eq!(x, 380.0);
+        assert_eq!(y, 510.0);
+    }
+
+    #[test]
+    fn fallback_flips_right_to_left() {
+        // Anchor near the right edge — "right" should overflow and flip to "left".
+        let anchor = Rect::new(740.0, 200.0, 50.0, 30.0);
+        let cb = Rect::new(0.0, 0.0, 800.0, 600.0);
+        let (x, _y) = anchor_position(anchor, cb, 40.0, 20.0, Some("right"), 800.0, 600.0);
+        // Original IMCB (right col, SpanAll row): (790, 0, 10, 600) — 40px overflows.
+        // Flipped to left: (0, 0, 740, 600). Align: x = 740-40 = 700.
+        assert_eq!(x, 700.0);
+    }
+
+    #[test]
+    fn no_flip_when_not_overflowing() {
+        let (x, y) = anchor_position(
+            test_anchor(), test_cb(), 40.0, 20.0, Some("bottom"), 800.0, 600.0,
+        );
+        // IMCB (bottom): (0, 230, 800, 370). Elem fits — no flip.
+        assert_eq!(x, 380.0);
+        assert_eq!(y, 230.0);
     }
 }

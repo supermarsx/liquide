@@ -24,6 +24,7 @@ pub mod writing_mode;
 
 pub use engine::{LayoutEngine, LayoutInput};
 pub use geometry::{Point, Rect, Size};
+pub use liquide_layout_cache::{DirtyPropagation, LayoutDirtyFlags};
 pub use tree::{AnchorRegistry, BoxType, LayoutBox, LayoutBoxId, LayoutTree, LineBox};
 
 use liquide_style_engine::computed::{
@@ -234,6 +235,24 @@ impl TextProperties {
                 std::borrow::Cow::Owned(result)
             }
             TextTransform::None => std::borrow::Cow::Borrowed(text),
+        }
+    }
+
+    /// Parse `font_feature_settings` CSS string into `FontFeature` values.
+    #[must_use]
+    pub fn parsed_font_features(&self) -> Vec<liquide_font_rasterizer::FontFeature> {
+        match &self.font_feature_settings {
+            Some(s) => liquide_font_rasterizer::parse_font_feature_settings(s),
+            None => Vec::new(),
+        }
+    }
+
+    /// Parse `font_variation_settings` CSS string into `rustybuzz::Variation` values.
+    #[must_use]
+    pub fn parsed_font_variations(&self) -> Vec<rustybuzz::Variation> {
+        match &self.font_variation_settings {
+            Some(s) => liquide_font_rasterizer::parse_font_variation_settings(s),
+            None => Vec::new(),
         }
     }
 }

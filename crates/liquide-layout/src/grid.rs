@@ -41,6 +41,34 @@ pub fn layout_grid<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     viewport_h: f32,
     base_font_size: f32,
 ) -> LayoutBoxId {
+    layout_grid_inner(
+        doc, node_id, styles, tree, text_measurer, image_measurer,
+        container_width, container_height, offset_x, offset_y,
+        viewport_w, viewport_h, base_font_size, None,
+    )
+}
+
+/// Inner grid layout that accepts optional parent track sizes for subgrid support.
+///
+/// When a child grid container uses `grid-template-columns: subgrid` or
+/// `grid-template-rows: subgrid`, the parent passes its resolved track sizes
+/// (sliced to the child's span) via `parent_tracks`.
+fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
+    doc: &Document,
+    node_id: NodeId,
+    styles: &StyleMap,
+    tree: &mut LayoutTree,
+    text_measurer: &TM,
+    image_measurer: &IM,
+    container_width: f32,
+    container_height: f32,
+    offset_x: f32,
+    offset_y: f32,
+    viewport_w: f32,
+    viewport_h: f32,
+    base_font_size: f32,
+    parent_tracks: Option<(&[f32], &[f32])>,
+) -> LayoutBoxId {
     let style = styles.get(node_id).cloned().unwrap_or_default();
     let box_id = tree.alloc(node_id, BoxType::Grid);
 
@@ -187,25 +215,16 @@ pub fn layout_grid<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         .iter()
         .any(|t| matches!(t, TrackSize::Subgrid));
 
-    // For subgrid, try to inherit tracks from the parent grid container
-    let parent_col_tracks = if has_subgrid_cols {
-        // Walk up the tree to find parent grid box to inherit column tracks
-        tree.get(box_id)
-            .and_then(|b| b.parent)
-            .and_then(|pid| tree.get(pid))
-            .map(|p| p.grid_col_tracks.clone())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let parent_row_tracks = if has_subgrid_rows {
-        tree.get(box_id)
-            .and_then(|b| b.parent)
-            .and_then(|pid| tree.get(pid))
-            .map(|p| p.grid_row_tracks.clone())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
+    // For subgrid, inherit tracks from the parent grid container via the
+    // explicit `parent_tracks` parameter. The previous tree-based parent
+    // lookup failed because the box hasn't been parented yet at this point.
+    let (parent_col_tracks, parent_row_tracks) = match parent_tracks {
+        Some((cols, rows)) => {
+            let pc = if has_subgrid_cols { cols.to_vec() } else { Vec::new() };
+            let pr = if has_subgrid_rows { rows.to_vec() } else { Vec::new() };
+            (pc, pr)
+        }
+        None => (Vec::new(), Vec::new()),
     };
 
     let parent_col_track_count = parent_col_tracks.len();
@@ -535,7 +554,16 @@ pub fn layout_grid<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 base_font_size,
             )
         } else if child_style.is_grid_container() {
-            crate::grid::layout_grid(
+            // Pass sliced parent tracks for subgrid inheritance.
+            // The child subgrid inherits exactly the tracks corresponding
+            // to its span in the parent grid.
+            let child_col_end = item.col_end.min(col_tracks.len());
+            let child_col_start = item.col_start.min(child_col_end);
+            let child_col_slice = &col_tracks[child_col_start..child_col_end];
+            let child_row_end = item.row_end.min(row_tracks.len());
+            let child_row_start = item.row_start.min(child_row_end);
+            let child_row_slice = &row_tracks[child_row_start..child_row_end];
+            layout_grid_inner(
                 doc,
                 item.node_id,
                 styles,
@@ -549,6 +577,7 @@ pub fn layout_grid<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 viewport_w,
                 viewport_h,
                 base_font_size,
+                Some((child_col_slice, child_row_slice)),
             )
         } else {
             crate::block::layout_block(
@@ -1115,5 +1144,254 @@ fn grid_content_distribute_align(ac: AlignContent, free: f32, count: usize) -> (
             let gap = free / (count + 1) as f32;
             (gap, gap)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DefaultImageMeasurer, DefaultTextMeasurer};
+    use liquide_dom::Document;
+    use liquide_style_engine::StyleMap;
+    use liquide_style_engine::computed::{ComputedStyle, Display, TrackSize};
+
+    /// Helper: create a grid container with children and custom styles,
+    /// then run `layout_grid` and return the tree.
+    fn grid_with_styles(
+        child_count: usize,
+        container_style: ComputedStyle,
+        child_styles: &[ComputedStyle],
+    ) -> (LayoutTree, LayoutBoxId, Vec<NodeId>) {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let container = doc.create_element("grid");
+        doc.append_child(root, container);
+
+        let mut children = Vec::new();
+        for i in 0..child_count {
+            let tag = format!("item{}", i);
+            let child = doc.create_element(&tag);
+            doc.append_child(container, child);
+            children.push(child);
+        }
+
+        let mut styles = StyleMap::new();
+        styles.insert(container, container_style);
+        for (i, child_id) in children.iter().enumerate() {
+            if i < child_styles.len() {
+                styles.insert(*child_id, child_styles[i].clone());
+            } else {
+                styles.insert(*child_id, ComputedStyle::default());
+            }
+        }
+
+        let mut tree = LayoutTree::new();
+        let box_id = layout_grid(
+            &doc, container, &styles, &mut tree,
+            &DefaultTextMeasurer, &DefaultImageMeasurer,
+            600.0, 400.0, 0.0, 0.0, 1920.0, 1080.0, 16.0,
+        );
+
+        (tree, box_id, children)
+    }
+
+    #[test]
+    fn subgrid_columns_inherits_parent_tracks() {
+        // Parent: 3 columns of 100px, 200px, 100px (total 400px in 600px container)
+        // Child at columns 1-3 with subgrid columns should inherit [200, 100]
+        let mut doc = Document::new();
+        let root = doc.root();
+        let parent_grid = doc.create_element("parent");
+        doc.append_child(root, parent_grid);
+
+        // The child grid (subgrid)
+        let child_grid = doc.create_element("child");
+        doc.append_child(parent_grid, child_grid);
+
+        // Grandchild items inside the subgrid
+        let gc1 = doc.create_element("gc1");
+        let gc2 = doc.create_element("gc2");
+        doc.append_child(child_grid, gc1);
+        doc.append_child(child_grid, gc2);
+
+        let mut parent_style = ComputedStyle::default();
+        parent_style.display = Display::Grid;
+        parent_style.grid_template_columns = vec![
+            TrackSize::Px(100.0),
+            TrackSize::Px(200.0),
+            TrackSize::Px(100.0),
+        ];
+
+        let mut child_style = ComputedStyle::default();
+        child_style.display = Display::Grid;
+        child_style.grid_template_columns = vec![TrackSize::Subgrid];
+        // Place child spanning columns 2-3 (0-indexed: col_start=1, col_end=3)
+        child_style.grid_column.start = liquide_style_engine::computed::GridLine::Line(2);
+        child_style.grid_column.end = liquide_style_engine::computed::GridLine::Line(4);
+
+        let gc_style = ComputedStyle::default();
+
+        let mut styles = StyleMap::new();
+        styles.insert(parent_grid, parent_style);
+        styles.insert(child_grid, child_style);
+        styles.insert(gc1, gc_style.clone());
+        styles.insert(gc2, gc_style);
+
+        let mut tree = LayoutTree::new();
+        let parent_box = layout_grid(
+            &doc, parent_grid, &styles, &mut tree,
+            &DefaultTextMeasurer, &DefaultImageMeasurer,
+            600.0, 400.0, 0.0, 0.0, 1920.0, 1080.0, 16.0,
+        );
+
+        // The parent grid should have column tracks stored
+        let pb = tree.get(parent_box).unwrap();
+        assert_eq!(pb.grid_col_tracks.len(), 3);
+        assert!((pb.grid_col_tracks[0] - 100.0).abs() < 0.1);
+        assert!((pb.grid_col_tracks[1] - 200.0).abs() < 0.1);
+        assert!((pb.grid_col_tracks[2] - 100.0).abs() < 0.1);
+
+        // Find the child grid box (first child of parent)
+        let child_box_id = pb.children[0];
+        let cb = tree.get(child_box_id).unwrap();
+        // The child subgrid should have inherited 2 column tracks (from parent cols 1..3)
+        assert_eq!(cb.grid_col_tracks.len(), 2);
+        assert!((cb.grid_col_tracks[0] - 200.0).abs() < 0.1);
+        assert!((cb.grid_col_tracks[1] - 100.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn subgrid_rows_inherits_parent_tracks() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let parent_grid = doc.create_element("parent");
+        doc.append_child(root, parent_grid);
+
+        let child_grid = doc.create_element("child");
+        doc.append_child(parent_grid, child_grid);
+
+        let gc1 = doc.create_element("gc1");
+        let gc2 = doc.create_element("gc2");
+        doc.append_child(child_grid, gc1);
+        doc.append_child(child_grid, gc2);
+
+        let mut parent_style = ComputedStyle::default();
+        parent_style.display = Display::Grid;
+        parent_style.grid_template_columns = vec![TrackSize::Px(300.0)];
+        parent_style.grid_template_rows = vec![
+            TrackSize::Px(50.0),
+            TrackSize::Px(80.0),
+            TrackSize::Px(60.0),
+        ];
+
+        let mut child_style = ComputedStyle::default();
+        child_style.display = Display::Grid;
+        child_style.grid_template_rows = vec![TrackSize::Subgrid];
+        // Place child spanning rows 1-3 (0-indexed: 0..3)
+        child_style.grid_row.start = liquide_style_engine::computed::GridLine::Line(1);
+        child_style.grid_row.end = liquide_style_engine::computed::GridLine::Line(3);
+
+        let gc_style = ComputedStyle::default();
+
+        let mut styles = StyleMap::new();
+        styles.insert(parent_grid, parent_style);
+        styles.insert(child_grid, child_style);
+        styles.insert(gc1, gc_style.clone());
+        styles.insert(gc2, gc_style);
+
+        let mut tree = LayoutTree::new();
+        let parent_box = layout_grid(
+            &doc, parent_grid, &styles, &mut tree,
+            &DefaultTextMeasurer, &DefaultImageMeasurer,
+            600.0, 400.0, 0.0, 0.0, 1920.0, 1080.0, 16.0,
+        );
+
+        let pb = tree.get(parent_box).unwrap();
+        let child_box_id = pb.children[0];
+        let cb = tree.get(child_box_id).unwrap();
+        // Child subgrid inherits rows 0..2 from parent (50, 80)
+        assert!(cb.grid_row_tracks.len() >= 2);
+    }
+
+    #[test]
+    fn subgrid_both_axes() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let parent_grid = doc.create_element("parent");
+        doc.append_child(root, parent_grid);
+
+        let child_grid = doc.create_element("child");
+        doc.append_child(parent_grid, child_grid);
+
+        let gc = doc.create_element("gc");
+        doc.append_child(child_grid, gc);
+
+        let mut parent_style = ComputedStyle::default();
+        parent_style.display = Display::Grid;
+        parent_style.grid_template_columns = vec![
+            TrackSize::Px(150.0),
+            TrackSize::Px(250.0),
+        ];
+        parent_style.grid_template_rows = vec![
+            TrackSize::Px(40.0),
+            TrackSize::Px(70.0),
+        ];
+
+        let mut child_style = ComputedStyle::default();
+        child_style.display = Display::Grid;
+        child_style.grid_template_columns = vec![TrackSize::Subgrid];
+        child_style.grid_template_rows = vec![TrackSize::Subgrid];
+        // Place child at column 2, row 2 (1-indexed)
+        child_style.grid_column.start = liquide_style_engine::computed::GridLine::Line(2);
+        child_style.grid_column.end = liquide_style_engine::computed::GridLine::Line(3);
+        child_style.grid_row.start = liquide_style_engine::computed::GridLine::Line(2);
+        child_style.grid_row.end = liquide_style_engine::computed::GridLine::Line(3);
+
+        let gc_style = ComputedStyle::default();
+
+        let mut styles = StyleMap::new();
+        styles.insert(parent_grid, parent_style);
+        styles.insert(child_grid, child_style);
+        styles.insert(gc, gc_style);
+
+        let mut tree = LayoutTree::new();
+        let parent_box = layout_grid(
+            &doc, parent_grid, &styles, &mut tree,
+            &DefaultTextMeasurer, &DefaultImageMeasurer,
+            600.0, 400.0, 0.0, 0.0, 1920.0, 1080.0, 16.0,
+        );
+
+        let pb = tree.get(parent_box).unwrap();
+        let child_box_id = pb.children[0];
+        let cb = tree.get(child_box_id).unwrap();
+        // Column subgrid: inherits parent col[1] = 250
+        assert_eq!(cb.grid_col_tracks.len(), 1);
+        assert!((cb.grid_col_tracks[0] - 250.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn no_subgrid_ignores_parent_tracks() {
+        // A regular child grid should NOT inherit parent tracks
+        let mut parent_style = ComputedStyle::default();
+        parent_style.display = Display::Grid;
+        parent_style.grid_template_columns = vec![
+            TrackSize::Px(100.0),
+            TrackSize::Px(200.0),
+        ];
+
+        let mut child_style = ComputedStyle::default();
+        child_style.display = Display::Grid;
+        child_style.grid_template_columns = vec![TrackSize::Px(50.0), TrackSize::Px(50.0)];
+
+        let (tree, parent_box, _children) = grid_with_styles(
+            1,
+            parent_style,
+            &[child_style],
+        );
+
+        let pb = tree.get(parent_box).unwrap();
+        // Parent should have its own tracks
+        assert_eq!(pb.grid_col_tracks.len(), 2);
+        assert!((pb.grid_col_tracks[0] - 100.0).abs() < 0.1);
     }
 }

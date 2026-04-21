@@ -159,6 +159,21 @@ impl AnchorRegistry {
     pub fn clear(&mut self) {
         self.anchors.clear();
     }
+
+    /// Return the number of registered anchors.
+    pub fn len(&self) -> usize {
+        self.anchors.len()
+    }
+
+    /// Return `true` if no anchors are registered.
+    pub fn is_empty(&self) -> bool {
+        self.anchors.is_empty()
+    }
+
+    /// Iterate over all registered anchor names.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.anchors.keys().map(|s| s.as_str())
+    }
 }
 
 /// The laid-out tree — result of running the layout engine.
@@ -375,5 +390,62 @@ impl LayoutTree {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geometry::Rect;
+
+    #[test]
+    fn anchor_registry_register_and_get() {
+        let mut reg = AnchorRegistry::default();
+        assert!(reg.is_empty());
+
+        reg.register("--my-anchor".into(), Rect::new(10.0, 20.0, 100.0, 50.0));
+        assert_eq!(reg.len(), 1);
+        assert!(!reg.is_empty());
+
+        let r = reg.get("--my-anchor").unwrap();
+        assert_eq!(*r, Rect::new(10.0, 20.0, 100.0, 50.0));
+    }
+
+    #[test]
+    fn anchor_registry_overwrite() {
+        let mut reg = AnchorRegistry::default();
+        reg.register("--a".into(), Rect::new(0.0, 0.0, 10.0, 10.0));
+        reg.register("--a".into(), Rect::new(5.0, 5.0, 20.0, 20.0));
+        assert_eq!(reg.len(), 1);
+        assert_eq!(*reg.get("--a").unwrap(), Rect::new(5.0, 5.0, 20.0, 20.0));
+    }
+
+    #[test]
+    fn anchor_registry_missing() {
+        let reg = AnchorRegistry::default();
+        assert!(reg.get("--nonexistent").is_none());
+    }
+
+    #[test]
+    fn anchor_registry_clear() {
+        let mut reg = AnchorRegistry::default();
+        reg.register("--x".into(), Rect::new(0.0, 0.0, 1.0, 1.0));
+        reg.register("--y".into(), Rect::new(0.0, 0.0, 2.0, 2.0));
+        assert_eq!(reg.len(), 2);
+
+        reg.clear();
+        assert!(reg.is_empty());
+        assert!(reg.get("--x").is_none());
+    }
+
+    #[test]
+    fn anchor_registry_names() {
+        let mut reg = AnchorRegistry::default();
+        reg.register("--b".into(), Rect::zero());
+        reg.register("--a".into(), Rect::zero());
+
+        let mut names: Vec<&str> = reg.names().collect();
+        names.sort();
+        assert_eq!(names, vec!["--a", "--b"]);
     }
 }

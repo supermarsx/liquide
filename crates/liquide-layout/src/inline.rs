@@ -111,6 +111,8 @@ enum InlineItem {
         edges: InlineEdges,
         vertical_align: VerticalAlign,
         font_size: f32,
+        direction: Direction,
+        unicode_bidi: UnicodeBidi,
     },
     /// Closing of an inline box.
     CloseInline {
@@ -140,6 +142,8 @@ struct PlacedFragment {
     #[allow(dead_code)] // Used for baseline alignment calculations  
     baseline: f32,
     node_id: NodeId,
+    /// Bidi embedding level (even = LTR, odd = RTL).
+    bidi_level: u8,
 }
 
 /// A completed line with placed fragments.
@@ -161,11 +165,22 @@ impl BuiltLine {
 // ── Collect inline items ────────────────────────────────────────────────────
 
 /// Resolve a `Dimension` side to pixels, defaulting to 0.
+///
+/// When `ch_advance` is provided (from real font metrics), `Dimension::Ch`
+/// values are resolved using it instead of the default `font_size * 0.5`
+/// approximation.
 fn resolve_dim(
     dim: &liquide_style_engine::dimension::Dimension,
     parent: f32,
     font_size: f32,
+    ch_advance: Option<f32>,
 ) -> f32 {
+    use liquide_style_engine::dimension::Dimension;
+    if let Dimension::Ch(v) = dim {
+        if let Some(ch_w) = ch_advance {
+            return ch_w * v;
+        }
+    }
     dim.resolve_px(parent, font_size, font_size, 0.0, 0.0)
         .unwrap_or(0.0)
 }
@@ -176,19 +191,22 @@ fn edges_from_style(
     parent_width: f32,
 ) -> InlineEdges {
     let fs = style.font_size;
+    // NOTE: ch_advance=None here — edges rarely use `ch` units.
+    // When the upstream TextMeasurer trait exposes font metrics,
+    // this can be plumbed through for full accuracy.
     InlineEdges {
-        margin_left: resolve_dim(&style.margin.left, parent_width, fs),
-        margin_right: resolve_dim(&style.margin.right, parent_width, fs),
+        margin_left: resolve_dim(&style.margin.left, parent_width, fs, None),
+        margin_right: resolve_dim(&style.margin.right, parent_width, fs, None),
         border_left: style.border_width.left,
         border_right: style.border_width.right,
-        padding_left: resolve_dim(&style.padding.left, parent_width, fs),
-        padding_right: resolve_dim(&style.padding.right, parent_width, fs),
-        margin_top: resolve_dim(&style.margin.top, 0.0, fs),
-        margin_bottom: resolve_dim(&style.margin.bottom, 0.0, fs),
+        padding_left: resolve_dim(&style.padding.left, parent_width, fs, None),
+        padding_right: resolve_dim(&style.padding.right, parent_width, fs, None),
+        margin_top: resolve_dim(&style.margin.top, 0.0, fs, None),
+        margin_bottom: resolve_dim(&style.margin.bottom, 0.0, fs, None),
         border_top: style.border_width.top,
         border_bottom: style.border_width.bottom,
-        padding_top: resolve_dim(&style.padding.top, 0.0, fs),
-        padding_bottom: resolve_dim(&style.padding.bottom, 0.0, fs),
+        padding_top: resolve_dim(&style.padding.top, 0.0, fs, None),
+        padding_bottom: resolve_dim(&style.padding.bottom, 0.0, fs, None),
     }
 }
 
@@ -415,6 +433,8 @@ fn collect_inline_items(
         let edges = edges_from_style(&style, parent_width);
         let va = style.vertical_align.clone();
         let fs = style.font_size;
+        let dir = style.direction;
+        let bidi = style.unicode_bidi;
         let box_id = tree.alloc(node_id, BoxType::Inline);
         items.push(InlineItem::OpenInline {
             node_id,
@@ -422,6 +442,8 @@ fn collect_inline_items(
             edges,
             vertical_align: va,
             font_size: fs,
+            direction: dir,
+            unicode_bidi: bidi,
         });
         Some((box_id, edges))
     } else {
@@ -762,6 +784,110 @@ fn vertical_offset(
     }
 }
 
+// ── Bidi embedding levels ────────────────────────────────────────────────────
+
+/// Next higher odd level (RTL).
+fn next_odd_level(level: u8) -> u8 {
+    if level % 2 == 1 { level + 2 } else { level + 1 }
+}
+
+/// Next higher even level (LTR).
+fn next_even_level(level: u8) -> u8 {
+    if level % 2 == 0 { level + 2 } else { level + 1 }
+}
+
+/// Compute bidi embedding levels for each inline item.
+///
+/// Uses a simplified Unicode Bidi Algorithm (UAX #9):
+/// - Base paragraph level is 0 (LTR) or 1 (RTL).
+/// - `unicode-bidi: embed` opens a new embedding level in the specified direction.
+/// - `unicode-bidi: isolate` / `isolate-override` creates an isolation boundary.
+/// - `unicode-bidi: bidi-override` forces direction on all enclosed content.
+///
+/// Returns a `Vec<u8>` parallel to `items` with the resolved level per item.
+fn compute_bidi_levels(items: &[InlineItem], base_level: u8) -> Vec<u8> {
+    let mut levels = vec![base_level; items.len()];
+    let mut stack: Vec<u8> = vec![base_level];
+
+    for (i, item) in items.iter().enumerate() {
+        match item {
+            InlineItem::OpenInline { direction, unicode_bidi, .. } => {
+                let current = *stack.last().unwrap_or(&base_level);
+                let new_level = match unicode_bidi {
+                    UnicodeBidi::Embed | UnicodeBidi::BidiOverride => match direction {
+                        Direction::Rtl => next_odd_level(current),
+                        Direction::Ltr => next_even_level(current),
+                    },
+                    UnicodeBidi::Isolate | UnicodeBidi::IsolateOverride => match direction {
+                        Direction::Rtl => next_odd_level(current),
+                        Direction::Ltr => next_even_level(current),
+                    },
+                    UnicodeBidi::Normal | UnicodeBidi::Plaintext => current,
+                };
+                stack.push(new_level);
+                levels[i] = new_level;
+            }
+            InlineItem::CloseInline { .. } => {
+                stack.pop();
+                levels[i] = *stack.last().unwrap_or(&base_level);
+            }
+            _ => {
+                levels[i] = *stack.last().unwrap_or(&base_level);
+            }
+        }
+    }
+
+    levels
+}
+
+/// Reorder placed fragments on a line according to bidi embedding levels.
+///
+/// Implements rule L2 of the Unicode Bidi Algorithm: for each level from max
+/// down to the base level + 1, reverse every maximal contiguous run of
+/// fragments at that level or higher, then recompute x positions.
+fn reorder_line_bidi(fragments: &mut [PlacedFragment], base_level: u8) {
+    if fragments.is_empty() {
+        return;
+    }
+
+    let max_level = fragments.iter().map(|f| f.bidi_level).max().unwrap_or(base_level);
+
+    if max_level <= base_level {
+        // All fragments at or below the base level.
+        // If the base is RTL (odd), reverse the entire line.
+        if base_level % 2 == 1 {
+            fragments.reverse();
+        }
+    } else {
+        // L2: for each level from max down to base_level + 1, reverse runs ≥ level.
+        for level in (base_level + 1..=max_level).rev() {
+            let mut i = 0;
+            while i < fragments.len() {
+                if fragments[i].bidi_level >= level {
+                    let start = i;
+                    while i < fragments.len() && fragments[i].bidi_level >= level {
+                        i += 1;
+                    }
+                    fragments[start..i].reverse();
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        // Also reverse the whole line if base is RTL.
+        if base_level % 2 == 1 {
+            fragments.reverse();
+        }
+    }
+
+    // Recompute x positions after reordering.
+    let mut cursor = 0.0f32;
+    for frag in fragments.iter_mut() {
+        frag.x = cursor;
+        cursor += frag.width;
+    }
+}
+
 // ── Layout lines ────────────────────────────────────────────────────────────
 
 /// Position fragments on lines, apply text-align and vertical-align,
@@ -778,6 +904,7 @@ fn layout_lines(
     default_font_size: f32,
     default_font_family: &[String],
     is_rtl: bool,
+    bidi_levels: &[u8],
 ) -> Vec<BuiltLine> {
     let mut built: Vec<BuiltLine> = Vec::new();
     let mut y = start_y;
@@ -848,22 +975,26 @@ fn layout_lines(
                     node_id,
                     ..
                 } => {
+                    let level = bidi_levels.get(idx).copied().unwrap_or(0);
                     fragments.push(PlacedFragment {
                         x: cursor_x,
                         width: *width,
                         height: *height,
                         baseline: *baseline,
                         node_id: *node_id,
+                        bidi_level: level,
                     });
                     cursor_x += width;
                 }
                 InlineItem::Space { width, node_id } => {
+                    let level = bidi_levels.get(idx).copied().unwrap_or(0);
                     fragments.push(PlacedFragment {
                         x: cursor_x,
                         width: *width,
                         height: 0.0,
                         baseline: 0.0,
                         node_id: *node_id,
+                        bidi_level: level,
                     });
                     cursor_x += width;
                 }
@@ -880,12 +1011,14 @@ fn layout_lines(
                 } => {
                     // Place ruby container as an atomic inline fragment.
                     let total_h = result.total_block_size();
+                    let level = bidi_levels.get(idx).copied().unwrap_or(0);
                     fragments.push(PlacedFragment {
                         x: cursor_x,
                         width: result.inline_advance,
                         height: total_h,
                         baseline: result.base_height * 0.8 + result.annotation_overhead(),
                         node_id: *node_id,
+                        bidi_level: level,
                     });
                     cursor_x += result.inline_advance;
                 }
@@ -936,16 +1069,12 @@ fn layout_lines(
             }
         }
 
-        // For RTL lines, reverse the visual order of fragments so inline
-        // items appear right-to-left, then apply alignment.
-        if is_rtl {
-            let mut cursor = 0.0f32;
-            for frag in fragments.iter_mut().rev() {
-                frag.x = cursor;
-                cursor += frag.width;
-            }
-            fragments.reverse();
-        }
+        // ── Apply bidi reordering ──
+        // Uses the Unicode Bidi Algorithm L2 rule to reorder fragments
+        // based on their embedding levels. This replaces simple RTL reversal
+        // with proper mixed-directionality support.
+        let base_level: u8 = if is_rtl { 1 } else { 0 };
+        reorder_line_bidi(&mut fragments, base_level);
 
         let shift = align_offset_directional(effective_align, max_width, line_content_width, is_rtl);
         if shift > 0.0 {
@@ -1099,6 +1228,9 @@ pub fn layout_inline(
 
     // ── 3. Position fragments on lines ──────────────────────────────────
 
+    let base_level: u8 = if is_rtl { 1 } else { 0 };
+    let bidi_levels = compute_bidi_levels(&items, base_level);
+
     let built_lines = layout_lines(
         &items,
         &line_indices,
@@ -1111,6 +1243,7 @@ pub fn layout_inline(
         font_size,
         &font_family,
         is_rtl,
+        &bidi_levels,
     );
 
     // ── 4. Build LineBox records and compute total geometry ──────────────
@@ -1448,5 +1581,278 @@ mod tests {
         assert!(allows_wrap(WhiteSpace::PreLine));
         assert!(!allows_wrap(WhiteSpace::Pre));
         assert!(!allows_wrap(WhiteSpace::NoWrap));
+    }
+
+    // ── Bidi level helpers ──────────────────────────────────────────────
+
+    #[test]
+    fn next_odd_level_values() {
+        assert_eq!(next_odd_level(0), 1);
+        assert_eq!(next_odd_level(1), 3);
+        assert_eq!(next_odd_level(2), 3);
+        assert_eq!(next_odd_level(3), 5);
+    }
+
+    #[test]
+    fn next_even_level_values() {
+        assert_eq!(next_even_level(0), 2);
+        assert_eq!(next_even_level(1), 2);
+        assert_eq!(next_even_level(2), 4);
+        assert_eq!(next_even_level(3), 4);
+    }
+
+    // ── compute_bidi_levels ─────────────────────────────────────────────
+
+    #[test]
+    fn bidi_levels_all_ltr_base() {
+        // Plain words at base level 0 all get level 0.
+        let items = vec![
+            InlineItem::Word {
+                text: "hello".into(),
+                width: 50.0,
+                height: 16.0,
+                baseline: 12.0,
+                node_id: NodeId(0),
+                font_size: 16.0,
+            },
+            InlineItem::Space { width: 4.0, node_id: NodeId(0) },
+            InlineItem::Word {
+                text: "world".into(),
+                width: 50.0,
+                height: 16.0,
+                baseline: 12.0,
+                node_id: NodeId(0),
+                font_size: 16.0,
+            },
+        ];
+        let levels = compute_bidi_levels(&items, 0);
+        assert_eq!(levels, vec![0, 0, 0]);
+    }
+
+    #[test]
+    fn bidi_levels_all_rtl_base() {
+        // Plain words at base level 1 all get level 1.
+        let items = vec![
+            InlineItem::Word {
+                text: "مرحبا".into(),
+                width: 60.0,
+                height: 16.0,
+                baseline: 12.0,
+                node_id: NodeId(0),
+                font_size: 16.0,
+            },
+        ];
+        let levels = compute_bidi_levels(&items, 1);
+        assert_eq!(levels, vec![1]);
+    }
+
+    #[test]
+    fn bidi_levels_embed_rtl_in_ltr() {
+        // LTR base with an RTL embed: embed content gets level 1.
+        let items = vec![
+            InlineItem::Word {
+                text: "hello".into(),
+                width: 50.0,
+                height: 16.0,
+                baseline: 12.0,
+                node_id: NodeId(0),
+                font_size: 16.0,
+            },
+            InlineItem::OpenInline {
+                node_id: NodeId(1),
+                box_id: LayoutBoxId(1),
+                edges: InlineEdges::default(),
+                vertical_align: VerticalAlign::Baseline,
+                font_size: 16.0,
+                direction: Direction::Rtl,
+                unicode_bidi: UnicodeBidi::Embed,
+            },
+            InlineItem::Word {
+                text: "عربي".into(),
+                width: 40.0,
+                height: 16.0,
+                baseline: 12.0,
+                node_id: NodeId(1),
+                font_size: 16.0,
+            },
+            InlineItem::CloseInline {
+                node_id: NodeId(1),
+                box_id: LayoutBoxId(1),
+                edges: InlineEdges::default(),
+            },
+            InlineItem::Word {
+                text: "world".into(),
+                width: 50.0,
+                height: 16.0,
+                baseline: 12.0,
+                node_id: NodeId(0),
+                font_size: 16.0,
+            },
+        ];
+        let levels = compute_bidi_levels(&items, 0);
+        // Open gets level 1 (RTL embed), word inside gets 1, close returns to 0, final word is 0.
+        assert_eq!(levels, vec![0, 1, 1, 0, 0]);
+    }
+
+    #[test]
+    fn bidi_levels_isolate_ltr_in_rtl() {
+        // RTL base with an LTR isolate: isolated content gets level 2.
+        let items = vec![
+            InlineItem::Word {
+                text: "مرحبا".into(),
+                width: 60.0,
+                height: 16.0,
+                baseline: 12.0,
+                node_id: NodeId(0),
+                font_size: 16.0,
+            },
+            InlineItem::OpenInline {
+                node_id: NodeId(1),
+                box_id: LayoutBoxId(1),
+                edges: InlineEdges::default(),
+                vertical_align: VerticalAlign::Baseline,
+                font_size: 16.0,
+                direction: Direction::Ltr,
+                unicode_bidi: UnicodeBidi::Isolate,
+            },
+            InlineItem::Word {
+                text: "English".into(),
+                width: 50.0,
+                height: 16.0,
+                baseline: 12.0,
+                node_id: NodeId(1),
+                font_size: 16.0,
+            },
+            InlineItem::CloseInline {
+                node_id: NodeId(1),
+                box_id: LayoutBoxId(1),
+                edges: InlineEdges::default(),
+            },
+        ];
+        let levels = compute_bidi_levels(&items, 1);
+        // Arabic at 1, open isolate at 2, English at 2, close at 1.
+        assert_eq!(levels, vec![1, 2, 2, 1]);
+    }
+
+    #[test]
+    fn bidi_levels_normal_no_change() {
+        // unicode-bidi: normal does not change the embedding level.
+        let items = vec![
+            InlineItem::OpenInline {
+                node_id: NodeId(1),
+                box_id: LayoutBoxId(1),
+                edges: InlineEdges::default(),
+                vertical_align: VerticalAlign::Baseline,
+                font_size: 16.0,
+                direction: Direction::Rtl,
+                unicode_bidi: UnicodeBidi::Normal,
+            },
+            InlineItem::Word {
+                text: "text".into(),
+                width: 40.0,
+                height: 16.0,
+                baseline: 12.0,
+                node_id: NodeId(1),
+                font_size: 16.0,
+            },
+            InlineItem::CloseInline {
+                node_id: NodeId(1),
+                box_id: LayoutBoxId(1),
+                edges: InlineEdges::default(),
+            },
+        ];
+        let levels = compute_bidi_levels(&items, 0);
+        // Normal doesn't change level — all remain 0.
+        assert_eq!(levels, vec![0, 0, 0]);
+    }
+
+    // ── reorder_line_bidi ───────────────────────────────────────────────
+
+    fn make_frag(x: f32, w: f32, level: u8, node: u32) -> PlacedFragment {
+        PlacedFragment {
+            x,
+            width: w,
+            height: 16.0,
+            baseline: 12.0,
+            node_id: NodeId(node),
+            bidi_level: level,
+        }
+    }
+
+    #[test]
+    fn bidi_reorder_all_ltr() {
+        // All level-0 fragments stay in order.
+        let mut frags = vec![
+            make_frag(0.0, 10.0, 0, 0),
+            make_frag(10.0, 10.0, 0, 1),
+            make_frag(20.0, 10.0, 0, 2),
+        ];
+        reorder_line_bidi(&mut frags, 0);
+        assert_eq!(frags[0].node_id, NodeId(0));
+        assert_eq!(frags[1].node_id, NodeId(1));
+        assert_eq!(frags[2].node_id, NodeId(2));
+    }
+
+    #[test]
+    fn bidi_reorder_all_rtl() {
+        // All level-1 fragments in RTL base → reversed.
+        let mut frags = vec![
+            make_frag(0.0, 10.0, 1, 0),
+            make_frag(10.0, 20.0, 1, 1),
+            make_frag(30.0, 10.0, 1, 2),
+        ];
+        reorder_line_bidi(&mut frags, 1);
+        assert_eq!(frags[0].node_id, NodeId(2));
+        assert_eq!(frags[1].node_id, NodeId(1));
+        assert_eq!(frags[2].node_id, NodeId(0));
+        // x positions recomputed
+        assert_eq!(frags[0].x, 0.0);
+        assert_eq!(frags[1].x, 10.0);
+        assert_eq!(frags[2].x, 30.0);
+    }
+
+    #[test]
+    fn bidi_reorder_mixed_ltr_rtl_embed() {
+        // LTR base with RTL embed in the middle: [LTR][RTL RTL][LTR]
+        // The RTL run (level 1) should be reversed within.
+        let mut frags = vec![
+            make_frag(0.0, 10.0, 0, 0),   // LTR "A"
+            make_frag(10.0, 10.0, 1, 1),  // RTL "ب"
+            make_frag(20.0, 10.0, 1, 2),  // RTL "ت"
+            make_frag(30.0, 10.0, 0, 3),  // LTR "B"
+        ];
+        reorder_line_bidi(&mut frags, 0);
+        // RTL run reversed: A, ت, ب, B
+        assert_eq!(frags[0].node_id, NodeId(0));
+        assert_eq!(frags[1].node_id, NodeId(2));
+        assert_eq!(frags[2].node_id, NodeId(1));
+        assert_eq!(frags[3].node_id, NodeId(3));
+    }
+
+    #[test]
+    fn bidi_reorder_rtl_base_with_ltr_embed() {
+        // RTL base (1) with LTR embed (level 2) in the middle.
+        // [RTL:1][LTR:2 LTR:2][RTL:1]
+        // L2 reverses level-2 run (no-op since already in logical order),
+        // then base RTL reverses entire line.
+        let mut frags = vec![
+            make_frag(0.0, 10.0, 1, 0),   // RTL "أ"
+            make_frag(10.0, 10.0, 2, 1),  // LTR "A"
+            make_frag(20.0, 10.0, 2, 2),  // LTR "B"
+            make_frag(30.0, 10.0, 1, 3),  // RTL "ب"
+        ];
+        reorder_line_bidi(&mut frags, 1);
+        // After L2: level 2 run [A,B] stays, then base RTL reverses all → ب, A, B, أ
+        assert_eq!(frags[0].node_id, NodeId(3));
+        assert_eq!(frags[1].node_id, NodeId(1));
+        assert_eq!(frags[2].node_id, NodeId(2));
+        assert_eq!(frags[3].node_id, NodeId(0));
+    }
+
+    #[test]
+    fn bidi_reorder_empty() {
+        let mut frags: Vec<PlacedFragment> = vec![];
+        reorder_line_bidi(&mut frags, 0); // should not panic
+        assert!(frags.is_empty());
     }
 }

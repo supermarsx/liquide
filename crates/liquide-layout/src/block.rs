@@ -329,8 +329,9 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     if let Some(before_style) = styles.get_pseudo(node_id, PseudoKind::Before) {
         if let Some(ref content) = before_style.content {
             if !content.is_empty() {
-                // Resolve [attr:name] placeholders against the element's attributes
+                // Resolve [attr:name] and [counter:name] placeholders
                 let resolved = resolve_attr_placeholders(content, doc, node_id);
+                let resolved = resolve_counter_placeholders(&resolved);
                 let text_props = crate::TextProperties::from_style(before_style);
                 let metrics = text_measurer.measure(
                     &resolved,
@@ -1069,8 +1070,9 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     if let Some(after_style) = styles.get_pseudo(node_id, PseudoKind::After) {
         if let Some(ref content) = after_style.content {
             if !content.is_empty() {
-                // Resolve [attr:name] placeholders against the element's attributes
+                // Resolve [attr:name] and [counter:name] placeholders
                 let resolved = resolve_attr_placeholders(content, doc, node_id);
+                let resolved = resolve_counter_placeholders(&resolved);
                 let text_props = crate::TextProperties::from_style(after_style);
                 let metrics = text_measurer.measure(
                     &resolved,
@@ -1461,6 +1463,57 @@ fn resolve_attr_placeholders(content: &str, doc: &Document, node_id: NodeId) -> 
             // Malformed placeholder — emit literally
             result.push_str(&rest[start..]);
             break;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
+/// Resolve `[counter:name]` and `[counters:name:sep]` placeholders in
+/// pseudo-element content using the thread-local `COUNTER_REGISTRY`.
+fn resolve_counter_placeholders(content: &str) -> String {
+    if !content.contains("[counter:") && !content.contains("[counters:") {
+        return content.to_string();
+    }
+    let mut result = String::with_capacity(content.len());
+    let mut rest = content;
+    while let Some(start) = rest.find("[counter") {
+        result.push_str(&rest[..start]);
+        let tag = &rest[start..];
+        if tag.starts_with("[counters:") {
+            let after_prefix = &tag[10..]; // skip "[counters:"
+            if let Some(end) = after_prefix.find(']') {
+                let inner = &after_prefix[..end];
+                // Split on first ':' -> name, separator
+                let (name, sep) = if let Some(colon) = inner.find(':') {
+                    (&inner[..colon], &inner[colon + 1..])
+                } else {
+                    (inner, ".")
+                };
+                let val = crate::counter::COUNTER_REGISTRY
+                    .with(|reg| reg.borrow().counters_value(name, sep));
+                result.push_str(&val);
+                rest = &after_prefix[end + 1..];
+            } else {
+                result.push_str(tag);
+                break;
+            }
+        } else if tag.starts_with("[counter:") {
+            let after_prefix = &tag[9..]; // skip "[counter:"
+            if let Some(end) = after_prefix.find(']') {
+                let name = &after_prefix[..end];
+                let val = crate::counter::COUNTER_REGISTRY
+                    .with(|reg| reg.borrow().counter_value(name));
+                result.push_str(&val.to_string());
+                rest = &after_prefix[end + 1..];
+            } else {
+                result.push_str(tag);
+                break;
+            }
+        } else {
+            // "[counter" prefix that isn't a valid placeholder — emit literally
+            result.push_str(&tag[..8]);
+            rest = &tag[8..];
         }
     }
     result.push_str(rest);
