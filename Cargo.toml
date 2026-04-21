@@ -21,7 +21,6 @@ members = [
     "crates/liquide-render-coordinator",
     "crates/liquide-encoder",
     "crates/liquide-encoder-hw",
-    "crates/liquide-css",
     "crates/liquide-fonts",
     "crates/liquide-context-menu",
     "crates/liquide-dock",
@@ -390,7 +389,6 @@ liquide-renderer-css = { path = "crates/liquide-renderer-css" }
 liquide-theme-css = { path = "crates/liquide-theme-css" }
 liquide-encoder = { path = "crates/liquide-encoder" }
 liquide-encoder-hw = { path = "crates/liquide-encoder-hw" }
-liquide-css = { path = "crates/liquide-css" }
 liquide-fonts = { path = "crates/liquide-fonts" }
 liquide-context-menu = { path = "crates/liquide-context-menu" }
 liquide-dock = { path = "crates/liquide-dock" }
@@ -495,3 +493,7 @@ panic = "abort"
 [profile.bench]
 inherits = "release"
 debug = true
+
+[[bench]]
+name = "layout_cache"
+harness = false
