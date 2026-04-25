@@ -1,6 +1,6 @@
 //! LayerDrawCmd — flattened, z-ordered draw commands for final compositing.
 
-use crate::layer::{BlendMode, LayerId, Rect, IDENTITY_TRANSFORM};
+use crate::layer::{BlendMode, IDENTITY_TRANSFORM, LayerId, Rect};
 use crate::tree::LayerTree;
 
 /// A single draw command emitted by [`flatten`] for the compositor.
@@ -144,10 +144,10 @@ fn compose_affine(parent: &[f32; 6], child: &[f32; 6]) -> [f32; 6] {
     let [pa, pb, pc, pd, ptx, pty] = *parent;
     let [ca, cb, cc, cd, ctx, cty] = *child;
     [
-        ca * pa + cb * pc,       // a
-        ca * pb + cb * pd,       // b
-        cc * pa + cd * pc,       // c
-        cc * pb + cd * pd,       // d
+        ca * pa + cb * pc,         // a
+        ca * pb + cb * pd,         // b
+        cc * pa + cd * pc,         // c
+        cc * pb + cd * pd,         // d
         ctx * pa + cty * pc + ptx, // tx
         ctx * pb + cty * pd + pty, // ty
     ]
@@ -161,11 +161,20 @@ fn transform_rect(transform: &[f32; 6], r: &Rect) -> Rect {
         (a * r.x + b * r.y + tx, c * r.x + d * r.y + ty),
         (a * r.right() + b * r.y + tx, c * r.right() + d * r.y + ty),
         (a * r.x + b * r.bottom() + tx, c * r.x + d * r.bottom() + ty),
-        (a * r.right() + b * r.bottom() + tx, c * r.right() + d * r.bottom() + ty),
+        (
+            a * r.right() + b * r.bottom() + tx,
+            c * r.right() + d * r.bottom() + ty,
+        ),
     ];
     let min_x = corners.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
     let min_y = corners.iter().map(|p| p.1).fold(f32::INFINITY, f32::min);
-    let max_x = corners.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
-    let max_y = corners.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max);
+    let max_x = corners
+        .iter()
+        .map(|p| p.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let max_y = corners
+        .iter()
+        .map(|p| p.1)
+        .fold(f32::NEG_INFINITY, f32::max);
     Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
 }

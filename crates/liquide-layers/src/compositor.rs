@@ -4,7 +4,7 @@
 //! the appropriate transform, opacity, clip, and blend mode. Implements
 //! occlusion culling to skip fully hidden layers.
 
-use crate::draw_cmd::{flatten, LayerDrawCmd};
+use crate::draw_cmd::{LayerDrawCmd, flatten};
 use crate::layer::{BlendMode, Rect};
 use crate::tree::LayerTree;
 
@@ -295,21 +295,30 @@ fn blit_layer(
 
     if is_simple {
         blit_translated(
-            src_pixels, src_w, src_h,
-            tx, ty,
+            src_pixels,
+            src_w,
+            src_h,
+            tx,
+            ty,
             &clip,
             cmd.opacity,
             cmd.blend_mode,
-            output, out_width, out_height,
+            output,
+            out_width,
+            out_height,
         );
     } else {
         blit_transformed(
-            src_pixels, src_w, src_h,
+            src_pixels,
+            src_w,
+            src_h,
             &cmd.transform,
             &clip,
             cmd.opacity,
             cmd.blend_mode,
-            output, out_width, out_height,
+            output,
+            out_width,
+            out_height,
         );
     }
 }
@@ -364,7 +373,10 @@ fn blit_translated(
             }
 
             blend_pixel(
-                sr, sg, sb, sa,
+                sr,
+                sg,
+                sb,
+                sa,
                 &mut output[dst_off..dst_off + 4],
                 blend_mode,
             );
@@ -428,7 +440,10 @@ fn blit_transformed(
             }
 
             blend_pixel(
-                sr, sg, sb, sa,
+                sr,
+                sg,
+                sb,
+                sa,
                 &mut output[dst_off..dst_off + 4],
                 blend_mode,
             );

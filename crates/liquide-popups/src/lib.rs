@@ -18,6 +18,7 @@
 //!   should dismiss popups or be blocked by modal dialogs.
 
 pub mod anchor;
+pub mod dialog_info;
 pub mod dropdown;
 pub mod events;
 pub mod manager;
@@ -30,6 +31,7 @@ pub mod tooltip;
 mod tests;
 
 pub use anchor::{Alignment, AnchorConfig, Edge};
+pub use dialog_info::DialogInfo;
 pub use dropdown::{DropdownController, DropdownItem, DropdownKey};
 pub use events::EventRouter;
 pub use manager::PopupManager;
@@ -54,7 +56,12 @@ impl Rect {
     /// Create a new rectangle.
     #[must_use]
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Right edge.

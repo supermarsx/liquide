@@ -56,10 +56,7 @@ impl AppNotificationSettings {
     /// Returns the settings for an app. If no explicit settings exist,
     /// returns the defaults.
     pub fn get(&self, app_id: &str) -> AppSettings {
-        self.settings
-            .get(app_id)
-            .cloned()
-            .unwrap_or_default()
+        self.settings.get(app_id).cloned().unwrap_or_default()
     }
 
     /// Returns a reference to the settings for an app, if explicitly configured.
@@ -79,10 +76,7 @@ impl AppNotificationSettings {
 
     /// Enables or disables notifications for an app.
     pub fn set_enabled(&mut self, app_id: &str, enabled: bool) {
-        self.settings
-            .entry(app_id.to_string())
-            .or_default()
-            .enabled = enabled;
+        self.settings.entry(app_id.to_string()).or_default().enabled = enabled;
     }
 
     /// Enables or disables sound for an app.

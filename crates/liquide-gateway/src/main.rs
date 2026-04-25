@@ -3,9 +3,8 @@ use clap::Parser;
 use tracing::info;
 
 use liquide_gateway::{
-    GatewayConfig, RoutingConfig, RelayConfig, LimitsConfig,
-    HealthCheckConfig, ManagementApiConfig, ClusterConfig,
-    ListenConfig, GatewayRuntime, TransportListener,
+    ClusterConfig, GatewayConfig, GatewayRuntime, HealthCheckConfig, LimitsConfig, ListenConfig,
+    ManagementApiConfig, RelayConfig, RoutingConfig, TransportListener,
 };
 
 /// Network gateway for the Liquide desktop environment.

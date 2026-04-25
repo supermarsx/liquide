@@ -1,7 +1,7 @@
 //! Core popup types: Popup, PopupType, PopupConfig, PopupId.
 
-use crate::anchor::AnchorConfig;
 use crate::Rect;
+use crate::anchor::AnchorConfig;
 
 /// Unique popup identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -91,6 +91,9 @@ pub struct PopupConfig {
 
 impl PopupConfig {
     /// Create a tooltip config.
+    ///
+    /// Tooltips do not auto-dismiss and do not consume Escape by default —
+    /// they are dismissed by mouse-out via the [`TooltipController`].
     #[must_use]
     pub fn tooltip(width: f32, height: f32) -> Self {
         Self {
@@ -100,9 +103,9 @@ impl PopupConfig {
             anchor: None,
             owner: None,
             modal: false,
-            auto_dismiss_ms: Some(5000),
+            auto_dismiss_ms: None,
             dismiss_on_click_outside: true,
-            dismiss_on_escape: true,
+            dismiss_on_escape: false,
             preferred_x: 0.0,
             preferred_y: 0.0,
         }
@@ -147,12 +150,18 @@ impl PopupConfig {
     /// Create a dialog config.
     #[must_use]
     pub fn dialog(width: f32, height: f32, owner: WindowId) -> Self {
+        Self::dialog_for(width, height, Some(owner))
+    }
+
+    /// Create a dialog config with an optional owner window.
+    #[must_use]
+    pub fn dialog_for(width: f32, height: f32, owner: Option<WindowId>) -> Self {
         Self {
             popup_type: PopupType::Dialog,
             width,
             height,
             anchor: None,
-            owner: Some(owner),
+            owner,
             modal: true,
             auto_dismiss_ms: None,
             dismiss_on_click_outside: false,
@@ -257,6 +266,9 @@ pub struct Popup {
     pub bounds: Rect,
     /// Anchor configuration, if anchored to another element.
     pub anchor: Option<AnchorConfig>,
+    /// Preferred top-left placement for later re-positioning.
+    pub preferred_x: f32,
+    pub preferred_y: f32,
     /// The window that owns this popup.
     pub owner: Option<WindowId>,
     /// Whether this popup blocks interaction with windows behind it.
@@ -288,6 +300,8 @@ impl Popup {
             popup_type: config.popup_type,
             bounds,
             anchor: config.anchor.clone(),
+            preferred_x: config.preferred_x,
+            preferred_y: config.preferred_y,
             owner: config.owner,
             modal: config.modal,
             auto_dismiss_ms: config.auto_dismiss_ms,
@@ -295,6 +309,24 @@ impl Popup {
             dismiss_on_escape: config.dismiss_on_escape,
             z_order,
             created_at,
+        }
+    }
+
+    /// Rebuild a popup config from the popup's persistent placement state.
+    #[must_use]
+    pub fn to_config(&self) -> PopupConfig {
+        PopupConfig {
+            popup_type: self.popup_type,
+            width: self.bounds.width,
+            height: self.bounds.height,
+            anchor: self.anchor.clone(),
+            owner: self.owner,
+            modal: self.modal,
+            auto_dismiss_ms: self.auto_dismiss_ms,
+            dismiss_on_click_outside: self.dismiss_on_click_outside,
+            dismiss_on_escape: self.dismiss_on_escape,
+            preferred_x: self.preferred_x,
+            preferred_y: self.preferred_y,
         }
     }
 

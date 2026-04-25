@@ -47,15 +47,16 @@ impl HealthChecker {
         response_time_ms: Option<u64>,
         now: u64,
     ) {
-        let status = self.statuses.entry(server_id.to_string()).or_insert_with(|| {
-            HealthStatus {
+        let status = self
+            .statuses
+            .entry(server_id.to_string())
+            .or_insert_with(|| HealthStatus {
                 server_id: server_id.to_string(),
                 healthy: true,
                 last_check: now,
                 response_time_ms: None,
                 consecutive_failures: 0,
-            }
-        });
+            });
 
         status.last_check = now;
 
@@ -75,9 +76,7 @@ impl HealthChecker {
     /// Whether a server is currently considered healthy.
     #[must_use]
     pub fn is_healthy(&self, server_id: &str) -> bool {
-        self.statuses
-            .get(server_id)
-            .map_or(false, |s| s.healthy)
+        self.statuses.get(server_id).map_or(false, |s| s.healthy)
     }
 
     /// Get the status report for a single server.

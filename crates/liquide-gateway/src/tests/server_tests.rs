@@ -1,5 +1,5 @@
-use crate::server::{ServerCapabilities, ServerHealth, ServerLoad, ServerRegistry};
 use crate::config::ListenTransport;
+use crate::server::{ServerCapabilities, ServerHealth, ServerLoad, ServerRegistry};
 
 fn sample_capabilities() -> ServerCapabilities {
     ServerCapabilities {

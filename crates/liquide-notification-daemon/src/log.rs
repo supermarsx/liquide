@@ -90,10 +90,7 @@ impl NotificationLog {
 
     /// Returns all entries for a specific application (chronological order).
     pub fn entries_for_app(&self, app_id: &str) -> Vec<&LogEntry> {
-        self.entries
-            .iter()
-            .filter(|e| e.app_id == app_id)
-            .collect()
+        self.entries.iter().filter(|e| e.app_id == app_id).collect()
     }
 
     /// Returns all entries with a timestamp >= `timestamp_ms` (chronological).

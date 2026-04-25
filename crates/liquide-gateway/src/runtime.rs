@@ -10,8 +10,8 @@ use crate::audit::GatewayAuditEvent;
 use crate::auth::{AuthHandler, AuthResult, GatewayAuthMethod};
 use crate::cluster::ClusterState;
 use crate::config::{
-    ClusterConfig, GatewayConfig, HealthCheckConfig, LimitsConfig,
-    ManagementApiConfig, RelayConfig, RoutingConfig,
+    ClusterConfig, GatewayConfig, HealthCheckConfig, LimitsConfig, ManagementApiConfig,
+    RelayConfig, RoutingConfig,
 };
 use crate::connection::{ConnectionState, ConnectionTracker};
 use crate::health::HealthChecker;
@@ -94,10 +94,7 @@ impl GatewayRuntime {
 
         let auth_handler = AuthHandler::new(management_config.clone());
         let management_api = ManagementApi::new(management_config);
-        let cluster_state = ClusterState::new(
-            config.hostname.clone(),
-            cluster_config.state_store,
-        );
+        let cluster_state = ClusterState::new(config.hostname.clone(), cluster_config.state_store);
 
         Self {
             config,
@@ -139,11 +136,9 @@ impl GatewayRuntime {
         self.rate_limiter.record_request(client_addr, timestamp);
 
         // 2. Track connection.
-        let conn_id = self.connection_tracker.add(
-            client_addr.to_string(),
-            transport.to_string(),
-            timestamp,
-        );
+        let conn_id =
+            self.connection_tracker
+                .add(client_addr.to_string(), transport.to_string(), timestamp);
 
         self.audit_events.push(GatewayAuditEvent::ClientConnected {
             addr: client_addr.to_string(),
@@ -167,7 +162,10 @@ impl GatewayRuntime {
         match &auth_result {
             AuthResult::Denied { reason } => {
                 // Record auth failure for rate limiter.
-                if let Some(ban) = self.rate_limiter.record_auth_failure(client_addr, timestamp) {
+                if let Some(ban) = self
+                    .rate_limiter
+                    .record_auth_failure(client_addr, timestamp)
+                {
                     self.audit_events.push(GatewayAuditEvent::AuthBanned {
                         addr: client_addr.to_string(),
                         reason: ban.reason.clone(),
@@ -222,10 +220,8 @@ impl GatewayRuntime {
         }
 
         // Register in cluster state.
-        self.cluster_state.register_session_route(
-            conn_id.clone(),
-            decision.target_server_id,
-        );
+        self.cluster_state
+            .register_session_route(conn_id.clone(), decision.target_server_id);
 
         Ok(conn_id)
     }
@@ -237,11 +233,9 @@ impl GatewayRuntime {
         capabilities: ServerCapabilities,
         timestamp: u64,
     ) -> Result<String> {
-        let server_id = self.server_registry.register(
-            address.clone(),
-            capabilities,
-            timestamp,
-        );
+        let server_id = self
+            .server_registry
+            .register(address.clone(), capabilities, timestamp);
 
         self.audit_events.push(GatewayAuditEvent::ServerRegistered {
             server_id: server_id.clone(),
@@ -256,12 +250,7 @@ impl GatewayRuntime {
     /// In a real implementation this would probe each server over the network.
     /// The stub marks servers healthy if they have a recent heartbeat.
     pub fn health_check_tick(&mut self, now: u64) {
-        let server_ids: Vec<String> = self
-            .server_registry
-            .all_servers()
-            .keys()
-            .cloned()
-            .collect();
+        let server_ids: Vec<String> = self.server_registry.all_servers().keys().cloned().collect();
 
         for server_id in &server_ids {
             if let Some(server) = self.server_registry.get(server_id) {
@@ -311,12 +300,10 @@ impl GatewayRuntime {
             .connections_for_server("")
             .into_iter()
             .filter(|id| {
-                self.connection_tracker
-                    .get(id)
-                    .map_or(true, |c| {
-                        c.state() == ConnectionState::Terminated
-                            && now.saturating_sub(c.connected_at()) > 60
-                    })
+                self.connection_tracker.get(id).map_or(true, |c| {
+                    c.state() == ConnectionState::Terminated
+                        && now.saturating_sub(c.connected_at()) > 60
+                })
             })
             .collect();
 
@@ -422,11 +409,9 @@ impl GatewayRuntime {
         self.rate_limiter.record_request(&client_ip, now);
 
         // 2. Track connection.
-        let conn_id = self.connection_tracker.add(
-            client_ip.clone(),
-            "tcp+tls".to_string(),
-            now,
-        );
+        let conn_id = self
+            .connection_tracker
+            .add(client_ip.clone(), "tcp+tls".to_string(), now);
 
         self.audit_events.push(GatewayAuditEvent::ClientConnected {
             addr: peer_addr.to_string(),
@@ -543,7 +528,10 @@ impl GatewayRuntime {
             _ => GatewayAuthMethod::UsernamePassword,
         };
 
-        let auth_result = self.auth_handler.authenticate_async(auth_method, &credential_str).await;
+        let auth_result = self
+            .auth_handler
+            .authenticate_async(auth_method, &credential_str)
+            .await;
 
         let auth_result = match auth_result {
             Ok(r) => r,
@@ -633,9 +621,7 @@ impl GatewayRuntime {
         }
 
         // 7. Route to session server.
-        let route_result = self
-            .router
-            .route(&client_ip, &self.server_registry, None);
+        let route_result = self.router.route(&client_ip, &self.server_registry, None);
 
         match route_result {
             Ok(decision) => {
@@ -677,7 +663,8 @@ impl GatewayRuntime {
 
 fn cbor_encode<T: serde::Serialize>(val: &T) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
-    ciborium::into_writer(val, &mut buf).map_err(|e| GatewayError::Internal(format!("CBOR encode: {e}")))?;
+    ciborium::into_writer(val, &mut buf)
+        .map_err(|e| GatewayError::Internal(format!("CBOR encode: {e}")))?;
     Ok(buf)
 }
 
@@ -690,17 +677,21 @@ async fn recv_cbor<T: serde::de::DeserializeOwned>(
     stream: &mut (impl AsyncReadExt + Unpin),
 ) -> Result<T> {
     let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await.map_err(|e| {
-        GatewayError::Internal(format!("recv len: {e}"))
-    })?;
+    stream
+        .read_exact(&mut len_buf)
+        .await
+        .map_err(|e| GatewayError::Internal(format!("recv len: {e}")))?;
     let msg_len = u32::from_le_bytes(len_buf) as usize;
     if msg_len > 16 * 1024 * 1024 {
-        return Err(GatewayError::Internal(format!("message too large: {msg_len}")));
+        return Err(GatewayError::Internal(format!(
+            "message too large: {msg_len}"
+        )));
     }
     let mut payload = vec![0u8; msg_len];
-    stream.read_exact(&mut payload).await.map_err(|e| {
-        GatewayError::Internal(format!("recv payload: {e}"))
-    })?;
+    stream
+        .read_exact(&mut payload)
+        .await
+        .map_err(|e| GatewayError::Internal(format!("recv payload: {e}")))?;
     cbor_decode(&payload)
 }
 
@@ -711,15 +702,18 @@ async fn send_cbor<T: serde::Serialize>(
 ) -> Result<()> {
     let data = cbor_encode(msg)?;
     let len = (data.len() as u32).to_le_bytes();
-    stream.write_all(&len).await.map_err(|e| {
-        GatewayError::Internal(format!("send len: {e}"))
-    })?;
-    stream.write_all(&data).await.map_err(|e| {
-        GatewayError::Internal(format!("send data: {e}"))
-    })?;
-    stream.flush().await.map_err(|e| {
-        GatewayError::Internal(format!("flush: {e}"))
-    })?;
+    stream
+        .write_all(&len)
+        .await
+        .map_err(|e| GatewayError::Internal(format!("send len: {e}")))?;
+    stream
+        .write_all(&data)
+        .await
+        .map_err(|e| GatewayError::Internal(format!("send data: {e}")))?;
+    stream
+        .flush()
+        .await
+        .map_err(|e| GatewayError::Internal(format!("flush: {e}")))?;
     Ok(())
 }
 
@@ -730,12 +724,18 @@ fn negotiate_transport(supported: &[String]) -> String {
             return preferred.to_string();
         }
     }
-    supported.first().cloned().unwrap_or_else(|| "tcp+tls".to_string())
+    supported
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "tcp+tls".to_string())
 }
 
 /// Pick the first match or fall back to the default.
 fn negotiate_first(supported: &[String], default: &str) -> String {
-    supported.first().cloned().unwrap_or_else(|| default.to_string())
+    supported
+        .first()
+        .cloned()
+        .unwrap_or_else(|| default.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -752,13 +752,12 @@ mod tests {
         Vec<rustls::pki_types::CertificateDer<'static>>,
         rustls::pki_types::PrivateKeyDer<'static>,
     ) {
-        let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()])
-            .expect("rcgen");
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).expect("rcgen");
         let cert_der = rustls::pki_types::CertificateDer::from(cert.cert.der().to_vec());
-        let key_der =
-            rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
-                cert.key_pair.serialize_der(),
-            ));
+        let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
+        );
         (vec![cert_der], key_der)
     }
 
@@ -793,23 +792,32 @@ mod tests {
 
     impl rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
         fn verify_server_cert(
-            &self, _: &rustls::pki_types::CertificateDer<'_>,
+            &self,
+            _: &rustls::pki_types::CertificateDer<'_>,
             _: &[rustls::pki_types::CertificateDer<'_>],
-            _: &rustls::pki_types::ServerName<'_>, _: &[u8],
+            _: &rustls::pki_types::ServerName<'_>,
+            _: &[u8],
             _: rustls::pki_types::UnixTime,
-        ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error>
+        {
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         }
         fn verify_tls12_signature(
-            &self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>,
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
             _: &rustls::DigitallySignedStruct,
-        ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+        {
             Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
         }
         fn verify_tls13_signature(
-            &self, _: &[u8], _: &rustls::pki_types::CertificateDer<'_>,
+            &self,
+            _: &[u8],
+            _: &rustls::pki_types::CertificateDer<'_>,
             _: &rustls::DigitallySignedStruct,
-        ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error>
+        {
             Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
         }
         fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
@@ -857,8 +865,13 @@ mod tests {
         let (server_stream, peer) = tcp_listener.accept().await.unwrap();
         rt.handle_tcp_connection(server_stream, peer).await;
         // Connection should be terminated.
-        assert!(rt.connection_tracker().active_count() == 0
-            || rt.drain_audit_events().iter().any(|e| matches!(e, GatewayAuditEvent::ClientConnected { .. })));
+        assert!(
+            rt.connection_tracker().active_count() == 0
+                || rt
+                    .drain_audit_events()
+                    .iter()
+                    .any(|e| matches!(e, GatewayAuditEvent::ClientConnected { .. }))
+        );
         drop(client);
     }
 
@@ -873,7 +886,8 @@ mod tests {
             "127.0.0.1:4000".to_string(),
             ServerCapabilities::default(),
             1,
-        ).unwrap();
+        )
+        .unwrap();
 
         let tcp_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = tcp_listener.local_addr().unwrap();
@@ -882,7 +896,8 @@ mod tests {
         let client_handle = tokio::spawn(async move {
             let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
             let connector = tokio_rustls::TlsConnector::from(insecure_client_tls_config());
-            let server_name = rustls::pki_types::ServerName::try_from("127.0.0.1".to_string()).unwrap();
+            let server_name =
+                rustls::pki_types::ServerName::try_from("127.0.0.1".to_string()).unwrap();
             let mut tls = connector.connect(server_name, tcp).await.unwrap();
 
             // Send ClientHello
@@ -897,7 +912,10 @@ mod tests {
                 supported_compressions: vec!["lz4".to_string()],
                 capabilities: BTreeMap::new(),
                 display: liquide_protocol::messages::common::DisplayInfo {
-                    width: 1920, height: 1080, scale_factor: 1.0, refresh_rate: 60,
+                    width: 1920,
+                    height: 1080,
+                    scale_factor: 1.0,
+                    refresh_rate: 60,
                 },
                 resume_token: None,
             };
@@ -936,8 +954,16 @@ mod tests {
 
         // Verify audit events were generated.
         let events = rt.drain_audit_events();
-        assert!(events.iter().any(|e| matches!(e, GatewayAuditEvent::ClientConnected { .. })));
-        assert!(events.iter().any(|e| matches!(e, GatewayAuditEvent::AuthAttempt { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, GatewayAuditEvent::ClientConnected { .. }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, GatewayAuditEvent::AuthAttempt { .. }))
+        );
     }
 
     #[tokio::test]

@@ -222,12 +222,7 @@ impl ServerRegistry {
         let server_id = format!("srv-{}", self.next_id);
         self.next_id += 1;
 
-        let server = RegisteredServer::new(
-            server_id.clone(),
-            address,
-            capabilities,
-            timestamp,
-        );
+        let server = RegisteredServer::new(server_id.clone(), address, capabilities, timestamp);
         self.servers.insert(server_id.clone(), server);
         server_id
     }

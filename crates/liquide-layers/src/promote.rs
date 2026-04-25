@@ -137,11 +137,7 @@ impl LayerPromotionHeuristics {
     /// Root layers and layers with active reasons (WillChange, Video,
     /// ScrollingContent, FixedPosition) are never demoted.
     #[must_use]
-    pub fn demotion_check(
-        &self,
-        reason: PromotionReason,
-        frames_since_dirty: u64,
-    ) -> bool {
+    pub fn demotion_check(&self, reason: PromotionReason, frames_since_dirty: u64) -> bool {
         // Never demote layers with persistent reasons.
         match reason {
             PromotionReason::Root
@@ -157,7 +153,10 @@ impl LayerPromotionHeuristics {
 
     /// Scan a layer tree and return IDs of layers eligible for demotion.
     #[must_use]
-    pub fn find_demotable_layers(&self, tree: &crate::tree::LayerTree) -> Vec<crate::layer::LayerId> {
+    pub fn find_demotable_layers(
+        &self,
+        tree: &crate::tree::LayerTree,
+    ) -> Vec<crate::layer::LayerId> {
         let mut result = Vec::new();
         for layer in tree.layers.values() {
             if layer.id == tree.root {

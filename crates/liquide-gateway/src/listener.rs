@@ -2,8 +2,8 @@
 
 use tokio::net::TcpListener;
 
-use crate::config::ListenConfig;
 use crate::GatewayError;
+use crate::config::ListenConfig;
 
 /// Lifecycle state of a transport listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,12 +103,13 @@ impl TransportListener {
     /// Bind the TCP socket and transition to `Listening`.
     pub async fn start(&mut self) -> crate::Result<()> {
         let addr = &self.config.address;
-        let listener = TcpListener::bind(addr).await.map_err(|e| {
-            GatewayError::ListenerBindFailed {
-                addr: addr.clone(),
-                reason: e.to_string(),
-            }
-        })?;
+        let listener =
+            TcpListener::bind(addr)
+                .await
+                .map_err(|e| GatewayError::ListenerBindFailed {
+                    addr: addr.clone(),
+                    reason: e.to_string(),
+                })?;
         tracing::info!(addr = %addr, id = %self.id, "listener bound");
         self.tcp_listener = Some(listener);
         self.state = ListenerState::Listening;
@@ -119,21 +120,22 @@ impl TransportListener {
     ///
     /// Returns the stream and increments the accept counter.
     /// Returns an error if the listener has not been started.
-    pub async fn accept(
-        &mut self,
-    ) -> crate::Result<(tokio::net::TcpStream, std::net::SocketAddr)> {
-        let listener = self.tcp_listener.as_ref().ok_or_else(|| {
-            GatewayError::ListenerBindFailed {
-                addr: self.config.address.clone(),
-                reason: "listener not started".into(),
-            }
-        })?;
-        let (stream, peer_addr) = listener.accept().await.map_err(|e| {
-            GatewayError::ListenerBindFailed {
-                addr: self.config.address.clone(),
-                reason: format!("accept: {e}"),
-            }
-        })?;
+    pub async fn accept(&mut self) -> crate::Result<(tokio::net::TcpStream, std::net::SocketAddr)> {
+        let listener =
+            self.tcp_listener
+                .as_ref()
+                .ok_or_else(|| GatewayError::ListenerBindFailed {
+                    addr: self.config.address.clone(),
+                    reason: "listener not started".into(),
+                })?;
+        let (stream, peer_addr) =
+            listener
+                .accept()
+                .await
+                .map_err(|e| GatewayError::ListenerBindFailed {
+                    addr: self.config.address.clone(),
+                    reason: format!("accept: {e}"),
+                })?;
         self.connections_accepted += 1;
         tracing::debug!(peer = %peer_addr, id = %self.id, "accepted connection");
         Ok((stream, peer_addr))

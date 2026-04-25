@@ -235,22 +235,13 @@ fn test_queue_remove() {
 fn test_queue_by_urgency() {
     reset_ids();
     let mut q = NotificationQueue::new();
-    q.enqueue_at(
-        Notification::new("N1"),
-        1000,
-    );
-    q.enqueue_at(
-        Notification::new("N2"),
-        1001,
-    );
+    q.enqueue_at(Notification::new("N1"), 1000);
+    q.enqueue_at(Notification::new("N2"), 1001);
     q.enqueue_at(
         Notification::new("C1").with_urgency(Urgency::Critical),
         1002,
     );
-    q.enqueue_at(
-        Notification::new("L1").with_urgency(Urgency::Low),
-        1003,
-    );
+    q.enqueue_at(Notification::new("L1").with_urgency(Urgency::Low), 1003);
 
     let normals = q.by_urgency(Urgency::Normal);
     assert_eq!(normals.len(), 2);
@@ -290,6 +281,29 @@ fn test_queue_critical_bypasses_rate_limit() {
 }
 
 #[test]
+fn test_queue_replaces_bypasses_rate_limit() {
+    // A notification with a non-zero replaces_id represents an *update* to
+    // an already-visible notification and must not count against the
+    // per-app rate-limit budget (otherwise progress-bar style replacements
+    // would rapidly hit the limit).
+    reset_ids();
+    let mut q = NotificationQueue::with_rate_limit(1);
+    let first = Notification::new("Progress 0%").with_app_name("downloader");
+    let id1 = q.enqueue_at(first, 1000).unwrap();
+
+    // Would normally be rate-limited after 1/sec, but replaces_id bypasses.
+    let replacement = Notification::new("Progress 50%")
+        .with_app_name("downloader")
+        .with_replaces_id(id1);
+    assert!(q.enqueue_at(replacement, 1001).is_some());
+
+    // A fresh notification from the same app at the same moment should
+    // still be rate-limited because the window counts the original.
+    let other = Notification::new("Other").with_app_name("downloader");
+    assert!(q.enqueue_at(other, 1002).is_none());
+}
+
+#[test]
 fn test_queue_replaces_existing() {
     reset_ids();
     let mut q = NotificationQueue::new();
@@ -298,9 +312,24 @@ fn test_queue_replaces_existing() {
     let replacement = Notification::new("Replacement").with_replaces_id(id1);
     let id2 = q.enqueue_at(replacement, 1001).unwrap();
 
-    assert_ne!(id1, id2);
+    assert_eq!(id1, id2);
     assert_eq!(q.pending_count(), 1); // Original was removed.
-    assert_eq!(q.dequeue().unwrap().summary, "Replacement");
+    let queued = q.dequeue().unwrap();
+    assert_eq!(queued.id, id1);
+    assert_eq!(queued.summary, "Replacement");
+}
+
+#[test]
+fn test_queue_replaces_missing_entry_allocates_new_id() {
+    reset_ids();
+    let mut q = NotificationQueue::new();
+
+    let id = q
+        .enqueue_at(Notification::new("Replacement").with_replaces_id(42), 1000)
+        .unwrap();
+
+    assert_ne!(id, 42);
+    assert_eq!(q.pending_count(), 1);
 }
 
 // ── History tests ───────────────────────────────────────────────────────
@@ -393,12 +422,7 @@ fn test_history_transient_skipped() {
 #[test]
 fn test_history_clear() {
     let mut h = NotificationHistory::new(100);
-    h.record(
-        &Notification::new("Test"),
-        CloseReason::Expired,
-        100,
-        200,
-    );
+    h.record(&Notification::new("Test"), CloseReason::Expired, 100, 200);
     assert_eq!(h.len(), 1);
     h.clear();
     assert!(h.is_empty());
@@ -506,10 +530,7 @@ fn test_server_never_expire_timeout_zero() {
     server.register_handler(Box::new(RecordingHandler::new()));
     server.set_default_timeout(100);
 
-    server.notify_at(
-        Notification::new("Persistent").with_timeout(0),
-        1000,
-    );
+    server.notify_at(Notification::new("Persistent").with_timeout(0), 1000);
 
     server.tick(100_000);
     assert_eq!(server.active_count(), 1); // Never expires.
@@ -539,8 +560,7 @@ fn test_server_invoke_action_resident() {
     let mut server = NotificationServer::new();
     server.register_handler(Box::new(RecordingHandler::new()));
 
-    let mut n = Notification::new("Resident action")
-        .with_action("play", "Play");
+    let mut n = Notification::new("Resident action").with_action("play", "Play");
     n.hints.resident = true;
 
     let id = server.notify_at(n, 1000);
@@ -556,10 +576,7 @@ fn test_server_invoke_invalid_action() {
     let mut server = NotificationServer::new();
     server.register_handler(Box::new(RecordingHandler::new()));
 
-    let id = server.notify_at(
-        Notification::new("Test").with_action("ok", "OK"),
-        1000,
-    );
+    let id = server.notify_at(Notification::new("Test").with_action("ok", "OK"), 1000);
 
     // Invoking a non-existent action should do nothing.
     server.invoke_action(id, "nonexistent");
@@ -592,14 +609,8 @@ fn test_server_rate_limits() {
     server.register_handler(Box::new(RecordingHandler::new()));
     server.queue_mut().rate_limiter_mut().set_limit(1);
 
-    let id1 = server.notify_at(
-        Notification::new("First").with_app_name("app1"),
-        1000,
-    );
-    let id2 = server.notify_at(
-        Notification::new("Second").with_app_name("app1"),
-        1100,
-    );
+    let id1 = server.notify_at(Notification::new("First").with_app_name("app1"), 1000);
+    let id2 = server.notify_at(Notification::new("Second").with_app_name("app1"), 1100);
 
     assert!(id1 > 0);
     assert_eq!(id2, 0); // Rate limited.
@@ -616,6 +627,42 @@ fn test_server_get_active() {
     let active = server.get_active(id).unwrap();
     assert_eq!(active.summary, "Lookup test");
     assert!(server.get_active(99999).is_none());
+}
+
+#[test]
+fn test_server_replaces_active_notification_keeps_id_and_updates_actions() {
+    reset_ids();
+    let mut server = NotificationServer::new();
+    server.register_handler(Box::new(RecordingHandler::new()));
+
+    let id = server.notify_at(
+        Notification::new("Download 0%")
+            .with_action("cancel", "Cancel")
+            .with_timeout(0),
+        1000,
+    );
+
+    let replacement_id = server.notify_at(
+        Notification::new("Download 50%")
+            .with_action("pause", "Pause")
+            .with_replaces_id(id)
+            .with_timeout(0),
+        1100,
+    );
+
+    assert_eq!(replacement_id, id);
+    assert_eq!(server.active_count(), 1);
+
+    let active = server.get_active(id).unwrap();
+    assert_eq!(active.summary, "Download 50%");
+    assert!(active.actions.iter().any(|(key, _)| key == "pause"));
+    assert!(!active.actions.iter().any(|(key, _)| key == "cancel"));
+
+    server.invoke_action(id, "cancel");
+    assert_eq!(server.active_count(), 1);
+
+    server.invoke_action(id, "pause");
+    assert_eq!(server.active_count(), 0);
 }
 
 // ── Platform tests ──────────────────────────────────────────────────────
@@ -640,17 +687,32 @@ fn test_platform_error_display() {
 // ── Grouping tests ──────────────────────────────────────────────────────
 
 use crate::grouping::{
-    collapse_group, expand_group, group_notifications, GroupableNotification, NotificationGroup,
+    GroupableNotification, NotificationGroup, collapse_group, expand_group, group_notifications,
 };
 
 #[test]
 fn test_group_by_app() {
     let notifs = vec![
-        GroupableNotification { id: 1, app_id: "chat".into() },
-        GroupableNotification { id: 2, app_id: "email".into() },
-        GroupableNotification { id: 3, app_id: "chat".into() },
-        GroupableNotification { id: 4, app_id: "chat".into() },
-        GroupableNotification { id: 5, app_id: "email".into() },
+        GroupableNotification {
+            id: 1,
+            app_id: "chat".into(),
+        },
+        GroupableNotification {
+            id: 2,
+            app_id: "email".into(),
+        },
+        GroupableNotification {
+            id: 3,
+            app_id: "chat".into(),
+        },
+        GroupableNotification {
+            id: 4,
+            app_id: "chat".into(),
+        },
+        GroupableNotification {
+            id: 5,
+            app_id: "email".into(),
+        },
     ];
     let groups = group_notifications(&notifs);
 
@@ -664,8 +726,14 @@ fn test_group_by_app() {
 #[test]
 fn test_group_single_app() {
     let notifs = vec![
-        GroupableNotification { id: 10, app_id: "browser".into() },
-        GroupableNotification { id: 20, app_id: "browser".into() },
+        GroupableNotification {
+            id: 10,
+            app_id: "browser".into(),
+        },
+        GroupableNotification {
+            id: 20,
+            app_id: "browser".into(),
+        },
     ];
     let groups = group_notifications(&notifs);
 
@@ -683,9 +751,18 @@ fn test_group_empty() {
 #[test]
 fn test_collapse_expand_group() {
     let notifs = vec![
-        GroupableNotification { id: 1, app_id: "chat".into() },
-        GroupableNotification { id: 2, app_id: "chat".into() },
-        GroupableNotification { id: 3, app_id: "chat".into() },
+        GroupableNotification {
+            id: 1,
+            app_id: "chat".into(),
+        },
+        GroupableNotification {
+            id: 2,
+            app_id: "chat".into(),
+        },
+        GroupableNotification {
+            id: 3,
+            app_id: "chat".into(),
+        },
     ];
     let mut groups = group_notifications(&notifs);
     let group = &mut groups[0];
@@ -736,11 +813,26 @@ fn test_group_add_remove() {
 #[test]
 fn test_group_preserves_order() {
     let notifs = vec![
-        GroupableNotification { id: 5, app_id: "a".into() },
-        GroupableNotification { id: 3, app_id: "b".into() },
-        GroupableNotification { id: 1, app_id: "a".into() },
-        GroupableNotification { id: 4, app_id: "c".into() },
-        GroupableNotification { id: 2, app_id: "b".into() },
+        GroupableNotification {
+            id: 5,
+            app_id: "a".into(),
+        },
+        GroupableNotification {
+            id: 3,
+            app_id: "b".into(),
+        },
+        GroupableNotification {
+            id: 1,
+            app_id: "a".into(),
+        },
+        GroupableNotification {
+            id: 4,
+            app_id: "c".into(),
+        },
+        GroupableNotification {
+            id: 2,
+            app_id: "b".into(),
+        },
     ];
     let groups = group_notifications(&notifs);
 
@@ -843,7 +935,14 @@ fn test_log_entries_by_action() {
     log.record_event(1, "a", "S", "", 1000, LogAction::Shown);
     log.record_event(2, "a", "S", "", 2000, LogAction::Clicked);
     log.record_event(3, "a", "S", "", 3000, LogAction::Shown);
-    log.record_event(4, "a", "S", "", 4000, LogAction::ActionInvoked("open".into()));
+    log.record_event(
+        4,
+        "a",
+        "S",
+        "",
+        4000,
+        LogAction::ActionInvoked("open".into()),
+    );
 
     let shown = log.entries_by_action(&LogAction::Shown);
     assert_eq!(shown.len(), 2);
@@ -860,8 +959,22 @@ fn test_log_entries_by_action() {
 fn test_log_action_invoked_distinct() {
     // ActionInvoked with different keys should not match each other.
     let mut log = NotificationLog::new(100);
-    log.record_event(1, "a", "S", "", 1000, LogAction::ActionInvoked("open".into()));
-    log.record_event(2, "a", "S", "", 2000, LogAction::ActionInvoked("close".into()));
+    log.record_event(
+        1,
+        "a",
+        "S",
+        "",
+        1000,
+        LogAction::ActionInvoked("open".into()),
+    );
+    log.record_event(
+        2,
+        "a",
+        "S",
+        "",
+        2000,
+        LogAction::ActionInvoked("close".into()),
+    );
 
     let open = log.entries_by_action(&LogAction::ActionInvoked("open".into()));
     assert_eq!(open.len(), 1);
@@ -879,7 +992,7 @@ fn test_log_default_capacity() {
 
 // ── DND schedule tests ──────────────────────────────────────────────────
 
-use crate::dnd::{crosses_midnight, DndSchedule, DndTimeRange};
+use crate::dnd::{DndSchedule, DndTimeRange, crosses_midnight};
 
 #[test]
 fn test_dnd_disabled_by_default() {
@@ -895,14 +1008,14 @@ fn test_dnd_basic_range() {
 
     // Inside evening portion.
     assert!(schedule.is_active(23, 30, 3)); // Wednesday 23:30
-    assert!(schedule.is_active(22, 0, 0));  // Sunday 22:00 (start is inclusive)
+    assert!(schedule.is_active(22, 0, 0)); // Sunday 22:00 (start is inclusive)
 
     // Inside morning portion (next day).
-    assert!(schedule.is_active(3, 0, 4));  // Thursday 03:00 (started Wed evening)
+    assert!(schedule.is_active(3, 0, 4)); // Thursday 03:00 (started Wed evening)
 
     // Outside range.
     assert!(!schedule.is_active(12, 0, 3)); // Wednesday noon
-    assert!(!schedule.is_active(8, 0, 3));  // Wednesday 8am
+    assert!(!schedule.is_active(8, 0, 3)); // Wednesday 8am
 }
 
 #[test]
@@ -912,7 +1025,7 @@ fn test_dnd_non_crossing_range() {
     schedule.add_schedule(DndTimeRange::new(9, 0, 17, 0)); // 9:00–17:00
 
     assert!(schedule.is_active(10, 0, 1)); // Monday 10am
-    assert!(schedule.is_active(9, 0, 5));  // Friday 9am (start is inclusive)
+    assert!(schedule.is_active(9, 0, 5)); // Friday 9am (start is inclusive)
     assert!(!schedule.is_active(17, 0, 1)); // Monday 5pm (end is exclusive)
     assert!(!schedule.is_active(8, 59, 1)); // Monday 8:59am
     assert!(!schedule.is_active(20, 0, 1)); // Monday 8pm
@@ -936,9 +1049,7 @@ fn test_dnd_weekday_filter() {
     let mut schedule = DndSchedule::new();
     schedule.enable();
     // Only on weekdays (Mon=1 through Fri=5).
-    schedule.add_schedule(
-        DndTimeRange::new(22, 0, 7, 0).with_days(vec![1, 2, 3, 4, 5]),
-    );
+    schedule.add_schedule(DndTimeRange::new(22, 0, 7, 0).with_days(vec![1, 2, 3, 4, 5]));
 
     // Monday evening → should be active.
     assert!(schedule.is_active(23, 0, 1));
@@ -987,10 +1098,10 @@ fn test_dnd_add_remove_schedule() {
 fn test_dnd_multiple_ranges() {
     let mut schedule = DndSchedule::new();
     schedule.enable();
-    schedule.add_schedule(DndTimeRange::new(22, 0, 7, 0));  // Night
+    schedule.add_schedule(DndTimeRange::new(22, 0, 7, 0)); // Night
     schedule.add_schedule(DndTimeRange::new(12, 0, 13, 0)); // Lunch
 
-    assert!(schedule.is_active(23, 0, 1));  // Night range
+    assert!(schedule.is_active(23, 0, 1)); // Night range
     assert!(schedule.is_active(12, 30, 1)); // Lunch range
     assert!(!schedule.is_active(10, 0, 1)); // Neither
 }
@@ -1015,9 +1126,7 @@ fn test_dnd_weekend_only() {
     let mut schedule = DndSchedule::new();
     schedule.enable();
     // Weekend nights: Saturday(6) and Sunday(0) evening.
-    schedule.add_schedule(
-        DndTimeRange::new(23, 0, 10, 0).with_days(vec![0, 6]),
-    );
+    schedule.add_schedule(DndTimeRange::new(23, 0, 10, 0).with_days(vec![0, 6]));
 
     // Saturday 23:30 → active (day=6 is in list).
     assert!(schedule.is_active(23, 30, 6));
@@ -1032,8 +1141,7 @@ fn test_dnd_weekend_only() {
 // ── Layout tests ────────────────────────────────────────────────────────
 
 use crate::layout::{
-    compute_positions, LayoutAnchor, NotificationInfo, NotificationLayout,
-    Priority, Rect,
+    LayoutAnchor, NotificationInfo, NotificationLayout, Priority, Rect, compute_positions,
 };
 
 fn screen() -> Rect {
@@ -1121,10 +1229,30 @@ fn test_layout_top_center() {
 #[test]
 fn test_layout_priority_ordering() {
     let infos = vec![
-        NotificationInfo { id: 1, width: 300.0, height: 80.0, priority: Priority::Low },
-        NotificationInfo { id: 2, width: 300.0, height: 80.0, priority: Priority::Urgent },
-        NotificationInfo { id: 3, width: 300.0, height: 80.0, priority: Priority::Normal },
-        NotificationInfo { id: 4, width: 300.0, height: 80.0, priority: Priority::High },
+        NotificationInfo {
+            id: 1,
+            width: 300.0,
+            height: 80.0,
+            priority: Priority::Low,
+        },
+        NotificationInfo {
+            id: 2,
+            width: 300.0,
+            height: 80.0,
+            priority: Priority::Urgent,
+        },
+        NotificationInfo {
+            id: 3,
+            width: 300.0,
+            height: 80.0,
+            priority: Priority::Normal,
+        },
+        NotificationInfo {
+            id: 4,
+            width: 300.0,
+            height: 80.0,
+            priority: Priority::High,
+        },
     ];
 
     let positions = compute_positions(&infos, screen(), LayoutAnchor::TopRight);
@@ -1171,9 +1299,24 @@ fn test_layout_custom_gap_margin() {
 #[test]
 fn test_layout_variable_heights() {
     let infos = vec![
-        NotificationInfo { id: 1, width: 300.0, height: 60.0, priority: Priority::Normal },
-        NotificationInfo { id: 2, width: 300.0, height: 100.0, priority: Priority::Normal },
-        NotificationInfo { id: 3, width: 300.0, height: 40.0, priority: Priority::Normal },
+        NotificationInfo {
+            id: 1,
+            width: 300.0,
+            height: 60.0,
+            priority: Priority::Normal,
+        },
+        NotificationInfo {
+            id: 2,
+            width: 300.0,
+            height: 100.0,
+            priority: Priority::Normal,
+        },
+        NotificationInfo {
+            id: 3,
+            width: 300.0,
+            height: 40.0,
+            priority: Priority::Normal,
+        },
     ];
 
     let positions = compute_positions(&infos, screen(), LayoutAnchor::TopRight);
@@ -1323,7 +1466,10 @@ fn test_app_settings_timeout_override() {
 fn test_app_settings_priority_override() {
     let mut registry = AppNotificationSettings::new();
     registry.set_priority_override("vip", Some(Priority::Urgent));
-    assert_eq!(registry.get("vip").priority_override, Some(Priority::Urgent));
+    assert_eq!(
+        registry.get("vip").priority_override,
+        Some(Priority::Urgent)
+    );
 
     registry.set_priority_override("vip", None);
     assert_eq!(registry.get("vip").priority_override, None);

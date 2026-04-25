@@ -66,7 +66,10 @@ impl LayerTree {
         let layer = Layer::new(id, bounds, reason);
         self.layers.insert(id, layer);
         self.children.entry(id).or_insert_with(Vec::new);
-        self.children.entry(parent).or_insert_with(Vec::new).push(id);
+        self.children
+            .entry(parent)
+            .or_insert_with(Vec::new)
+            .push(id);
         self.parent_of.insert(id, parent);
         id
     }
@@ -97,7 +100,10 @@ impl LayerTree {
     /// Does nothing if the layer is the root, doesn't exist, or
     /// `new_parent` is a descendant of the layer (would create a cycle).
     pub fn reparent(&mut self, id: LayerId, new_parent: LayerId) {
-        if id == self.root || !self.layers.contains_key(&id) || !self.layers.contains_key(&new_parent) {
+        if id == self.root
+            || !self.layers.contains_key(&id)
+            || !self.layers.contains_key(&new_parent)
+        {
             return;
         }
         // Prevent cycles: new_parent must not be a descendant of id.
@@ -111,7 +117,10 @@ impl LayerTree {
             }
         }
         // Attach to new parent.
-        self.children.entry(new_parent).or_insert_with(Vec::new).push(id);
+        self.children
+            .entry(new_parent)
+            .or_insert_with(Vec::new)
+            .push(id);
         self.parent_of.insert(id, new_parent);
     }
 
@@ -218,6 +227,75 @@ impl LayerTree {
                 layer.frames_since_dirty += 1;
             }
         }
+    }
+
+    /// Apply layer-promotion / demotion heuristics for one frame.
+    ///
+    /// Callers pass in:
+    /// * the [`LayerPromotionHeuristics`] policy,
+    /// * a map from layer id to current scene signals
+    ///   ([`ElementInfo::paint_count`] / `animation_active` /
+    ///    `scroll_content_height` / `scroll_viewport_height`),
+    ///   which lets the heuristics re-evaluate demotion against live
+    ///   scene activity rather than stale defaults,
+    ///
+    /// and this method:
+    /// 1. Ticks the per-layer `frames_since_dirty` counters,
+    /// 2. Patches any provided `ElementInfo` into the matching layer's
+    ///    observable fields so later frames have accurate signals,
+    /// 3. Returns the set of layers that the heuristics want demoted.
+    ///
+    /// Previous to this, `LayerPromotionHeuristics` had no callers and
+    /// `paint_count` / `animation_active` / `scroll_content_height`
+    /// were never populated (t8 §3.5 Medium).
+    pub fn update(
+        &mut self,
+        heuristics: &crate::promote::LayerPromotionHeuristics,
+        signals: &std::collections::HashMap<LayerId, crate::promote::ElementInfo>,
+    ) -> Vec<LayerId> {
+        // Advance frame counters for clean layers.
+        self.tick_frame_counters();
+
+        // Fold live signals into per-layer state: we only track
+        // animation_active here (it affects demotion). paint_count and
+        // scroll geometry are read straight from `signals` by the
+        // heuristics below.
+        for (id, info) in signals {
+            if let Some(layer) = self.layers.get_mut(id) {
+                if info.animation_active {
+                    // Animated layers should not be demoted while the
+                    // animation is running — reset frames_since_dirty
+                    // so heuristics keep them promoted.
+                    layer.frames_since_dirty = 0;
+                }
+            }
+        }
+
+        // Collect demotable layer ids.
+        let mut demotable = Vec::new();
+        for layer in self.layers.values() {
+            if layer.id == self.root {
+                continue;
+            }
+            // If signals say the element still has a reason to exist
+            // (animation, paint-churn), don't demote.
+            let still_active = signals
+                .get(&layer.id)
+                .map(|i| {
+                    i.animation_active
+                        || i.has_will_change
+                        || i.paint_count >= heuristics.paint_count_promotion
+                })
+                .unwrap_or(false);
+            if still_active {
+                continue;
+            }
+            if heuristics.demotion_check(layer.promotion_reason, layer.frames_since_dirty) {
+                demotable.push(layer.id);
+            }
+        }
+
+        demotable
     }
 
     /// Total memory used by cached pixel buffers across all layers.

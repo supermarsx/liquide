@@ -70,19 +70,27 @@ impl NotificationQueue {
 
     /// Enqueues a notification with an explicit timestamp (for testing).
     pub fn enqueue_at(&mut self, mut notification: Notification, now_ms: u64) -> Option<u32> {
-        // Rate-limit check (skip for Critical urgency).
-        if notification.urgency() != Urgency::Critical
+        // Rate-limit check (skip for Critical urgency and for notifications
+        // that replace an existing one — the replacement is conceptually
+        // an update to an already-visible notification and shouldn't count
+        // against the app's per-second budget).
+        let is_replacement = notification.replaces_id != 0;
+        if !is_replacement
+            && notification.urgency() != Urgency::Critical
             && !self.rate_limiter.check(&notification.app_name, now_ms)
         {
             return None;
         }
 
         // If this notification replaces an existing one, remove the old one.
-        if notification.replaces_id != 0 {
-            self.remove(notification.replaces_id);
-        }
+        let replacement_id = if is_replacement {
+            self.remove(notification.replaces_id)
+                .map(|_| notification.replaces_id)
+        } else {
+            None
+        };
 
-        let id = alloc_id();
+        let id = replacement_id.unwrap_or_else(alloc_id);
         notification.id = id;
 
         let queue = match notification.urgency() {

@@ -87,6 +87,12 @@ impl NotificationServer {
 
     /// Submits a notification with an explicit timestamp (for testing).
     pub fn notify_at(&mut self, notification: Notification, now_ms: u64) -> u32 {
+        if notification.replaces_id != 0 {
+            if let Some(id) = self.replace_active(notification.clone(), now_ms) {
+                return id;
+            }
+        }
+
         let id = match self.queue.enqueue_at(notification, now_ms) {
             Some(id) => id,
             None => return 0, // Rate-limited.
@@ -140,10 +146,9 @@ impl NotificationServer {
     /// Invokes an action on an active notification.
     pub fn invoke_action(&mut self, id: u32, action_key: &str) {
         // Check the notification exists and has this action.
-        let has_action = self
-            .active
-            .iter()
-            .any(|(aid, notif, _)| *aid == id && notif.actions.iter().any(|(k, _)| k == action_key));
+        let has_action = self.active.iter().any(|(aid, notif, _)| {
+            *aid == id && notif.actions.iter().any(|(k, _)| k == action_key)
+        });
 
         if has_action {
             if let Some(handler) = self.handler.as_mut() {
@@ -248,6 +253,20 @@ impl NotificationServer {
             handler.on_notify(&notif);
             self.active.push((id, notif, now_ms));
         }
+    }
+
+    fn replace_active(&mut self, mut notification: Notification, now_ms: u64) -> Option<u32> {
+        let id = notification.replaces_id;
+        let pos = self.active.iter().position(|(aid, _, _)| *aid == id)?;
+
+        notification.id = id;
+
+        if let Some(handler) = self.handler.as_mut() {
+            handler.on_notify(&notification);
+        }
+
+        self.active[pos] = (id, notification, now_ms);
+        Some(id)
     }
 
     /// Platform-agnostic current time in ms.

@@ -1,17 +1,20 @@
 //! Z-order management for the popup stack.
 //!
 //! Popups always render above regular windows. Within the popup layer:
-//! - Modal dialogs are above non-modal popups.
+//! - Tooltips are the lowest of the popup layers (they should never obscure
+//!   interactive popups like context menus or dialogs).
+//! - Non-modal popups sit above tooltips.
+//! - Modal dialogs sit above everything.
 //! - Within the same type, the most recently opened popup is on top.
 
 use crate::popup::{Popup, PopupType};
 
-/// Base z-order for non-modal popups (above all regular windows).
+/// Base z-order for tooltips (lowest popup tier — informational overlay).
+const BASE_Z_TOOLTIP: i32 = 8_000;
+/// Base z-order for non-modal popups (above tooltips and regular windows).
 const BASE_Z_NONMODAL: i32 = 10_000;
-/// Base z-order for modal dialogs (above non-modal popups).
+/// Base z-order for modal dialogs (above everything else).
 const BASE_Z_MODAL: i32 = 20_000;
-/// Base z-order for tooltips (above everything except modal).
-const BASE_Z_TOOLTIP: i32 = 15_000;
 
 /// Manages z-order assignment for the popup layer.
 pub struct PopupStack {

@@ -60,7 +60,11 @@ mod layer_tests {
 
     #[test]
     fn layer_pixel_buffer_size() {
-        let layer = Layer::new(1, Rect::new(0.0, 0.0, 64.0, 32.0), PromotionReason::Explicit);
+        let layer = Layer::new(
+            1,
+            Rect::new(0.0, 0.0, 64.0, 32.0),
+            PromotionReason::Explicit,
+        );
         assert_eq!(layer.pixel_buffer_size(), 64 * 32 * 4);
     }
 
@@ -98,6 +102,155 @@ mod layer_tests {
     fn blend_mode_default() {
         assert_eq!(BlendMode::default(), BlendMode::SrcOver);
     }
+
+    #[test]
+    fn layer_extension_fields_default_none() {
+        let layer = Layer::new(1, Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Root);
+        assert!(layer.filter.is_none());
+        assert!(layer.backdrop_filter.is_none());
+        assert!(layer.mask.is_none());
+        assert!(layer.clip_path.is_none());
+        assert!(!layer.isolation);
+    }
+
+    #[test]
+    fn filter_chain_is_identity_when_empty() {
+        let fc = FilterChain::default();
+        assert!(fc.is_identity());
+    }
+}
+
+#[cfg(test)]
+mod occlusion_tests {
+    use crate::compositor::LayerCompositor;
+    use crate::layer::*;
+    use crate::tree::LayerTree;
+
+    /// Regression test for t8 §3.5 "occlusion walk".
+    ///
+    /// Builds a tree with two sibling layers covering identical bounds,
+    /// where the higher-z child is fully opaque and has valid pixel
+    /// data. The rear sibling (lower z, same bounds) must be marked
+    /// occluded and skipped — only the front layer should be drawn.
+    #[test]
+    fn opaque_front_layer_culls_rear_sibling() {
+        let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 100.0, 100.0));
+
+        // Rear layer (lower z, opaque pixels, covers viewport).
+        let rear = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
+        {
+            let l = tree.get_mut(rear).unwrap();
+            l.pixels = Some(vec![255u8; 100 * 100 * 4]);
+            l.mark_clean();
+            l.z_order = 0;
+            l.opacity = 1.0;
+            l.blend_mode = BlendMode::SrcOver;
+        }
+
+        // Front layer (higher z, opaque pixels, identical bounds).
+        let front = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
+        {
+            let l = tree.get_mut(front).unwrap();
+            l.pixels = Some(vec![255u8; 100 * 100 * 4]);
+            l.mark_clean();
+            l.z_order = 1;
+            l.opacity = 1.0;
+            l.blend_mode = BlendMode::SrcOver;
+        }
+
+        let mut output = vec![0u8; 100 * 100 * 4];
+        let mut compositor = LayerCompositor::new();
+        let stats = compositor.composite(&tree, &mut output, 100, 100);
+
+        // The rear sibling must be culled (covered by front opaque rect).
+        assert!(
+            stats.occluded >= 1,
+            "expected rear layer to be occluded, got stats: {stats:?}"
+        );
+        // And the compositor should have drawn at most the front layer
+        // (plus the root if it had pixels — it doesn't in this test).
+        assert!(
+            stats.drawn <= 1,
+            "expected at most 1 draw, got {} (stats: {stats:?})",
+            stats.drawn
+        );
+    }
+
+    /// Sanity: a transparent front layer must NOT occlude the rear
+    /// (opacity < 1 means per-pixel alpha can show through).
+    #[test]
+    fn transparent_front_layer_does_not_cull_rear() {
+        let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 100.0, 100.0));
+        let rear = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
+        let l = tree.get_mut(rear).unwrap();
+        l.pixels = Some(vec![255u8; 100 * 100 * 4]);
+        l.mark_clean();
+        l.z_order = 0;
+
+        let front = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
+        let l = tree.get_mut(front).unwrap();
+        l.pixels = Some(vec![255u8; 100 * 100 * 4]);
+        l.mark_clean();
+        l.z_order = 1;
+        l.opacity = 0.5; // translucent
+
+        let mut output = vec![0u8; 100 * 100 * 4];
+        let mut compositor = LayerCompositor::new();
+        let stats = compositor.composite(&tree, &mut output, 100, 100);
+        // Root has no pixels so it is always skipped; the two children
+        // should both be composited (front is translucent, so it cannot
+        // occlude the rear).
+        assert_eq!(
+            stats.drawn, 2,
+            "rear + translucent front should both draw (stats: {stats:?})"
+        );
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use crate::layer::*;
+    use crate::promote::{ElementInfo, LayerPromotionHeuristics};
+    use crate::tree::LayerTree;
+    use std::collections::HashMap;
+
+    #[test]
+    fn update_returns_no_demotable_while_animating() {
+        let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 100.0, 100.0));
+        let id = tree.create_layer(
+            Rect::new(0.0, 0.0, 50.0, 50.0),
+            PromotionReason::HasTransform,
+        );
+        // Pre-age the layer well past the demotion threshold.
+        tree.get_mut(id).unwrap().frames_since_dirty = 10_000;
+
+        let mut signals = HashMap::new();
+        signals.insert(
+            id,
+            ElementInfo {
+                animation_active: true,
+                has_transform: true,
+                ..Default::default()
+            },
+        );
+
+        let demotable = tree.update(&LayerPromotionHeuristics::default(), &signals);
+        assert!(
+            demotable.is_empty(),
+            "animating layer should not be demoted, got {demotable:?}"
+        );
+    }
+
+    #[test]
+    fn update_returns_demotable_when_idle() {
+        let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 100.0, 100.0));
+        let id = tree.create_layer(Rect::new(0.0, 0.0, 50.0, 50.0), PromotionReason::Explicit);
+        tree.get_mut(id).unwrap().frames_since_dirty = 10_000;
+
+        let signals: HashMap<_, _> = HashMap::new();
+        let demotable = tree.update(&LayerPromotionHeuristics::default(), &signals);
+        assert_eq!(demotable, vec![id]);
+    }
 }
 
 #[cfg(test)]
@@ -115,7 +268,10 @@ mod tree_tests {
     #[test]
     fn create_layer_under_root() {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
-        let child = tree.create_layer(Rect::new(100.0, 100.0, 200.0, 200.0), PromotionReason::HasTransform);
+        let child = tree.create_layer(
+            Rect::new(100.0, 100.0, 200.0, 200.0),
+            PromotionReason::HasTransform,
+        );
         assert_eq!(tree.len(), 2);
         assert_eq!(tree.children_of(tree.root).len(), 1);
         assert_eq!(tree.children_of(tree.root)[0], child);
@@ -125,8 +281,15 @@ mod tree_tests {
     #[test]
     fn create_nested_layers() {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
-        let parent = tree.create_layer(Rect::new(0.0, 0.0, 500.0, 500.0), PromotionReason::ScrollingContent);
-        let child = tree.create_layer_under(parent, Rect::new(10.0, 10.0, 100.0, 100.0), PromotionReason::HasOpacity);
+        let parent = tree.create_layer(
+            Rect::new(0.0, 0.0, 500.0, 500.0),
+            PromotionReason::ScrollingContent,
+        );
+        let child = tree.create_layer_under(
+            parent,
+            Rect::new(10.0, 10.0, 100.0, 100.0),
+            PromotionReason::HasOpacity,
+        );
         assert_eq!(tree.len(), 3);
         assert_eq!(tree.parent(child), Some(parent));
         assert_eq!(tree.children_of(parent), &[child]);
@@ -145,9 +308,20 @@ mod tree_tests {
     #[test]
     fn remove_subtree() {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
-        let parent = tree.create_layer(Rect::new(0.0, 0.0, 500.0, 500.0), PromotionReason::ScrollingContent);
-        let _child1 = tree.create_layer_under(parent, Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
-        let _child2 = tree.create_layer_under(parent, Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
+        let parent = tree.create_layer(
+            Rect::new(0.0, 0.0, 500.0, 500.0),
+            PromotionReason::ScrollingContent,
+        );
+        let _child1 = tree.create_layer_under(
+            parent,
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            PromotionReason::Explicit,
+        );
+        let _child2 = tree.create_layer_under(
+            parent,
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            PromotionReason::Explicit,
+        );
         assert_eq!(tree.len(), 4);
         tree.remove_layer(parent);
         assert_eq!(tree.len(), 1); // only root remains
@@ -166,7 +340,11 @@ mod tree_tests {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
         let a = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
         let b = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
-        let c = tree.create_layer_under(a, Rect::new(0.0, 0.0, 50.0, 50.0), PromotionReason::HasOpacity);
+        let c = tree.create_layer_under(
+            a,
+            Rect::new(0.0, 0.0, 50.0, 50.0),
+            PromotionReason::HasOpacity,
+        );
         assert_eq!(tree.parent(c), Some(a));
 
         tree.reparent(c, b);
@@ -179,7 +357,11 @@ mod tree_tests {
     fn reparent_prevents_cycle() {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
         let a = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
-        let b = tree.create_layer_under(a, Rect::new(0.0, 0.0, 50.0, 50.0), PromotionReason::Explicit);
+        let b = tree.create_layer_under(
+            a,
+            Rect::new(0.0, 0.0, 50.0, 50.0),
+            PromotionReason::Explicit,
+        );
 
         // Trying to reparent a under its child b should be a no-op.
         tree.reparent(a, b);
@@ -205,7 +387,10 @@ mod tree_tests {
     #[test]
     fn set_transform_does_not_dirty() {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
-        let child = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::HasTransform);
+        let child = tree.create_layer(
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            PromotionReason::HasTransform,
+        );
         tree.get_mut(child).unwrap().mark_clean();
         tree.get_mut(child).unwrap().pixels = Some(vec![0u8; 100 * 100 * 4]);
 
@@ -217,7 +402,10 @@ mod tree_tests {
     #[test]
     fn set_opacity_does_not_dirty() {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
-        let child = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::HasOpacity);
+        let child = tree.create_layer(
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            PromotionReason::HasOpacity,
+        );
         tree.get_mut(child).unwrap().mark_clean();
         tree.get_mut(child).unwrap().pixels = Some(vec![0u8; 100 * 100 * 4]);
 
@@ -268,9 +456,9 @@ mod tree_tests {
 
 #[cfg(test)]
 mod draw_cmd_tests {
+    use crate::draw_cmd::flatten;
     use crate::layer::*;
     use crate::tree::LayerTree;
-    use crate::draw_cmd::flatten;
 
     #[test]
     fn flatten_empty_tree() {
@@ -285,10 +473,16 @@ mod draw_cmd_tests {
     fn flatten_with_children() {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
         tree.get_mut(tree.root).unwrap().pixels = Some(vec![0u8; 4]);
-        let c1 = tree.create_layer(Rect::new(100.0, 100.0, 200.0, 200.0), PromotionReason::Explicit);
+        let c1 = tree.create_layer(
+            Rect::new(100.0, 100.0, 200.0, 200.0),
+            PromotionReason::Explicit,
+        );
         tree.get_mut(c1).unwrap().pixels = Some(vec![0u8; 200 * 200 * 4]);
         tree.get_mut(c1).unwrap().mark_clean();
-        let c2 = tree.create_layer(Rect::new(500.0, 500.0, 100.0, 100.0), PromotionReason::Explicit);
+        let c2 = tree.create_layer(
+            Rect::new(500.0, 500.0, 100.0, 100.0),
+            PromotionReason::Explicit,
+        );
         tree.get_mut(c2).unwrap().pixels = Some(vec![0u8; 100 * 100 * 4]);
 
         let cmds = flatten(&tree, Rect::new(0.0, 0.0, 1920.0, 1080.0));
@@ -299,7 +493,10 @@ mod draw_cmd_tests {
     fn flatten_skips_fully_transparent() {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
         tree.get_mut(tree.root).unwrap().pixels = Some(vec![0u8; 4]);
-        let child = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::HasOpacity);
+        let child = tree.create_layer(
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            PromotionReason::HasOpacity,
+        );
         tree.set_opacity(child, 0.0);
         tree.get_mut(child).unwrap().pixels = Some(vec![0u8; 100 * 100 * 4]);
 
@@ -311,7 +508,10 @@ mod draw_cmd_tests {
     fn flatten_skips_outside_viewport() {
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
         tree.get_mut(tree.root).unwrap().pixels = Some(vec![0u8; 4]);
-        let child = tree.create_layer(Rect::new(2000.0, 2000.0, 100.0, 100.0), PromotionReason::Explicit);
+        let child = tree.create_layer(
+            Rect::new(2000.0, 2000.0, 100.0, 100.0),
+            PromotionReason::Explicit,
+        );
         tree.get_mut(child).unwrap().pixels = Some(vec![0u8; 100 * 100 * 4]);
 
         let cmds = flatten(&tree, Rect::new(0.0, 0.0, 1920.0, 1080.0));
@@ -344,7 +544,10 @@ mod draw_cmd_tests {
         tree.get_mut(tree.root).unwrap().pixels = Some(vec![0u8; 4]);
         tree.set_opacity(tree.root, 0.5);
 
-        let child = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::HasOpacity);
+        let child = tree.create_layer(
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            PromotionReason::HasOpacity,
+        );
         tree.set_opacity(child, 0.5);
         tree.get_mut(child).unwrap().pixels = Some(vec![0u8; 4]);
 
@@ -360,7 +563,10 @@ mod draw_cmd_tests {
         tree.get_mut(tree.root).unwrap().pixels = Some(vec![0u8; 4]);
         tree.set_transform(tree.root, [1.0, 0.0, 0.0, 1.0, 100.0, 0.0]);
 
-        let child = tree.create_layer(Rect::new(0.0, 0.0, 50.0, 50.0), PromotionReason::HasTransform);
+        let child = tree.create_layer(
+            Rect::new(0.0, 0.0, 50.0, 50.0),
+            PromotionReason::HasTransform,
+        );
         tree.set_transform(child, [1.0, 0.0, 0.0, 1.0, 50.0, 0.0]);
         tree.get_mut(child).unwrap().pixels = Some(vec![0u8; 4]);
 
@@ -374,8 +580,8 @@ mod draw_cmd_tests {
 #[cfg(test)]
 mod sync_tests {
     use crate::layer::*;
-    use crate::tree::LayerTree;
     use crate::sync::*;
+    use crate::tree::LayerTree;
 
     #[test]
     fn create_initial_pair_produces_matching_trees() {
@@ -390,10 +596,9 @@ mod sync_tests {
         let (active, mut pending) = create_initial_pair(tree);
 
         // Modify the pending tree.
-        let new_layer = pending.tree.create_layer(
-            Rect::new(0.0, 0.0, 100.0, 100.0),
-            PromotionReason::Explicit,
-        );
+        let new_layer = pending
+            .tree
+            .create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::Explicit);
 
         let (new_active, returned, sync) = commit(pending, active);
         assert_eq!(new_active.tree.len(), 2); // root + new layer
@@ -512,7 +717,10 @@ mod promote_tests {
             is_fixed: true,
             ..Default::default()
         };
-        assert_eq!(h.should_promote(&info), Some(PromotionReason::FixedPosition));
+        assert_eq!(
+            h.should_promote(&info),
+            Some(PromotionReason::FixedPosition)
+        );
     }
 
     #[test]
@@ -524,7 +732,10 @@ mod promote_tests {
             scroll_viewport_height: 500.0,
             ..Default::default()
         };
-        assert_eq!(h.should_promote(&info), Some(PromotionReason::ScrollingContent));
+        assert_eq!(
+            h.should_promote(&info),
+            Some(PromotionReason::ScrollingContent)
+        );
     }
 
     #[test]
@@ -578,8 +789,14 @@ mod promote_tests {
     fn find_demotable_layers() {
         let h = LayerPromotionHeuristics::new();
         let mut tree = LayerTree::new(Rect::new(0.0, 0.0, 1920.0, 1080.0));
-        let c1 = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::HasOpacity);
-        let c2 = tree.create_layer(Rect::new(0.0, 0.0, 100.0, 100.0), PromotionReason::WillChange);
+        let c1 = tree.create_layer(
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            PromotionReason::HasOpacity,
+        );
+        let c2 = tree.create_layer(
+            Rect::new(0.0, 0.0, 100.0, 100.0),
+            PromotionReason::WillChange,
+        );
 
         // Clean both and advance frames past threshold.
         tree.get_mut(c1).unwrap().mark_clean();
@@ -700,7 +917,10 @@ mod pool_tests {
         pool.release(h);
         let stats = pool.stats();
         assert!(stats.pooled_bytes > 0);
-        assert_eq!(stats.total_bytes(), stats.pooled_bytes + stats.allocated_bytes);
+        assert_eq!(
+            stats.total_bytes(),
+            stats.pooled_bytes + stats.allocated_bytes
+        );
     }
 }
 
@@ -788,8 +1008,8 @@ mod compositor_tests {
         // Check that output has red pixels.
         for pixel in output.chunks(4) {
             assert_eq!(pixel[0], 255); // R
-            assert_eq!(pixel[1], 0);   // G
-            assert_eq!(pixel[2], 0);   // B
+            assert_eq!(pixel[1], 0); // G
+            assert_eq!(pixel[2], 0); // B
             assert_eq!(pixel[3], 255); // A
         }
     }

@@ -72,26 +72,25 @@ pub mod linux {
         let actions_parts: Vec<String> = notification
             .actions
             .iter()
-            .flat_map(|(k, v)| vec![format!("'{}'", escape_gvariant(k)), format!("'{}'", escape_gvariant(v))])
+            .flat_map(|(k, v)| {
+                vec![
+                    format!("'{}'", escape_gvariant(k)),
+                    format!("'{}'", escape_gvariant(v)),
+                ]
+            })
             .collect();
         let actions_str = format!("[{}]", actions_parts.join(", "));
 
         // Build the hints dict for GVariant format.
         let mut hints_parts = Vec::new();
         if let Some(urgency) = notification.hints.urgency {
-            hints_parts.push(format!(
-                "'urgency': <byte {}>",
-                urgency as u8
-            ));
+            hints_parts.push(format!("'urgency': <byte {}>", urgency as u8));
         }
         if let Some(ref cat) = notification.hints.category {
             hints_parts.push(format!("'category': <'{}'>", escape_gvariant(cat)));
         }
         if let Some(ref de) = notification.hints.desktop_entry {
-            hints_parts.push(format!(
-                "'desktop-entry': <'{}'>",
-                escape_gvariant(de)
-            ));
+            hints_parts.push(format!("'desktop-entry': <'{}'>", escape_gvariant(de)));
         }
         if notification.hints.suppress_sound {
             hints_parts.push("'suppress-sound': <true>".to_string());
@@ -209,20 +208,12 @@ pub mod linux {
     fn parse_dbus_string_array(s: &str) -> Vec<String> {
         let s = s.trim();
         // Strip outer parens and trailing comma.
-        let s = s
-            .strip_prefix('(')
-            .unwrap_or(s);
-        let s = s
-            .strip_suffix(')')
-            .unwrap_or(s);
+        let s = s.strip_prefix('(').unwrap_or(s);
+        let s = s.strip_suffix(')').unwrap_or(s);
         let s = s.trim().strip_suffix(',').unwrap_or(s);
         // Strip brackets.
-        let s = s
-            .strip_prefix('[')
-            .unwrap_or(s);
-        let s = s
-            .strip_suffix(']')
-            .unwrap_or(s);
+        let s = s.strip_prefix('[').unwrap_or(s);
+        let s = s.strip_suffix(']').unwrap_or(s);
         // Split by comma and strip quotes.
         s.split(',')
             .map(|part| {
@@ -249,10 +240,41 @@ pub mod windows {
     /// Uses the `BurntToast` module if available, otherwise falls back to
     /// raw `[Windows.UI.Notifications]` API via PowerShell.
     pub fn send_notification(notification: &Notification) -> PlatformResult<()> {
-        let summary = escape_powershell(&notification.summary);
-        let body = escape_powershell(&notification.body);
+        let template = build_toast_xml(notification);
 
-        // Build action buttons XML if present.
+        let script = format!(
+            r#"
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+
+$template = @'
+{template}
+'@
+
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml($template)
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('LiquiDE')
+$notifier.Show($toast)
+"#,
+            template = template,
+        );
+
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(PlatformError::CommandFailed {
+                tool: "powershell".to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn build_toast_xml(notification: &Notification) -> String {
         let actions_xml = notification
             .actions
             .iter()
@@ -272,50 +294,12 @@ pub mod windows {
             format!("<actions>{}</actions>", actions_xml)
         };
 
-        let script = format!(
-            r#"
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
-
-$template = @"
-<toast>
-    <visual>
-        <binding template='ToastGeneric'>
-            <text>{summary}</text>
-            <text>{body}</text>
-        </binding>
-    </visual>
-    {actions_block}
-</toast>
-"@
-
-$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-$xml.LoadXml($template)
-$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('LiquiDE')
-$notifier.Show($toast)
-"#,
-        );
-
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()?;
-
-        if !output.status.success() {
-            return Err(PlatformError::CommandFailed {
-                tool: "powershell".to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            });
-        }
-
-        Ok(())
-    }
-
-    /// Escapes a string for embedding in a PowerShell script.
-    fn escape_powershell(s: &str) -> String {
-        s.replace('`', "``")
-            .replace('"', "`\"")
-            .replace('$', "`$")
+        format!(
+            "<toast>\n    <visual>\n        <binding template='ToastGeneric'>\n            <text>{}</text>\n            <text>{}</text>\n        </binding>\n    </visual>\n    {}\n</toast>",
+            escape_xml(&notification.summary),
+            escape_xml(&notification.body),
+            actions_block,
+        )
     }
 
     /// Escapes a string for embedding in XML attribute values.
@@ -325,6 +309,27 @@ $notifier.Show($toast)
             .replace('>', "&gt;")
             .replace('"', "&quot;")
             .replace('\'', "&apos;")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn toast_xml_escapes_text_nodes_and_actions() {
+            let notification = Notification::new("<sync & save>")
+                .with_body("Body with <b>markup</b> & 'quotes'")
+                .with_action("open&launch", "Open <Now>");
+
+            let xml = build_toast_xml(&notification);
+
+            assert!(xml.contains("<text>&lt;sync &amp; save&gt;</text>"));
+            assert!(xml.contains("<text>Body with &lt;b&gt;markup&lt;/b&gt; &amp; &apos;quotes&apos;</text>"));
+            assert!(xml.contains("content='Open &lt;Now&gt;'"));
+            assert!(xml.contains("arguments='open&amp;launch'"));
+            assert!(!xml.contains("<text><sync & save></text>"));
+            assert!(!xml.contains("<text>Body with <b>markup</b>"));
+        }
     }
 }
 
@@ -357,16 +362,11 @@ pub mod macos {
 
         if let Some(ref sound) = notification.hints.sound_name {
             if !notification.hints.suppress_sound {
-                script.push_str(&format!(
-                    " sound name \"{}\"",
-                    escape_applescript(sound)
-                ));
+                script.push_str(&format!(" sound name \"{}\"", escape_applescript(sound)));
             }
         }
 
-        let output = Command::new("osascript")
-            .args(["-e", &script])
-            .output()?;
+        let output = Command::new("osascript").args(["-e", &script]).output()?;
 
         if !output.status.success() {
             return Err(PlatformError::CommandFailed {

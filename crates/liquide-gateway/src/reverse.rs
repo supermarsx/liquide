@@ -133,26 +133,24 @@ impl ReverseConnectionManager {
     }
 
     /// Request a connect-back from a registered server.
-    pub fn request_connect_back(
-        &mut self,
-        server_id: &str,
-        timestamp: u64,
-    ) -> Result<()> {
-        let conn = self.connections.get_mut(server_id).ok_or_else(|| {
-            GatewayError::ServerNotFound {
-                server_id: server_id.to_string(),
-            }
-        })?;
+    pub fn request_connect_back(&mut self, server_id: &str, timestamp: u64) -> Result<()> {
+        let conn =
+            self.connections
+                .get_mut(server_id)
+                .ok_or_else(|| GatewayError::ServerNotFound {
+                    server_id: server_id.to_string(),
+                })?;
         conn.send_connect_back(timestamp)
     }
 
     /// Mark a reverse connection as established.
     pub fn mark_connected(&mut self, server_id: &str) -> Result<()> {
-        let conn = self.connections.get_mut(server_id).ok_or_else(|| {
-            GatewayError::ServerNotFound {
-                server_id: server_id.to_string(),
-            }
-        })?;
+        let conn =
+            self.connections
+                .get_mut(server_id)
+                .ok_or_else(|| GatewayError::ServerNotFound {
+                    server_id: server_id.to_string(),
+                })?;
         conn.mark_connected();
         Ok(())
     }

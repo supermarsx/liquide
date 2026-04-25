@@ -3,20 +3,21 @@
 //! Provides TLS termination, authentication, routing, relay proxying,
 //! rate limiting, health checking, and cluster coordination.
 
-pub mod config;
-pub mod server;
-pub mod routing;
-pub mod connection;
+pub mod audit;
 pub mod auth;
+pub mod cluster;
+pub mod config;
+pub mod connection;
+pub mod desktop_commands;
+pub mod health;
+pub mod listener;
+pub mod management;
+pub mod ratelimit;
 pub mod relay;
 pub mod reverse;
-pub mod listener;
-pub mod ratelimit;
-pub mod health;
-pub mod management;
-pub mod cluster;
-pub mod audit;
+pub mod routing;
 pub mod runtime;
+pub mod server;
 
 #[cfg(test)]
 mod tests;
@@ -87,23 +88,25 @@ pub enum GatewayError {
 pub type Result<T> = std::result::Result<T, GatewayError>;
 
 // Re-exports
-pub use config::{
-    GatewayConfig, ListenConfig, ListenTransport, ListenRole, TlsConfig,
-    RoutingConfig, RelayConfig, ReverseConnectConfig, LimitsConfig,
-    HealthCheckConfig, SecurityConfig, ObfuscationMode,
-    ManagementApiConfig, ClusterConfig,
-};
-pub use server::{ServerHealth, ServerCapabilities, ServerLoad, RegisteredServer, ServerRegistry};
-pub use routing::{RoutingStrategy, RouteDecision, Router};
-pub use connection::{ConnectionMode, ConnectionState, ClientConnection, ConnectionTracker};
-pub use auth::{GatewayAuthMethod, AuthResult, AuthChallenge, AuthHandler};
-pub use relay::{RelaySession, RelayManager};
-pub use reverse::{ReverseConnectionState, ReverseConnection, ReverseConnectionManager};
-pub use listener::{ListenerState, TransportListener, ListenerManager};
-pub use ratelimit::{RateLimiterEntry, IpBan, TarpitSession, TarpitMode, RateLimiter};
-pub use health::{HealthStatus, HealthChecker};
-pub use management::{ApiEndpoint, ManagementApi};
-pub use config::StateStoreType;
-pub use cluster::{ClusterNode, ClusterState};
 pub use audit::{AuditLevel, GatewayAuditEvent};
+pub use auth::{AuthChallenge, AuthHandler, AuthResult, GatewayAuthMethod};
+pub use cluster::{ClusterNode, ClusterState};
+pub use config::StateStoreType;
+pub use config::{
+    ClusterConfig, GatewayConfig, HealthCheckConfig, LimitsConfig, ListenConfig, ListenRole,
+    ListenTransport, ManagementApiConfig, ObfuscationMode, RelayConfig, ReverseConnectConfig,
+    RoutingConfig, SecurityConfig, TlsConfig,
+};
+pub use connection::{ClientConnection, ConnectionMode, ConnectionState, ConnectionTracker};
+pub use desktop_commands::{
+    DesktopCommand, DesktopCommandBus, DesktopCommandHandler, HandlerResult,
+};
+pub use health::{HealthChecker, HealthStatus};
+pub use listener::{ListenerManager, ListenerState, TransportListener};
+pub use management::{ApiEndpoint, ManagementApi};
+pub use ratelimit::{IpBan, RateLimiter, RateLimiterEntry, TarpitMode, TarpitSession};
+pub use relay::{RelayManager, RelaySession};
+pub use reverse::{ReverseConnection, ReverseConnectionManager, ReverseConnectionState};
+pub use routing::{RouteDecision, Router, RoutingStrategy};
 pub use runtime::{GatewayRuntime, GatewayStatus};
+pub use server::{RegisteredServer, ServerCapabilities, ServerHealth, ServerLoad, ServerRegistry};

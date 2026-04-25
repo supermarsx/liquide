@@ -76,7 +76,12 @@ pub struct ClientConnection {
 impl ClientConnection {
     /// Create a new client connection in the `Connecting` state.
     #[must_use]
-    pub fn new(connection_id: String, client_addr: String, transport: String, connected_at: u64) -> Self {
+    pub fn new(
+        connection_id: String,
+        client_addr: String,
+        transport: String,
+        connected_at: u64,
+    ) -> Self {
         Self {
             connection_id,
             client_addr,
@@ -169,7 +174,10 @@ impl ClientConnection {
     /// Whether the connection is in an active (non-terminal) state.
     #[must_use]
     pub fn is_active(&self) -> bool {
-        !matches!(self.state, ConnectionState::Terminated | ConnectionState::Disconnecting)
+        !matches!(
+            self.state,
+            ConnectionState::Terminated | ConnectionState::Disconnecting
+        )
     }
 }
 

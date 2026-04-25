@@ -1,11 +1,12 @@
 //! Central popup orchestrator that owns all open popups and manages their
 //! lifecycle.
 
+use crate::Rect;
+use crate::dialog_info::DialogInfo;
 use crate::events::EventRouter;
 use crate::popup::{Popup, PopupConfig, PopupId, PopupType, WindowId};
 use crate::position::PopupPositioner;
 use crate::stack::PopupStack;
-use crate::Rect;
 
 /// Central popup manager that coordinates creation, positioning, z-ordering,
 /// and dismissal of all popup windows.
@@ -35,6 +36,7 @@ impl PopupManager {
     /// Update the screen dimensions (call on resize).
     pub fn set_screen(&mut self, screen: Rect) {
         self.screen = screen;
+        self.reposition_all();
     }
 
     /// Open a new popup with the given configuration.
@@ -51,7 +53,9 @@ impl PopupManager {
         let id = PopupId::new(self.next_id);
         self.next_id += 1;
 
-        let z = self.stack.z_order_for_popup(config.popup_type, config.modal);
+        let z = self
+            .stack
+            .z_order_for_popup(config.popup_type, config.modal);
         let bounds = PopupPositioner::position(&config, self.screen, &self.popups);
 
         let popup = Popup::from_config(id, &config, bounds, z, now_us);
@@ -170,6 +174,53 @@ impl PopupManager {
         EventRouter::handle_focus_change(&self.popups, new_focus)
     }
 
+    /// Self-invoked lifecycle: compute the set of popups to dismiss for a
+    /// click at `(x, y)` *and* close them. Returns the ids that were closed.
+    pub fn on_click_outside(&mut self, x: f32, y: f32) -> Vec<PopupId> {
+        let ids = EventRouter::handle_click_outside(&self.popups, x, y);
+        for id in &ids {
+            self.close(*id);
+        }
+        ids
+    }
+
+    /// Self-invoked lifecycle: find the topmost Escape-dismissable popup and
+    /// close it. Returns the id closed, if any.
+    pub fn on_escape(&mut self) -> Option<PopupId> {
+        if let Some(id) = EventRouter::handle_escape(&self.popups) {
+            self.close(id);
+            Some(id)
+        } else {
+            None
+        }
+    }
+
+    /// Self-invoked lifecycle: dismiss popups that should close when focus
+    /// moves to `new_focus` and close them. Returns the ids that were closed.
+    pub fn on_focus_change(&mut self, new_focus: WindowId) -> Vec<PopupId> {
+        let ids = EventRouter::handle_focus_change(&self.popups, new_focus);
+        for id in &ids {
+            self.close(*id);
+        }
+        ids
+    }
+
+    /// Whether a non-modal popup can currently be shown.
+    ///
+    /// Non-modal popups should not render while a modal dialog is up —
+    /// they would be blocked by the modal overlay and create confusing UX.
+    #[must_use]
+    pub fn can_show_nonmodal(&self) -> bool {
+        !self.is_modal_active()
+    }
+
+    /// Open a dialog described by a value implementing [`DialogInfo`].
+    ///
+    /// The dialog is always opened modally. Returns the assigned popup id.
+    pub fn show_dialog<D: DialogInfo>(&mut self, dialog: &D, owner: WindowId) -> PopupId {
+        self.open(dialog.popup_config_with_owner(Some(owner)))
+    }
+
     /// Close all popups that should auto-dismiss at the current time.
     /// Returns the IDs of dismissed popups.
     pub fn dismiss_expired(&mut self, now_us: u64) -> Vec<PopupId> {
@@ -202,9 +253,36 @@ impl PopupManager {
 
     /// Update a popup's bounds (e.g. after content changes).
     pub fn update_bounds(&mut self, id: PopupId, bounds: Rect) {
-        if let Some(popup) = self.get_mut(id) {
-            popup.bounds = bounds;
+        if let Some(index) = self.popups.iter().position(|popup| popup.id == id) {
+            let popup = &mut self.popups[index];
+            popup.preferred_x = bounds.x;
+            popup.preferred_y = bounds.y;
+            popup.bounds.width = bounds.width;
+            popup.bounds.height = bounds.height;
+            self.reposition_popup(index);
         }
+    }
+
+    fn reposition_all(&mut self) {
+        if self.popups.is_empty() {
+            return;
+        }
+
+        let popups = std::mem::take(&mut self.popups);
+        let mut repositioned = Vec::with_capacity(popups.len());
+        for mut popup in popups {
+            let config = popup.to_config();
+            popup.bounds = PopupPositioner::position(&config, self.screen, &repositioned);
+            repositioned.push(popup);
+        }
+        self.popups = repositioned;
+    }
+
+    fn reposition_popup(&mut self, index: usize) {
+        let mut popup = self.popups.remove(index);
+        let config = popup.to_config();
+        popup.bounds = PopupPositioner::position(&config, self.screen, &self.popups);
+        self.popups.insert(index, popup);
     }
 }
 

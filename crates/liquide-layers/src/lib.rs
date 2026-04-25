@@ -26,6 +26,7 @@
 
 pub mod compositor;
 pub mod draw_cmd;
+pub mod geometry_adapter;
 pub mod layer;
 pub mod pool;
 pub mod promote;
@@ -35,10 +36,15 @@ pub mod tree;
 #[cfg(test)]
 mod tests;
 
-pub use compositor::{clear_output, clear_output_color, CompositeStats, LayerCompositor, OcclusionTracker};
-pub use draw_cmd::{flatten, LayerDrawCmd};
-pub use layer::{BlendMode, Layer, LayerId, PromotionReason, Rect, IDENTITY_TRANSFORM};
+pub use compositor::{
+    CompositeStats, LayerCompositor, OcclusionTracker, clear_output, clear_output_color,
+};
+pub use draw_cmd::{LayerDrawCmd, flatten};
+pub use layer::{
+    BlendMode, ClipPathRef, FilterChain, FilterOpKind, IDENTITY_TRANSFORM, Layer, LayerId, MaskRef,
+    PromotionReason, Rect,
+};
 pub use pool::{PoolStats, SurfaceHandle, SurfacePool};
-pub use promote::{ElementInfo, LayerPromotionHeuristics, DEFAULT_DEMOTION_THRESHOLD};
-pub use sync::{commit, create_initial_pair, ActiveTree, PendingTree, TreeSyncState};
+pub use promote::{DEFAULT_DEMOTION_THRESHOLD, ElementInfo, LayerPromotionHeuristics};
+pub use sync::{ActiveTree, PendingTree, TreeSyncState, commit, create_initial_pair};
 pub use tree::LayerTree;

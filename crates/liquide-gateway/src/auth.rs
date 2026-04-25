@@ -1,13 +1,11 @@
 //! Authentication handlers for the gateway.
 
-use liquide_auth::provider::{
-    AuthProvider, Credentials as ProviderCredentials,
-};
 use liquide_auth::pam::PamProvider;
+use liquide_auth::provider::{AuthProvider, Credentials as ProviderCredentials};
 
-use crate::{GatewayError, Result};
 use crate::config::ManagementApiConfig;
 use crate::management::constant_time_eq;
+use crate::{GatewayError, Result};
 
 /// Supported authentication methods.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,16 +89,10 @@ impl AuthHandler {
     ///
     /// For `UsernamePassword`, delegates to the `liquide-auth` PAM provider.
     /// Other methods use local validation stubs.
-    pub fn authenticate(
-        &self,
-        method: GatewayAuthMethod,
-        credential: &str,
-    ) -> Result<AuthResult> {
+    pub fn authenticate(&self, method: GatewayAuthMethod, credential: &str) -> Result<AuthResult> {
         match method {
             GatewayAuthMethod::Token => self.validate_token(credential),
-            GatewayAuthMethod::UsernamePassword => {
-                self.authenticate_username_password(credential)
-            }
+            GatewayAuthMethod::UsernamePassword => self.authenticate_username_password(credential),
             GatewayAuthMethod::Oidc => {
                 if credential.is_empty() {
                     Ok(AuthResult::Denied {
@@ -119,7 +111,8 @@ impl AuthHandler {
                     })
                 } else {
                     Ok(AuthResult::Denied {
-                        reason: "client certificate authentication backend not implemented".to_string(),
+                        reason: "client certificate authentication backend not implemented"
+                            .to_string(),
                     })
                 }
             }

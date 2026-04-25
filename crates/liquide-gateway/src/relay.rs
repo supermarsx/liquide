@@ -122,7 +122,9 @@ impl RelayManager {
         timestamp: u64,
     ) -> Result<String> {
         if !self.config.enabled {
-            return Err(GatewayError::Internal("relay subsystem is disabled".to_string()));
+            return Err(GatewayError::Internal(
+                "relay subsystem is disabled".to_string(),
+            ));
         }
 
         let active = self.active_count();
@@ -147,27 +149,24 @@ impl RelayManager {
 
     /// Terminate a relay session.
     pub fn terminate_relay(&mut self, relay_id: &str) -> Result<()> {
-        let session = self.sessions.get_mut(relay_id).ok_or_else(|| {
-            GatewayError::SessionNotFound {
-                session_id: relay_id.to_string(),
-            }
-        })?;
+        let session =
+            self.sessions
+                .get_mut(relay_id)
+                .ok_or_else(|| GatewayError::SessionNotFound {
+                    session_id: relay_id.to_string(),
+                })?;
         session.terminate();
         Ok(())
     }
 
     /// Record data passing through a relay.
-    pub fn relay_data(
-        &mut self,
-        relay_id: &str,
-        bytes_in: u64,
-        bytes_out: u64,
-    ) -> Result<()> {
-        let session = self.sessions.get_mut(relay_id).ok_or_else(|| {
-            GatewayError::SessionNotFound {
-                session_id: relay_id.to_string(),
-            }
-        })?;
+    pub fn relay_data(&mut self, relay_id: &str, bytes_in: u64, bytes_out: u64) -> Result<()> {
+        let session =
+            self.sessions
+                .get_mut(relay_id)
+                .ok_or_else(|| GatewayError::SessionNotFound {
+                    session_id: relay_id.to_string(),
+                })?;
         session.record_traffic(bytes_in, bytes_out);
         Ok(())
     }

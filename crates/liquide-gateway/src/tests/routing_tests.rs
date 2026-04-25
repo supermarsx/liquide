@@ -13,7 +13,8 @@ fn make_registry(count: usize) -> ServerRegistry {
             gpu_available: true,
             tags: HashMap::new(),
         };
-        caps.tags.insert("region".to_string(), format!("region-{}", i % 2));
+        caps.tags
+            .insert("region".to_string(), format!("region-{}", i % 2));
 
         let id = registry.register(format!("10.0.0.{}:3900", i + 1), caps, 1000);
         registry.update_health(&id, ServerHealth::Healthy);
@@ -90,7 +91,9 @@ fn test_direct_routing() {
     assert!(result.is_err());
 
     // Direct with explicit server should succeed.
-    let decision = router.route("192.168.1.1", &registry, Some("srv-1")).unwrap();
+    let decision = router
+        .route("192.168.1.1", &registry, Some("srv-1"))
+        .unwrap();
     assert_eq!(decision.target_server_id, "srv-1");
 }
 

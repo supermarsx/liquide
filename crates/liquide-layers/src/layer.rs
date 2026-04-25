@@ -16,7 +16,12 @@ impl Rect {
     /// Create a new rectangle.
     #[must_use]
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Right edge (x + width).
@@ -92,6 +97,71 @@ impl Rect {
         width: 0.0,
         height: 0.0,
     };
+}
+
+/// A CSS filter operation attached to a layer (blur, drop-shadow, etc.).
+///
+/// Kept as a lightweight, renderer-agnostic descriptor. Concrete pixel
+/// processing lives in the renderer crates; the layer only needs to
+/// carry the description forward for the compositor to honour it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FilterOpKind {
+    /// Gaussian blur with the given radius in pixels.
+    Blur { radius: f32 },
+    /// Brightness multiplier (1.0 = identity).
+    Brightness { amount: f32 },
+    /// Contrast multiplier (1.0 = identity).
+    Contrast { amount: f32 },
+    /// Grayscale amount (0.0 = identity, 1.0 = full gray).
+    Grayscale { amount: f32 },
+    /// Hue rotation in degrees.
+    HueRotate { degrees: f32 },
+    /// Invert amount (0.0 = identity, 1.0 = full invert).
+    Invert { amount: f32 },
+    /// Opacity multiplier (0.0 = transparent, 1.0 = identity).
+    Opacity { amount: f32 },
+    /// Saturation multiplier (1.0 = identity).
+    Saturate { amount: f32 },
+    /// Sepia amount (0.0 = identity, 1.0 = full sepia).
+    Sepia { amount: f32 },
+    /// Drop shadow with offset + blur + color (RGBA premultiplied).
+    DropShadow {
+        offset_x: f32,
+        offset_y: f32,
+        blur_radius: f32,
+        rgba: [u8; 4],
+    },
+}
+
+/// Ordered chain of filter operations applied to a layer.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FilterChain {
+    pub ops: Vec<FilterOpKind>,
+}
+
+impl FilterChain {
+    /// True if the chain has no ops (equivalent to `None`).
+    #[must_use]
+    pub fn is_identity(&self) -> bool {
+        self.ops.is_empty()
+    }
+}
+
+/// Reference to an image or gradient mask applied to a layer.
+///
+/// The ID refers to a resource managed by a higher-level crate
+/// (style-engine / renderer). Kept opaque here.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct MaskRef {
+    pub resource_id: u64,
+    /// Mask mode: 0 = alpha, 1 = luminance (matches CSS `mask-mode`).
+    pub mode: u8,
+}
+
+/// Reference to a `clip-path` shape (polygon / circle / path).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct ClipPathRef {
+    pub resource_id: u64,
 }
 
 /// Porter-Duff and CSS blend modes for layer compositing.
@@ -184,6 +254,19 @@ pub struct Layer {
     /// Number of frames since this layer was last marked dirty.
     /// Used by demotion heuristics to reclaim memory.
     pub frames_since_dirty: u64,
+    /// Optional CSS `filter` chain applied to the layer's own content.
+    pub filter: Option<FilterChain>,
+    /// Optional CSS `backdrop-filter` chain applied to the content
+    /// **behind** the layer (read the destination, blur it, re-composite).
+    pub backdrop_filter: Option<FilterChain>,
+    /// Optional mask image / gradient.
+    pub mask: Option<MaskRef>,
+    /// Optional `clip-path` shape (overrides the rectangular `clip` when set).
+    pub clip_path: Option<ClipPathRef>,
+    /// Whether this layer creates an isolated stacking context (CSS
+    /// `isolation: isolate`). Affects how blend modes interact with
+    /// the surrounding content.
+    pub isolation: bool,
 }
 
 impl Layer {
@@ -203,6 +286,11 @@ impl Layer {
             z_order: 0,
             promotion_reason: reason,
             frames_since_dirty: 0,
+            filter: None,
+            backdrop_filter: None,
+            mask: None,
+            clip_path: None,
+            isolation: false,
         }
     }
 
@@ -251,8 +339,14 @@ impl Layer {
         ];
         let min_x = corners.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
         let min_y = corners.iter().map(|p| p.1).fold(f32::INFINITY, f32::min);
-        let max_x = corners.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
-        let max_y = corners.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max);
+        let max_x = corners
+            .iter()
+            .map(|p| p.0)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let max_y = corners
+            .iter()
+            .map(|p| p.1)
+            .fold(f32::NEG_INFINITY, f32::max);
         Rect::new(min_x, min_y, max_x - min_x, max_y - min_y)
     }
 

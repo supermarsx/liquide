@@ -17,15 +17,9 @@ pub enum AuditLevel {
 #[derive(Debug, Clone)]
 pub enum GatewayAuditEvent {
     /// A new client connection was accepted.
-    ClientConnected {
-        addr: String,
-        transport: String,
-    },
+    ClientConnected { addr: String, transport: String },
     /// A client disconnected.
-    ClientDisconnected {
-        addr: String,
-        reason: String,
-    },
+    ClientDisconnected { addr: String, reason: String },
     /// An authentication attempt was made.
     AuthAttempt {
         addr: String,
@@ -33,25 +27,13 @@ pub enum GatewayAuditEvent {
         success: bool,
     },
     /// An IP was banned due to repeated auth failures.
-    AuthBanned {
-        addr: String,
-        reason: String,
-    },
+    AuthBanned { addr: String, reason: String },
     /// A backend server registered with the gateway.
-    ServerRegistered {
-        server_id: String,
-        addr: String,
-    },
+    ServerRegistered { server_id: String, addr: String },
     /// A backend server was removed.
-    ServerDeregistered {
-        server_id: String,
-        reason: String,
-    },
+    ServerDeregistered { server_id: String, reason: String },
     /// A server's health status changed.
-    ServerHealthChanged {
-        server_id: String,
-        health: String,
-    },
+    ServerHealthChanged { server_id: String, health: String },
     /// A routing decision was made.
     RouteDecision {
         client: String,
@@ -72,17 +54,11 @@ pub enum GatewayAuditEvent {
         duration_sec: u64,
     },
     /// A rate limit was triggered for an IP.
-    RateLimitTriggered {
-        addr: String,
-        rate: u32,
-    },
+    RateLimitTriggered { addr: String, rate: u32 },
     /// Configuration was reloaded.
     ConfigReloaded,
     /// A tarpit was engaged for an abusive IP.
-    TarpitEngaged {
-        addr: String,
-        mode: String,
-    },
+    TarpitEngaged { addr: String, mode: String },
 }
 
 impl GatewayAuditEvent {
@@ -110,8 +86,7 @@ impl GatewayAuditEvent {
             | Self::ServerHealthChanged { .. }
             | Self::RateLimitTriggered { .. } => AuditLevel::Warn,
 
-            Self::AuthBanned { .. }
-            | Self::TarpitEngaged { .. } => AuditLevel::Error,
+            Self::AuthBanned { .. } | Self::TarpitEngaged { .. } => AuditLevel::Error,
         }
     }
 

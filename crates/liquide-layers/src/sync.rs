@@ -59,14 +59,23 @@ fn diff_trees(old: &LayerTree, new: &LayerTree) -> TreeSyncState {
         let blend_changed = old_layer.blend_mode != new_layer.blend_mode;
         let dirty = new_layer.is_dirty;
 
-        if bounds_changed || transform_changed || opacity_changed || z_changed
-            || clip_changed || blend_changed || dirty
+        if bounds_changed
+            || transform_changed
+            || opacity_changed
+            || z_changed
+            || clip_changed
+            || blend_changed
+            || dirty
         {
             modified.push(id);
         }
     }
 
-    TreeSyncState { added, removed, modified }
+    TreeSyncState {
+        added,
+        removed,
+        modified,
+    }
 }
 
 /// The pending tree slot — being constructed by the main thread.

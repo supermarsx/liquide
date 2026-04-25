@@ -1,9 +1,9 @@
 //! Popup positioning with screen-edge avoidance, anchor flipping, and overlap
 //! prevention.
 
+use crate::Rect;
 use crate::anchor::AnchorConfig;
 use crate::popup::{Popup, PopupConfig};
-use crate::Rect;
 
 /// Minimum number of pixels a popup must remain visible on-screen.
 const MIN_VISIBLE_PX: f32 = 32.0;
@@ -44,11 +44,7 @@ impl PopupPositioner {
 
     /// Quick tooltip positioning: place below the cursor, avoid screen edges.
     #[must_use]
-    pub fn position_tooltip(
-        anchor: (f32, f32),
-        size: (f32, f32),
-        screen: Rect,
-    ) -> (f32, f32) {
+    pub fn position_tooltip(anchor: (f32, f32), size: (f32, f32), screen: Rect) -> (f32, f32) {
         let (ax, ay) = anchor;
         let (sw, sh) = (size.0, size.1);
 
@@ -79,11 +75,7 @@ impl PopupPositioner {
 
     /// Context menu positioning: at click point, avoid screen edges.
     #[must_use]
-    pub fn position_context_menu(
-        click: (f32, f32),
-        size: (f32, f32),
-        screen: Rect,
-    ) -> (f32, f32) {
+    pub fn position_context_menu(click: (f32, f32), size: (f32, f32), screen: Rect) -> (f32, f32) {
         let (cx, cy) = click;
         let (mw, mh) = (size.0, size.1);
 
@@ -169,21 +161,12 @@ impl PopupPositioner {
 
     /// Whether a rect at (x,y) of size (w,h) fits entirely within the screen.
     fn fits_on_screen(x: f32, y: f32, w: f32, h: f32, screen: Rect) -> bool {
-        x >= screen.x
-            && y >= screen.y
-            && x + w <= screen.right()
-            && y + h <= screen.bottom()
+        x >= screen.x && y >= screen.y && x + w <= screen.right() && y + h <= screen.bottom()
     }
 
     /// Clamp a popup position so at least `MIN_VISIBLE_PX` remains on-screen
     /// in each dimension.
-    fn clamp_to_screen(
-        mut x: f32,
-        mut y: f32,
-        w: f32,
-        h: f32,
-        screen: Rect,
-    ) -> (f32, f32) {
+    fn clamp_to_screen(mut x: f32, mut y: f32, w: f32, h: f32, screen: Rect) -> (f32, f32) {
         // Don't let the popup go too far off-screen.
         let max_x = screen.right() - MIN_VISIBLE_PX.min(w);
         let max_y = screen.bottom() - MIN_VISIBLE_PX.min(h);
@@ -229,7 +212,8 @@ impl PopupPositioner {
                 let nudged = Rect::new(nx, ny, candidate.width, candidate.height);
 
                 // Must be on screen.
-                if nx < screen.x || ny < screen.y
+                if nx < screen.x
+                    || ny < screen.y
                     || nx + candidate.width > screen.right()
                     || ny + candidate.height > screen.bottom()
                 {

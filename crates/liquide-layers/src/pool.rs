@@ -178,7 +178,12 @@ impl SurfacePool {
     #[must_use]
     pub fn stats(&self) -> PoolStats {
         let pooled: u64 = self.buckets.values().map(|b| b.len() as u64).sum();
-        let pooled_bytes: usize = self.buckets.values().flat_map(|b| b.iter()).map(|v| v.len()).sum();
+        let pooled_bytes: usize = self
+            .buckets
+            .values()
+            .flat_map(|b| b.iter())
+            .map(|v| v.len())
+            .sum();
 
         PoolStats {
             allocated: self.outstanding,

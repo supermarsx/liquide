@@ -17,10 +17,11 @@ impl EventRouter {
     #[must_use]
     pub fn should_block_event(popups: &[Popup], target_window: WindowId) -> bool {
         popups.iter().any(|p| {
-            p.modal && match p.owner {
-                Some(owner) => owner == target_window,
-                None => true,
-            }
+            p.modal
+                && match p.owner {
+                    Some(owner) => owner == target_window,
+                    None => true,
+                }
         })
     }
 

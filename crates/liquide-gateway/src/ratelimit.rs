@@ -101,15 +101,16 @@ impl RateLimiter {
 
         let rate = self.config.per_ip_rate_per_sec as f64;
 
-        let entry = self.entries.entry(ip.to_string()).or_insert_with(|| {
-            RateLimiterEntry {
+        let entry = self
+            .entries
+            .entry(ip.to_string())
+            .or_insert_with(|| RateLimiterEntry {
                 ip: ip.to_string(),
                 tokens: rate,
                 last_refill: now,
                 request_count: 0,
                 auth_failures: 0,
-            }
-        });
+            });
 
         // Refill tokens based on elapsed time.
         let elapsed = now.saturating_sub(entry.last_refill);
@@ -131,15 +132,16 @@ impl RateLimiter {
 
     /// Record a successful request (for accounting).
     pub fn record_request(&mut self, ip: &str, now: u64) {
-        let entry = self.entries.entry(ip.to_string()).or_insert_with(|| {
-            RateLimiterEntry {
+        let entry = self
+            .entries
+            .entry(ip.to_string())
+            .or_insert_with(|| RateLimiterEntry {
                 ip: ip.to_string(),
                 tokens: self.config.per_ip_rate_per_sec as f64,
                 last_refill: now,
                 request_count: 0,
                 auth_failures: 0,
-            }
-        });
+            });
         entry.request_count += 1;
     }
 
@@ -147,15 +149,16 @@ impl RateLimiter {
     /// failure threshold is crossed and the IP is now banned.
     pub fn record_auth_failure(&mut self, ip: &str, now: u64) -> Option<IpBan> {
         let rate = self.config.per_ip_rate_per_sec as f64;
-        let entry = self.entries.entry(ip.to_string()).or_insert_with(|| {
-            RateLimiterEntry {
+        let entry = self
+            .entries
+            .entry(ip.to_string())
+            .or_insert_with(|| RateLimiterEntry {
                 ip: ip.to_string(),
                 tokens: rate,
                 last_refill: now,
                 request_count: 0,
                 auth_failures: 0,
-            }
-        });
+            });
         entry.auth_failures += 1;
 
         if entry.auth_failures >= self.config.auth_failure_ban_threshold {
@@ -163,8 +166,7 @@ impl RateLimiter {
                 ip: ip.to_string(),
                 reason: format!(
                     "exceeded {} auth failures in {}s",
-                    self.config.auth_failure_ban_threshold,
-                    self.config.auth_failure_window_sec,
+                    self.config.auth_failure_ban_threshold, self.config.auth_failure_window_sec,
                 ),
                 banned_at: now,
                 expires_at: now + self.config.ban_duration_sec,
@@ -181,9 +183,7 @@ impl RateLimiter {
     /// Check if an IP is currently banned.
     #[must_use]
     pub fn is_banned(&self, ip: &str, now: u64) -> bool {
-        self.bans
-            .get(ip)
-            .map_or(false, |ban| now < ban.expires_at)
+        self.bans.get(ip).map_or(false, |ban| now < ban.expires_at)
     }
 
     /// Manually ban an IP.

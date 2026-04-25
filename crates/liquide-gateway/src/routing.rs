@@ -166,14 +166,12 @@ impl Router {
 
     // --- Internal strategies ---
 
-    fn route_direct(
-        &self,
-        server_id: &str,
-        registry: &ServerRegistry,
-    ) -> Result<RouteDecision> {
-        let server = registry.get(server_id).ok_or_else(|| GatewayError::ServerNotFound {
-            server_id: server_id.to_string(),
-        })?;
+    fn route_direct(&self, server_id: &str, registry: &ServerRegistry) -> Result<RouteDecision> {
+        let server = registry
+            .get(server_id)
+            .ok_or_else(|| GatewayError::ServerNotFound {
+                server_id: server_id.to_string(),
+            })?;
 
         if server.health() == crate::server::ServerHealth::Unhealthy {
             return Err(GatewayError::ServerUnhealthy {
@@ -198,11 +196,7 @@ impl Router {
         }
     }
 
-    fn route_least_load(
-        &self,
-        healthy: &[String],
-        registry: &ServerRegistry,
-    ) -> RouteDecision {
+    fn route_least_load(&self, healthy: &[String], registry: &ServerRegistry) -> RouteDecision {
         let mut best_id = healthy[0].clone();
         let mut best_score = f32::MAX;
 
@@ -229,9 +223,10 @@ impl Router {
                 continue;
             }
             let tags = &server.capabilities().tags;
-            let matched = self.tag_filters.iter().all(|(k, v)| {
-                tags.get(k).map_or(false, |tv| tv == v)
-            });
+            let matched = self
+                .tag_filters
+                .iter()
+                .all(|(k, v)| tags.get(k).map_or(false, |tv| tv == v));
             if matched {
                 return Ok(RouteDecision {
                     target_server_id: server.server_id().to_string(),

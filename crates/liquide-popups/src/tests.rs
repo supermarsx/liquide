@@ -1,5 +1,6 @@
 //! Tests for the popup management system.
 
+use crate::Rect;
 use crate::anchor::{Alignment, AnchorConfig, Edge};
 use crate::dropdown::{DropdownController, DropdownItem, DropdownKey};
 use crate::events::EventRouter;
@@ -8,7 +9,6 @@ use crate::popup::{Popup, PopupConfig, PopupId, PopupType, WindowId};
 use crate::position::PopupPositioner;
 use crate::stack::PopupStack;
 use crate::tooltip::{TooltipAction, TooltipController};
-use crate::Rect;
 
 fn screen() -> Rect {
     Rect::new(0.0, 0.0, 1920.0, 1080.0)
@@ -52,8 +52,9 @@ fn popup_id_display() {
 fn config_tooltip() {
     let cfg = PopupConfig::tooltip(200.0, 40.0).at(100.0, 100.0);
     assert_eq!(cfg.popup_type, PopupType::Tooltip);
-    assert!(cfg.auto_dismiss_ms.is_some());
-    assert!(cfg.dismiss_on_escape);
+    // Tooltips do not auto-dismiss by default and do not consume Escape.
+    assert!(cfg.auto_dismiss_ms.is_none());
+    assert!(!cfg.dismiss_on_escape);
     assert!(!cfg.modal);
     assert_eq!(cfg.preferred_x, 100.0);
 }
@@ -64,6 +65,14 @@ fn config_dialog() {
     let cfg = PopupConfig::dialog(400.0, 300.0, owner);
     assert!(cfg.modal);
     assert_eq!(cfg.owner, Some(owner));
+    assert!(!cfg.dismiss_on_click_outside);
+}
+
+#[test]
+fn config_dialog_for_without_owner_is_global_modal() {
+    let cfg = PopupConfig::dialog_for(400.0, 300.0, None);
+    assert!(cfg.modal);
+    assert_eq!(cfg.owner, None);
     assert!(!cfg.dismiss_on_click_outside);
 }
 
@@ -184,8 +193,8 @@ fn anchor_raw_position_right_end() {
 
 #[test]
 fn anchor_raw_position_left_start_with_offset() {
-    let anchor = AnchorConfig::new(Rect::new(300.0, 100.0, 80.0, 40.0), Edge::Left)
-        .with_offset(5.0, -3.0);
+    let anchor =
+        AnchorConfig::new(Rect::new(300.0, 100.0, 80.0, 40.0), Edge::Left).with_offset(5.0, -3.0);
     let (x, y) = anchor.compute_raw_position(150.0, 100.0);
     assert_eq!(x, 155.0);
     assert_eq!(y, 97.0);
@@ -246,11 +255,8 @@ fn positioner_context_menu_bottom_right_corner() {
 
 #[test]
 fn positioner_anchored_with_flip() {
-    let anchor = AnchorConfig::new(
-        Rect::new(400.0, 1000.0, 100.0, 30.0),
-        Edge::Bottom,
-    )
-    .with_alignment(Alignment::Start);
+    let anchor = AnchorConfig::new(Rect::new(400.0, 1000.0, 100.0, 30.0), Edge::Bottom)
+        .with_alignment(Alignment::Start);
     let cfg = PopupConfig::popover(200.0, 150.0, anchor).at(0.0, 0.0);
     let result = PopupPositioner::position(&cfg, screen(), &[]);
     assert!(result.y < 1000.0, "popup should flip above anchor");
@@ -258,14 +264,14 @@ fn positioner_anchored_with_flip() {
 
 #[test]
 fn positioner_anchored_with_slide() {
-    let anchor = AnchorConfig::new(
-        Rect::new(1850.0, 400.0, 50.0, 30.0),
-        Edge::Bottom,
-    )
-    .with_alignment(Alignment::Start);
+    let anchor = AnchorConfig::new(Rect::new(1850.0, 400.0, 50.0, 30.0), Edge::Bottom)
+        .with_alignment(Alignment::Start);
     let cfg = PopupConfig::popover(200.0, 100.0, anchor).at(0.0, 0.0);
     let result = PopupPositioner::position(&cfg, screen(), &[]);
-    assert!(result.right() <= 1920.0, "popup should slide to stay on screen");
+    assert!(
+        result.right() <= 1920.0,
+        "popup should slide to stay on screen"
+    );
 }
 
 // =========================================================================
@@ -281,11 +287,20 @@ fn stack_z_order_modal_above_nonmodal() {
 }
 
 #[test]
-fn stack_z_order_tooltip_above_nonmodal() {
+fn stack_z_order_tooltip_below_nonmodal() {
+    // Tooltips should sit below interactive popups like context menus.
     let mut stack = PopupStack::new();
     let z_menu = stack.z_order_for_popup(PopupType::ContextMenu, false);
     let z_tip = stack.z_order_for_popup(PopupType::Tooltip, false);
-    assert!(z_tip > z_menu);
+    assert!(z_tip < z_menu);
+}
+
+#[test]
+fn stack_z_order_modal_above_tooltip() {
+    let mut stack = PopupStack::new();
+    let z_tip = stack.z_order_for_popup(PopupType::Tooltip, false);
+    let z_dialog = stack.z_order_for_popup(PopupType::Dialog, true);
+    assert!(z_dialog > z_tip);
 }
 
 #[test]
@@ -309,8 +324,9 @@ fn stack_reset() {
 
 #[test]
 fn stack_base_constants() {
-    assert!(PopupStack::base_tooltip() > PopupStack::base_nonmodal());
-    assert!(PopupStack::base_modal() > PopupStack::base_tooltip());
+    // Tooltip < non-modal < modal.
+    assert!(PopupStack::base_tooltip() < PopupStack::base_nonmodal());
+    assert!(PopupStack::base_nonmodal() < PopupStack::base_modal());
 }
 
 // =========================================================================
@@ -329,6 +345,8 @@ fn make_popup(
         popup_type,
         bounds,
         anchor: None,
+        preferred_x: bounds.x,
+        preferred_y: bounds.y,
         owner,
         modal,
         auto_dismiss_ms: None,
@@ -385,8 +403,20 @@ fn event_router_click_outside() {
 #[test]
 fn event_router_escape_topmost() {
     let popups = vec![
-        make_popup(1, Rect::new(100.0, 100.0, 200.0, 200.0), PopupType::ContextMenu, false, None),
-        make_popup(5, Rect::new(200.0, 200.0, 200.0, 200.0), PopupType::Dropdown, false, None),
+        make_popup(
+            1,
+            Rect::new(100.0, 100.0, 200.0, 200.0),
+            PopupType::ContextMenu,
+            false,
+            None,
+        ),
+        make_popup(
+            5,
+            Rect::new(200.0, 200.0, 200.0, 200.0),
+            PopupType::Dropdown,
+            false,
+            None,
+        ),
     ];
     let esc = EventRouter::handle_escape(&popups);
     assert_eq!(esc, Some(PopupId::new(5)));
@@ -395,8 +425,20 @@ fn event_router_escape_topmost() {
 #[test]
 fn event_router_focus_change_dismisses_owned() {
     let popups = vec![
-        make_popup(1, Rect::new(100.0, 100.0, 200.0, 200.0), PopupType::ContextMenu, false, Some(WindowId(10))),
-        make_popup(2, Rect::new(300.0, 100.0, 200.0, 200.0), PopupType::Dropdown, false, Some(WindowId(20))),
+        make_popup(
+            1,
+            Rect::new(100.0, 100.0, 200.0, 200.0),
+            PopupType::ContextMenu,
+            false,
+            Some(WindowId(10)),
+        ),
+        make_popup(
+            2,
+            Rect::new(300.0, 100.0, 200.0, 200.0),
+            PopupType::Dropdown,
+            false,
+            Some(WindowId(20)),
+        ),
     ];
     let dismissed = EventRouter::handle_focus_change(&popups, WindowId(10));
     assert_eq!(dismissed.len(), 1);
@@ -419,8 +461,20 @@ fn event_router_focus_change_keeps_notifications() {
 #[test]
 fn event_router_popup_at_point() {
     let popups = vec![
-        make_popup(1, Rect::new(0.0, 0.0, 200.0, 200.0), PopupType::ContextMenu, false, None),
-        make_popup(2, Rect::new(100.0, 100.0, 200.0, 200.0), PopupType::Dropdown, false, None),
+        make_popup(
+            1,
+            Rect::new(0.0, 0.0, 200.0, 200.0),
+            PopupType::ContextMenu,
+            false,
+            None,
+        ),
+        make_popup(
+            2,
+            Rect::new(100.0, 100.0, 200.0, 200.0),
+            PopupType::Dropdown,
+            false,
+            None,
+        ),
     ];
     let hit = EventRouter::popup_at_point(&popups, 150.0, 150.0);
     assert_eq!(hit, Some(PopupId::new(2)));
@@ -481,9 +535,21 @@ fn manager_close_owned_by() {
     let mut mgr = PopupManager::new(screen());
     let w1 = WindowId(10);
     let w2 = WindowId(20);
-    mgr.open(PopupConfig::context_menu(200.0, 300.0).at(100.0, 100.0).owned_by(w1));
-    mgr.open(PopupConfig::dropdown(200.0, 200.0).at(200.0, 200.0).owned_by(w2));
-    mgr.open(PopupConfig::tooltip(150.0, 30.0).at(300.0, 300.0).owned_by(w1));
+    mgr.open(
+        PopupConfig::context_menu(200.0, 300.0)
+            .at(100.0, 100.0)
+            .owned_by(w1),
+    );
+    mgr.open(
+        PopupConfig::dropdown(200.0, 200.0)
+            .at(200.0, 200.0)
+            .owned_by(w2),
+    );
+    mgr.open(
+        PopupConfig::tooltip(150.0, 30.0)
+            .at(300.0, 300.0)
+            .owned_by(w1),
+    );
     assert_eq!(mgr.count(), 3);
     mgr.close_owned_by(w1);
     assert_eq!(mgr.count(), 1);
@@ -522,7 +588,10 @@ fn manager_modal_active() {
 #[test]
 fn manager_dismiss_expired() {
     let mut mgr = PopupManager::new(screen());
-    mgr.open_at_time(PopupConfig::notification(320.0, 80.0, 2000).at(100.0, 100.0), 0);
+    mgr.open_at_time(
+        PopupConfig::notification(320.0, 80.0, 2000).at(100.0, 100.0),
+        0,
+    );
     mgr.open_at_time(PopupConfig::context_menu(200.0, 300.0).at(300.0, 300.0), 0);
     assert_eq!(mgr.count(), 2);
 
@@ -547,6 +616,35 @@ fn manager_get_and_update_bounds() {
 }
 
 #[test]
+fn manager_update_bounds_reclamps_to_current_screen() {
+    let mut mgr = PopupManager::new(screen());
+    let id = mgr.open(PopupConfig::context_menu(200.0, 300.0).at(100.0, 100.0));
+
+    mgr.update_bounds(id, Rect::new(5_000.0, 4_000.0, 260.0, 360.0));
+
+    let popup = mgr.get(id).unwrap();
+    assert_eq!(popup.bounds.width, 260.0);
+    assert_eq!(popup.bounds.height, 360.0);
+    assert!(popup.bounds.x <= screen().right() - 32.0);
+    assert!(popup.bounds.y <= screen().bottom() - 32.0);
+}
+
+#[test]
+fn manager_set_screen_repositions_existing_popups() {
+    let mut mgr = PopupManager::new(screen());
+    let id = mgr.open(PopupConfig::context_menu(200.0, 300.0).at(4_000.0, 3_000.0));
+
+    let new_screen = Rect::new(1_920.0, 120.0, 1_280.0, 720.0);
+    mgr.set_screen(new_screen);
+
+    let popup = mgr.get(id).unwrap();
+    assert!(popup.bounds.x >= new_screen.x);
+    assert!(popup.bounds.y >= new_screen.y);
+    assert!(popup.bounds.x <= new_screen.right() - 32.0);
+    assert!(popup.bounds.y <= new_screen.bottom() - 32.0);
+}
+
+#[test]
 fn manager_default() {
     let mgr = PopupManager::default();
     assert!(mgr.is_empty());
@@ -562,6 +660,68 @@ fn manager_popup_at_point() {
     let cy = popup.bounds.y + 50.0;
     assert_eq!(mgr.popup_at_point(cx, cy), Some(id));
     assert!(mgr.popup_at_point(2000.0, 2000.0).is_none());
+}
+
+#[test]
+fn manager_on_escape_closes_topmost() {
+    let mut mgr = PopupManager::new(screen());
+    let _id1 = mgr.open(PopupConfig::context_menu(200.0, 300.0).at(100.0, 100.0));
+    let id2 = mgr.open(PopupConfig::dropdown(200.0, 200.0).at(200.0, 200.0));
+    let closed = mgr.on_escape();
+    assert_eq!(closed, Some(id2));
+    assert_eq!(mgr.count(), 1);
+}
+
+#[test]
+fn manager_on_click_outside_closes_matching() {
+    let mut mgr = PopupManager::new(screen());
+    let _id = mgr.open(PopupConfig::context_menu(200.0, 200.0).at(100.0, 100.0));
+    let closed = mgr.on_click_outside(2.0, 2.0);
+    assert_eq!(closed.len(), 1);
+    assert_eq!(mgr.count(), 0);
+}
+
+#[test]
+fn manager_on_focus_change_closes_non_owners() {
+    let mut mgr = PopupManager::new(screen());
+    let w1 = WindowId(10);
+    let w2 = WindowId(20);
+    mgr.open(
+        PopupConfig::context_menu(200.0, 300.0)
+            .at(100.0, 100.0)
+            .owned_by(w1),
+    );
+    mgr.open(
+        PopupConfig::dropdown(200.0, 200.0)
+            .at(200.0, 200.0)
+            .owned_by(w2),
+    );
+    let closed = mgr.on_focus_change(w1);
+    assert_eq!(closed.len(), 1);
+    assert_eq!(mgr.count(), 1);
+    assert_eq!(mgr.popups()[0].owner, Some(w1));
+}
+
+#[test]
+fn manager_show_dialog_is_modal() {
+    use crate::dialog_info::DialogInfo;
+
+    struct FakeDialog;
+    impl DialogInfo for FakeDialog {
+        fn preferred_size(&self) -> (f32, f32) {
+            (400.0, 300.0)
+        }
+    }
+
+    let mut mgr = PopupManager::new(screen());
+    let owner = WindowId(7);
+    let id = mgr.show_dialog(&FakeDialog, owner);
+    let popup = mgr.get(id).unwrap();
+    assert!(popup.modal);
+    assert_eq!(popup.popup_type, PopupType::Dialog);
+    assert_eq!(popup.owner, Some(owner));
+    assert!(mgr.is_modal_active());
+    assert!(!mgr.can_show_nonmodal());
 }
 
 // =========================================================================
@@ -907,7 +1067,11 @@ fn integration_modal_blocks_then_escape_closes() {
     let mut mgr = PopupManager::new(screen());
     let w = WindowId(1);
 
-    mgr.open(PopupConfig::context_menu(200.0, 300.0).at(100.0, 100.0).owned_by(w));
+    mgr.open(
+        PopupConfig::context_menu(200.0, 300.0)
+            .at(100.0, 100.0)
+            .owned_by(w),
+    );
     assert!(!mgr.should_block_event(w));
 
     let dlg_id = mgr.open(PopupConfig::dialog(400.0, 300.0, w));

@@ -40,6 +40,7 @@
 //! let id = server.notify(notif);
 //! ```
 
+pub mod animation;
 pub mod app_settings;
 pub mod dnd;
 pub mod grouping;
@@ -52,19 +53,24 @@ pub mod queue;
 pub mod rate_limiter;
 pub mod server;
 pub mod spec;
+pub mod theme;
 
+pub use animation::{AnimationPhase, NotificationAnimationState};
 pub use app_settings::{AppNotificationSettings, AppSettings};
 pub use dnd::{DndSchedule, DndTimeRange};
 pub use grouping::{NotificationGroup, NotificationId};
 pub use handler::NotificationHandler;
 pub use history::{HistoryEntry, NotificationHistory};
-pub use layout::{LayoutAnchor, NotificationInfo, NotificationLayout, NotificationPosition, Priority, Rect};
+pub use layout::{
+    LayoutAnchor, NotificationInfo, NotificationLayout, NotificationPosition, Priority, Rect,
+};
 pub use log::{LogAction, LogEntry, NotificationLog};
 pub use platform::{PlatformError, PlatformResult};
 pub use queue::NotificationQueue;
 pub use rate_limiter::RateLimiter;
 pub use server::{NotificationServer, ServerInfo};
 pub use spec::{CloseReason, Notification, NotificationHints, Urgency};
+pub use theme::{NotificationColor, NotificationTheme, UrgencyColors};
 
 #[cfg(test)]
 mod tests;

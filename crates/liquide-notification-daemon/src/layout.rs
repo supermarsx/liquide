@@ -126,9 +126,50 @@ impl NotificationLayout {
         screen: Rect,
         anchor: LayoutAnchor,
     ) -> Vec<NotificationPosition> {
+        self.compute_positions_scaled(notifications, screen, anchor, 1.0)
+    }
+
+    /// Like [`compute_positions`](Self::compute_positions) but scales gap,
+    /// margin and notification sizes by `scale` (DPI scale factor).
+    ///
+    /// `scale` values `< 1.0` or non-finite are treated as `1.0`.
+    pub fn compute_positions_scaled(
+        &self,
+        notifications: &[NotificationInfo],
+        screen: Rect,
+        anchor: LayoutAnchor,
+        scale: f32,
+    ) -> Vec<NotificationPosition> {
+        let (positions, _overflow) =
+            self.compute_positions_with_overflow(notifications, screen, anchor, scale, usize::MAX);
+        positions
+    }
+
+    /// Like [`compute_positions_scaled`](Self::compute_positions_scaled) but
+    /// also enforces a hard cap of `max_visible` notifications.
+    ///
+    /// Returns the visible positions plus the count of notifications that
+    /// could not be displayed (screen overflow or cap). The caller can render
+    /// a "+N more" badge when the overflow count is non-zero.
+    pub fn compute_positions_with_overflow(
+        &self,
+        notifications: &[NotificationInfo],
+        screen: Rect,
+        anchor: LayoutAnchor,
+        scale: f32,
+        max_visible: usize,
+    ) -> (Vec<NotificationPosition>, usize) {
         if notifications.is_empty() {
-            return Vec::new();
+            return (Vec::new(), 0);
         }
+
+        let s = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        let gap = self.gap * s;
+        let margin = self.margin * s;
 
         // Sort by priority descending (Urgent first), stable to preserve
         // insertion order among equal priorities.
@@ -136,65 +177,72 @@ impl NotificationLayout {
         sorted.sort_by(|a, b| b.priority.cmp(&a.priority));
 
         let mut positions = Vec::new();
+        let mut overflow: usize = 0;
         let mut cursor_y: f32;
         let grows_down: bool;
 
         match anchor {
             LayoutAnchor::TopRight | LayoutAnchor::TopLeft | LayoutAnchor::TopCenter => {
-                cursor_y = screen.y + self.margin;
+                cursor_y = screen.y + margin;
                 grows_down = true;
             }
             LayoutAnchor::BottomRight | LayoutAnchor::BottomLeft => {
-                cursor_y = screen.y + screen.height - self.margin;
+                cursor_y = screen.y + screen.height - margin;
                 grows_down = false;
             }
         }
 
         for info in &sorted {
+            if positions.len() >= max_visible {
+                overflow += 1;
+                continue;
+            }
+
+            let width = info.width * s;
+            let height = info.height * s;
+
             let x = match anchor {
                 LayoutAnchor::TopRight | LayoutAnchor::BottomRight => {
-                    screen.x + screen.width - self.margin - info.width
+                    screen.x + screen.width - margin - width
                 }
-                LayoutAnchor::TopLeft | LayoutAnchor::BottomLeft => screen.x + self.margin,
-                LayoutAnchor::TopCenter => {
-                    screen.x + (screen.width - info.width) / 2.0
-                }
+                LayoutAnchor::TopLeft | LayoutAnchor::BottomLeft => screen.x + margin,
+                LayoutAnchor::TopCenter => screen.x + (screen.width - width) / 2.0,
             };
 
             let y = if grows_down {
                 cursor_y
             } else {
-                cursor_y - info.height
+                cursor_y - height
             };
 
             // Overflow check: skip notifications that don't fit on screen.
             if grows_down {
-                let bottom = y + info.height;
-                if bottom > screen.y + screen.height - self.margin {
-                    continue; // Would overflow below screen.
+                let bottom = y + height;
+                if bottom > screen.y + screen.height - margin {
+                    overflow += 1;
+                    continue;
                 }
-            } else {
-                if y < screen.y + self.margin {
-                    continue; // Would overflow above screen.
-                }
+            } else if y < screen.y + margin {
+                overflow += 1;
+                continue;
             }
 
             positions.push(NotificationPosition {
                 id: info.id,
                 x,
                 y,
-                width: info.width,
-                height: info.height,
+                width,
+                height,
             });
 
             if grows_down {
-                cursor_y = y + info.height + self.gap;
+                cursor_y = y + height + gap;
             } else {
-                cursor_y = y - self.gap;
+                cursor_y = y - gap;
             }
         }
 
-        positions
+        (positions, overflow)
     }
 }
 
