@@ -14,27 +14,29 @@
 //! and per-element invalidation tracking with automatic damage
 //! computation.
 
-pub mod rect;
 pub mod band;
-pub mod region;
-pub mod invalid;
 pub mod clip;
-pub mod paint;
 pub mod damage;
 pub mod frame_clock;
+pub mod geometry_adapter;
+pub mod invalid;
 pub mod invalidation;
+pub mod paint;
+pub mod rect;
+pub mod region;
 
 #[cfg(test)]
 mod tests;
 
-pub use rect::Rect;
 pub use band::{Band, Span};
-pub use region::{Region, RegionBuilder, RegionComplexity};
-pub use invalid::InvalidRegion;
 pub use clip::ClipRegion;
-pub use paint::{PaintContext, WindowId, begin_paint, begin_paint_bounded, end_paint};
 pub use damage::{DamageRegion, DamageTracker};
 pub use frame_clock::{FrameClock, FrameThrottler};
+pub use invalid::InvalidRegion;
 pub use invalidation::{
-    InvalidationFlags, InvalidationTracker, compute_damage_from_invalidation,
+    InvalidationFlags, InvalidationTracker, NodeDamageInflation, compute_damage_from_invalidation,
+    compute_damage_from_invalidation_with_inflation,
 };
+pub use paint::{PaintContext, WindowId, begin_paint, begin_paint_bounded, end_paint};
+pub use rect::Rect;
+pub use region::{Region, RegionBuilder, RegionComplexity};

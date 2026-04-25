@@ -84,37 +84,19 @@ impl CaretNavigator {
         lines: &[LayoutLine],
     ) -> TextOffset {
         match (direction, granularity) {
-            (MoveDirection::Left, MoveGranularity::Grapheme) => {
-                Self::prev_grapheme(text, current)
-            }
-            (MoveDirection::Right, MoveGranularity::Grapheme) => {
-                Self::next_grapheme(text, current)
-            }
-            (MoveDirection::Left, MoveGranularity::Word) => {
-                Self::prev_word(text, current)
-            }
-            (MoveDirection::Right, MoveGranularity::Word) => {
-                Self::next_word(text, current)
-            }
-            (MoveDirection::Left, MoveGranularity::Line) => {
-                Self::line_start(text, current)
-            }
-            (MoveDirection::Right, MoveGranularity::Line) => {
-                Self::line_end(text, current)
-            }
-            (MoveDirection::Up, MoveGranularity::Grapheme) => {
-                Self::prev_line(current, lines)
-            }
-            (MoveDirection::Down, MoveGranularity::Grapheme) => {
-                Self::next_line(current, lines)
-            }
+            (MoveDirection::Left, MoveGranularity::Grapheme) => Self::prev_grapheme(text, current),
+            (MoveDirection::Right, MoveGranularity::Grapheme) => Self::next_grapheme(text, current),
+            (MoveDirection::Left, MoveGranularity::Word) => Self::prev_word(text, current),
+            (MoveDirection::Right, MoveGranularity::Word) => Self::next_word(text, current),
+            (MoveDirection::Left, MoveGranularity::Line) => Self::line_start(text, current),
+            (MoveDirection::Right, MoveGranularity::Line) => Self::line_end(text, current),
+            (MoveDirection::Up, MoveGranularity::Grapheme) => Self::prev_line(current, lines),
+            (MoveDirection::Down, MoveGranularity::Grapheme) => Self::next_line(current, lines),
             (_, MoveGranularity::Document) => match direction {
                 MoveDirection::Left | MoveDirection::Up => TextOffset(0),
                 MoveDirection::Right | MoveDirection::Down => TextOffset(text.len()),
             },
-            (MoveDirection::Up, MoveGranularity::Paragraph) => {
-                Self::prev_paragraph(text, current)
-            }
+            (MoveDirection::Up, MoveGranularity::Paragraph) => Self::prev_paragraph(text, current),
             (MoveDirection::Down, MoveGranularity::Paragraph) => {
                 Self::next_paragraph(text, current)
             }
@@ -209,10 +191,7 @@ impl CaretNavigator {
     /// Move to the start of the current line.
     #[must_use]
     pub fn line_start(text: &str, current: TextOffset) -> TextOffset {
-        let start = text[..current.0]
-            .rfind('\n')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let start = text[..current.0].rfind('\n').map(|i| i + 1).unwrap_or(0);
         TextOffset(start)
     }
 
@@ -243,7 +222,8 @@ impl CaretNavigator {
         // Move to the same horizontal position on the previous line.
         let prev = &lines[current_line - 1];
         let target_offset_in_line = current.0.saturating_sub(lines[current_line].start);
-        let new_offset = prev.start + target_offset_in_line.min(prev.end.saturating_sub(prev.start));
+        let new_offset =
+            prev.start + target_offset_in_line.min(prev.end.saturating_sub(prev.start));
         TextOffset(new_offset)
     }
 
@@ -262,7 +242,8 @@ impl CaretNavigator {
 
         let next = &lines[current_line + 1];
         let target_offset_in_line = current.0.saturating_sub(lines[current_line].start);
-        let new_offset = next.start + target_offset_in_line.min(next.end.saturating_sub(next.start));
+        let new_offset =
+            next.start + target_offset_in_line.min(next.end.saturating_sub(next.start));
         TextOffset(new_offset)
     }
 

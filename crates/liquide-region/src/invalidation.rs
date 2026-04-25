@@ -4,9 +4,9 @@
 //! (paint, layout, style, etc.), then converts those invalidations into
 //! screen-space damage rects.
 
-use std::collections::HashMap;
 use crate::damage::DamageRegion;
 use crate::rect::Rect;
+use std::collections::HashMap;
 
 /// Bitflags describing what aspects of a node are invalidated.
 ///
@@ -179,6 +179,31 @@ impl Default for InvalidationTracker {
     }
 }
 
+/// Per-node visual effect metadata used by
+/// [`compute_damage_from_invalidation`] to expand the damage rect of a
+/// node beyond its bounds when box-shadow / filter / outline extends
+/// outside the layout box.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NodeDamageInflation {
+    /// Worst-case shadow spread + blur radius (`spread_radius +
+    /// blur_radius` from `box-shadow` / `drop-shadow`). In pixels.
+    pub shadow_spread: i32,
+    /// Worst-case filter blur radius. In pixels.
+    pub filter_blur: i32,
+    /// Outline offset + outline width. In pixels.
+    pub outline_extent: i32,
+}
+
+impl NodeDamageInflation {
+    /// Total pixel inflation applied to the damage rect on each side.
+    #[inline]
+    pub fn pixels(self) -> i32 {
+        self.shadow_spread
+            .max(self.filter_blur)
+            .max(self.outline_extent)
+    }
+}
+
 /// Convert a list of invalidated (node_id, flags) pairs into a
 /// `DamageRegion` using the provided node-to-bounds map.
 ///
@@ -190,6 +215,19 @@ pub fn compute_damage_from_invalidation(
     dirty: &[(u64, InvalidationFlags)],
     bounds: &HashMap<u64, Rect>,
 ) -> DamageRegion {
+    compute_damage_from_invalidation_with_inflation(dirty, bounds, &HashMap::new())
+}
+
+/// Variant of [`compute_damage_from_invalidation`] that consults a
+/// per-node inflation map so the returned damage region accounts for
+/// `box-shadow` / `filter` / `outline` extending outside the node's
+/// own bounds. This replaces the previous hardcoded 1-pixel margin
+/// which under-damaged large shadows (§5.1 of the t8 review).
+pub fn compute_damage_from_invalidation_with_inflation(
+    dirty: &[(u64, InvalidationFlags)],
+    bounds: &HashMap<u64, Rect>,
+    inflation: &HashMap<u64, NodeDamageInflation>,
+) -> DamageRegion {
     let mut damage = DamageRegion::new();
 
     for &(node_id, flags) in dirty {
@@ -197,11 +235,20 @@ pub fn compute_damage_from_invalidation(
             if rect.is_empty() {
                 continue;
             }
-            // Inflate for layout/subtree changes that may shift neighbors.
-            if flags.contains(InvalidationFlags::LAYOUT)
+            // Base inflation for layout / subtree changes that may
+            // shift neighbors.
+            let base = if flags.contains(InvalidationFlags::LAYOUT)
                 || flags.contains(InvalidationFlags::SUBTREE)
             {
-                damage.add(rect.inflate(1, 1));
+                1
+            } else {
+                0
+            };
+            // Per-node style inflation (shadow / filter / outline).
+            let extra = inflation.get(&node_id).map(|i| i.pixels()).unwrap_or(0);
+            let total = base + extra;
+            if total > 0 {
+                damage.add(rect.inflate(total, total));
             } else {
                 damage.add(rect);
             }
@@ -369,7 +416,7 @@ mod tests {
         t.mark_dirty(5, InvalidationFlags::SUBTREE);
         t.mark_dirty(6, InvalidationFlags::LAYOUT); // layout alone doesn't need paint
         t.mark_dirty(7, InvalidationFlags::SCROLL); // scroll alone doesn't need paint
-        t.mark_dirty(8, InvalidationFlags::STYLE);  // style alone doesn't need paint
+        t.mark_dirty(8, InvalidationFlags::STYLE); // style alone doesn't need paint
 
         assert!(t.needs_paint(1));
         assert!(t.needs_paint(2));

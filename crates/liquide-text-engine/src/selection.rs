@@ -193,10 +193,7 @@ impl Selection {
         let offset = offset.min(text.len());
 
         // Find line start.
-        let start = text[..offset]
-            .rfind('\n')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let start = text[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
 
         // Find line end.
         let end = text[offset..]

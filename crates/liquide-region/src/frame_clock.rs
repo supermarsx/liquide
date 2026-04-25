@@ -78,8 +78,8 @@ impl FrameClock {
 
         // Update exponential moving average (alpha = 0.1 for smooth FPS).
         const ALPHA: f64 = 0.1;
-        self.avg_frame_duration_us = ALPHA * self.last_frame_duration_us as f64
-            + (1.0 - ALPHA) * self.avg_frame_duration_us;
+        self.avg_frame_duration_us =
+            ALPHA * self.last_frame_duration_us as f64 + (1.0 - ALPHA) * self.avg_frame_duration_us;
     }
 
     /// The time budget for each frame in microseconds.

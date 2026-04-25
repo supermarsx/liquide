@@ -242,7 +242,10 @@ fn max_height() {
 
 #[test]
 fn margin_individual() {
-    let s = style_for("x { margin-top: 10px; margin-right: 20px; margin-bottom: 30px; margin-left: 40px; }", "x");
+    let s = style_for(
+        "x { margin-top: 10px; margin-right: 20px; margin-bottom: 30px; margin-left: 40px; }",
+        "x",
+    );
     assert_dim_px!(s.margin.top, 10.0);
     assert_dim_px!(s.margin.right, 20.0);
     assert_dim_px!(s.margin.bottom, 30.0);
@@ -251,7 +254,10 @@ fn margin_individual() {
 
 #[test]
 fn padding_individual() {
-    let s = style_for("x { padding-top: 5px; padding-right: 10px; padding-bottom: 15px; padding-left: 20px; }", "x");
+    let s = style_for(
+        "x { padding-top: 5px; padding-right: 10px; padding-bottom: 15px; padding-left: 20px; }",
+        "x",
+    );
     assert_dim_px!(s.padding.top, 5.0);
     assert_dim_px!(s.padding.right, 10.0);
     assert_dim_px!(s.padding.bottom, 15.0);
@@ -271,7 +277,10 @@ fn margin_percent() {
 #[test]
 #[ignore = "lightningcss merges individual border-width longhands into shorthand; HashMap ordering issue"]
 fn border_width_individual() {
-    let s = style_for("x { border-top-width: 1px; border-right-width: 2px; border-bottom-width: 3px; border-left-width: 4px; }", "x");
+    let s = style_for(
+        "x { border-top-width: 1px; border-right-width: 2px; border-bottom-width: 3px; border-left-width: 4px; }",
+        "x",
+    );
     assert!((s.border_width.top - 1.0).abs() < 0.1);
     assert!((s.border_width.right - 2.0).abs() < 0.1);
     assert!((s.border_width.bottom - 3.0).abs() < 0.1);
@@ -280,7 +289,10 @@ fn border_width_individual() {
 
 #[test]
 fn border_style_individual() {
-    let s = style_for("x { border-top-style: solid; border-right-style: dashed; border-bottom-style: dotted; border-left-style: double; }", "x");
+    let s = style_for(
+        "x { border-top-style: solid; border-right-style: dashed; border-bottom-style: dotted; border-left-style: double; }",
+        "x",
+    );
     assert_eq!(s.border_style.top, BorderLineStyle::Solid);
     assert_eq!(s.border_style.right, BorderLineStyle::Dashed);
     assert_eq!(s.border_style.bottom, BorderLineStyle::Dotted);
@@ -290,7 +302,10 @@ fn border_style_individual() {
 #[test]
 #[ignore = "lightningcss merges individual border-color longhands into shorthand; HashMap ordering issue"]
 fn border_color_individual() {
-    let s = style_for("x { border-top-color: red; border-bottom-color: blue; }", "x");
+    let s = style_for(
+        "x { border-top-color: red; border-bottom-color: blue; }",
+        "x",
+    );
     assert_eq!(s.border_color.top.r, 255);
     assert_eq!(s.border_color.top.g, 0);
     assert_eq!(s.border_color.bottom.b, 255);
@@ -298,7 +313,10 @@ fn border_color_individual() {
 
 #[test]
 fn border_radius_individual() {
-    let s = style_for("x { border-top-left-radius: 4px; border-top-right-radius: 8px; border-bottom-right-radius: 12px; border-bottom-left-radius: 16px; }", "x");
+    let s = style_for(
+        "x { border-top-left-radius: 4px; border-top-right-radius: 8px; border-bottom-right-radius: 12px; border-bottom-left-radius: 16px; }",
+        "x",
+    );
     assert!((s.border_radius.top_left - 4.0).abs() < 0.1);
     assert!((s.border_radius.top_right - 8.0).abs() < 0.1);
     assert!((s.border_radius.bottom_right - 12.0).abs() < 0.1);
@@ -320,7 +338,10 @@ fn border_radius_shorthand() {
 
 #[test]
 fn offset_properties() {
-    let s = style_for("x { position: absolute; top: 10px; right: 20px; bottom: 30px; left: 40px; }", "x");
+    let s = style_for(
+        "x { position: absolute; top: 10px; right: 20px; bottom: 30px; left: 40px; }",
+        "x",
+    );
     assert_dim_px!(s.top, 10.0);
     assert_dim_px!(s.right, 20.0);
     assert_dim_px!(s.bottom, 30.0);
@@ -447,7 +468,10 @@ fn align_content_space_between() {
 
 #[test]
 fn flex_grow_shrink_basis() {
-    let s = style_for("x { flex-grow: 2; flex-shrink: 0.5; flex-basis: 100px; }", "x");
+    let s = style_for(
+        "x { flex-grow: 2; flex-shrink: 0.5; flex-basis: 100px; }",
+        "x",
+    );
     assert!((s.flex_grow - 2.0).abs() < 0.1);
     assert!((s.flex_shrink - 0.5).abs() < 0.1);
     assert_dim_px!(s.flex_basis, 100.0);
@@ -472,7 +496,10 @@ fn flex_gap() {
 
 #[test]
 fn grid_template_columns_px() {
-    let s = style_for("x { display: grid; grid-template-columns: 100px 200px; }", "x");
+    let s = style_for(
+        "x { display: grid; grid-template-columns: 100px 200px; }",
+        "x",
+    );
     assert_eq!(s.grid_template_columns.len(), 2);
     assert!(matches!(s.grid_template_columns[0], TrackSize::Px(v) if (v - 100.0).abs() < 0.1));
     assert!(matches!(s.grid_template_columns[1], TrackSize::Px(v) if (v - 200.0).abs() < 0.1));
@@ -775,13 +802,19 @@ fn box_shadow_single() {
 #[test]
 fn mix_blend_mode_multiply() {
     let s = style_for("x { mix-blend-mode: multiply; }", "x");
-    assert_eq!(s.mix_blend_mode, liquide_compositor::pixel::BlendMode::Multiply);
+    assert_eq!(
+        s.mix_blend_mode,
+        liquide_compositor::pixel::BlendMode::Multiply
+    );
 }
 
 #[test]
 fn mix_blend_mode_screen() {
     let s = style_for("x { mix-blend-mode: screen; }", "x");
-    assert_eq!(s.mix_blend_mode, liquide_compositor::pixel::BlendMode::Screen);
+    assert_eq!(
+        s.mix_blend_mode,
+        liquide_compositor::pixel::BlendMode::Screen
+    );
 }
 
 #[test]
@@ -877,7 +910,11 @@ fn visibility_inherits() {
 
 #[test]
 fn text_node_inherits_color() {
-    let s = style_for_text("parent { color: green; font-size: 18px; }", "parent", "hello");
+    let s = style_for_text(
+        "parent { color: green; font-size: 18px; }",
+        "parent",
+        "hello",
+    );
     assert_eq!(s.color.g, 128); // CSS "green" = #008000
     assert!((s.font_size - 18.0).abs() < 0.1);
 }
@@ -885,7 +922,11 @@ fn text_node_inherits_color() {
 #[test]
 fn non_inherited_props_do_not_inherit() {
     // display, position, width, etc. should NOT inherit
-    let s = style_for_child("parent { display: flex; position: absolute; width: 500px; opacity: 0.5; }", "parent", "child");
+    let s = style_for_child(
+        "parent { display: flex; position: absolute; width: 500px; opacity: 0.5; }",
+        "parent",
+        "child",
+    );
     assert_eq!(s.display, Display::Block); // default, not flex
     assert_eq!(s.position, Position::Static); // default, not absolute
     assert_dim_auto!(s.width); // default auto, not 500px
@@ -1077,28 +1118,44 @@ fn unit_percent() {
 fn unit_em() {
     // em units are stored as-is; resolved to px during layout
     let s = style_for("x { width: 2em; }", "x");
-    assert!(matches!(s.width, Dimension::Em(v) if (v - 2.0).abs() < 0.01), "expected Em(2.0) got {:?}", s.width);
+    assert!(
+        matches!(s.width, Dimension::Em(v) if (v - 2.0).abs() < 0.01),
+        "expected Em(2.0) got {:?}",
+        s.width
+    );
 }
 
 #[test]
 fn unit_rem() {
     // rem units are stored as-is; resolved to px during layout
     let s = style_for("x { width: 1.5rem; }", "x");
-    assert!(matches!(s.width, Dimension::Rem(v) if (v - 1.5).abs() < 0.01), "expected Rem(1.5) got {:?}", s.width);
+    assert!(
+        matches!(s.width, Dimension::Rem(v) if (v - 1.5).abs() < 0.01),
+        "expected Rem(1.5) got {:?}",
+        s.width
+    );
 }
 
 #[test]
 fn unit_vw() {
     // viewport units are stored as-is; resolved to px during layout
     let s = style_for("x { width: 50vw; }", "x");
-    assert!(matches!(s.width, Dimension::Vw(v) if (v - 50.0).abs() < 0.01), "expected Vw(50.0) got {:?}", s.width);
+    assert!(
+        matches!(s.width, Dimension::Vw(v) if (v - 50.0).abs() < 0.01),
+        "expected Vw(50.0) got {:?}",
+        s.width
+    );
 }
 
 #[test]
 fn unit_vh() {
     // viewport units are stored as-is; resolved to px during layout
     let s = style_for("x { width: 100vh; }", "x");
-    assert!(matches!(s.width, Dimension::Vh(v) if (v - 100.0).abs() < 0.01), "expected Vh(100.0) got {:?}", s.width);
+    assert!(
+        matches!(s.width, Dimension::Vh(v) if (v - 100.0).abs() < 0.01),
+        "expected Vh(100.0) got {:?}",
+        s.width
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

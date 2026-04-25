@@ -172,9 +172,7 @@ pub(crate) fn coalesce_bands(bands: &mut Vec<Band>) {
     }
     let mut write = 0;
     for read in 1..bands.len() {
-        if bands[write].y_bottom == bands[read].y_top
-            && bands[write].spans == bands[read].spans
-        {
+        if bands[write].y_bottom == bands[read].y_top && bands[write].spans == bands[read].spans {
             // Merge: extend the write band downward.
             bands[write].y_bottom = bands[read].y_bottom;
         } else {

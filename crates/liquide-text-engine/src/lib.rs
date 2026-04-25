@@ -18,6 +18,7 @@ pub mod bidi;
 pub mod caret;
 pub mod cluster;
 pub mod editing;
+pub mod emoji;
 pub mod font_fallback;
 pub mod hit_test;
 pub mod hyphenation;
@@ -33,15 +34,17 @@ pub use bidi::{BidiParagraph, BidiResolver, Direction};
 pub use caret::{CaretNavigator, CaretPosition, MoveDirection, MoveGranularity};
 pub use cluster::{GraphemeCluster, grapheme_clusters};
 pub use editing::{EditAction, TextEditor, UndoEntry};
-pub use font_fallback::{FallbackChain, FontId, FontDescriptor, FontWeight, FontStyle};
+pub use font_fallback::{FallbackChain, FontDescriptor, FontId, FontStyle, FontWeight};
 pub use hit_test::{HitTestResult, HitTester};
-pub use hyphenation::{HyphenationConfig, HyphenPoint, Hyphenator, HyphensMode, soft_hyphen_breaks};
+pub use hyphenation::{
+    HyphenPoint, HyphenationConfig, Hyphenator, HyphensMode, soft_hyphen_breaks,
+};
 pub use line_breaking::{BreakAction, BreakOpportunity, LineBreaker};
 pub use paragraph::{GlyphRun, LayoutLine, ParagraphLayout, ParagraphLayouter, TextAlignment};
-pub use rasterizer::{FontMetrics, HintingMode, RasterizedGlyph, FontRasterizer, SoftRasterizer};
+pub use rasterizer::{FontMetrics, FontRasterizer, HintingMode, RasterizedGlyph, SoftRasterizer};
 pub use script::{Script, ScriptDetector, ScriptRun};
 pub use selection::{Selection, SelectionSet, TextOffset};
-pub use shaping::{ShapedGlyph, ShapedRun, TextShaper, ShaperConfig, ShaperBackend};
+pub use shaping::{ShapedGlyph, ShapedRun, ShaperBackend, ShaperConfig, TextShaper};
 
 use thiserror::Error;
 
@@ -77,7 +80,10 @@ mod tests {
 
     #[test]
     fn test_invalid_offset_error() {
-        let err = TextError::InvalidOffset { offset: 100, len: 50 };
+        let err = TextError::InvalidOffset {
+            offset: 100,
+            len: 50,
+        };
         assert!(err.to_string().contains("100"));
         assert!(err.to_string().contains("50"));
     }

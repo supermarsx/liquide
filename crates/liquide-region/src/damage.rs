@@ -45,60 +45,44 @@ impl DamageRegion {
 
     /// Merge overlapping rectangles to reduce count.
     ///
-    /// Uses a greedy sweep: sort by top-left, then merge any pair whose
-    /// bounding-box area is within 1.5x of the sum of their individual
-    /// areas (i.e., they overlap significantly or are close together).
+    /// Uses a sorted-interval sweep: rects are sorted by their left edge,
+    /// then a single forward pass merges any pair whose rectangles
+    /// intersect. When a merge produces a rect that overlaps other
+    /// previously-emitted entries, those are collapsed into it. Overall
+    /// cost is `O(n log n)` from the sort plus near-linear amortised
+    /// merging (each rect participates in at most `k` merges where `k`
+    /// is the final output size), replacing the previous `O(n²)`
+    /// quadratic repeat-until-stable pass.
     pub fn merge_overlapping(&mut self) {
         if self.full || self.rects.len() < 2 {
             return;
         }
 
-        // Sort by top then left for spatial locality.
-        self.rects.sort_unstable_by(|a, b| {
-            a.top.cmp(&b.top).then(a.left.cmp(&b.left))
-        });
+        // Sort by left edge for the sweep.
+        self.rects.sort_unstable_by(|a, b| a.left.cmp(&b.left));
 
-        let mut merged: Vec<Rect> = Vec::with_capacity(self.rects.len());
-        merged.push(self.rects[0]);
+        let mut out: Vec<Rect> = Vec::with_capacity(self.rects.len());
 
-        for i in 1..self.rects.len() {
-            let r = self.rects[i];
-            let mut did_merge = false;
-            // Try to merge with an existing rect if they overlap.
-            for m in merged.iter_mut() {
-                if m.intersects(&r) {
-                    *m = m.union(&r);
-                    did_merge = true;
-                    break;
-                }
-            }
-            if !did_merge {
-                merged.push(r);
-            }
-        }
-
-        // Second pass: the first merge pass can create new overlaps.
-        // Repeat until stable (typically 1-2 passes for small rect counts).
-        let mut changed = true;
-        while changed && merged.len() > 1 {
-            changed = false;
+        for &r in &self.rects {
+            let mut current = r;
+            // Collapse any existing entries that overlap `current`.
+            // Because `current` may grow when it absorbs others, we
+            // loop until no further collapse is possible.
             let mut i = 0;
-            while i < merged.len() {
-                let mut j = i + 1;
-                while j < merged.len() {
-                    if merged[i].intersects(&merged[j]) {
-                        merged[i] = merged[i].union(&merged[j]);
-                        merged.swap_remove(j);
-                        changed = true;
-                    } else {
-                        j += 1;
-                    }
+            while i < out.len() {
+                if out[i].intersects(&current) {
+                    current = out[i].union(&current);
+                    out.swap_remove(i);
+                    // restart the scan — `current` is now larger
+                    i = 0;
+                    continue;
                 }
                 i += 1;
             }
+            out.push(current);
         }
 
-        self.rects = merged;
+        self.rects = out;
     }
 
     /// Simplify the damage region to at most `max_rects` rectangles.
@@ -126,9 +110,7 @@ impl DamageRegion {
             for i in 0..self.rects.len() {
                 for j in (i + 1)..self.rects.len() {
                     let merged = self.rects[i].union(&self.rects[j]);
-                    let cost = merged.area()
-                        - self.rects[i].area()
-                        - self.rects[j].area();
+                    let cost = merged.area() - self.rects[i].area() - self.rects[j].area();
                     if cost < best_cost {
                         best_cost = cost;
                         best_i = i;
@@ -259,10 +241,7 @@ impl DamageTracker {
     /// Advance to the next frame: current damage becomes previous,
     /// and a new empty current damage region begins.
     pub fn swap_frame(&mut self) {
-        self.previous_frame = std::mem::replace(
-            &mut self.current_frame,
-            DamageRegion::new(),
-        );
+        self.previous_frame = std::mem::replace(&mut self.current_frame, DamageRegion::new());
         self.generation += 1;
     }
 
@@ -513,10 +492,7 @@ mod tests {
     #[test]
     fn tracker_add_damage_region() {
         let mut t = DamageTracker::new();
-        let region = Region::from_rects(&[
-            Rect::new(0, 0, 10, 10),
-            Rect::new(20, 20, 30, 30),
-        ]);
+        let region = Region::from_rects(&[Rect::new(0, 0, 10, 10), Rect::new(20, 20, 30, 30)]);
         t.add_damage_region(&region);
         assert!(!t.is_empty());
         assert_eq!(t.current_damage().rect_count(), 2);

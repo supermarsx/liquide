@@ -114,15 +114,12 @@ impl HitTester {
             }
             last_x = glyph.x;
             // Approximate advance from position differences.
-            last_advance = if let Some(next) = line
-                .glyphs
-                .iter()
-                .find(|g| g.cluster > glyph.cluster)
-            {
-                next.x - glyph.x
-            } else {
-                0.0
-            };
+            last_advance =
+                if let Some(next) = line.glyphs.iter().find(|g| g.cluster > glyph.cluster) {
+                    next.x - glyph.x
+                } else {
+                    0.0
+                };
         }
 
         // Past the last glyph: return end of line.

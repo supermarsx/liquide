@@ -79,8 +79,8 @@ impl BidiClass {
             // White space
             0x000C | 0x0020 | 0x1680 | 0x2000..=0x200A | 0x2028 | 0x205F | 0x3000 => Self::WS,
             // Explicit formatting
-            0x200E => Self::L,   // LRM
-            0x200F => Self::R,   // RLM
+            0x200E => Self::L, // LRM
+            0x200F => Self::R, // RLM
             0x202A => Self::LRE,
             0x202B => Self::RLE,
             0x202C => Self::PDF,
@@ -97,13 +97,16 @@ impl BidiClass {
             // European separators
             0x002B | 0x002D | 0x207A | 0x207B | 0x208A | 0x208B | 0x2212 => Self::ES,
             // European terminators (must come before Arabic letters range)
-            0x0023..=0x0025 | 0x00A2..=0x00A5 | 0x00B0..=0x00B1 | 0x058F |
-            0x09F2..=0x09F3 | 0x20A0..=0x20CF => Self::ET,
+            0x0023..=0x0025
+            | 0x00A2..=0x00A5
+            | 0x00B0..=0x00B1
+            | 0x058F
+            | 0x09F2..=0x09F3
+            | 0x20A0..=0x20CF => Self::ET,
             // Common separators (must come before Arabic letters range)
             0x002C | 0x002E | 0x002F | 0x003A | 0x00A0 | 0x202F => Self::CS,
             // Non-spacing marks (must come before Arabic letters and Hebrew)
-            0x0300..=0x036F | 0x0483..=0x0489 |
-            0xFE20..=0xFE2F => Self::NSM,
+            0x0300..=0x036F | 0x0483..=0x0489 | 0xFE20..=0xFE2F => Self::NSM,
             // Arabic numbers (must come before Arabic letters range)
             0x0660..=0x0669 => Self::AN,
             // Arabic-specific: numbers, terminators, separators within Arabic block
@@ -111,18 +114,32 @@ impl BidiClass {
             0x0609..=0x060A | 0x066A => Self::ET,
             0x060C => Self::CS,
             0x0591..=0x05BD => Self::NSM,
-            0x0610..=0x061A | 0x064B..=0x065F | 0x0670 |
-            0x06D6..=0x06DC | 0x06DF..=0x06E4 | 0x06E7..=0x06E8 => Self::NSM,
+            0x0610..=0x061A
+            | 0x064B..=0x065F
+            | 0x0670
+            | 0x06D6..=0x06DC
+            | 0x06DF..=0x06E4
+            | 0x06E7..=0x06E8 => Self::NSM,
             // Arabic letters (general Arabic range, after specific subranges)
-            0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF |
-            0xFB50..=0xFDFF | 0xFE70..=0xFEFF => Self::AL,
+            0x0600..=0x06FF
+            | 0x0750..=0x077F
+            | 0x08A0..=0x08FF
+            | 0xFB50..=0xFDFF
+            | 0xFE70..=0xFEFF => Self::AL,
             // Hebrew (after NSM subranges)
             0x0590..=0x05FF | 0xFB1D..=0xFB4F => Self::R,
             // Strong left-to-right: Latin, Greek, Cyrillic, CJK, most others
-            0x0041..=0x005A | 0x0061..=0x007A | 0x00C0..=0x024F |
-            0x0370..=0x03FF | 0x0400..=0x052F |
-            0x1100..=0x11FF | 0x3040..=0x30FF | 0x3130..=0x318F |
-            0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF => Self::L,
+            0x0041..=0x005A
+            | 0x0061..=0x007A
+            | 0x00C0..=0x024F
+            | 0x0370..=0x03FF
+            | 0x0400..=0x052F
+            | 0x1100..=0x11FF
+            | 0x3040..=0x30FF
+            | 0x3130..=0x318F
+            | 0x4E00..=0x9FFF
+            | 0xAC00..=0xD7AF
+            | 0xF900..=0xFAFF => Self::L,
             // Default: most characters are strong LTR or neutral
             _ => {
                 if cp >= 0x0041 && cp <= 0x1FFFF {
@@ -191,7 +208,11 @@ impl BidiRun {
     /// The visual direction of this run.
     #[must_use]
     pub fn direction(&self) -> Direction {
-        if self.level % 2 == 0 { Direction::Ltr } else { Direction::Rtl }
+        if self.level % 2 == 0 {
+            Direction::Ltr
+        } else {
+            Direction::Rtl
+        }
     }
 }
 
@@ -228,7 +249,8 @@ impl BidiResolver {
             };
         }
 
-        let mut classes: Vec<BidiClass> = chars.iter().map(|&ch| BidiClass::from_char(ch)).collect();
+        let mut classes: Vec<BidiClass> =
+            chars.iter().map(|&ch| BidiClass::from_char(ch)).collect();
 
         // P2/P3: Determine base direction from first strong character
         let base_dir = base_direction.unwrap_or_else(|| {
@@ -304,7 +326,10 @@ impl BidiResolver {
 
         // W6: Remaining ES, ET, CS, BN → ON
         for cls in &mut classes {
-            if matches!(cls, BidiClass::ES | BidiClass::ET | BidiClass::CS | BidiClass::BN) {
+            if matches!(
+                cls,
+                BidiClass::ES | BidiClass::ET | BidiClass::CS | BidiClass::BN
+            ) {
                 *cls = BidiClass::ON;
             }
         }
@@ -327,8 +352,15 @@ impl BidiResolver {
         // N1/N2: Neutral types between same-direction runs get that direction;
         // otherwise get embedding direction.
         for i in 0..n {
-            if matches!(classes[i], BidiClass::ON | BidiClass::WS | BidiClass::S | BidiClass::B) {
-                let embed_dir = if levels[i] % 2 == 0 { Direction::Ltr } else { Direction::Rtl };
+            if matches!(
+                classes[i],
+                BidiClass::ON | BidiClass::WS | BidiClass::S | BidiClass::B
+            ) {
+                let embed_dir = if levels[i] % 2 == 0 {
+                    Direction::Ltr
+                } else {
+                    Direction::Rtl
+                };
                 let prev_strong = find_prev_strong(&classes, i, embed_dir);
                 let next_strong = find_next_strong(&classes, i, n, embed_dir);
                 if prev_strong == next_strong {
@@ -390,7 +422,11 @@ impl BidiResolver {
         for i in 1..levels.len() {
             if levels[i] != current_level {
                 let start_byte = char_indices[run_start_char];
-                let end_byte = if i < char_indices.len() { char_indices[i] } else { text_len };
+                let end_byte = if i < char_indices.len() {
+                    char_indices[i]
+                } else {
+                    text_len
+                };
                 runs.push(BidiRun {
                     start: start_byte,
                     end: end_byte,
@@ -729,11 +765,7 @@ fn apply_explicit_levels(
 
 /// Determine the paragraph direction of an isolate content (for FSI / X5c).
 /// Scans from `start` looking for the first strong type, respecting nested isolates.
-fn determine_isolate_direction(
-    chars: &[char],
-    classes: &[BidiClass],
-    start: usize,
-) -> Direction {
+fn determine_isolate_direction(chars: &[char], classes: &[BidiClass], start: usize) -> Direction {
     let mut isolate_depth: u32 = 0;
     for i in start..chars.len() {
         match classes[i] {
@@ -761,11 +793,7 @@ fn determine_isolate_direction(
 ///
 /// For each bracket pair, determines whether to resolve the brackets to L or R
 /// based on the strong types between them and the embedding context.
-fn apply_bracket_pairs(
-    chars: &[char],
-    classes: &mut [BidiClass],
-    levels: &[BidiLevel],
-) {
+fn apply_bracket_pairs(chars: &[char], classes: &mut [BidiClass], levels: &[BidiLevel]) {
     let pairs = find_bracket_pairs(chars);
 
     for (open_pos, close_pos) in pairs {
@@ -1022,19 +1050,39 @@ mod tests {
 
     #[test]
     fn test_run_direction() {
-        let run_ltr = BidiRun { start: 0, end: 5, level: 0 };
+        let run_ltr = BidiRun {
+            start: 0,
+            end: 5,
+            level: 0,
+        };
         assert_eq!(run_ltr.direction(), Direction::Ltr);
 
-        let run_rtl = BidiRun { start: 0, end: 5, level: 1 };
+        let run_rtl = BidiRun {
+            start: 0,
+            end: 5,
+            level: 1,
+        };
         assert_eq!(run_rtl.direction(), Direction::Rtl);
     }
 
     #[test]
     fn test_visual_reorder() {
         let runs = vec![
-            BidiRun { start: 0, end: 5, level: 0 },
-            BidiRun { start: 5, end: 10, level: 1 },
-            BidiRun { start: 10, end: 15, level: 0 },
+            BidiRun {
+                start: 0,
+                end: 5,
+                level: 0,
+            },
+            BidiRun {
+                start: 5,
+                end: 10,
+                level: 1,
+            },
+            BidiRun {
+                start: 10,
+                end: 15,
+                level: 0,
+            },
         ];
         let reordered = BidiResolver::visual_reorder(&runs);
         assert_eq!(reordered.len(), 3);
@@ -1059,8 +1107,14 @@ mod tests {
         // "Hello" should be at even (LTR) level within RTL context
         let chars: Vec<char> = text.chars().collect();
         let hello_start = chars.iter().position(|&c| c == 'H').unwrap();
-        assert!(result.levels[hello_start] % 2 == 0, "LRE should create even embedding level");
-        assert!(result.levels[hello_start] >= 2, "LRE level should be >= 2 in RTL context");
+        assert!(
+            result.levels[hello_start] % 2 == 0,
+            "LRE should create even embedding level"
+        );
+        assert!(
+            result.levels[hello_start] >= 2,
+            "LRE level should be >= 2 in RTL context"
+        );
     }
 
     #[test]
@@ -1070,7 +1124,10 @@ mod tests {
         let result = BidiResolver::resolve(&text, Some(Direction::Ltr));
         let chars: Vec<char> = text.chars().collect();
         let alef_pos = chars.iter().position(|&c| c == 'א').unwrap();
-        assert!(result.levels[alef_pos] % 2 == 1, "RLE should create odd embedding level");
+        assert!(
+            result.levels[alef_pos] % 2 == 1,
+            "RLE should create odd embedding level"
+        );
     }
 
     #[test]
@@ -1113,7 +1170,10 @@ mod tests {
         // A and C should be at base level (0)
         assert_eq!(result.levels[a_pos], 0, "A should be at base level");
         // After PDF, C should return to base level
-        assert_eq!(result.levels[c_pos], 0, "C should return to base level after PDF");
+        assert_eq!(
+            result.levels[c_pos], 0,
+            "C should return to base level after PDF"
+        );
     }
 
     #[test]
@@ -1124,7 +1184,10 @@ mod tests {
         let chars: Vec<char> = text.chars().collect();
         let b_pos = chars.iter().position(|&c| c == 'B').unwrap();
         // After paragraph separator, B should be at base level
-        assert_eq!(result.levels[b_pos], 0, "B should be at base level after paragraph separator");
+        assert_eq!(
+            result.levels[b_pos], 0,
+            "B should be at base level after paragraph separator"
+        );
     }
 
     #[test]
@@ -1205,8 +1268,10 @@ mod tests {
         let chars: Vec<char> = text.chars().collect();
         let a_pos = chars.iter().position(|&c| c == 'A').unwrap();
         let c_pos = chars.iter().position(|&c| c == 'C').unwrap();
-        assert_eq!(result.levels[a_pos], result.levels[c_pos],
-            "After PDI, should return to pre-isolate level");
+        assert_eq!(
+            result.levels[a_pos], result.levels[c_pos],
+            "After PDI, should return to pre-isolate level"
+        );
     }
 
     #[test]
@@ -1263,7 +1328,10 @@ mod tests {
         // Brackets should resolve according to RTL embedding
         let chars: Vec<char> = text.chars().collect();
         let alef_pos = chars.iter().position(|&c| c == 'א').unwrap();
-        assert!(result.levels[alef_pos] % 2 == 1, "Hebrew in brackets should be RTL");
+        assert!(
+            result.levels[alef_pos] % 2 == 1,
+            "Hebrew in brackets should be RTL"
+        );
     }
 
     #[test]
@@ -1337,14 +1405,20 @@ mod tests {
     fn test_determine_isolate_direction_ltr() {
         let chars: Vec<char> = "Hello".chars().collect();
         let classes: Vec<BidiClass> = chars.iter().map(|&c| BidiClass::from_char(c)).collect();
-        assert_eq!(determine_isolate_direction(&chars, &classes, 0), Direction::Ltr);
+        assert_eq!(
+            determine_isolate_direction(&chars, &classes, 0),
+            Direction::Ltr
+        );
     }
 
     #[test]
     fn test_determine_isolate_direction_rtl() {
         let chars: Vec<char> = "אבג".chars().collect();
         let classes: Vec<BidiClass> = chars.iter().map(|&c| BidiClass::from_char(c)).collect();
-        assert_eq!(determine_isolate_direction(&chars, &classes, 0), Direction::Rtl);
+        assert_eq!(
+            determine_isolate_direction(&chars, &classes, 0),
+            Direction::Rtl
+        );
     }
 
     #[test]

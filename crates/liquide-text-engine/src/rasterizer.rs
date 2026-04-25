@@ -163,7 +163,8 @@ impl RasterizedGlyph {
             GlyphPixels::SubPixel(data) => {
                 let base = idx * 3;
                 if base + 2 < data.len() {
-                    let avg = ((data[base] as u16 + data[base + 1] as u16 + data[base + 2] as u16) / 3) as u8;
+                    let avg = ((data[base] as u16 + data[base + 1] as u16 + data[base + 2] as u16)
+                        / 3) as u8;
                     avg
                 } else {
                     0

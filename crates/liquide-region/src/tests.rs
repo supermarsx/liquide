@@ -59,21 +59,45 @@ mod rect_tests {
         let a = Rect::new(10, 10, 20, 20);
         let b = Rect::new(30, 30, 40, 40);
         let u = a.union(&b);
-        assert_eq!(u, Rect { left: 10, top: 10, right: 40, bottom: 40 });
+        assert_eq!(
+            u,
+            Rect {
+                left: 10,
+                top: 10,
+                right: 40,
+                bottom: 40
+            }
+        );
     }
 
     #[test]
     fn rect_offset() {
         let r = Rect::new(10, 20, 30, 40);
         let o = r.offset(5, -5);
-        assert_eq!(o, Rect { left: 15, top: 15, right: 35, bottom: 35 });
+        assert_eq!(
+            o,
+            Rect {
+                left: 15,
+                top: 15,
+                right: 35,
+                bottom: 35
+            }
+        );
     }
 
     #[test]
     fn rect_inflate() {
         let r = Rect::new(10, 10, 20, 20);
         let inflated = r.inflate(5, 5);
-        assert_eq!(inflated, Rect { left: 5, top: 5, right: 25, bottom: 25 });
+        assert_eq!(
+            inflated,
+            Rect {
+                left: 5,
+                top: 5,
+                right: 25,
+                bottom: 25
+            }
+        );
 
         // Deflate to nothing
         let shrunk = r.inflate(-6, -6);
@@ -142,10 +166,7 @@ mod band_tests {
     #[test]
     fn rects_to_bands_overlapping() {
         // Two overlapping rectangles
-        let bands = rects_to_bands(&[
-            Rect::new(0, 0, 20, 20),
-            Rect::new(10, 10, 30, 30),
-        ]);
+        let bands = rects_to_bands(&[Rect::new(0, 0, 20, 20), Rect::new(10, 10, 30, 30)]);
         // Should produce 3 bands:
         // y=[0,10): span [0,20)
         // y=[10,20): span [0,30) (merged)
@@ -167,10 +188,7 @@ mod band_tests {
     #[test]
     fn rects_to_bands_coalesce() {
         // Two vertically adjacent rects with same x range -> coalesced
-        let bands = rects_to_bands(&[
-            Rect::new(0, 0, 100, 50),
-            Rect::new(0, 50, 100, 100),
-        ]);
+        let bands = rects_to_bands(&[Rect::new(0, 0, 100, 50), Rect::new(0, 50, 100, 100)]);
         assert_eq!(bands.len(), 1);
         assert_eq!(bands[0].y_top, 0);
         assert_eq!(bands[0].y_bottom, 100);
@@ -276,10 +294,7 @@ mod region_tests {
 
     #[test]
     fn multi_rect_region() {
-        let r = Region::from_rects(&[
-            Rect::new(0, 0, 10, 10),
-            Rect::new(20, 0, 30, 10),
-        ]);
+        let r = Region::from_rects(&[Rect::new(0, 0, 10, 10), Rect::new(20, 0, 30, 10)]);
         assert_eq!(r.complexity(), RegionComplexity::Complex);
         assert_eq!(r.rect_count(), 2);
         assert!(r.contains_point(5, 5));
@@ -451,8 +466,8 @@ mod region_tests {
             Rect::new(0, 0, 10, 30),  // vertical bar
             Rect::new(0, 20, 30, 30), // horizontal bar
         ]);
-        assert!(r.contains_point(5, 5));   // in vertical bar
-        assert!(r.contains_point(5, 25));  // in overlap
+        assert!(r.contains_point(5, 5)); // in vertical bar
+        assert!(r.contains_point(5, 25)); // in overlap
         assert!(r.contains_point(25, 25)); // in horizontal bar only
         assert!(!r.contains_point(25, 5)); // outside
     }
@@ -468,11 +483,8 @@ mod region_tests {
     #[test]
     fn region_contains_rect_complex() {
         // Two horizontal bars with a gap
-        let r = Region::from_rects(&[
-            Rect::new(0, 0, 100, 10),
-            Rect::new(0, 20, 100, 30),
-        ]);
-        assert!(r.contains_rect(&Rect::new(10, 0, 90, 10)));  // fits in first bar
+        let r = Region::from_rects(&[Rect::new(0, 0, 100, 10), Rect::new(0, 20, 100, 30)]);
+        assert!(r.contains_rect(&Rect::new(10, 0, 90, 10))); // fits in first bar
         assert!(!r.contains_rect(&Rect::new(0, 0, 100, 30))); // spans the gap
     }
 
@@ -511,7 +523,8 @@ mod region_tests {
                     assert!(
                         rects.iter().any(|r| r.contains(x, y)),
                         "Point ({}, {}) should be in region rects",
-                        x, y
+                        x,
+                        y
                     );
                 }
             }
@@ -597,7 +610,7 @@ mod region_tests {
         let hole = Region::from_rect(Rect::new(0, 10, 10, 20));
         let result = r.subtract(&hole);
         assert_eq!(result.rect_count(), 2);
-        assert!(result.contains_point(5, 5));  // above hole
+        assert!(result.contains_point(5, 5)); // above hole
         assert!(!result.contains_point(5, 15)); // in hole
         assert!(result.contains_point(5, 25)); // below hole
     }
@@ -648,8 +661,8 @@ mod builder_tests {
 
 #[cfg(test)]
 mod invalid_tests {
-    use crate::rect::Rect;
     use crate::invalid::InvalidRegion;
+    use crate::rect::Rect;
 
     #[test]
     fn initially_clean() {
@@ -727,8 +740,8 @@ mod invalid_tests {
 
 #[cfg(test)]
 mod clip_tests {
-    use crate::rect::Rect;
     use crate::clip::ClipRegion;
+    use crate::rect::Rect;
 
     #[test]
     fn new_clip_is_full() {
@@ -769,10 +782,10 @@ mod clip_tests {
     fn is_visible() {
         let mut clip = ClipRegion::new();
         clip.push_clip(Rect::new(10, 10, 50, 50));
-        assert!(clip.is_visible(&Rect::new(20, 20, 30, 30)));  // fully inside
-        assert!(clip.is_visible(&Rect::new(0, 0, 20, 20)));    // partially inside
+        assert!(clip.is_visible(&Rect::new(20, 20, 30, 30))); // fully inside
+        assert!(clip.is_visible(&Rect::new(0, 0, 20, 20))); // partially inside
         assert!(!clip.is_visible(&Rect::new(50, 50, 60, 60))); // fully outside
-        assert!(!clip.is_visible(&Rect::new(0, 0, 0, 0)));     // empty rect
+        assert!(!clip.is_visible(&Rect::new(0, 0, 0, 0))); // empty rect
     }
 
     #[test]
@@ -823,9 +836,9 @@ mod clip_tests {
 
 #[cfg(test)]
 mod paint_tests {
-    use crate::rect::Rect;
     use crate::invalid::InvalidRegion;
     use crate::paint::{begin_paint, begin_paint_bounded, end_paint};
+    use crate::rect::Rect;
 
     #[test]
     fn begin_paint_empty_returns_none() {

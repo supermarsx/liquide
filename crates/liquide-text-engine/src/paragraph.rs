@@ -234,10 +234,7 @@ impl ParagraphLayouter {
                     .collect();
                 run.glyphs.iter().map(move |g| {
                     let cluster_idx = g.cluster as usize;
-                    let local_offset = char_offsets
-                        .get(cluster_idx)
-                        .copied()
-                        .unwrap_or(0);
+                    let local_offset = char_offsets.get(cluster_idx).copied().unwrap_or(0);
                     LayoutItem {
                         glyph: *g,
                         font_id: run.font_id,
@@ -262,12 +259,7 @@ impl ParagraphLayouter {
     }
 
     /// Greedy line breaking.
-    fn break_lines(
-        &self,
-        text: &str,
-        items: &[LayoutItem],
-        max_width: f32,
-    ) -> Vec<RawLine> {
+    fn break_lines(&self, text: &str, items: &[LayoutItem], max_width: f32) -> Vec<RawLine> {
         let mut lines: Vec<RawLine> = Vec::new();
         let mut line_start = 0;
         let mut line_width: f32 = 0.0;
@@ -279,7 +271,11 @@ impl ParagraphLayouter {
         let is_first_line = |lines: &Vec<RawLine>| lines.is_empty();
 
         for (i, item) in items.iter().enumerate() {
-            let indent = if is_first_line(&lines) { self.style.indent } else { 0.0 };
+            let indent = if is_first_line(&lines) {
+                self.style.indent
+            } else {
+                0.0
+            };
             let effective_width = max_width - indent;
 
             line_ascent = line_ascent.max(item.metrics.ascent);
@@ -288,10 +284,7 @@ impl ParagraphLayouter {
             let glyph_width = item.glyph.x_advance;
 
             // Check if this is a break opportunity.
-            let ch = text[item.byte_offset..]
-                .chars()
-                .next()
-                .unwrap_or(' ');
+            let ch = text[item.byte_offset..].chars().next().unwrap_or(' ');
 
             if ch == ' ' || ch == '\t' {
                 last_break = i + 1;
@@ -439,7 +432,6 @@ impl ParagraphLayouter {
 
         // Penalty constants
         const INFINITY_PENALTY: f64 = 1e10;
-        const HYPHEN_PENALTY: f64 = 50.0; // Would be used for hyphenation
 
         // Work backwards
         for i in (0..bp_count - 1).rev() {
@@ -455,7 +447,10 @@ impl ParagraphLayouter {
 
                 // Trim trailing whitespace advance
                 if end > start {
-                    let last_ch = text[items[end - 1].byte_offset..].chars().next().unwrap_or('x');
+                    let last_ch = text[items[end - 1].byte_offset..]
+                        .chars()
+                        .next()
+                        .unwrap_or('x');
                     if last_ch == ' ' || last_ch == '\t' || last_ch == '\n' {
                         line_w -= items[end - 1].glyph.x_advance;
                     }
@@ -468,7 +463,10 @@ impl ParagraphLayouter {
 
                 // Check for hard break
                 let is_hard = if end > start {
-                    let ch = text[items[end - 1].byte_offset..].chars().next().unwrap_or('x');
+                    let ch = text[items[end - 1].byte_offset..]
+                        .chars()
+                        .next()
+                        .unwrap_or('x');
                     ch == '\n'
                 } else {
                     false
@@ -481,7 +479,7 @@ impl ParagraphLayouter {
                     if line_w > effective_width * 1.0001 {
                         INFINITY_PENALTY
                     } else {
-                        0.0  // Last line can be any width ≤ max
+                        0.0 // Last line can be any width ≤ max
                     }
                 } else if is_hard {
                     // Forced break: no badness for the break itself.
@@ -514,7 +512,10 @@ impl ParagraphLayouter {
 
             // Determine if this was a hard break
             let is_hard = if end > start {
-                let ch = text[items[end - 1].byte_offset..].chars().next().unwrap_or('x');
+                let ch = text[items[end - 1].byte_offset..]
+                    .chars()
+                    .next()
+                    .unwrap_or('x');
                 ch == '\n'
             } else {
                 false
@@ -523,7 +524,10 @@ impl ParagraphLayouter {
             // Trim the line: exclude trailing whitespace/newline items
             let mut actual_end = end;
             while actual_end > start {
-                let ch = text[items[actual_end - 1].byte_offset..].chars().next().unwrap_or('x');
+                let ch = text[items[actual_end - 1].byte_offset..]
+                    .chars()
+                    .next()
+                    .unwrap_or('x');
                 if ch == ' ' || ch == '\t' || ch == '\n' {
                     actual_end -= 1;
                 } else {
@@ -533,14 +537,24 @@ impl ParagraphLayouter {
 
             let line_items = items[start..actual_end].to_vec();
             let line_w: f32 = line_items.iter().map(|it| it.glyph.x_advance).sum();
-            let line_ascent = line_items.iter().map(|it| it.metrics.ascent).fold(0.0f32, f32::max);
-            let line_descent = line_items.iter().map(|it| it.metrics.descent).fold(0.0f32, f32::max);
+            let line_ascent = line_items
+                .iter()
+                .map(|it| it.metrics.ascent)
+                .fold(0.0f32, f32::max);
+            let line_descent = line_items
+                .iter()
+                .map(|it| it.metrics.descent)
+                .fold(0.0f32, f32::max);
 
             breaks.push(RawLine {
                 items: line_items,
                 width: line_w,
                 ascent: if line_ascent > 0.0 { line_ascent } else { 12.0 },
-                descent: if line_descent > 0.0 { line_descent } else { 4.0 },
+                descent: if line_descent > 0.0 {
+                    line_descent
+                } else {
+                    4.0
+                },
                 hard_break: is_hard,
             });
 
@@ -565,7 +579,11 @@ impl ParagraphLayouter {
             .max_lines
             .map_or(false, |max| raw_lines.len() >= max);
 
-        let finite_max = if max_width.is_finite() { max_width } else { 0.0 };
+        let finite_max = if max_width.is_finite() {
+            max_width
+        } else {
+            0.0
+        };
 
         for (line_idx, raw) in raw_lines.iter().enumerate() {
             let line_height = (raw.ascent + raw.descent) * self.style.line_height_factor;
@@ -574,19 +592,40 @@ impl ParagraphLayouter {
             // Compute alignment offset.
             let x_offset = match self.style.alignment {
                 TextAlignment::Start => {
-                    if line_idx == 0 { self.style.indent } else { 0.0 }
+                    if line_idx == 0 {
+                        self.style.indent
+                    } else {
+                        0.0
+                    }
                 }
                 TextAlignment::End => {
-                    (if max_width.is_finite() { max_width } else { 0.0 }) - raw.width
+                    (if max_width.is_finite() {
+                        max_width
+                    } else {
+                        0.0
+                    }) - raw.width
                 }
                 TextAlignment::Center => {
-                    ((if max_width.is_finite() { max_width } else { 0.0 }) - raw.width) / 2.0
+                    ((if max_width.is_finite() {
+                        max_width
+                    } else {
+                        0.0
+                    }) - raw.width)
+                        / 2.0
                 }
                 TextAlignment::Justify if !raw.hard_break && raw.items.len() > 1 => {
-                    if line_idx == 0 { self.style.indent } else { 0.0 }
+                    if line_idx == 0 {
+                        self.style.indent
+                    } else {
+                        0.0
+                    }
                 }
                 TextAlignment::Justify => {
-                    if line_idx == 0 { self.style.indent } else { 0.0 }
+                    if line_idx == 0 {
+                        self.style.indent
+                    } else {
+                        0.0
+                    }
                 }
             };
 
@@ -628,7 +667,11 @@ impl ParagraphLayouter {
             total_width = total_width.max(line_width);
 
             let line_start = raw.items.first().map(|it| it.byte_offset).unwrap_or(0);
-            let line_end = raw.items.last().map(|it| it.byte_offset + it.glyph.cluster as usize).unwrap_or(0);
+            let line_end = raw
+                .items
+                .last()
+                .map(|it| it.byte_offset + it.glyph.cluster as usize)
+                .unwrap_or(0);
 
             lines.push(LayoutLine {
                 glyphs: positioned,
@@ -737,7 +780,11 @@ mod tests {
         // "Hello World" = 11 chars at 10px each = 110px → should wrap
         let run = make_run("Hello World", 10.0);
         let layout = layouter.layout("Hello World", &[run]);
-        assert!(layout.lines.len() >= 2, "expected wrap, got {} lines", layout.lines.len());
+        assert!(
+            layout.lines.len() >= 2,
+            "expected wrap, got {} lines",
+            layout.lines.len()
+        );
     }
 
     #[test]

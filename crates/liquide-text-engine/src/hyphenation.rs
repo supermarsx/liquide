@@ -132,9 +132,7 @@ impl Hyphenator {
     /// Check if a word can be hyphenated at the given byte offset.
     #[must_use]
     pub fn can_hyphenate_at(&self, word: &str, byte_offset: usize) -> bool {
-        self.hyphenate(word)
-            .iter()
-            .any(|p| p.offset == byte_offset)
+        self.hyphenate(word).iter().any(|p| p.offset == byte_offset)
     }
 
     /// Get the best hyphenation point that keeps the word segment within max_width.
@@ -142,7 +140,13 @@ impl Hyphenator {
     /// `char_widths` contains the advance width of each character in the word.
     /// Returns the byte offset for the best break, or None if no valid break exists.
     #[must_use]
-    pub fn find_break(&self, word: &str, char_widths: &[f32], max_width: f32, hyphen_width: f32) -> Option<usize> {
+    pub fn find_break(
+        &self,
+        word: &str,
+        char_widths: &[f32],
+        max_width: f32,
+        hyphen_width: f32,
+    ) -> Option<usize> {
         let points = self.hyphenate(word);
         if points.is_empty() {
             return None;
@@ -206,42 +210,28 @@ impl Hyphenator {
         // at positions between (and around) letters. Odd levels = break ok.
         let raw_patterns = [
             // Vowel-consonant patterns - prefer breaks before consonant
-            "a1b", "a1c", "a1d", "a1f", "a1g", "a1l", "a1m", "a1n", "a1p",
-            "a1r", "a1s", "a1t", "a1v", "a1w", "a1z",
-            "e1b", "e1c", "e1d", "e1f", "e1g", "e1l", "e1m", "e1n", "e1p",
-            "e1r", "e1s", "e1t", "e1v", "e1x",
-            "i1b", "i1c", "i1d", "i1f", "i1g", "i1l", "i1m", "i1n", "i1p",
-            "i1r", "i1s", "i1t", "i1v", "i1z",
-            "o1b", "o1c", "o1d", "o1f", "o1g", "o1l", "o1m", "o1n", "o1p",
-            "o1r", "o1s", "o1t", "o1v", "o1w",
-            "u1b", "u1c", "u1d", "u1f", "u1g", "u1l", "u1m", "u1n", "u1p",
-            "u1r", "u1s", "u1t", "u1v",
-
+            "a1b", "a1c", "a1d", "a1f", "a1g", "a1l", "a1m", "a1n", "a1p", "a1r", "a1s", "a1t",
+            "a1v", "a1w", "a1z", "e1b", "e1c", "e1d", "e1f", "e1g", "e1l", "e1m", "e1n", "e1p",
+            "e1r", "e1s", "e1t", "e1v", "e1x", "i1b", "i1c", "i1d", "i1f", "i1g", "i1l", "i1m",
+            "i1n", "i1p", "i1r", "i1s", "i1t", "i1v", "i1z", "o1b", "o1c", "o1d", "o1f", "o1g",
+            "o1l", "o1m", "o1n", "o1p", "o1r", "o1s", "o1t", "o1v", "o1w", "u1b", "u1c", "u1d",
+            "u1f", "u1g", "u1l", "u1m", "u1n", "u1p", "u1r", "u1s", "u1t", "u1v",
             // Common syllable breaks
-            "1pu", "1tu", "1ta", "1te", "1ti", "1to", "1da", "1de", "1di", "1do", "1du",
-            "1ma", "1me", "1mi", "1mo", "1mu", "1na", "1ne", "1ni", "1no", "1nu",
-            "1ra", "1re", "1ri", "1ro", "1ru", "1la", "1le", "1li", "1lo", "1lu",
-            "1sa", "1se", "1si", "1so", "1su", "1ba", "1be", "1bi", "1bo", "1bu",
-            "1ca", "1ce", "1ci", "1co", "1cu", "1fa", "1fe", "1fi", "1fo", "1fu",
-            "1ga", "1ge", "1gi", "1go", "1gu", "1va", "1ve", "1vi", "1vo", "1vu",
-            "1pa", "1pe", "1pi", "1po",
-
-            // Common word parts
-            "com1pu", "pu1ter", "pro1gram", "gram1m", "un1der", "der1st",
-            "stand1", "1ing.", "1tion", "1sion",
-
-            // Double consonants - break between
-            "b1b", "c1c", "d1d", "f1f", "g1g", "l1l", "m1m", "n1n", "p1p",
-            "r1r", "s1s", "t1t", "z1z",
-
-            // Prefix patterns
+            "1pu", "1tu", "1ta", "1te", "1ti", "1to", "1da", "1de", "1di", "1do", "1du", "1ma",
+            "1me", "1mi", "1mo", "1mu", "1na", "1ne", "1ni", "1no", "1nu", "1ra", "1re", "1ri",
+            "1ro", "1ru", "1la", "1le", "1li", "1lo", "1lu", "1sa", "1se", "1si", "1so", "1su",
+            "1ba", "1be", "1bi", "1bo", "1bu", "1ca", "1ce", "1ci", "1co", "1cu", "1fa", "1fe",
+            "1fi", "1fo", "1fu", "1ga", "1ge", "1gi", "1go", "1gu", "1va", "1ve", "1vi", "1vo",
+            "1vu", "1pa", "1pe", "1pi", "1po", // Common word parts
+            "com1pu", "pu1ter", "pro1gram", "gram1m", "un1der", "der1st", "stand1", "1ing.",
+            "1tion", "1sion", // Double consonants - break between
+            "b1b", "c1c", "d1d", "f1f", "g1g", "l1l", "m1m", "n1n", "p1p", "r1r", "s1s", "t1t",
+            "z1z", // Prefix patterns
             ".un1", ".re1", ".pre1", ".dis1", ".mis1", ".over1", ".under1",
-
             // Keep consonant clusters together
-            "2bl", "2br", "2ch", "2ck", "2cl", "2cr", "2dr", "2fl", "2fr",
-            "2gl", "2gr", "2ph", "2pl", "2pr", "2qu", "2sc", "2sh", "2sk",
-            "2sl", "2sm", "2sn", "2sp", "2st", "2sw", "2th", "2tr", "2tw",
-            "2wh", "2wr",
+            "2bl", "2br", "2ch", "2ck", "2cl", "2cr", "2dr", "2fl", "2fr", "2gl", "2gr", "2ph",
+            "2pl", "2pr", "2qu", "2sc", "2sh", "2sk", "2sl", "2sm", "2sn", "2sp", "2st", "2sw",
+            "2th", "2tr", "2tw", "2wh", "2wr",
         ];
 
         for pattern in &raw_patterns {
@@ -325,7 +315,7 @@ mod tests {
         let word = "programming";
         // Each character is 10px wide, hyphen is 5px
         let char_widths: Vec<f32> = word.chars().map(|_| 10.0).collect();
-        
+
         // Max width 55px should allow "progr-" (5*10 + 5 = 55)
         let break_point = hyphenator.find_break(word, &char_widths, 55.0, 5.0);
         // Should find a break point

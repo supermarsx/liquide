@@ -31,7 +31,9 @@ fn test_get_property() {
     let sheet = parser.parse_str(css).unwrap();
     let engine = ThemeEngine::new(sheet);
 
-    let bg = engine.get_property("button", &[], &[], "background").unwrap();
+    let bg = engine
+        .get_property("button", &[], &[], "background")
+        .unwrap();
     assert!(bg.is_some());
 
     if let Some(PropertyValue::Color(color)) = bg {

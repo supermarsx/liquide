@@ -1,5 +1,8 @@
 use super::*;
+use crate::parser::ThemeParser;
 use crate::value::Color;
+use std::fs;
+use tempfile::tempdir;
 
 #[test]
 fn test_stylesheet() {
@@ -90,4 +93,102 @@ fn test_layer_and_conditions_cascade() {
     let desktop = sheet.compute_styles_with_environment("button", &[], None, &[], &env_desktop);
     let desktop_color = desktop.get("color").unwrap().as_color().unwrap();
     assert_eq!(desktop_color.r, 255);
+}
+
+#[test]
+fn test_invalid_supports_and_media_fail_closed() {
+    let css = r#"
+            button { color: #ff0000; }
+            @supports (display: definitely-not-a-real-value) {
+                button { color: #0000ff; }
+            }
+            @media (totally-unknown: 1) {
+                button { background-color: #0000ff; }
+            }
+        "#;
+
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "button",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+
+    let color = styles.get("color").unwrap().as_color().unwrap();
+    assert_eq!(color.r, 255);
+    assert!(styles.get("background-color").is_none());
+}
+
+#[test]
+fn test_textual_or_media_query_evaluates() {
+    let css = r#"
+            button { color: #ff0000; }
+            @media (max-width: 100px) or (prefers-color-scheme: light) {
+                button { color: #00ff00; }
+            }
+        "#;
+
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "button",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+
+    let color = styles.get("color").unwrap().as_color().unwrap();
+    assert_eq!(color.g, 255);
+}
+
+#[test]
+fn test_load_path_with_imports_applies_import_qualifiers() {
+    let dir = tempdir().unwrap();
+    let import_path = dir.path().join("imported.css");
+    let root_true = dir.path().join("root-true.css");
+    let root_false = dir.path().join("root-false.css");
+
+    fs::write(&import_path, "button { background-color: #0000ff; }").unwrap();
+    fs::write(
+        &root_true,
+        "@import \"imported.css\" supports(display: grid) screen; button { color: #ff0000; }",
+    )
+    .unwrap();
+    fs::write(
+        &root_false,
+        "@import \"imported.css\" supports(display: definitely-not-real) screen; button { color: #ff0000; }",
+    )
+    .unwrap();
+
+    let true_sheet = StyleSheet::load_path_with_imports(&root_true).unwrap();
+    let true_styles = true_sheet.compute_styles_with_environment(
+        "button",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    assert_eq!(
+        true_styles
+            .get("background-color")
+            .unwrap()
+            .as_color()
+            .unwrap()
+            .b,
+        255
+    );
+
+    let false_sheet = StyleSheet::load_path_with_imports(&root_false).unwrap();
+    let false_styles = false_sheet.compute_styles_with_environment(
+        "button",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    assert!(false_styles.get("background-color").is_none());
 }

@@ -285,9 +285,7 @@ pub fn recommended_families(script: Script) -> &'static [&'static str] {
         Script::Hebrew => &["Segoe UI", "Noto Sans Hebrew", "Arial Hebrew"],
         Script::Devanagari => &["Noto Sans Devanagari", "Mangal"],
         Script::Han => &["Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC"],
-        Script::Hiragana | Script::Katakana => {
-            &["Noto Sans CJK JP", "Yu Gothic", "Hiragino Sans"]
-        }
+        Script::Hiragana | Script::Katakana => &["Noto Sans CJK JP", "Yu Gothic", "Hiragino Sans"],
         Script::Hangul => &["Noto Sans CJK KR", "Malgun Gothic", "Apple SD Gothic Neo"],
         Script::Thai => &["Noto Sans Thai", "Tahoma", "Leelawadee"],
         Script::Bengali => &["Noto Sans Bengali", "Vrinda"],
@@ -332,8 +330,7 @@ mod tests {
 
     #[test]
     fn test_fallback_script_override() {
-        let chain = FallbackChain::new(FontId(1))
-            .with_script_override(Script::Arabic, FontId(10));
+        let chain = FallbackChain::new(FontId(1)).with_script_override(Script::Arabic, FontId(10));
 
         // Script override should win even though primary covers it
         let font = chain.resolve('ع', Script::Arabic, &|_id, _ch| true);
@@ -342,8 +339,7 @@ mod tests {
 
     #[test]
     fn test_fallback_last_resort() {
-        let chain = FallbackChain::new(FontId(1))
-            .with_last_resort(FontId(99));
+        let chain = FallbackChain::new(FontId(1)).with_last_resort(FontId(99));
 
         // Nothing covers it → last resort
         let font = chain.resolve('☃', Script::Common, &|_id, _ch| false);
@@ -362,8 +358,7 @@ mod tests {
 
     #[test]
     fn test_segment_mixed() {
-        let chain = FallbackChain::new(FontId(1))
-            .with_fallback(FontId(2));
+        let chain = FallbackChain::new(FontId(1)).with_fallback(FontId(2));
 
         // Primary covers Latin, fallback covers CJK
         let text = "Hi你好";

@@ -15,15 +15,9 @@ use crate::selection::{Selection, TextOffset};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditAction {
     /// Insert text at an offset.
-    Insert {
-        offset: usize,
-        text: String,
-    },
+    Insert { offset: usize, text: String },
     /// Delete a range of text.
-    Delete {
-        offset: usize,
-        deleted: String,
-    },
+    Delete { offset: usize, deleted: String },
     /// Replace a range with new text.
     Replace {
         offset: usize,

@@ -7,8 +7,26 @@
 
 use serde::{Deserialize, Serialize};
 
+use std::sync::Once;
+
 use crate::bidi::Direction;
 use crate::font_fallback::FontId;
+
+/// Emits a single `warn!` the first time the fallback Latin-only shaper
+/// is invoked without a real shaping backend attached. Shouts loudly
+/// that complex scripts (Arabic joining, Indic reordering, CJK,
+/// emoji ZWJ sequences) will not render correctly until a
+/// `ShaperBackend` — typically `RustybuzzShaperBackend` from
+/// `liquide-font-rasterizer` — is installed.
+fn warn_fallback_once() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        tracing::warn!(
+            "rustybuzz backend unavailable — falling back to Latin-only shaper; \
+             complex scripts (Arabic/Indic/CJK/emoji ZWJ) will not render correctly"
+        );
+    });
+}
 
 /// A shaped glyph output from the shaping pipeline.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -142,7 +160,10 @@ impl TextShaper {
 
     #[must_use]
     pub fn with_config(config: ShaperConfig) -> Self {
-        Self { config, backend: None }
+        Self {
+            config,
+            backend: None,
+        }
     }
 
     /// Set the shaping backend (e.g., rustybuzz).
@@ -154,7 +175,10 @@ impl TextShaper {
     /// Create a shaper with a backend already attached.
     #[must_use]
     pub fn with_backend(config: ShaperConfig, backend: Box<dyn ShaperBackend>) -> Self {
-        Self { config, backend: Some(backend) }
+        Self {
+            config,
+            backend: Some(backend),
+        }
     }
 
     /// Shape a run of text using a specific font.
@@ -162,13 +186,7 @@ impl TextShaper {
     /// If a backend is set, tries it first (real OpenType shaping).
     /// Falls back to the built-in approximate shaper for basic scripts.
     #[must_use]
-    pub fn shape(
-        &self,
-        text: &str,
-        font_id: FontId,
-        size: f32,
-        direction: Direction,
-    ) -> ShapedRun {
+    pub fn shape(&self, text: &str, font_id: FontId, size: f32, direction: Direction) -> ShapedRun {
         // Try the real backend first
         if let Some(ref backend) = self.backend {
             if let Some(glyphs) = backend.shape(text, font_id, size, direction, &self.config) {
@@ -181,10 +199,49 @@ impl TextShaper {
                     end: text.len(),
                 };
             }
+        } else {
+            warn_fallback_once();
         }
 
         // Fallback: built-in approximate shaping
         self.shape_fallback(text, font_id, size, direction)
+    }
+
+    /// Shape text as a sequence of script-segmented sub-runs, invoking the
+    /// backend once per segment.
+    ///
+    /// Mirrors HarfBuzz's recommended flow: segment by Unicode script
+    /// (UAX #24) before shaping so that each sub-run is fed a buffer
+    /// containing a single script. This fixes mixed-script input where
+    /// the previous single-call path under-shaped the weaker script.
+    ///
+    /// Returns a `Vec<ShapedRun>` in source order (visual reordering
+    /// still happens at the bidi + line-layout stage) with each run's
+    /// `start`/`end` byte range set from the script segmentation.
+    #[must_use]
+    pub fn shape_runs(
+        &self,
+        text: &str,
+        font_id: FontId,
+        size: f32,
+        direction: Direction,
+    ) -> Vec<ShapedRun> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+        let script_runs = crate::script::ScriptDetector::detect(text);
+        if script_runs.is_empty() {
+            return vec![self.shape(text, font_id, size, direction)];
+        }
+        let mut out = Vec::with_capacity(script_runs.len());
+        for run in &script_runs {
+            let slice = &text[run.start..run.end];
+            let mut shaped = self.shape(slice, font_id, size, direction);
+            shaped.start = run.start;
+            shaped.end = run.end;
+            out.push(shaped);
+        }
+        out
     }
 
     /// Built-in fallback shaping for basic Latin scripts.
@@ -215,15 +272,21 @@ impl TextShaper {
                 (ch as u32, char_advance(ch, base_advance, space_width), 1)
             };
 
-            let adjusted_advance = advance + self.config.letter_spacing
-                + if ch == ' ' { self.config.word_spacing } else { 0.0 };
+            let adjusted_advance = advance
+                + self.config.letter_spacing
+                + if ch == ' ' {
+                    self.config.word_spacing
+                } else {
+                    0.0
+                };
 
             // Apply basic kerning (simplified)
-            let kern_offset = if self.has_feature(ShapingFeature::Kerning) && i + consumed < chars.len() {
-                self.kern_pair(ch, chars[i + consumed], size)
-            } else {
-                0.0
-            };
+            let kern_offset =
+                if self.has_feature(ShapingFeature::Kerning) && i + consumed < chars.len() {
+                    self.kern_pair(ch, chars[i + consumed], size)
+                } else {
+                    0.0
+                };
 
             glyphs.push(ShapedGlyph {
                 glyph_id,
@@ -271,7 +334,11 @@ impl TextShaper {
                 _ => {}
             }
         }
-        (chars[i] as u32, char_advance(chars[i], base, base * 0.42), 1)
+        (
+            chars[i] as u32,
+            char_advance(chars[i], base, base * 0.42),
+            1,
+        )
     }
 
     /// Basic kerning for common Latin pairs.
@@ -417,5 +484,28 @@ mod tests {
         let run_latin = shaper.shape("a", FontId(1), 16.0, Direction::Ltr);
         // CJK characters should be wider than Latin
         assert!(run_cjk.width() > run_latin.width());
+    }
+
+    #[test]
+    fn test_mixed_script_segmentation() {
+        // Mixed Latin + Arabic must produce separate shaped runs so the
+        // backend sees one script per call (HarfBuzz contract).
+        let shaper = TextShaper::new();
+        let runs = shaper.shape_runs("hi مرحبا", FontId(1), 16.0, Direction::Ltr);
+        assert!(
+            runs.len() >= 2,
+            "expected >=2 script runs, got {}",
+            runs.len()
+        );
+        // First run must start at byte 0, last run must end at text.len().
+        assert_eq!(runs.first().unwrap().start, 0);
+        assert_eq!(runs.last().unwrap().end, "hi مرحبا".len());
+    }
+
+    #[test]
+    fn test_shape_runs_empty() {
+        let shaper = TextShaper::new();
+        let runs = shaper.shape_runs("", FontId(1), 16.0, Direction::Ltr);
+        assert!(runs.is_empty());
     }
 }

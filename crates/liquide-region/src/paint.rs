@@ -4,9 +4,9 @@
 //! invalid region from the window, provides it as a clip for painting,
 //! and EndPaint validates the painted area.
 
+use crate::invalid::InvalidRegion;
 use crate::rect::Rect;
 use crate::region::Region;
-use crate::invalid::InvalidRegion;
 
 /// Opaque identifier for a window. The actual type is determined by
 /// the windowing layer; we use u64 to avoid coupling to any specific

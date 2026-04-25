@@ -3,8 +3,8 @@
 //! Provides Y-X banded region operations (union, intersect, subtract, xor).
 
 use crate::band::{
-    Band, Span, coalesce_bands, rects_to_bands, spans_intersect, spans_subtract,
-    spans_union, spans_xor,
+    Band, Span, coalesce_bands, rects_to_bands, spans_intersect, spans_subtract, spans_union,
+    spans_xor,
 };
 use crate::rect::Rect;
 

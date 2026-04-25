@@ -52,34 +52,82 @@ impl GraphemeCategory {
             0x000A => Self::LF,
             0x200D => Self::ZWJ,
             // Combining marks (general range)
-            0x0300..=0x036F | 0x0483..=0x0489 | 0x0591..=0x05BD | 0x05BF |
-            0x05C1..=0x05C2 | 0x05C4..=0x05C5 | 0x05C7 | 0x0610..=0x061A |
-            0x064B..=0x065F | 0x0670 | 0x06D6..=0x06DC | 0x06DF..=0x06E4 |
-            0x06E7..=0x06E8 | 0x06EA..=0x06ED | 0x0711 | 0x0730..=0x074A |
-            0x0E31 | 0x0E34..=0x0E3A | 0x0EB1 | 0x0EB4..=0x0EBC |
-            0xFE00..=0xFE0F | 0xFE20..=0xFE2F | 0x20D0..=0x20FF | 0x1AB0..=0x1AFF |
-            0xE0100..=0xE01EF => Self::Extend,
+            0x0300..=0x036F
+            | 0x0483..=0x0489
+            | 0x0591..=0x05BD
+            | 0x05BF
+            | 0x05C1..=0x05C2
+            | 0x05C4..=0x05C5
+            | 0x05C7
+            | 0x0610..=0x061A
+            | 0x064B..=0x065F
+            | 0x0670
+            | 0x06D6..=0x06DC
+            | 0x06DF..=0x06E4
+            | 0x06E7..=0x06E8
+            | 0x06EA..=0x06ED
+            | 0x0711
+            | 0x0730..=0x074A
+            | 0x0E31
+            | 0x0E34..=0x0E3A
+            | 0x0EB1
+            | 0x0EB4..=0x0EBC
+            | 0xFE00..=0xFE0F
+            | 0xFE20..=0xFE2F
+            | 0x20D0..=0x20FF
+            | 0x1AB0..=0x1AFF
+            | 0xE0100..=0xE01EF => Self::Extend,
             // Spacing combining marks (Indic, etc.)
-            0x0903 | 0x093B | 0x093E..=0x0940 | 0x0949..=0x094C | 0x094E..=0x094F |
-            0x0982..=0x0983 | 0x09BE..=0x09C0 | 0x09C7..=0x09C8 | 0x09CB..=0x09CC |
-            0x09D7 | 0x0A03 | 0x0A3E..=0x0A40 | 0x0A83 => Self::SpacingMark,
+            0x0903
+            | 0x093B
+            | 0x093E..=0x0940
+            | 0x0949..=0x094C
+            | 0x094E..=0x094F
+            | 0x0982..=0x0983
+            | 0x09BE..=0x09C0
+            | 0x09C7..=0x09C8
+            | 0x09CB..=0x09CC
+            | 0x09D7
+            | 0x0A03
+            | 0x0A3E..=0x0A40
+            | 0x0A83 => Self::SpacingMark,
             // Regional indicators (flag emoji)
             0x1F1E6..=0x1F1FF => Self::RegionalIndicator,
             // Extended pictographic (emoji) — simplified range
-            0x1F600..=0x1F64F | 0x1F300..=0x1F5FF | 0x1F680..=0x1F6FF |
-            0x1F900..=0x1F9FF | 0x1FA00..=0x1FA6F | 0x1FA70..=0x1FAFF |
-            0x2600..=0x26FF | 0x2700..=0x27BF | 0x231A..=0x231B |
-            0x23E9..=0x23F3 | 0x23F8..=0x23FA | 0x25AA..=0x25AB |
-            0x25B6 | 0x25C0 | 0x25FB..=0x25FE => Self::ExtendedPictographic,
+            0x1F600..=0x1F64F
+            | 0x1F300..=0x1F5FF
+            | 0x1F680..=0x1F6FF
+            | 0x1F900..=0x1F9FF
+            | 0x1FA00..=0x1FA6F
+            | 0x1FA70..=0x1FAFF
+            | 0x2600..=0x26FF
+            | 0x2700..=0x27BF
+            | 0x231A..=0x231B
+            | 0x23E9..=0x23F3
+            | 0x23F8..=0x23FA
+            | 0x25AA..=0x25AB
+            | 0x25B6
+            | 0x25C0
+            | 0x25FB..=0x25FE => Self::ExtendedPictographic,
             // Hangul Jamo
             0x1100..=0x115F | 0xA960..=0xA97C => Self::HangulL,
             0x1160..=0x11A7 | 0xD7B0..=0xD7C6 => Self::HangulV,
             0x11A8..=0x11FF | 0xD7CB..=0xD7FB => Self::HangulT,
             // Control characters
-            0x0000..=0x0009 | 0x000B..=0x000C | 0x000E..=0x001F | 0x007F..=0x009F |
-            0x00AD | 0x061C | 0x200B | 0x200E..=0x200F | 0x2028..=0x2029 |
-            0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF |
-            0xFFF0..=0xFFF8 => Self::Control,
+            0x0000..=0x0009
+            | 0x000B..=0x000C
+            | 0x000E..=0x001F
+            | 0x007F..=0x009F
+            | 0x00AD
+            | 0x061C
+            | 0x200B
+            | 0x200E..=0x200F
+            | 0x2028..=0x2029
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF0..=0xFFF8 => Self::Control,
             // Precomposed Hangul syllables (LV and LVT)
             cp if (0xAC00..=0xD7A3).contains(&cp) => {
                 // LV syllables: those where (cp - 0xAC00) % 28 == 0
@@ -115,7 +163,10 @@ pub fn grapheme_clusters(text: &str) -> Vec<GraphemeCluster> {
 
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     if chars.len() == 1 {
-        return vec![GraphemeCluster { start: 0, end: text.len() }];
+        return vec![GraphemeCluster {
+            start: 0,
+            end: text.len(),
+        }];
     }
 
     let mut clusters = Vec::new();
@@ -273,7 +324,10 @@ mod tests {
     fn test_categories() {
         assert_eq!(GraphemeCategory::from_char('\r'), GraphemeCategory::CR);
         assert_eq!(GraphemeCategory::from_char('\n'), GraphemeCategory::LF);
-        assert_eq!(GraphemeCategory::from_char('\u{200D}'), GraphemeCategory::ZWJ);
+        assert_eq!(
+            GraphemeCategory::from_char('\u{200D}'),
+            GraphemeCategory::ZWJ
+        );
         assert_eq!(GraphemeCategory::from_char('A'), GraphemeCategory::Other);
     }
 }

@@ -88,13 +88,13 @@ impl LineBreakClass {
             0x200B => Self::ZW,
             0x2060 | 0xFEFF => Self::WJ,
             // Opening
-            0x0028 | 0x005B | 0x007B | 0x00AB | 0x2018 | 0x201C |
-            0x2039 | 0x3008 | 0x300A | 0x300C | 0x300E | 0x3010 |
-            0x3014 | 0x3016 | 0x3018 | 0x301A | 0xFF08 | 0xFF3B | 0xFF5B => Self::OP,
+            0x0028 | 0x005B | 0x007B | 0x00AB | 0x2018 | 0x201C | 0x2039 | 0x3008 | 0x300A
+            | 0x300C | 0x300E | 0x3010 | 0x3014 | 0x3016 | 0x3018 | 0x301A | 0xFF08 | 0xFF3B
+            | 0xFF5B => Self::OP,
             // Closing
-            0x0029 | 0x005D | 0x007D | 0x00BB | 0x2019 | 0x201D |
-            0x203A | 0x3009 | 0x300B | 0x300D | 0x300F | 0x3011 |
-            0x3015 | 0x3017 | 0x3019 | 0x301B | 0xFF09 | 0xFF3D | 0xFF5D => Self::CL,
+            0x0029 | 0x005D | 0x007D | 0x00BB | 0x2019 | 0x201D | 0x203A | 0x3009 | 0x300B
+            | 0x300D | 0x300F | 0x3011 | 0x3015 | 0x3017 | 0x3019 | 0x301B | 0xFF09 | 0xFF3D
+            | 0xFF5D => Self::CL,
             // Quotation
             0x0022 | 0x0027 => Self::QU,
             // Exclamation
@@ -102,16 +102,41 @@ impl LineBreakClass {
             // Hyphen
             0x002D | 0x2010 | 0x2013 => Self::HY,
             // Non-starter (Japanese)
-            0x3041 | 0x3043 | 0x3045 | 0x3047 | 0x3049 | 0x3063 |
-            0x3083 | 0x3085 | 0x3087 | 0x308E | 0x3095..=0x3096 |
-            0x30A1 | 0x30A3 | 0x30A5 | 0x30A7 | 0x30A9 | 0x30C3 |
-            0x30E3 | 0x30E5 | 0x30E7 | 0x30EE | 0x30F5..=0x30F6 |
-            0x3000..=0x3002 | 0xFF0C | 0xFF0E | 0xFF1A | 0xFF1B => Self::NS,
+            0x3041
+            | 0x3043
+            | 0x3045
+            | 0x3047
+            | 0x3049
+            | 0x3063
+            | 0x3083
+            | 0x3085
+            | 0x3087
+            | 0x308E
+            | 0x3095..=0x3096
+            | 0x30A1
+            | 0x30A3
+            | 0x30A5
+            | 0x30A7
+            | 0x30A9
+            | 0x30C3
+            | 0x30E3
+            | 0x30E5
+            | 0x30E7
+            | 0x30EE
+            | 0x30F5..=0x30F6
+            | 0x3000..=0x3002
+            | 0xFF0C
+            | 0xFF0E
+            | 0xFF1A
+            | 0xFF1B => Self::NS,
             // Break after (comma, period in some contexts, etc.)
             0x0009 | 0x007C | 0x00AD | 0x058A | 0x2000..=0x200A | 0x2012 | 0x2014 => Self::BA,
             // CJK Ideographs
-            0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x20000..=0x2A6DF | 0xF900..=0xFAFF |
-            0x2F800..=0x2FA1F => Self::ID,
+            0x4E00..=0x9FFF
+            | 0x3400..=0x4DBF
+            | 0x20000..=0x2A6DF
+            | 0xF900..=0xFAFF
+            | 0x2F800..=0x2FA1F => Self::ID,
             // CJK Fullwidth forms often act as ID
             0x3000..=0x303F => Self::ID,
             // Numerics
@@ -148,7 +173,10 @@ impl LineBreaker {
         }
 
         let chars: Vec<(usize, char)> = text.char_indices().collect();
-        let classes: Vec<LineBreakClass> = chars.iter().map(|&(_, ch)| LineBreakClass::from_char(ch)).collect();
+        let classes: Vec<LineBreakClass> = chars
+            .iter()
+            .map(|&(_, ch)| LineBreakClass::from_char(ch))
+            .collect();
         let n = chars.len();
         let mut opportunities = Vec::new();
 
@@ -395,9 +423,12 @@ mod tests {
         let breaks = LineBreaker::break_opportunities("line1\r\nline2");
         // Should not break between CR and LF
         let crlf_inner = breaks.iter().find(|b| b.offset == 6);
+        assert!(crlf_inner.is_none());
         // CR at index 5, LF at index 6 — break prohibited between them
         // But mandatory break at offset 7 (after LF)
-        let after_crlf = breaks.iter().find(|b| b.offset == 7 && b.action == BreakAction::Mandatory);
+        let after_crlf = breaks
+            .iter()
+            .find(|b| b.offset == 7 && b.action == BreakAction::Mandatory);
         assert!(after_crlf.is_some());
     }
 
@@ -434,7 +465,8 @@ mod tests {
     fn test_no_break_in_number() {
         let breaks = LineBreaker::break_opportunities("123456");
         // Should not break within digits
-        let digit_breaks: Vec<_> = breaks.iter()
+        let digit_breaks: Vec<_> = breaks
+            .iter()
             .filter(|b| b.offset > 0 && b.offset < 6 && b.action == BreakAction::Allowed)
             .collect();
         assert!(digit_breaks.is_empty());
