@@ -163,11 +163,7 @@ impl EqualizerEffect {
     /// Get the gain for a specific band (0-4) in dB.
     #[must_use]
     pub fn get_band(&self, band: usize) -> f32 {
-        if band < 5 {
-            self.band_gains[band]
-        } else {
-            0.0
-        }
+        if band < 5 { self.band_gains[band] } else { 0.0 }
     }
 
     /// Set all bands to flat (0 dB).

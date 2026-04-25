@@ -326,8 +326,18 @@ fn device_manager_duplex_can_be_both() {
 #[test]
 fn device_manager_devices_by_type() {
     let mut mgr = AudioDeviceManager::new();
-    let out = AudioDevice::new(EnumDeviceId(0), "out".into(), "Out".into(), EnumDeviceType::Output);
-    let inp = AudioDevice::new(EnumDeviceId(0), "in".into(), "In".into(), EnumDeviceType::Input);
+    let out = AudioDevice::new(
+        EnumDeviceId(0),
+        "out".into(),
+        "Out".into(),
+        EnumDeviceType::Output,
+    );
+    let inp = AudioDevice::new(
+        EnumDeviceId(0),
+        "in".into(),
+        "In".into(),
+        EnumDeviceType::Input,
+    );
     mgr.add_device(out);
     mgr.add_device(inp);
 

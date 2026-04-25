@@ -2,7 +2,11 @@ use crate::buffer::*;
 use crate::format::*;
 
 fn stereo_f32() -> AudioFormat {
-    AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo)
+    AudioFormat::new(
+        SampleFormat::F32,
+        SampleRate::Hz48000,
+        ChannelLayout::Stereo,
+    )
 }
 
 // ========== AudioBuffer ==========

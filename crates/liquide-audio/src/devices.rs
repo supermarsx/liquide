@@ -186,10 +186,16 @@ impl fmt::Display for DeviceEvent {
         match self {
             Self::Added(dev) => write!(f, "DeviceAdded({})", dev.description),
             Self::Removed(id) => write!(f, "DeviceRemoved({id})"),
-            Self::DefaultChanged { device_type, device_id } => {
+            Self::DefaultChanged {
+                device_type,
+                device_id,
+            } => {
                 write!(f, "DefaultChanged({device_type}, {device_id})")
             }
-            Self::PropertyChanged { device_id, property } => {
+            Self::PropertyChanged {
+                device_id,
+                property,
+            } => {
                 write!(f, "PropertyChanged({device_id}, {property})")
             }
         }

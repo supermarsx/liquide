@@ -52,7 +52,11 @@ fn channel_layout_counts() {
 
 #[test]
 fn audio_format_frame_size() {
-    let fmt = AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo);
+    let fmt = AudioFormat::new(
+        SampleFormat::F32,
+        SampleRate::Hz48000,
+        ChannelLayout::Stereo,
+    );
     // 2 channels * 4 bytes = 8
     assert_eq!(fmt.frame_size(), 8);
 
@@ -63,14 +67,22 @@ fn audio_format_frame_size() {
 
 #[test]
 fn audio_format_byte_rate() {
-    let fmt = AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo);
+    let fmt = AudioFormat::new(
+        SampleFormat::F32,
+        SampleRate::Hz48000,
+        ChannelLayout::Stereo,
+    );
     // 8 bytes/frame * 48000 frames/s = 384000
     assert_eq!(fmt.byte_rate(), 384_000);
 }
 
 #[test]
 fn audio_format_duration_us() {
-    let fmt = AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo);
+    let fmt = AudioFormat::new(
+        SampleFormat::F32,
+        SampleRate::Hz48000,
+        ChannelLayout::Stereo,
+    );
     // 384000 bytes = 1 second = 1_000_000 us
     assert_eq!(fmt.duration_us(384_000), 1_000_000);
 
@@ -80,7 +92,11 @@ fn audio_format_duration_us() {
 
 #[test]
 fn audio_format_serde_roundtrip() {
-    let fmt = AudioFormat::new(SampleFormat::I16, SampleRate::Hz44100, ChannelLayout::Stereo);
+    let fmt = AudioFormat::new(
+        SampleFormat::I16,
+        SampleRate::Hz44100,
+        ChannelLayout::Stereo,
+    );
     let json = serde_json::to_string(&fmt).unwrap();
     let back: AudioFormat = serde_json::from_str(&json).unwrap();
     assert_eq!(fmt, back);
@@ -88,7 +104,11 @@ fn audio_format_serde_roundtrip() {
 
 #[test]
 fn audio_format_display() {
-    let fmt = AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo);
+    let fmt = AudioFormat::new(
+        SampleFormat::F32,
+        SampleRate::Hz48000,
+        ChannelLayout::Stereo,
+    );
     let s = format!("{fmt}");
     assert!(s.contains("AudioFormat"));
     assert!(s.contains("F32"));

@@ -251,7 +251,11 @@ impl fmt::Display for SoundConfig {
             f,
             "SoundConfig(vol={:.0}%, {}{})",
             self.global_volume * 100.0,
-            if self.events_enabled { "enabled" } else { "disabled" },
+            if self.events_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            },
             if self.per_event.is_empty() {
                 String::new()
             } else {
@@ -343,7 +347,9 @@ impl fmt::Display for SoundPlayer {
         write!(
             f,
             "SoundPlayer({}, {}, {} played)",
-            self.theme, self.config, self.play_log.len(),
+            self.theme,
+            self.config,
+            self.play_log.len(),
         )
     }
 }

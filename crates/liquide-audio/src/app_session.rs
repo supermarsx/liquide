@@ -48,24 +48,16 @@ impl fmt::Display for StreamType {
 #[derive(Debug, Clone)]
 pub enum SessionEvent {
     /// A session's volume was changed.
-    VolumeChanged {
-        session_id: SessionId,
-        volume: f32,
-    },
+    VolumeChanged { session_id: SessionId, volume: f32 },
     /// A session's mute state was toggled.
-    MuteChanged {
-        session_id: SessionId,
-        muted: bool,
-    },
+    MuteChanged { session_id: SessionId, muted: bool },
     /// A new session was created.
     SessionCreated {
         session_id: SessionId,
         app_id: String,
     },
     /// A session ended.
-    SessionEnded {
-        session_id: SessionId,
-    },
+    SessionEnded { session_id: SessionId },
     /// A session's peak level was updated.
     PeakUpdated {
         session_id: SessionId,
@@ -88,7 +80,10 @@ impl fmt::Display for SessionEvent {
             Self::SessionEnded { session_id } => {
                 write!(f, "SessionEnded({session_id})")
             }
-            Self::PeakUpdated { session_id, peak_level } => {
+            Self::PeakUpdated {
+                session_id,
+                peak_level,
+            } => {
                 write!(f, "PeakUpdated({session_id}, {peak_level:.4})")
             }
         }
@@ -267,10 +262,8 @@ impl AudioSessionManager {
     pub fn set_mute(&mut self, session_id: SessionId, muted: bool) -> bool {
         if let Some(session) = self.sessions.get_mut(&session_id) {
             session.set_muted(muted);
-            self.events.push(SessionEvent::MuteChanged {
-                session_id,
-                muted,
-            });
+            self.events
+                .push(SessionEvent::MuteChanged { session_id, muted });
             true
         } else {
             false

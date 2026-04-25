@@ -3,8 +3,8 @@
 //! Used as a fallback on platforms without a native audio backend.
 
 use crate::{
-    AppAudioStream, AudioBackend, AudioDeviceInfo, AudioError, AudioEvent, CaptureHandle,
-    DeviceId, DeviceType, Result, SystemSound, Volume,
+    AppAudioStream, AudioBackend, AudioDeviceInfo, AudioError, AudioEvent, CaptureHandle, DeviceId,
+    DeviceType, Result, SystemSound, Volume,
 };
 
 /// Stub audio manager that does nothing.

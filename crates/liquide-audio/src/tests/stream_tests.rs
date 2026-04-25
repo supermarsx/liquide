@@ -3,7 +3,11 @@ use crate::stream::*;
 
 fn make_config(direction: StreamDirection) -> StreamConfig {
     StreamConfig {
-        format: AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo),
+        format: AudioFormat::new(
+            SampleFormat::F32,
+            SampleRate::Hz48000,
+            ChannelLayout::Stereo,
+        ),
         direction,
         buffer_size_frames: 1024,
     }

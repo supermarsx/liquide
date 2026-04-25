@@ -153,9 +153,10 @@ impl AudioSession {
             return Ok(Vec::new());
         }
         let mut raw = vec![0u8; available];
-        let n = self.capture_buffer.read(&mut raw).map_err(|_| {
-            AudioError::Internal("failed to read capture buffer".to_string())
-        })?;
+        let n = self
+            .capture_buffer
+            .read(&mut raw)
+            .map_err(|_| AudioError::Internal("failed to read capture buffer".to_string()))?;
         raw.truncate(n);
         let encoded = self.codec.encode(&raw)?;
         self.stats.bytes_encoded += encoded.len() as u64;

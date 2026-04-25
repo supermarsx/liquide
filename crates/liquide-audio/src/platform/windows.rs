@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::process::Command;
 
 use crate::{
-    AppAudioStream, AudioBackend, AudioDeviceInfo, AudioError, AudioEvent, CaptureHandle,
-    DeviceId, DeviceType, Result, SystemSound, Volume,
+    AppAudioStream, AudioBackend, AudioDeviceInfo, AudioError, AudioEvent, CaptureHandle, DeviceId,
+    DeviceType, Result, SystemSound, Volume,
 };
 
 // ── Win32 FFI ──────────────────────────────────────────────────────────

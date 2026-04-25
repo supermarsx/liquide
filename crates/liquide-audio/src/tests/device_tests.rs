@@ -8,11 +8,15 @@ fn null_device_manager_enumerate() {
     let devices = mgr.enumerate();
     assert_eq!(devices.len(), 2);
 
-    let capture = devices.iter().find(|d| d.direction == StreamDirection::Capture);
+    let capture = devices
+        .iter()
+        .find(|d| d.direction == StreamDirection::Capture);
     assert!(capture.is_some());
     assert!(capture.unwrap().is_default);
 
-    let playback = devices.iter().find(|d| d.direction == StreamDirection::Playback);
+    let playback = devices
+        .iter()
+        .find(|d| d.direction == StreamDirection::Playback);
     assert!(playback.is_some());
     assert!(playback.unwrap().is_default);
 }
@@ -38,7 +42,11 @@ fn null_device_manager_default_playback() {
 fn null_device_manager_open_capture_stream() {
     let mut mgr = NullDeviceManager::new();
     let config = StreamConfig {
-        format: AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo),
+        format: AudioFormat::new(
+            SampleFormat::F32,
+            SampleRate::Hz48000,
+            ChannelLayout::Stereo,
+        ),
         direction: StreamDirection::Capture,
         buffer_size_frames: 512,
     };
@@ -51,7 +59,11 @@ fn null_device_manager_open_capture_stream() {
 fn null_device_manager_open_playback_stream() {
     let mut mgr = NullDeviceManager::new();
     let config = StreamConfig {
-        format: AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo),
+        format: AudioFormat::new(
+            SampleFormat::F32,
+            SampleRate::Hz48000,
+            ChannelLayout::Stereo,
+        ),
         direction: StreamDirection::Playback,
         buffer_size_frames: 512,
     };
@@ -65,7 +77,11 @@ fn null_device_manager_open_playback_stream() {
 fn null_device_manager_open_unknown_device() {
     let mut mgr = NullDeviceManager::new();
     let config = StreamConfig {
-        format: AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo),
+        format: AudioFormat::new(
+            SampleFormat::F32,
+            SampleRate::Hz48000,
+            ChannelLayout::Stereo,
+        ),
         direction: StreamDirection::Playback,
         buffer_size_frames: 512,
     };

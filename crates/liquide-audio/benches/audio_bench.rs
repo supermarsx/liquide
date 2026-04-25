@@ -1,12 +1,16 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 use liquide_audio::buffer::AudioRingBuffer;
-use liquide_audio::codec::PcmCodec;
 use liquide_audio::codec::AudioCodec;
+use liquide_audio::codec::PcmCodec;
 use liquide_audio::format::{AudioFormat, ChannelLayout, SampleFormat, SampleRate};
 
 fn bench_ring_buffer_write_read_1m_samples(c: &mut Criterion) {
-    let fmt = AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo);
+    let fmt = AudioFormat::new(
+        SampleFormat::F32,
+        SampleRate::Hz48000,
+        ChannelLayout::Stereo,
+    );
     // 1M stereo f32 samples = 1_000_000 * 2 channels * 4 bytes = 8_000_000 bytes
     // Use a large ring buffer
     let chunk_size = 8_000;
@@ -33,7 +37,11 @@ fn bench_ring_buffer_write_read_1m_samples(c: &mut Criterion) {
 }
 
 fn bench_pcm_codec_encode_10000_frames(c: &mut Criterion) {
-    let fmt = AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo);
+    let fmt = AudioFormat::new(
+        SampleFormat::F32,
+        SampleRate::Hz48000,
+        ChannelLayout::Stereo,
+    );
     let frame_size = fmt.frame_size();
     // 10000 frames
     let data = vec![0u8; frame_size * 10_000];

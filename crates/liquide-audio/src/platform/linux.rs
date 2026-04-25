@@ -121,15 +121,17 @@ impl AudioManager {
             SystemSound::MessageIn => {
                 "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"
             }
-            SystemSound::MessageOut => "/usr/share/sounds/freedesktop/stereo/message-sent-instant.oga",
+            SystemSound::MessageOut => {
+                "/usr/share/sounds/freedesktop/stereo/message-sent-instant.oga"
+            }
             SystemSound::Login => "/usr/share/sounds/freedesktop/stereo/service-login.oga",
             SystemSound::Logout => "/usr/share/sounds/freedesktop/stereo/service-logout.oga",
             SystemSound::LockScreen => "/usr/share/sounds/freedesktop/stereo/screen-capture.oga",
             SystemSound::Screenshot => "/usr/share/sounds/freedesktop/stereo/screen-capture.oga",
-            SystemSound::VolumeChange => "/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga",
-            SystemSound::DeviceConnect => {
-                "/usr/share/sounds/freedesktop/stereo/device-added.oga"
+            SystemSound::VolumeChange => {
+                "/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga"
             }
+            SystemSound::DeviceConnect => "/usr/share/sounds/freedesktop/stereo/device-added.oga",
             SystemSound::DeviceDisconnect => {
                 "/usr/share/sounds/freedesktop/stereo/device-removed.oga"
             }
@@ -209,10 +211,7 @@ impl AudioBackend for AudioManager {
     fn set_volume(&mut self, _device_id: DeviceId, volume: Volume) -> Result<()> {
         let pct = (volume.level.clamp(0.0, 1.0) * 100.0).round() as u32;
         let pct_str = format!("{pct}%");
-        Self::run_cmd(
-            "pactl",
-            &["set-sink-volume", "@DEFAULT_SINK@", &pct_str],
-        )?;
+        Self::run_cmd("pactl", &["set-sink-volume", "@DEFAULT_SINK@", &pct_str])?;
 
         let mute_str = if volume.muted { "1" } else { "0" };
         Self::run_cmd("pactl", &["set-sink-mute", "@DEFAULT_SINK@", mute_str])?;

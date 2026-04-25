@@ -13,9 +13,15 @@ fn sound_event_all_variants() {
 
 #[test]
 fn sound_event_freedesktop_names() {
-    assert_eq!(SoundEvent::NotificationPopup.freedesktop_name(), "message-new-instant");
+    assert_eq!(
+        SoundEvent::NotificationPopup.freedesktop_name(),
+        "message-new-instant"
+    );
     assert_eq!(SoundEvent::Error.freedesktop_name(), "dialog-error");
-    assert_eq!(SoundEvent::VolumeChange.freedesktop_name(), "audio-volume-change");
+    assert_eq!(
+        SoundEvent::VolumeChange.freedesktop_name(),
+        "audio-volume-change"
+    );
     assert_eq!(SoundEvent::Screenshot.freedesktop_name(), "screen-capture");
     assert_eq!(SoundEvent::Trash.freedesktop_name(), "trash-empty");
 }

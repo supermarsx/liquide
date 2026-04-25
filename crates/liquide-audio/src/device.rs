@@ -66,7 +66,11 @@ impl NullDeviceManager {
     /// The default format used by null devices.
     #[must_use]
     fn default_format() -> AudioFormat {
-        AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo)
+        AudioFormat::new(
+            SampleFormat::F32,
+            SampleRate::Hz48000,
+            ChannelLayout::Stereo,
+        )
     }
 }
 

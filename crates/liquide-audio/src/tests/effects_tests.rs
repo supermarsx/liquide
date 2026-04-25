@@ -205,7 +205,10 @@ fn compressor_above_threshold() {
 
     // After the compressor settles, output should be less than input
     let tail_peak: f32 = output[1500..].iter().fold(0.0f32, |m, &s| m.max(s.abs()));
-    assert!(tail_peak < 0.95, "compressor should reduce level above threshold, got {tail_peak}");
+    assert!(
+        tail_peak < 0.95,
+        "compressor should reduce level above threshold, got {tail_peak}"
+    );
 }
 
 #[test]

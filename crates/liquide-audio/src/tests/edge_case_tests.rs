@@ -3,7 +3,11 @@ use crate::format::*;
 
 #[test]
 fn zero_size_audio_buffer() {
-    let fmt = AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo);
+    let fmt = AudioFormat::new(
+        SampleFormat::F32,
+        SampleRate::Hz48000,
+        ChannelLayout::Stereo,
+    );
     let buf = AudioBuffer::from_silence(fmt, 0);
     assert_eq!(buf.data.len(), 0);
     assert_eq!(buf.frame_count(), 0);

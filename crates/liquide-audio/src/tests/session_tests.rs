@@ -3,7 +3,11 @@ use crate::format::*;
 use crate::session::*;
 
 fn default_format() -> AudioFormat {
-    AudioFormat::new(SampleFormat::F32, SampleRate::Hz48000, ChannelLayout::Stereo)
+    AudioFormat::new(
+        SampleFormat::F32,
+        SampleRate::Hz48000,
+        ChannelLayout::Stereo,
+    )
 }
 
 #[test]

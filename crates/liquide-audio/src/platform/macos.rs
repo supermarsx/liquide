@@ -6,8 +6,8 @@
 use std::process::Command;
 
 use crate::{
-    AppAudioStream, AudioBackend, AudioDeviceInfo, AudioError, AudioEvent, CaptureHandle,
-    DeviceId, DeviceType, Result, SystemSound, Volume,
+    AppAudioStream, AudioBackend, AudioDeviceInfo, AudioError, AudioEvent, CaptureHandle, DeviceId,
+    DeviceType, Result, SystemSound, Volume,
 };
 
 /// macOS audio manager.
@@ -80,10 +80,7 @@ impl AudioBackend for AudioManager {
         let mut devices = Vec::new();
         let mut next_id = self.next_id;
 
-        if let Some(items) = parsed
-            .get("SPAudioDataType")
-            .and_then(|v| v.as_array())
-        {
+        if let Some(items) = parsed.get("SPAudioDataType").and_then(|v| v.as_array()) {
             for item in items {
                 if let Some(items_inner) = item.get("_items").and_then(|v| v.as_array()) {
                     for dev in items_inner {
@@ -92,10 +89,7 @@ impl AudioBackend for AudioManager {
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown")
                             .to_string();
-                        let dtype = if dev
-                            .get("coreaudio_output_source")
-                            .is_some()
-                        {
+                        let dtype = if dev.get("coreaudio_output_source").is_some() {
                             DeviceType::Output
                         } else {
                             DeviceType::Input
@@ -130,8 +124,10 @@ impl AudioBackend for AudioManager {
     }
 
     fn get_volume(&self, _device_id: DeviceId) -> Result<Volume> {
-        let output =
-            Self::run_cmd("osascript", &["-e", "output volume of (get volume settings)"])?;
+        let output = Self::run_cmd(
+            "osascript",
+            &["-e", "output volume of (get volume settings)"],
+        )?;
         let vol: f32 = output
             .trim()
             .parse()
