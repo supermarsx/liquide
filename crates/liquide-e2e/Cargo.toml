@@ -1,0 +1,21 @@
+[package]
+name = "liquide-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+liquide-app-harness = { path = "../liquide-app-harness" }
+liquide-apps-files = { path = "../liquide-apps-files" }
+liquide-apps-settings = { path = "../liquide-apps-settings" }
+liquide-apps-terminal = { path = "../liquide-apps-terminal" }
+liquide-apps-text-editor = { path = "../liquide-apps-text-editor" }
+liquide-apps-software-center = { path = "../liquide-apps-software-center" }
+liquide-apps-task-manager = { path = "../liquide-apps-task-manager" }
+liquide-input.workspace = true
+liquide-platform.workspace = true
+liquide-ui-core.workspace = true
