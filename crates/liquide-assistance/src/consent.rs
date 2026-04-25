@@ -1,8 +1,8 @@
 //! Consent flow for assistance sessions.
 
+use crate::Result;
 use crate::message::ConsentPromptMsg;
 use crate::mode::{AssistanceMode, Restriction};
-use crate::Result;
 
 /// State of the consent flow.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -35,20 +35,65 @@ fn test_stealth_active_event() {
 #[test]
 fn test_all_event_names_unique() {
     let events: Vec<AssistanceAuditEvent> = vec![
-        AssistanceAuditEvent::Requested { observer_id: String::new(), target_session_id: String::new(), mode: String::new() },
-        AssistanceAuditEvent::ConsentGranted { observer_id: String::new(), target_session_id: String::new() },
-        AssistanceAuditEvent::ConsentDenied { observer_id: String::new(), target_session_id: String::new() },
-        AssistanceAuditEvent::ConsentTimeout { observer_id: String::new(), target_session_id: String::new() },
-        AssistanceAuditEvent::Started { session_id: String::new(), observer_id: String::new(), mode: String::new() },
-        AssistanceAuditEvent::Escalated { session_id: String::new(), new_mode: String::new() },
-        AssistanceAuditEvent::OwnerReclaimed { session_id: String::new() },
-        AssistanceAuditEvent::Ended { session_id: String::new(), reason: String::new() },
-        AssistanceAuditEvent::StealthStarted { observer_id: String::new(), target_session_id: String::new() },
-        AssistanceAuditEvent::StealthActive { observer_id: String::new(), target_session_id: String::new(), duration_seconds: 0 },
-        AssistanceAuditEvent::StealthEnded { observer_id: String::new(), target_session_id: String::new(), duration_seconds: 0 },
-        AssistanceAuditEvent::ChatMessageSent { session_id: String::new(), sender: String::new() },
-        AssistanceAuditEvent::InviteCreated { code: String::new(), created_by: String::new() },
-        AssistanceAuditEvent::InviteUsed { code: String::new(), used_by: String::new() },
+        AssistanceAuditEvent::Requested {
+            observer_id: String::new(),
+            target_session_id: String::new(),
+            mode: String::new(),
+        },
+        AssistanceAuditEvent::ConsentGranted {
+            observer_id: String::new(),
+            target_session_id: String::new(),
+        },
+        AssistanceAuditEvent::ConsentDenied {
+            observer_id: String::new(),
+            target_session_id: String::new(),
+        },
+        AssistanceAuditEvent::ConsentTimeout {
+            observer_id: String::new(),
+            target_session_id: String::new(),
+        },
+        AssistanceAuditEvent::Started {
+            session_id: String::new(),
+            observer_id: String::new(),
+            mode: String::new(),
+        },
+        AssistanceAuditEvent::Escalated {
+            session_id: String::new(),
+            new_mode: String::new(),
+        },
+        AssistanceAuditEvent::OwnerReclaimed {
+            session_id: String::new(),
+        },
+        AssistanceAuditEvent::Ended {
+            session_id: String::new(),
+            reason: String::new(),
+        },
+        AssistanceAuditEvent::StealthStarted {
+            observer_id: String::new(),
+            target_session_id: String::new(),
+        },
+        AssistanceAuditEvent::StealthActive {
+            observer_id: String::new(),
+            target_session_id: String::new(),
+            duration_seconds: 0,
+        },
+        AssistanceAuditEvent::StealthEnded {
+            observer_id: String::new(),
+            target_session_id: String::new(),
+            duration_seconds: 0,
+        },
+        AssistanceAuditEvent::ChatMessageSent {
+            session_id: String::new(),
+            sender: String::new(),
+        },
+        AssistanceAuditEvent::InviteCreated {
+            code: String::new(),
+            created_by: String::new(),
+        },
+        AssistanceAuditEvent::InviteUsed {
+            code: String::new(),
+            used_by: String::new(),
+        },
     ];
     let names: Vec<&str> = events.iter().map(|e| e.event_name()).collect();
     let mut unique = names.clone();

@@ -47,9 +47,19 @@ fn test_stealth_allowed_for_security_admin() {
         stealth_cfg,
         PermissionsConfig::default(),
     );
-    let sec = Observer::new("o1".into(), "Sec".into(), ObserverRole::SecurityAdmin, AssistanceMode::ViewOnly);
+    let sec = Observer::new(
+        "o1".into(),
+        "Sec".into(),
+        ObserverRole::SecurityAdmin,
+        AssistanceMode::ViewOnly,
+    );
     assert!(policy.is_stealth_allowed(&sec));
-    let hd = Observer::new("o2".into(), "HD".into(), ObserverRole::HelpDesk, AssistanceMode::ViewOnly);
+    let hd = Observer::new(
+        "o2".into(),
+        "HD".into(),
+        ObserverRole::HelpDesk,
+        AssistanceMode::ViewOnly,
+    );
     assert!(!policy.is_stealth_allowed(&hd));
 }
 
@@ -65,9 +75,19 @@ fn test_max_observers() {
 #[test]
 fn test_can_request() {
     let policy = make_policy();
-    let hd = Observer::new("o1".into(), "HD".into(), ObserverRole::HelpDesk, AssistanceMode::ViewOnly);
+    let hd = Observer::new(
+        "o1".into(),
+        "HD".into(),
+        ObserverRole::HelpDesk,
+        AssistanceMode::ViewOnly,
+    );
     assert!(policy.can_request(&hd));
-    let admin = Observer::new("o2".into(), "Admin".into(), ObserverRole::Admin, AssistanceMode::ViewOnly);
+    let admin = Observer::new(
+        "o2".into(),
+        "Admin".into(),
+        ObserverRole::Admin,
+        AssistanceMode::ViewOnly,
+    );
     assert!(policy.can_request(&admin));
 }
 

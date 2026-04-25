@@ -1,4 +1,6 @@
-use crate::config::{AssistanceConfig, ModeConfig, StealthConfig, PermissionsConfig, RecordingConfig};
+use crate::config::{
+    AssistanceConfig, ModeConfig, PermissionsConfig, RecordingConfig, StealthConfig,
+};
 
 #[test]
 fn test_assistance_config_defaults() {

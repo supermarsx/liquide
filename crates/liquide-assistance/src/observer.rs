@@ -72,7 +72,10 @@ impl Observer {
         match mode {
             AssistanceMode::ViewOnly => true,
             AssistanceMode::Interactive => {
-                matches!(self.role, ObserverRole::HelpDesk | ObserverRole::Admin | ObserverRole::SecurityAdmin)
+                matches!(
+                    self.role,
+                    ObserverRole::HelpDesk | ObserverRole::Admin | ObserverRole::SecurityAdmin
+                )
             }
             AssistanceMode::Exclusive => {
                 matches!(self.role, ObserverRole::Admin | ObserverRole::SecurityAdmin)

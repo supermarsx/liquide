@@ -128,10 +128,11 @@ impl AssistanceCoordinator {
                 let capabilities = session.mode().capabilities();
 
                 self.sessions.insert(session_id.clone(), session);
-                self.audit_events.push(AssistanceAuditEvent::ConsentGranted {
-                    observer_id: observer_id.clone(),
-                    target_session_id: "target".to_string(),
-                });
+                self.audit_events
+                    .push(AssistanceAuditEvent::ConsentGranted {
+                        observer_id: observer_id.clone(),
+                        target_session_id: "target".to_string(),
+                    });
                 self.audit_events.push(AssistanceAuditEvent::Started {
                     session_id: session_id.clone(),
                     observer_id,
@@ -191,11 +192,7 @@ impl AssistanceCoordinator {
     }
 
     /// Join a session using an invite code.
-    pub fn join_with_code(
-        &mut self,
-        code: &str,
-        observer: &Observer,
-    ) -> Result<AssistanceGranted> {
+    pub fn join_with_code(&mut self, code: &str, observer: &Observer) -> Result<AssistanceGranted> {
         // Redeem the invite.
         let invite = self.invite_registry.redeem(code)?;
         let mode = invite.mode;
@@ -229,12 +226,12 @@ impl AssistanceCoordinator {
 
     /// End an assistance session.
     pub fn end_assistance(&mut self, session_id: &str, reason: EndReason) -> Result<()> {
-        let session = self
-            .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| AssistanceError::SessionNotFound {
-                session_id: session_id.to_string(),
-            })?;
+        let session =
+            self.sessions
+                .get_mut(session_id)
+                .ok_or_else(|| AssistanceError::SessionNotFound {
+                    session_id: session_id.to_string(),
+                })?;
 
         session.end(0);
 

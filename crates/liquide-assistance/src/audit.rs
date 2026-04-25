@@ -49,10 +49,7 @@ pub enum AssistanceAuditEvent {
     /// The owner reclaimed control.
     OwnerReclaimed { session_id: String },
     /// The session ended.
-    Ended {
-        session_id: String,
-        reason: String,
-    },
+    Ended { session_id: String, reason: String },
     /// A stealth session started.
     StealthStarted {
         observer_id: String,
@@ -71,20 +68,11 @@ pub enum AssistanceAuditEvent {
         duration_seconds: u64,
     },
     /// A chat message was sent.
-    ChatMessageSent {
-        session_id: String,
-        sender: String,
-    },
+    ChatMessageSent { session_id: String, sender: String },
     /// An invite was created.
-    InviteCreated {
-        code: String,
-        created_by: String,
-    },
+    InviteCreated { code: String, created_by: String },
     /// An invite was used.
-    InviteUsed {
-        code: String,
-        used_by: String,
-    },
+    InviteUsed { code: String, used_by: String },
 }
 
 impl AssistanceAuditEvent {

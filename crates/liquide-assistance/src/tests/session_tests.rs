@@ -1,5 +1,5 @@
 use crate::mode::AssistanceMode;
-use crate::session::{ShadowSession, ShadowSessionState, SessionInfo};
+use crate::session::{SessionInfo, ShadowSession, ShadowSessionState};
 
 #[test]
 fn test_new_session_is_pending() {

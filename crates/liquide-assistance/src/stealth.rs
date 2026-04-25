@@ -18,7 +18,11 @@ pub struct StealthSession {
 impl StealthSession {
     /// Create a new stealth session.  The observer must have the `SecurityAdmin` role.
     #[must_use]
-    pub fn new(observer: &Observer, target_session_id: String, config: StealthConfig) -> Result<Self> {
+    pub fn new(
+        observer: &Observer,
+        target_session_id: String,
+        config: StealthConfig,
+    ) -> Result<Self> {
         if observer.role != ObserverRole::SecurityAdmin {
             return Err(AssistanceError::StealthRoleRequired {
                 required_role: config.required_role.clone(),

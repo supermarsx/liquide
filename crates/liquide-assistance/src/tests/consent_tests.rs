@@ -24,7 +24,10 @@ fn test_consent_prompt() {
     let prompt = flow.prompt(100).unwrap();
     assert_eq!(prompt.observer_name, "Alice");
     assert_eq!(prompt.timeout_seconds, 60);
-    assert!(matches!(*flow.state(), ConsentState::AwaitingResponse { .. }));
+    assert!(matches!(
+        *flow.state(),
+        ConsentState::AwaitingResponse { .. }
+    ));
 }
 
 #[test]

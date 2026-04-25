@@ -1,44 +1,43 @@
 //! Remote assistance framework — session shadowing, consent flows,
 //! observer management, stealth monitoring, and audit trail.
 
-pub mod mode;
-pub mod config;
-pub mod message;
-pub mod session;
-pub mod observer;
-pub mod consent;
-pub mod input;
-pub mod cursor;
-pub mod chat;
-pub mod invite;
-pub mod stealth;
 pub mod audit;
+pub mod chat;
+pub mod config;
+pub mod consent;
 pub mod coordinator;
+pub mod cursor;
+pub mod input;
+pub mod invite;
+pub mod message;
+pub mod mode;
+pub mod observer;
 pub mod policy;
+pub mod session;
+pub mod stealth;
 
 #[cfg(test)]
 mod tests;
 
-pub use mode::{AssistanceMode, ModeCapabilities, Restriction};
-pub use config::{AssistanceConfig, ModeConfig, StealthConfig, PermissionsConfig, RecordingConfig};
-pub use message::{
-    AssistanceRequest, ConsentPromptMsg, ConsentResponseMsg,
-    AssistanceGranted, AssistanceDenied, DenialReason,
-    AssistanceInviteMsg, InviteCreatedMsg, JoinWithCode,
-    EscalationRequest, EscalationPromptMsg, EscalationResponse, EscalationGranted,
-    EndReason, AssistanceEnd, ChatMsg, AnnotationAdd, OwnerReclaimControl,
-};
-pub use session::{ShadowSessionState, ShadowSession, SessionInfo};
-pub use observer::{ObserverRole, Observer};
-pub use consent::{ConsentState, ConsentFlow};
-pub use input::{InputSource, InputEventType, InputEvent, InputCoordinator};
-pub use cursor::{CursorAppearance, GhostCursor, cursor_appearance_for_mode};
-pub use chat::{ChatMessage, ChatChannel};
-pub use invite::{InviteCode, InviteRegistry};
-pub use stealth::StealthSession;
-pub use audit::{AuditLevel, AssistanceAuditEvent};
+pub use audit::{AssistanceAuditEvent, AuditLevel};
+pub use chat::{ChatChannel, ChatMessage};
+pub use config::{AssistanceConfig, ModeConfig, PermissionsConfig, RecordingConfig, StealthConfig};
+pub use consent::{ConsentFlow, ConsentState};
 pub use coordinator::AssistanceCoordinator;
+pub use cursor::{CursorAppearance, GhostCursor, cursor_appearance_for_mode};
+pub use input::{InputCoordinator, InputEvent, InputEventType, InputSource};
+pub use invite::{InviteCode, InviteRegistry};
+pub use message::{
+    AnnotationAdd, AssistanceDenied, AssistanceEnd, AssistanceGranted, AssistanceInviteMsg,
+    AssistanceRequest, ChatMsg, ConsentPromptMsg, ConsentResponseMsg, DenialReason, EndReason,
+    EscalationGranted, EscalationPromptMsg, EscalationRequest, EscalationResponse,
+    InviteCreatedMsg, JoinWithCode, OwnerReclaimControl,
+};
+pub use mode::{AssistanceMode, ModeCapabilities, Restriction};
+pub use observer::{Observer, ObserverRole};
 pub use policy::AssistancePolicy;
+pub use session::{SessionInfo, ShadowSession, ShadowSessionState};
+pub use stealth::StealthSession;
 
 use thiserror::Error;
 

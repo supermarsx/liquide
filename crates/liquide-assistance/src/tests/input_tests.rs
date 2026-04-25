@@ -4,7 +4,10 @@ use crate::mode::AssistanceMode;
 fn make_owner_event() -> InputEvent {
     InputEvent {
         source: InputSource::Owner,
-        event_type: InputEventType::Keyboard { key: 65, pressed: true },
+        event_type: InputEventType::Keyboard {
+            key: 65,
+            pressed: true,
+        },
         timestamp: 1000,
     }
 }
@@ -12,7 +15,11 @@ fn make_owner_event() -> InputEvent {
 fn make_observer_event(id: &str) -> InputEvent {
     InputEvent {
         source: InputSource::Observer { id: id.to_string() },
-        event_type: InputEventType::Mouse { x: 100.0, y: 200.0, buttons: 1 },
+        event_type: InputEventType::Mouse {
+            x: 100.0,
+            y: 200.0,
+            buttons: 1,
+        },
         timestamp: 1000,
     }
 }
