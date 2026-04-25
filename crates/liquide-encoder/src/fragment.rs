@@ -6,8 +6,8 @@
 //! fragmentation layer that honours a caller-supplied budget and
 //! assigns a monotonic sequence number per emitted fragment.
 
-use std::fmt;
 use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::de::{SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -16,8 +16,8 @@ use crate::strategy::CompressionMethod;
 use crate::tile::{FrameStats, TileBatch, TileEncoding, TileUpdate};
 
 use liquide_compositor::damage::DamageClass;
-use liquide_protocol::codec::cbor_encode;
 use liquide_protocol::FrameHeader;
+use liquide_protocol::codec::cbor_encode;
 
 const MAX_FRAGMENT_COUNT_SEARCH_PASSES: usize = 4;
 
@@ -154,7 +154,11 @@ fn empty_tile_part(tile_index: u32, tile: &TileUpdate) -> FragmentTilePart {
     }
 }
 
-fn make_single_fragment(batch_sequence: u64, sequence: u64, tile: FragmentTilePart) -> BatchFragment {
+fn make_single_fragment(
+    batch_sequence: u64,
+    sequence: u64,
+    tile: FragmentTilePart,
+) -> BatchFragment {
     BatchFragment {
         batch_sequence,
         sequence,
@@ -175,7 +179,11 @@ fn make_single_fragment(batch_sequence: u64, sequence: u64, tile: FragmentTilePa
     }
 }
 
-fn make_bundled_fragment(batch_sequence: u64, sequence: u64, tiles: Vec<FragmentTilePart>) -> BatchFragment {
+fn make_bundled_fragment(
+    batch_sequence: u64,
+    sequence: u64,
+    tiles: Vec<FragmentTilePart>,
+) -> BatchFragment {
     let mut tiles = tiles.into_iter();
     let tile = tiles
         .next()
@@ -201,11 +209,15 @@ fn make_bundled_fragment(batch_sequence: u64, sequence: u64, tiles: Vec<Fragment
 }
 
 fn encoded_wire_size(fragment: &BatchFragment) -> Result<usize, FragmentError> {
-    let encoded = cbor_encode(fragment).map_err(|err| FragmentError::Serialization(err.to_string()))?;
+    let encoded =
+        cbor_encode(fragment).map_err(|err| FragmentError::Serialization(err.to_string()))?;
     Ok(FrameHeader::WIRE_SIZE + encoded.len())
 }
 
-fn ensure_fragment_fits(fragment: &BatchFragment, max_wire_bytes: usize) -> Result<(), FragmentError> {
+fn ensure_fragment_fits(
+    fragment: &BatchFragment,
+    max_wire_bytes: usize,
+) -> Result<(), FragmentError> {
     let required = encoded_wire_size(fragment)?;
     if required > max_wire_bytes {
         return Err(FragmentError::BudgetTooSmall {
@@ -393,7 +405,8 @@ fn split_payload_tile(
         part.fragment_count = actual_count;
     }
     for (idx, part) in parts.iter().enumerate() {
-        let candidate = make_single_fragment(batch_sequence, starting_sequence + idx as u64, part.clone());
+        let candidate =
+            make_single_fragment(batch_sequence, starting_sequence + idx as u64, part.clone());
         ensure_fragment_fits(&candidate, max_wire_bytes)?;
     }
     Ok(parts)
@@ -479,9 +492,15 @@ pub fn fragment_batch(
                         ))?,
                     });
                 }
-                push_bundled_fragment(&mut out, batch.sequence, &mut seq, std::mem::take(&mut pending_empty_tiles));
+                push_bundled_fragment(
+                    &mut out,
+                    batch.sequence,
+                    &mut seq,
+                    std::mem::take(&mut pending_empty_tiles),
+                );
                 pending_empty_tiles.push(empty_tile_part(tile_index, tile));
-                let single = make_bundled_fragment(batch.sequence, seq, pending_empty_tiles.clone());
+                let single =
+                    make_bundled_fragment(batch.sequence, seq, pending_empty_tiles.clone());
                 ensure_fragment_fits(&single, max_payload_bytes)?;
             }
             continue;
@@ -533,22 +552,28 @@ pub fn reassemble_batch(fragments: &[BatchFragment]) -> Result<TileBatch, Fragme
         if f.batch_sequence != batch_sequence {
             return Err(FragmentError::SequenceMismatch);
         }
-        by_tile.entry(f.tile_index).or_default().push(FragmentTilePart {
-            tile_index: f.tile_index,
-            fragment_seq: f.fragment_seq,
-            fragment_count: f.fragment_count,
-            total_len: f.total_len,
-            payload_offset: f.payload_offset,
-            tx: f.tx,
-            ty: f.ty,
-            encoding: f.encoding,
-            crc: f.crc,
-            damage_class: f.damage_class,
-            compression: f.compression,
-            payload: f.payload.clone(),
-        });
+        by_tile
+            .entry(f.tile_index)
+            .or_default()
+            .push(FragmentTilePart {
+                tile_index: f.tile_index,
+                fragment_seq: f.fragment_seq,
+                fragment_count: f.fragment_count,
+                total_len: f.total_len,
+                payload_offset: f.payload_offset,
+                tx: f.tx,
+                ty: f.ty,
+                encoding: f.encoding,
+                crc: f.crc,
+                damage_class: f.damage_class,
+                compression: f.compression,
+                payload: f.payload.clone(),
+            });
         for tile in &f.bundled_tiles {
-            by_tile.entry(tile.tile_index).or_default().push(tile.clone());
+            by_tile
+                .entry(tile.tile_index)
+                .or_default()
+                .push(tile.clone());
         }
     }
 
@@ -609,6 +634,44 @@ mod fragment_module_tests {
     use super::*;
     use crate::strategy::CompressionMethod;
     use liquide_compositor::damage::DamageClass;
+    use liquide_protocol::codec::{cbor_decode, cbor_encode};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    struct LegacyFragmentTilePart {
+        tile_index: u32,
+        fragment_seq: u32,
+        fragment_count: u32,
+        total_len: u32,
+        payload_offset: u32,
+        tx: u32,
+        ty: u32,
+        encoding: TileEncoding,
+        crc: u32,
+        damage_class: DamageClass,
+        compression: CompressionMethod,
+        payload: Vec<u8>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    struct LegacyBatchFragment {
+        batch_sequence: u64,
+        sequence: u64,
+        tile_index: u32,
+        fragment_seq: u32,
+        fragment_count: u32,
+        total_len: u32,
+        payload_offset: u32,
+        tx: u32,
+        ty: u32,
+        encoding: TileEncoding,
+        crc: u32,
+        damage_class: DamageClass,
+        compression: CompressionMethod,
+        payload: Vec<u8>,
+        bundled_tiles: Vec<LegacyFragmentTilePart>,
+        is_last: bool,
+    }
 
     fn tile(tx: u32, ty: u32, bytes: &[u8]) -> TileUpdate {
         TileUpdate {
@@ -691,7 +754,11 @@ mod fragment_module_tests {
 
         let frags = fragment_batch(&batch, 1024, 10).unwrap();
         assert!(frags.len() < batch.tiles.len());
-        assert!(frags.iter().all(|fragment| encoded_wire_size(fragment).unwrap() <= 1024));
+        assert!(
+            frags
+                .iter()
+                .all(|fragment| encoded_wire_size(fragment).unwrap() <= 1024)
+        );
         assert!(frags.iter().all(|fragment| {
             fragment.payload.is_empty()
                 && fragment
@@ -716,7 +783,99 @@ mod fragment_module_tests {
 
         let frags = fragment_batch(&batch, 256, 0).unwrap();
         assert!(frags.len() > 1);
-        assert!(frags.iter().all(|fragment| encoded_wire_size(fragment).unwrap() <= 256));
+        assert!(
+            frags
+                .iter()
+                .all(|fragment| encoded_wire_size(fragment).unwrap() <= 256)
+        );
+    }
+
+    #[test]
+    fn new_fragment_type_decodes_legacy_vec_payload_encoding() {
+        let legacy = LegacyBatchFragment {
+            batch_sequence: 7,
+            sequence: 9,
+            tile_index: 2,
+            fragment_seq: 0,
+            fragment_count: 1,
+            total_len: 4,
+            payload_offset: 0,
+            tx: 3,
+            ty: 5,
+            encoding: TileEncoding::Full,
+            crc: 0xAABB_CCDD,
+            damage_class: DamageClass::UiPrimitive,
+            compression: CompressionMethod::Zstd { level: 3 },
+            payload: vec![1, 2, 3, 4],
+            bundled_tiles: vec![LegacyFragmentTilePart {
+                tile_index: 3,
+                fragment_seq: 0,
+                fragment_count: 1,
+                total_len: 0,
+                payload_offset: 0,
+                tx: 4,
+                ty: 5,
+                encoding: TileEncoding::Skip,
+                crc: 0,
+                damage_class: DamageClass::UiPrimitive,
+                compression: CompressionMethod::Lz4,
+                payload: Vec::new(),
+            }],
+            is_last: true,
+        };
+
+        let encoded = cbor_encode(&legacy).unwrap();
+        let decoded: BatchFragment = cbor_decode(&encoded).unwrap();
+
+        assert_eq!(decoded.batch_sequence, legacy.batch_sequence);
+        assert_eq!(decoded.sequence, legacy.sequence);
+        assert_eq!(decoded.payload, legacy.payload);
+        assert_eq!(decoded.bundled_tiles.len(), 1);
+        assert!(decoded.bundled_tiles[0].payload.is_empty());
+    }
+
+    #[test]
+    fn legacy_fragment_type_decodes_new_byte_string_encoding() {
+        let fragment = BatchFragment {
+            batch_sequence: 13,
+            sequence: 21,
+            tile_index: 4,
+            fragment_seq: 0,
+            fragment_count: 1,
+            total_len: 5,
+            payload_offset: 0,
+            tx: 1,
+            ty: 2,
+            encoding: TileEncoding::Full,
+            crc: 0x1234_5678,
+            damage_class: DamageClass::UiPrimitive,
+            compression: CompressionMethod::Zstd { level: 3 },
+            payload: vec![9, 8, 7, 6, 5],
+            bundled_tiles: vec![FragmentTilePart {
+                tile_index: 5,
+                fragment_seq: 0,
+                fragment_count: 1,
+                total_len: 0,
+                payload_offset: 0,
+                tx: 2,
+                ty: 2,
+                encoding: TileEncoding::Skip,
+                crc: 0,
+                damage_class: DamageClass::UiPrimitive,
+                compression: CompressionMethod::Lz4,
+                payload: Vec::new(),
+            }],
+            is_last: false,
+        };
+
+        let encoded = cbor_encode(&fragment).unwrap();
+        let decoded: LegacyBatchFragment = cbor_decode(&encoded).unwrap();
+
+        assert_eq!(decoded.batch_sequence, fragment.batch_sequence);
+        assert_eq!(decoded.sequence, fragment.sequence);
+        assert_eq!(decoded.payload, fragment.payload);
+        assert_eq!(decoded.bundled_tiles.len(), 1);
+        assert!(decoded.bundled_tiles[0].payload.is_empty());
     }
 
     #[test]

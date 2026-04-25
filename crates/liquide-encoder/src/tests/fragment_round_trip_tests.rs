@@ -5,8 +5,8 @@ use crate::tile::TileConfig;
 use liquide_compositor::damage::{DamageClass, DamageTile};
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::pixel::{Color, PixelFormat};
-use liquide_protocol::codec::cbor_encode;
 use liquide_protocol::FrameHeader;
+use liquide_protocol::codec::cbor_encode;
 
 fn make_gradient_fb(size: u32) -> FrameBuffer {
     // Produce a non-solid frame so tiles encode as Full/Delta (not Solid),
@@ -51,9 +51,11 @@ fn encode_frame_with_mtu_fragments_and_reassembles_exactly() {
         .encode_frame_with_mtu(&fb, &damage, 4096)
         .expect("encode with mtu");
     assert!(!fragments.is_empty(), "at least one fragment expected");
-    assert!(fragments.iter().all(|fragment| {
-        cbor_encode(fragment).unwrap().len() + FrameHeader::WIRE_SIZE <= 4096
-    }));
+    assert!(
+        fragments.iter().all(|fragment| {
+            cbor_encode(fragment).unwrap().len() + FrameHeader::WIRE_SIZE <= 4096
+        })
+    );
     // Sequence numbers are monotonically increasing and dense across the batch.
     for pair in fragments.windows(2) {
         assert_eq!(pair[0].sequence + 1, pair[1].sequence);
@@ -107,9 +109,11 @@ fn encode_frame_with_mtu_respects_wire_budget() {
 
     let fragments = enc.encode_frame_with_mtu(&fb, &damage, 512).unwrap();
     assert!(!fragments.is_empty());
-    assert!(fragments.iter().all(|fragment| {
-        cbor_encode(fragment).unwrap().len() + FrameHeader::WIRE_SIZE <= 512
-    }));
+    assert!(
+        fragments.iter().all(|fragment| {
+            cbor_encode(fragment).unwrap().len() + FrameHeader::WIRE_SIZE <= 512
+        })
+    );
 }
 
 #[test]
