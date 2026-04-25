@@ -1,5 +1,5 @@
-use liquide_compositor::pixel::PixelFormat;
 use crate::surface::RenderSurface;
+use liquide_compositor::pixel::PixelFormat;
 
 #[test]
 fn test_new_surface() {

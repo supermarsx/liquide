@@ -217,7 +217,10 @@ impl SettingEntry {
                 }
             }
             (SettingKind::Color, SettingValue::Text(t)) => {
-                if t.starts_with('#') && t.len() == 7 && t[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+                if t.starts_with('#')
+                    && t.len() == 7
+                    && t[1..].chars().all(|c| c.is_ascii_hexdigit())
+                {
                     Ok(())
                 } else {
                     Err(crate::SettingsError::InvalidValue {

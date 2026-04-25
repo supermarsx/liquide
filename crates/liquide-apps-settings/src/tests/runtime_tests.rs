@@ -30,7 +30,8 @@ fn test_runtime_get_value() {
 #[test]
 fn test_runtime_set_value() {
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.set_value("audio.mute", SettingValue::Bool(true)).unwrap();
+    rt.set_value("audio.mute", SettingValue::Bool(true))
+        .unwrap();
     assert_eq!(rt.value("audio.mute"), Some(&SettingValue::Bool(true)));
 }
 
@@ -51,7 +52,8 @@ fn test_runtime_set_value_unknown_key() {
 #[test]
 fn test_runtime_reset_to_default() {
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.set_value("audio.mute", SettingValue::Bool(true)).unwrap();
+    rt.set_value("audio.mute", SettingValue::Bool(true))
+        .unwrap();
     rt.reset_to_default("audio.mute").unwrap();
     assert_eq!(rt.value("audio.mute"), Some(&SettingValue::Bool(false)));
 }
@@ -59,7 +61,8 @@ fn test_runtime_reset_to_default() {
 #[test]
 fn test_runtime_undo_redo() {
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.set_value("audio.mute", SettingValue::Bool(true)).unwrap();
+    rt.set_value("audio.mute", SettingValue::Bool(true))
+        .unwrap();
     assert!(rt.can_undo());
 
     rt.undo().unwrap();
@@ -79,7 +82,8 @@ fn test_runtime_undo_empty() {
 #[test]
 fn test_runtime_policy_locked() {
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.policy_mut().set_constraint("audio.mute", PolicyConstraint::Locked);
+    rt.policy_mut()
+        .set_constraint("audio.mute", PolicyConstraint::Locked);
     let result = rt.set_value("audio.mute", SettingValue::Bool(true));
     assert!(result.is_err());
 }
@@ -119,13 +123,18 @@ fn test_runtime_category_infos() {
     let rt = SettingsRuntime::new(SettingsConfig::default());
     let infos = rt.category_infos();
     assert_eq!(infos.len(), 8);
-    assert!(infos.iter().all(|i| i.entry_count > 0 || i.category == Category::Users));
+    assert!(
+        infos
+            .iter()
+            .all(|i| i.entry_count > 0 || i.category == Category::Users)
+    );
 }
 
 #[test]
 fn test_runtime_notifications() {
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.set_value("audio.mute", SettingValue::Bool(true)).unwrap();
+    rt.set_value("audio.mute", SettingValue::Bool(true))
+        .unwrap();
     let notifs = rt.drain_notifications();
     assert_eq!(notifs.len(), 1);
     assert_eq!(notifs[0].key, "audio.mute");
@@ -141,7 +150,10 @@ fn test_runtime_page() {
 
 #[test]
 fn test_runtime_config() {
-    let config = SettingsConfig { window_width: 1200, ..SettingsConfig::default() };
+    let config = SettingsConfig {
+        window_width: 1200,
+        ..SettingsConfig::default()
+    };
     let rt = SettingsRuntime::new(config);
     assert_eq!(rt.config().window_width, 1200);
 }
@@ -156,8 +168,10 @@ fn test_save_and_load_round_trip() {
     let path = dir.join("settings.json");
 
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.set_value("audio.mute", SettingValue::Bool(true)).unwrap();
-    rt.set_value("audio.volume", SettingValue::Number(75.0)).unwrap();
+    rt.set_value("audio.mute", SettingValue::Bool(true))
+        .unwrap();
+    rt.set_value("audio.volume", SettingValue::Number(75.0))
+        .unwrap();
     rt.save_to_path(&path).unwrap();
 
     // Load into a fresh runtime
@@ -237,7 +251,8 @@ fn test_handle_change() {
 #[test]
 fn test_handle_change_locked() {
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.policy_mut().set_constraint("audio.mute", PolicyConstraint::Locked);
+    rt.policy_mut()
+        .set_constraint("audio.mute", PolicyConstraint::Locked);
     let result = rt.handle_change("audio.mute", SettingValue::Bool(true));
     assert!(result.is_err());
 }
@@ -251,7 +266,8 @@ fn test_apply_changes_saves() {
 
     // We test save_to_path directly since apply_changes uses settings_file()
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.set_value("audio.mute", SettingValue::Bool(true)).unwrap();
+    rt.set_value("audio.mute", SettingValue::Bool(true))
+        .unwrap();
     rt.save_to_path(&path).unwrap();
     assert!(path.exists());
 
@@ -266,7 +282,8 @@ fn test_apply_changes_saves() {
 fn test_revert_changes() {
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
     let original = rt.value("audio.mute").cloned().unwrap();
-    rt.set_value("audio.mute", SettingValue::Bool(true)).unwrap();
+    rt.set_value("audio.mute", SettingValue::Bool(true))
+        .unwrap();
     rt.revert_changes();
     assert_eq!(rt.value("audio.mute"), Some(&original));
 }
@@ -286,7 +303,8 @@ fn test_category_settings_display() {
 #[test]
 fn test_category_settings_locked() {
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.policy_mut().set_constraint("audio.mute", PolicyConstraint::Locked);
+    rt.policy_mut()
+        .set_constraint("audio.mute", PolicyConstraint::Locked);
     let displays = rt.category_settings(Category::Audio);
     let mute = displays.iter().find(|d| d.key == "audio.mute");
     assert!(mute.is_some());
@@ -296,7 +314,8 @@ fn test_category_settings_locked() {
 #[test]
 fn test_category_settings_hidden() {
     let mut rt = SettingsRuntime::new(SettingsConfig::default());
-    rt.policy_mut().set_constraint("audio.mute", PolicyConstraint::Hidden);
+    rt.policy_mut()
+        .set_constraint("audio.mute", PolicyConstraint::Hidden);
     let displays = rt.category_settings(Category::Audio);
     assert!(displays.iter().all(|d| d.key != "audio.mute"));
 }

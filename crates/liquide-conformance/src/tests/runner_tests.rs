@@ -1,10 +1,10 @@
 //! Tests for the conformance runner and report generation.
 
+use crate::case::{CaseResult, Outcome, TestCase, TestCategory};
 use crate::config::ConformanceConfig;
 use crate::report::{ConformanceReport, SuiteResult};
 use crate::runner::ConformanceRunner;
 use crate::suite::SuiteName;
-use crate::case::{CaseResult, Outcome, TestCase, TestCategory};
 
 // ===========================================================================
 // Runner — all suites
@@ -66,7 +66,11 @@ fn test_run_all_suites_passes() {
     let report = runner.run();
 
     assert_eq!(report.suites.len(), 5);
-    assert!(report.total_failed() == 0, "expected 0 failures, got {}", report.total_failed());
+    assert!(
+        report.total_failed() == 0,
+        "expected 0 failures, got {}",
+        report.total_failed()
+    );
     assert!(report.all_passed());
 }
 

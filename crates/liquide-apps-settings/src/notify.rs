@@ -23,7 +23,10 @@ pub struct NotificationQueue {
 impl NotificationQueue {
     #[must_use]
     pub fn new() -> Self {
-        Self { queue: Vec::new(), batching: false }
+        Self {
+            queue: Vec::new(),
+            batching: false,
+        }
     }
 
     /// Enable or disable batching.
@@ -33,7 +36,9 @@ impl NotificationQueue {
 
     /// Whether batching is enabled.
     #[must_use]
-    pub fn is_batching(&self) -> bool { self.batching }
+    pub fn is_batching(&self) -> bool {
+        self.batching
+    }
 
     /// Push a notification.
     pub fn push(&mut self, key: impl Into<String>, value: SettingValue, timestamp: u64) {
@@ -51,17 +56,25 @@ impl NotificationQueue {
 
     /// Number of queued notifications.
     #[must_use]
-    pub fn len(&self) -> usize { self.queue.len() }
+    pub fn len(&self) -> usize {
+        self.queue.len()
+    }
 
     /// Whether the queue is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool { self.queue.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
 
     /// Peek at queued notifications without consuming them.
     #[must_use]
-    pub fn peek(&self) -> &[SettingNotification] { &self.queue }
+    pub fn peek(&self) -> &[SettingNotification] {
+        &self.queue
+    }
 }
 
 impl Default for NotificationQueue {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

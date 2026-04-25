@@ -32,19 +32,28 @@ impl SuiteResult {
     /// Number of passed tests.
     #[must_use]
     pub fn passed(&self) -> usize {
-        self.cases.iter().filter(|c| c.outcome == Outcome::Pass).count()
+        self.cases
+            .iter()
+            .filter(|c| c.outcome == Outcome::Pass)
+            .count()
     }
 
     /// Number of failed tests.
     #[must_use]
     pub fn failed(&self) -> usize {
-        self.cases.iter().filter(|c| c.outcome == Outcome::Fail).count()
+        self.cases
+            .iter()
+            .filter(|c| c.outcome == Outcome::Fail)
+            .count()
     }
 
     /// Number of skipped tests.
     #[must_use]
     pub fn skipped(&self) -> usize {
-        self.cases.iter().filter(|c| c.outcome == Outcome::Skip).count()
+        self.cases
+            .iter()
+            .filter(|c| c.outcome == Outcome::Skip)
+            .count()
     }
 
     /// Total number of test cases.

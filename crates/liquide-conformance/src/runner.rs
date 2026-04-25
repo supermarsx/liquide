@@ -6,9 +6,7 @@ use crate::report::{ConformanceReport, SuiteResult};
 use crate::suite::SuiteName;
 use crate::validator;
 
-use liquide_protocol::{
-    ChannelId, FrameFlags, FrameHeader, MessageType, MAGIC, PROTOCOL_VERSION,
-};
+use liquide_protocol::{ChannelId, FrameFlags, FrameHeader, MAGIC, MessageType, PROTOCOL_VERSION};
 
 /// Conformance runner that collects test cases and executes them.
 pub struct ConformanceRunner {
@@ -62,8 +60,11 @@ impl ConformanceRunner {
         // Group cases by suite.
         let suites = self.config.suite.expand();
         for &suite_name in suites {
-            let suite_cases: Vec<&TestCase> =
-                self.cases.iter().filter(|c| c.suite == suite_name).collect();
+            let suite_cases: Vec<&TestCase> = self
+                .cases
+                .iter()
+                .filter(|c| c.suite == suite_name)
+                .collect();
 
             let mut suite_result = SuiteResult::new(suite_name);
             for case in &suite_cases {
@@ -231,7 +232,11 @@ impl ConformanceRunner {
         if !result.passed {
             CaseResult::pass(case, 8)
         } else {
-            CaseResult::fail(case, 8, "validator accepted incompatible version 'proto/999'")
+            CaseResult::fail(
+                case,
+                8,
+                "validator accepted incompatible version 'proto/999'",
+            )
         }
     }
 
@@ -392,7 +397,11 @@ impl ConformanceRunner {
         if header.is_reliable() {
             CaseResult::pass(case, 5)
         } else {
-            CaseResult::fail(case, 5, "RELIABLE flag not detected in single-frame message")
+            CaseResult::fail(
+                case,
+                5,
+                "RELIABLE flag not detected in single-frame message",
+            )
         }
     }
 

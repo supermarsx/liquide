@@ -9,10 +9,19 @@ use crate::suite::SuiteName;
 
 #[test]
 fn test_suite_from_name() {
-    assert_eq!(SuiteName::from_name("handshake"), Some(SuiteName::Handshake));
+    assert_eq!(
+        SuiteName::from_name("handshake"),
+        Some(SuiteName::Handshake)
+    );
     assert_eq!(SuiteName::from_name("auth"), Some(SuiteName::Auth));
-    assert_eq!(SuiteName::from_name("streaming"), Some(SuiteName::Streaming));
-    assert_eq!(SuiteName::from_name("clipboard"), Some(SuiteName::Clipboard));
+    assert_eq!(
+        SuiteName::from_name("streaming"),
+        Some(SuiteName::Streaming)
+    );
+    assert_eq!(
+        SuiteName::from_name("clipboard"),
+        Some(SuiteName::Clipboard)
+    );
     assert_eq!(SuiteName::from_name("security"), Some(SuiteName::Security));
     assert_eq!(SuiteName::from_name("all"), Some(SuiteName::All));
     assert_eq!(SuiteName::from_name("unknown"), None);

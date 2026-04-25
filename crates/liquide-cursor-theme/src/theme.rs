@@ -1,4 +1,4 @@
-use crate::cursor::{CursorShape, CursorImage};
+use crate::cursor::{CursorImage, CursorShape};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ pub struct CursorTheme {
     pub comment: String,
     pub default_size: u32,
     pub inherits: Option<String>,
-    cursors: HashMap<CursorShape, Vec<CursorImage>>,  // multiple sizes
+    cursors: HashMap<CursorShape, Vec<CursorImage>>, // multiple sizes
 }
 
 impl CursorTheme {
@@ -37,20 +37,25 @@ impl CursorTheme {
         }
 
         // Find closest size
-        images.iter()
+        images
+            .iter()
             .min_by_key(|img| (img.nominal_size as i32 - size as i32).unsigned_abs())
     }
 
     /// Get all available sizes for a shape
     pub fn available_sizes(&self, shape: CursorShape) -> Vec<u32> {
-        self.cursors.get(&shape)
+        self.cursors
+            .get(&shape)
             .map(|images| images.iter().map(|i| i.nominal_size).collect())
             .unwrap_or_default()
     }
 
     /// Check if this theme has a cursor for the given shape
     pub fn has_cursor(&self, shape: CursorShape) -> bool {
-        self.cursors.get(&shape).map(|v| !v.is_empty()).unwrap_or(false)
+        self.cursors
+            .get(&shape)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
     }
 
     /// Number of shapes defined
@@ -80,9 +85,11 @@ impl CursorThemeManager {
         #[cfg(target_os = "linux")]
         {
             mgr.search_paths.push(PathBuf::from("/usr/share/icons"));
-            mgr.search_paths.push(PathBuf::from("/usr/local/share/icons"));
+            mgr.search_paths
+                .push(PathBuf::from("/usr/local/share/icons"));
             if let Ok(home) = std::env::var("HOME") {
-                mgr.search_paths.push(PathBuf::from(home).join(".local/share/icons"));
+                mgr.search_paths
+                    .push(PathBuf::from(home).join(".local/share/icons"));
                 mgr.search_paths.push(PathBuf::from(home).join(".icons"));
             }
         }
@@ -94,7 +101,10 @@ impl CursorThemeManager {
         }
 
         // Register builtin theme
-        mgr.themes.insert("default".to_string(), crate::builtin::create_builtin_theme());
+        mgr.themes.insert(
+            "default".to_string(),
+            crate::builtin::create_builtin_theme(),
+        );
 
         mgr
     }
@@ -104,7 +114,9 @@ impl CursorThemeManager {
         let mut found = Vec::new();
 
         for path in &self.search_paths.clone() {
-            if !path.is_dir() { continue; }
+            if !path.is_dir() {
+                continue;
+            }
             let entries = match std::fs::read_dir(path) {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -112,14 +124,17 @@ impl CursorThemeManager {
 
             for entry in entries.flatten() {
                 let dir = entry.path();
-                if !dir.is_dir() { continue; }
+                if !dir.is_dir() {
+                    continue;
+                }
 
                 // Check for cursor theme indicator
                 let cursor_dir = dir.join("cursors");
                 let index_file = dir.join("cursor.theme");
 
                 if cursor_dir.is_dir() || index_file.exists() {
-                    let name = dir.file_name()
+                    let name = dir
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("")
                         .to_string();
@@ -130,7 +145,8 @@ impl CursorThemeManager {
                         // Try to parse cursor.theme/index.theme for metadata
                         if let Ok(content) = std::fs::read_to_string(dir.join("cursor.theme")) {
                             parse_theme_file(&content, &mut theme);
-                        } else if let Ok(content) = std::fs::read_to_string(dir.join("index.theme")) {
+                        } else if let Ok(content) = std::fs::read_to_string(dir.join("index.theme"))
+                        {
                             parse_theme_file(&content, &mut theme);
                         }
                         self.themes.insert(name, theme);
@@ -155,16 +171,18 @@ impl CursorThemeManager {
     /// Get cursor for shape from active theme
     pub fn get_cursor(&self, shape: CursorShape) -> Option<&CursorImage> {
         let theme = self.themes.get(&self.active_theme)?;
-        theme.get_cursor(shape, self.default_size)
-            .or_else(|| {
-                // Fall back to "default" theme
-                self.themes.get("default")?.get_cursor(shape, self.default_size)
-            })
+        theme.get_cursor(shape, self.default_size).or_else(|| {
+            // Fall back to "default" theme
+            self.themes
+                .get("default")?
+                .get_cursor(shape, self.default_size)
+        })
     }
 
     /// List available themes
     pub fn list_themes(&self) -> Vec<(&str, &str)> {
-        self.themes.iter()
+        self.themes
+            .iter()
             .map(|(name, theme)| (name.as_str(), theme.display_name.as_str()))
             .collect()
     }
@@ -180,7 +198,9 @@ impl CursorThemeManager {
 }
 
 impl Default for CursorThemeManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub(crate) fn parse_theme_file(content: &str, theme: &mut CursorTheme) {

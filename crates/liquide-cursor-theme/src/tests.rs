@@ -1,17 +1,44 @@
-use crate::cursor::{CursorShape, CursorImage, AnimatedCursor};
+use crate::cursor::{AnimatedCursor, CursorImage, CursorShape};
 use crate::theme::{CursorTheme, CursorThemeManager, parse_theme_file};
 
 #[test]
 fn from_css_round_trip() {
     let css_names = [
-        "default", "auto", "pointer", "text", "crosshair", "move",
-        "wait", "progress", "help", "not-allowed", "grab", "grabbing",
-        "n-resize", "s-resize", "e-resize", "w-resize",
-        "ne-resize", "nw-resize", "se-resize", "sw-resize",
-        "ns-resize", "ew-resize", "nesw-resize", "nwse-resize",
-        "row-resize", "col-resize",
-        "zoom-in", "zoom-out", "copy", "alias", "context-menu",
-        "cell", "vertical-text", "no-drop", "none",
+        "default",
+        "auto",
+        "pointer",
+        "text",
+        "crosshair",
+        "move",
+        "wait",
+        "progress",
+        "help",
+        "not-allowed",
+        "grab",
+        "grabbing",
+        "n-resize",
+        "s-resize",
+        "e-resize",
+        "w-resize",
+        "ne-resize",
+        "nw-resize",
+        "se-resize",
+        "sw-resize",
+        "ns-resize",
+        "ew-resize",
+        "nesw-resize",
+        "nwse-resize",
+        "row-resize",
+        "col-resize",
+        "zoom-in",
+        "zoom-out",
+        "copy",
+        "alias",
+        "context-menu",
+        "cell",
+        "vertical-text",
+        "no-drop",
+        "none",
     ];
     for name in css_names {
         assert!(
@@ -89,9 +116,9 @@ fn animated_cursor_tick_advances() {
     let mut anim = AnimatedCursor::new(vec![f1, f2, f3], vec![100, 100, 100]);
 
     assert_eq!(anim.current_frame, 0);
-    assert!(!anim.tick(50));  // not enough time
+    assert!(!anim.tick(50)); // not enough time
     assert_eq!(anim.current_frame, 0);
-    assert!(anim.tick(50));   // exactly 100ms total
+    assert!(anim.tick(50)); // exactly 100ms total
     assert_eq!(anim.current_frame, 1);
 }
 

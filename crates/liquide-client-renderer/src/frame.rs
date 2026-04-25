@@ -4,6 +4,7 @@ use liquide_compositor::pixel::PixelFormat;
 use liquide_encoder::tile::{TileBatch, TileConfig, TileEncoding};
 
 use crate::decoder::TileDecoder;
+use crate::presenter::Presenter;
 use crate::surface::RenderSurface;
 
 /// Result of applying a single tile batch to the frame assembler.
@@ -93,7 +94,11 @@ impl FrameAssembler {
         // Only reached if all tiles decoded successfully.
         for (tx, ty, data) in decoded {
             if !self.surface.write_tile(tx, ty, self.tile_size, &data) {
-                tracing::warn!("write_tile({}, {}): incomplete write, buffer size mismatch", tx, ty);
+                // Incomplete write (usually buffer-size mismatch at the
+                // frame edge + truncated tile). Return a recoverable error
+                // so the caller can request reassembly retry on the next
+                // batch rather than silently committing corrupted tiles.
+                return Err(crate::ClientRendererError::IncompleteTile { tx, ty });
             }
             self.decoder.commit_tile(tx, ty, data);
         }
@@ -117,6 +122,17 @@ impl FrameAssembler {
     /// Mutable reference to the current surface.
     pub fn surface_mut(&mut self) -> &mut RenderSurface {
         &mut self.surface
+    }
+
+    /// Present the current surface using the supplied presenter.
+    pub fn present<P: Presenter>(&self, presenter: &mut P) -> crate::Result<()> {
+        if !presenter.supports_format(self.surface.format()) {
+            return Err(crate::ClientRendererError::PresenterError(format!(
+                "presenter does not support pixel format {}",
+                self.surface.format().wire_name()
+            )));
+        }
+        presenter.present(&self.surface)
     }
 
     /// Reference to the tile decoder.

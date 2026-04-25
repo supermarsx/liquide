@@ -75,9 +75,7 @@ impl TileDecoder {
                 // Decompress delta, then XOR-apply against previous tile.
                 let delta = self.decompress(&update.payload, &update.compression)?;
                 let zeros = vec![0u8; tile_bytes];
-                let previous = self.previous_tiles[idx]
-                    .as_deref()
-                    .unwrap_or(&zeros);
+                let previous = self.previous_tiles[idx].as_deref().unwrap_or(&zeros);
                 if delta.len() != previous.len() {
                     return Err(ClientRendererError::FrameSizeMismatch {
                         expected: previous.len(),
@@ -95,9 +93,10 @@ impl TileDecoder {
                     ));
                 }
                 if tile_bytes % 4 != 0 {
-                    return Err(ClientRendererError::DecodeError(
-                        format!("solid tile: tile_bytes ({}) not divisible by 4", tile_bytes),
-                    ));
+                    return Err(ClientRendererError::DecodeError(format!(
+                        "solid tile: tile_bytes ({}) not divisible by 4",
+                        tile_bytes
+                    )));
                 }
                 let color = [
                     update.payload[0],
@@ -182,21 +181,13 @@ impl TileDecoder {
     }
 
     /// Decompress a payload using the specified compression method.
-    fn decompress(
-        &self,
-        payload: &[u8],
-        method: &CompressionMethod,
-    ) -> crate::Result<Vec<u8>> {
+    fn decompress(&self, payload: &[u8], method: &CompressionMethod) -> crate::Result<Vec<u8>> {
         let max_size = self.config.tile_bytes();
         match method {
-            CompressionMethod::Zstd { .. } => {
-                decompress_zstd(payload, max_size)
-                    .map_err(|e| ClientRendererError::CompressionError(e.to_string()))
-            }
-            CompressionMethod::Lz4 => {
-                decompress_lz4(payload)
-                    .map_err(|e| ClientRendererError::CompressionError(e.to_string()))
-            }
+            CompressionMethod::Zstd { .. } => decompress_zstd(payload, max_size)
+                .map_err(|e| ClientRendererError::CompressionError(e.to_string())),
+            CompressionMethod::Lz4 => decompress_lz4(payload)
+                .map_err(|e| ClientRendererError::CompressionError(e.to_string())),
         }
     }
 }

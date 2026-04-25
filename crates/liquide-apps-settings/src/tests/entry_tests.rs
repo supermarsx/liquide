@@ -1,12 +1,12 @@
 //! Tests for setting entries and values.
 
+use crate::apply::ChangeTracker;
 use crate::category::Category;
 use crate::entry::{SettingEntry, SettingKind, SettingValue};
-use crate::apply::ChangeTracker;
-use crate::policy::{PolicyEngine, PolicyConstraint};
-use crate::search::SettingsSearch;
 use crate::notify::NotificationQueue;
 use crate::page;
+use crate::policy::{PolicyConstraint, PolicyEngine};
+use crate::search::SettingsSearch;
 
 // ===========================================================================
 // SettingEntry
@@ -22,7 +22,17 @@ fn test_toggle_entry() {
 
 #[test]
 fn test_slider_entry() {
-    let e = SettingEntry::slider("a.b", "Test", "Desc", Category::Audio, "Sec", 0.0, 100.0, 1.0, 50.0);
+    let e = SettingEntry::slider(
+        "a.b",
+        "Test",
+        "Desc",
+        Category::Audio,
+        "Sec",
+        0.0,
+        100.0,
+        1.0,
+        50.0,
+    );
     assert!(matches!(e.kind, SettingKind::Slider { .. }));
     assert!(!e.is_modified());
 }
@@ -30,15 +40,28 @@ fn test_slider_entry() {
 #[test]
 fn test_choice_entry() {
     let e = SettingEntry::choice(
-        "a.b", "Test", "Desc", Category::Input, "Sec",
-        vec!["x".into(), "y".into()], "x",
+        "a.b",
+        "Test",
+        "Desc",
+        Category::Input,
+        "Sec",
+        vec!["x".into(), "y".into()],
+        "x",
     );
     assert!(matches!(e.kind, SettingKind::Choice { .. }));
 }
 
 #[test]
 fn test_text_entry() {
-    let e = SettingEntry::text("a.b", "Test", "Desc", Category::Network, "Sec", 128, "hello");
+    let e = SettingEntry::text(
+        "a.b",
+        "Test",
+        "Desc",
+        Category::Network,
+        "Sec",
+        128,
+        "hello",
+    );
     assert_eq!(e.value, SettingValue::Text("hello".into()));
 }
 
@@ -72,21 +95,46 @@ fn test_validate_toggle_type_mismatch() {
 
 #[test]
 fn test_validate_slider_ok() {
-    let e = SettingEntry::slider("a.b", "Test", "Desc", Category::Audio, "Sec", 0.0, 100.0, 1.0, 50.0);
+    let e = SettingEntry::slider(
+        "a.b",
+        "Test",
+        "Desc",
+        Category::Audio,
+        "Sec",
+        0.0,
+        100.0,
+        1.0,
+        50.0,
+    );
     assert!(e.validate(&SettingValue::Number(75.0)).is_ok());
 }
 
 #[test]
 fn test_validate_slider_out_of_range() {
-    let e = SettingEntry::slider("a.b", "Test", "Desc", Category::Audio, "Sec", 0.0, 100.0, 1.0, 50.0);
+    let e = SettingEntry::slider(
+        "a.b",
+        "Test",
+        "Desc",
+        Category::Audio,
+        "Sec",
+        0.0,
+        100.0,
+        1.0,
+        50.0,
+    );
     assert!(e.validate(&SettingValue::Number(150.0)).is_err());
 }
 
 #[test]
 fn test_validate_choice_ok() {
     let e = SettingEntry::choice(
-        "a.b", "Test", "Desc", Category::Input, "Sec",
-        vec!["x".into(), "y".into()], "x",
+        "a.b",
+        "Test",
+        "Desc",
+        Category::Input,
+        "Sec",
+        vec!["x".into(), "y".into()],
+        "x",
     );
     assert!(e.validate(&SettingValue::Text("y".into())).is_ok());
 }
@@ -94,8 +142,13 @@ fn test_validate_choice_ok() {
 #[test]
 fn test_validate_choice_invalid() {
     let e = SettingEntry::choice(
-        "a.b", "Test", "Desc", Category::Input, "Sec",
-        vec!["x".into(), "y".into()], "x",
+        "a.b",
+        "Test",
+        "Desc",
+        Category::Input,
+        "Sec",
+        vec!["x".into(), "y".into()],
+        "x",
     );
     assert!(e.validate(&SettingValue::Text("z".into())).is_err());
 }
@@ -250,7 +303,14 @@ fn test_policy_remove() {
 fn test_search_basic() {
     let mut s = SettingsSearch::new(10);
     let entries = vec![
-        SettingEntry::toggle("a.b", "Volume", "Master volume", Category::Audio, "Sec", false),
+        SettingEntry::toggle(
+            "a.b",
+            "Volume",
+            "Master volume",
+            Category::Audio,
+            "Sec",
+            false,
+        ),
         SettingEntry::toggle("c.d", "Mute", "Mute", Category::Audio, "Sec", false),
     ];
     s.search("volume", &entries);
@@ -261,9 +321,14 @@ fn test_search_basic() {
 #[test]
 fn test_search_empty_query() {
     let mut s = SettingsSearch::new(10);
-    let entries = vec![
-        SettingEntry::toggle("a.b", "Volume", "Desc", Category::Audio, "Sec", false),
-    ];
+    let entries = vec![SettingEntry::toggle(
+        "a.b",
+        "Volume",
+        "Desc",
+        Category::Audio,
+        "Sec",
+        false,
+    )];
     s.search("", &entries);
     assert_eq!(s.result_count(), 0);
 }
@@ -271,9 +336,14 @@ fn test_search_empty_query() {
 #[test]
 fn test_search_clear() {
     let mut s = SettingsSearch::new(10);
-    let entries = vec![
-        SettingEntry::toggle("a.b", "Volume", "Desc", Category::Audio, "Sec", false),
-    ];
+    let entries = vec![SettingEntry::toggle(
+        "a.b",
+        "Volume",
+        "Desc",
+        Category::Audio,
+        "Sec",
+        false,
+    )];
     s.search("volume", &entries);
     s.clear();
     assert_eq!(s.result_count(), 0);
@@ -283,9 +353,14 @@ fn test_search_clear() {
 #[test]
 fn test_search_history() {
     let mut s = SettingsSearch::new(3);
-    let entries = vec![
-        SettingEntry::toggle("a.b", "Volume", "Desc", Category::Audio, "Sec", false),
-    ];
+    let entries = vec![SettingEntry::toggle(
+        "a.b",
+        "Volume",
+        "Desc",
+        Category::Audio,
+        "Sec",
+        false,
+    )];
     s.search("volume", &entries);
     s.commit_to_history();
     s.search("mute", &entries);
@@ -344,6 +419,10 @@ fn test_default_pages() {
 fn test_default_pages_all_categories() {
     let (pages, _) = page::default_pages();
     for cat in crate::category::Category::ALL {
-        assert!(pages.iter().any(|p| p.category == *cat), "Missing page for {:?}", cat);
+        assert!(
+            pages.iter().any(|p| p.category == *cat),
+            "Missing page for {:?}",
+            cat
+        );
     }
 }

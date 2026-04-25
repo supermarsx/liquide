@@ -15,7 +15,6 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum LiquideError {
     // ── generic ────────────────────────────────────────────────────────
-
     /// An I/O operation failed.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -41,7 +40,6 @@ pub enum LiquideError {
     Internal(String),
 
     // ── security / identity ────────────────────────────────────────────
-
     /// Authentication failed.
     #[error("authentication error: {0}")]
     Auth(String),
@@ -55,7 +53,6 @@ pub enum LiquideError {
     Crypto(String),
 
     // ── networking / protocol ──────────────────────────────────────────
-
     /// Transport-level error (QUIC, WebSocket, TLS).
     #[error("transport error: {0}")]
     Transport(String),
@@ -65,7 +62,6 @@ pub enum LiquideError {
     Protocol(String),
 
     // ── media / peripherals ────────────────────────────────────────────
-
     /// Audio subsystem error.
     #[error("audio error: {0}")]
     Audio(String),
@@ -75,7 +71,6 @@ pub enum LiquideError {
     Display(String),
 
     // ── extensibility ──────────────────────────────────────────────────
-
     /// Plugin subsystem error.
     #[error("plugin error: {0}")]
     Plugin(String),

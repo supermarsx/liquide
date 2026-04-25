@@ -2,7 +2,7 @@
 
 use crate::validator;
 use liquide_protocol::channel::ALL_CHANNELS;
-use liquide_protocol::{ChannelId, FrameFlags, FrameHeader, MessageType, MAGIC, PROTOCOL_VERSION};
+use liquide_protocol::{ChannelId, FrameFlags, FrameHeader, MAGIC, MessageType, PROTOCOL_VERSION};
 
 // ===========================================================================
 // Magic validation
@@ -52,7 +52,11 @@ fn test_empty_version() {
 fn test_known_channels() {
     for &channel in ALL_CHANNELS {
         let result = validator::validate_channel_id(channel.as_u16());
-        assert!(result.passed, "channel 0x{:02X} should be valid", channel.as_u16());
+        assert!(
+            result.passed,
+            "channel 0x{:02X} should be valid",
+            channel.as_u16()
+        );
     }
 }
 
@@ -245,15 +249,13 @@ fn test_non_control_channel() {
 
 #[test]
 fn test_valid_hello_pair() {
-    let result =
-        validator::validate_hello_pair(MessageType::ClientHello, MessageType::ServerHello);
+    let result = validator::validate_hello_pair(MessageType::ClientHello, MessageType::ServerHello);
     assert!(result.passed);
 }
 
 #[test]
 fn test_wrong_hello_pair() {
-    let result =
-        validator::validate_hello_pair(MessageType::ServerHello, MessageType::ClientHello);
+    let result = validator::validate_hello_pair(MessageType::ServerHello, MessageType::ClientHello);
     assert!(!result.passed);
 }
 

@@ -70,8 +70,7 @@ pub fn validate_version(version: &str) -> ValidationResult {
 #[must_use]
 pub fn validate_channel_id(raw: u16) -> ValidationResult {
     let channel = ChannelId::from_u16(raw);
-    if channel != ChannelId::RESERVED
-        && liquide_protocol::channel::ALL_CHANNELS.contains(&channel)
+    if channel != ChannelId::RESERVED && liquide_protocol::channel::ALL_CHANNELS.contains(&channel)
     {
         ValidationResult::pass(format!("channel ID 0x{raw:02X} is valid"))
     } else {
@@ -126,9 +125,7 @@ pub fn validate_frame_header(header: &FrameHeader) -> Vec<ValidationResult> {
     }
 
     // RELIABLE and ORDERED are independent; no mutual-exclusion constraint.
-    results.push(ValidationResult::pass(
-        "frame flag combinations are valid",
-    ));
+    results.push(ValidationResult::pass("frame flag combinations are valid"));
 
     results
 }

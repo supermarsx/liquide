@@ -54,7 +54,9 @@ impl ChangeTracker {
 
     /// Undo the last change.
     pub fn undo(&mut self) -> crate::Result<SettingChange> {
-        let change = self.undo_stack.pop()
+        let change = self
+            .undo_stack
+            .pop()
             .ok_or(crate::SettingsError::NothingToUndo)?;
         let reversed = SettingChange {
             key: change.key.clone(),
@@ -67,7 +69,9 @@ impl ChangeTracker {
 
     /// Redo the last undone change.
     pub fn redo(&mut self) -> crate::Result<SettingChange> {
-        let change = self.redo_stack.pop()
+        let change = self
+            .redo_stack
+            .pop()
             .ok_or(crate::SettingsError::NothingToRedo)?;
         let reapplied = SettingChange {
             key: change.key.clone(),
@@ -80,23 +84,33 @@ impl ChangeTracker {
 
     /// Whether there are pending changes.
     #[must_use]
-    pub fn has_pending(&self) -> bool { !self.pending.is_empty() }
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
 
     /// Number of pending changes.
     #[must_use]
-    pub fn pending_count(&self) -> usize { self.pending.len() }
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
 
     /// Get pending changes.
     #[must_use]
-    pub fn pending(&self) -> &[SettingChange] { &self.pending }
+    pub fn pending(&self) -> &[SettingChange] {
+        &self.pending
+    }
 
     /// Whether undo is available.
     #[must_use]
-    pub fn can_undo(&self) -> bool { !self.undo_stack.is_empty() }
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
 
     /// Whether redo is available.
     #[must_use]
-    pub fn can_redo(&self) -> bool { !self.redo_stack.is_empty() }
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
 
     /// Discard all pending changes.
     pub fn discard(&mut self) {
@@ -112,5 +126,7 @@ impl ChangeTracker {
 }
 
 impl Default for ChangeTracker {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

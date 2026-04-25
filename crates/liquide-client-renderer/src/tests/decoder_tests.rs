@@ -48,7 +48,8 @@ fn test_decode_full_zstd() {
     let compressed = compress_zstd(&raw, 3).unwrap();
 
     let update = make_update(
-        0, 0,
+        0,
+        0,
         TileEncoding::Full,
         compressed,
         CompressionMethod::Zstd { level: 3 },
@@ -66,12 +67,7 @@ fn test_decode_full_lz4() {
     let raw = vec![0xBB; tile_bytes];
     let compressed = compress_lz4(&raw);
 
-    let update = make_update(
-        0, 0,
-        TileEncoding::Full,
-        compressed,
-        CompressionMethod::Lz4,
-    );
+    let update = make_update(0, 0, TileEncoding::Full, compressed, CompressionMethod::Lz4);
 
     let decoded = d.decode_tile(&update).unwrap();
     assert_eq!(decoded, raw);
@@ -85,12 +81,7 @@ fn test_decode_skip_with_previous() {
     let previous = vec![0xCC; tile_bytes];
     d.commit_tile(0, 0, previous.clone());
 
-    let update = make_update(
-        0, 0,
-        TileEncoding::Skip,
-        Vec::new(),
-        CompressionMethod::Lz4,
-    );
+    let update = make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4);
 
     let decoded = d.decode_tile(&update).unwrap();
     assert_eq!(decoded, previous);
@@ -102,12 +93,7 @@ fn test_decode_skip_without_previous() {
     let d = TileDecoder::new(2, 2, config.clone());
     let tile_bytes = config.tile_bytes();
 
-    let update = make_update(
-        0, 0,
-        TileEncoding::Skip,
-        Vec::new(),
-        CompressionMethod::Lz4,
-    );
+    let update = make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4);
 
     let decoded = d.decode_tile(&update).unwrap();
     assert_eq!(decoded, vec![0u8; tile_bytes]);
@@ -127,7 +113,8 @@ fn test_decode_delta() {
     let compressed = compress_zstd(&delta, 3).unwrap();
 
     let update = make_update(
-        1, 0,
+        1,
+        0,
         TileEncoding::Delta,
         compressed,
         CompressionMethod::Zstd { level: 3 },
@@ -145,7 +132,8 @@ fn test_decode_solid() {
 
     let color = vec![0xFF, 0x00, 0xFF, 0x80];
     let update = make_update(
-        0, 0,
+        0,
+        0,
         TileEncoding::Solid,
         color.clone(),
         CompressionMethod::Lz4,
@@ -169,7 +157,8 @@ fn test_decode_copy() {
     d.commit_tile(1, 1, source_data.clone());
 
     let update = make_update(
-        2, 2,
+        2,
+        2,
         TileEncoding::Copy { source_index: 5 },
         Vec::new(),
         CompressionMethod::Lz4,
@@ -182,12 +171,7 @@ fn test_decode_copy() {
 #[test]
 fn test_decode_invalid_coords() {
     let d = TileDecoder::new(2, 2, default_config());
-    let update = make_update(
-        5, 5,
-        TileEncoding::Full,
-        Vec::new(),
-        CompressionMethod::Lz4,
-    );
+    let update = make_update(5, 5, TileEncoding::Full, Vec::new(), CompressionMethod::Lz4);
 
     let result = d.decode_tile(&update);
     assert!(result.is_err());
@@ -203,7 +187,8 @@ fn test_commit_and_delta_cycle() {
     let frame1 = vec![0x10; tile_bytes];
     let compressed1 = compress_lz4(&frame1);
     let update1 = make_update(
-        0, 0,
+        0,
+        0,
         TileEncoding::Full,
         compressed1,
         CompressionMethod::Lz4,
@@ -217,7 +202,8 @@ fn test_commit_and_delta_cycle() {
     let delta = xor_delta(&frame2, &frame1);
     let compressed2 = compress_lz4(&delta);
     let update2 = make_update(
-        0, 0,
+        0,
+        0,
         TileEncoding::Delta,
         compressed2,
         CompressionMethod::Lz4,
@@ -235,12 +221,7 @@ fn test_reset() {
     d.reset();
 
     // After reset, skip should return zeros
-    let update = make_update(
-        0, 0,
-        TileEncoding::Skip,
-        Vec::new(),
-        CompressionMethod::Lz4,
-    );
+    let update = make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4);
     let decoded = d.decode_tile(&update).unwrap();
     assert!(decoded.iter().all(|&b| b == 0));
 }
@@ -258,7 +239,8 @@ fn test_resize_decoder() {
 fn test_solid_payload_too_short() {
     let d = TileDecoder::new(2, 2, default_config());
     let update = make_update(
-        0, 0,
+        0,
+        0,
         TileEncoding::Solid,
         vec![0xFF, 0x00],
         CompressionMethod::Lz4,
@@ -268,7 +250,14 @@ fn test_solid_payload_too_short() {
 
 #[test]
 fn test_display() {
-    let d = TileDecoder::new(30, 17, TileConfig { tile_size: 64, bpp: 4 });
+    let d = TileDecoder::new(
+        30,
+        17,
+        TileConfig {
+            tile_size: 64,
+            bpp: 4,
+        },
+    );
     let display = format!("{d}");
     assert!(display.contains("30x17"));
     assert!(display.contains("64"));

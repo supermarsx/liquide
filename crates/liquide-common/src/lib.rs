@@ -5,7 +5,10 @@
 
 pub mod config;
 pub mod error;
+pub mod geometry;
 pub mod logging;
+pub mod node_id_bases;
 pub mod sync;
 
 pub use error::{LiquideError, Result};
+pub use geometry::{FRect, IRect, Rect, RectScalar};

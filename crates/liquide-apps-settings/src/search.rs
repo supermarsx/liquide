@@ -106,11 +106,19 @@ impl SettingsSearch {
     }
 
     #[must_use]
-    pub fn query(&self) -> &str { &self.query }
+    pub fn query(&self) -> &str {
+        &self.query
+    }
     #[must_use]
-    pub fn results(&self) -> &[SearchResult] { &self.results }
+    pub fn results(&self) -> &[SearchResult] {
+        &self.results
+    }
     #[must_use]
-    pub fn result_count(&self) -> usize { self.results.len() }
+    pub fn result_count(&self) -> usize {
+        self.results.len()
+    }
     #[must_use]
-    pub fn history(&self) -> &[String] { &self.history }
+    pub fn history(&self) -> &[String] {
+        &self.history
+    }
 }

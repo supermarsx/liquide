@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use clap::Parser;
 use tracing::info;
 
@@ -100,10 +100,7 @@ async fn main() -> Result<()> {
     }
 
     if !report.all_passed() {
-        bail!(
-            "{} conformance test(s) failed",
-            report.total_failed()
-        );
+        bail!("{} conformance test(s) failed", report.total_failed());
     }
 
     Ok(())

@@ -44,7 +44,10 @@ fn test_single_pixel_surface() {
 
 #[test]
 fn test_all_skip_batch() {
-    let config = TileConfig { tile_size: 4, bpp: 4 };
+    let config = TileConfig {
+        tile_size: 4,
+        bpp: 4,
+    };
     let mut a = FrameAssembler::new(8, 8, PixelFormat::Bgra8, config);
 
     let batch = TileBatch {
@@ -139,15 +142,22 @@ fn test_cursor_all_shapes() {
 
 #[test]
 fn test_solid_tile_in_assembler() {
-    let config = TileConfig { tile_size: 4, bpp: 4 };
+    let config = TileConfig {
+        tile_size: 4,
+        bpp: 4,
+    };
     let mut a = FrameAssembler::new(8, 8, PixelFormat::Bgra8, config);
     let color = vec![0xFF, 0x00, 0xFF, 0x80];
 
     let batch = TileBatch {
         sequence: 0,
-        tiles: vec![
-            make_update(0, 0, TileEncoding::Solid, color.clone(), CompressionMethod::Lz4),
-        ],
+        tiles: vec![make_update(
+            0,
+            0,
+            TileEncoding::Solid,
+            color.clone(),
+            CompressionMethod::Lz4,
+        )],
         uncompressed_bytes: 0,
         compressed_bytes: 0,
         stats: FrameStats::new(),
@@ -163,7 +173,10 @@ fn test_solid_tile_in_assembler() {
 
 #[test]
 fn test_full_then_skip_preserves() {
-    let config = TileConfig { tile_size: 4, bpp: 4 };
+    let config = TileConfig {
+        tile_size: 4,
+        bpp: 4,
+    };
     let tile_bytes = config.tile_bytes();
     let raw = vec![0x42; tile_bytes];
     let compressed = compress_lz4(&raw);
@@ -173,9 +186,13 @@ fn test_full_then_skip_preserves() {
     // First batch: full tile
     let batch1 = TileBatch {
         sequence: 0,
-        tiles: vec![
-            make_update(0, 0, TileEncoding::Full, compressed, CompressionMethod::Lz4),
-        ],
+        tiles: vec![make_update(
+            0,
+            0,
+            TileEncoding::Full,
+            compressed,
+            CompressionMethod::Lz4,
+        )],
         uncompressed_bytes: 0,
         compressed_bytes: 0,
         stats: FrameStats::new(),
@@ -185,9 +202,13 @@ fn test_full_then_skip_preserves() {
     // Second batch: skip
     let batch2 = TileBatch {
         sequence: 1,
-        tiles: vec![
-            make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4),
-        ],
+        tiles: vec![make_update(
+            0,
+            0,
+            TileEncoding::Skip,
+            Vec::new(),
+            CompressionMethod::Lz4,
+        )],
         uncompressed_bytes: 0,
         compressed_bytes: 0,
         stats: FrameStats::new(),

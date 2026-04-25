@@ -2,8 +2,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CursorShape {
     Default,
-    Pointer,    // hand/link
-    Text,       // I-beam
+    Pointer, // hand/link
+    Text,    // I-beam
     Crosshair,
     Move,
     Wait,
@@ -28,13 +28,13 @@ pub enum CursorShape {
     RowResize,
     ZoomIn,
     ZoomOut,
-    Copy,       // arrow + plus
-    Alias,      // arrow + curved arrow
-    ContextMenu,// arrow + menu
-    Cell,       // plus/cross
+    Copy,        // arrow + plus
+    Alias,       // arrow + curved arrow
+    ContextMenu, // arrow + menu
+    Cell,        // plus/cross
     VerticalText,
     NoDrop,
-    None,       // invisible cursor
+    None, // invisible cursor
 }
 
 impl CursorShape {
@@ -112,35 +112,59 @@ impl CursorShape {
     /// Win32 cursor resource name
     pub fn win32_id(&self) -> u32 {
         match self {
-            Self::Default => 32512,     // IDC_ARROW
-            Self::Pointer => 32649,     // IDC_HAND
-            Self::Text => 32513,        // IDC_IBEAM
-            Self::Crosshair => 32515,   // IDC_CROSS
+            Self::Default => 32512,                            // IDC_ARROW
+            Self::Pointer => 32649,                            // IDC_HAND
+            Self::Text => 32513,                               // IDC_IBEAM
+            Self::Crosshair => 32515,                          // IDC_CROSS
             Self::Move | Self::Grab | Self::Grabbing => 32646, // IDC_SIZEALL
-            Self::Wait => 32514,        // IDC_WAIT
-            Self::Progress => 32650,    // IDC_APPSTARTING
-            Self::Help => 32651,        // IDC_HELP
-            Self::NotAllowed | Self::NoDrop => 32648, // IDC_NO
+            Self::Wait => 32514,                               // IDC_WAIT
+            Self::Progress => 32650,                           // IDC_APPSTARTING
+            Self::Help => 32651,                               // IDC_HELP
+            Self::NotAllowed | Self::NoDrop => 32648,          // IDC_NO
             Self::ResizeN | Self::ResizeS | Self::ResizeNS | Self::RowResize => 32645, // IDC_SIZENS
             Self::ResizeE | Self::ResizeW | Self::ResizeEW | Self::ColResize => 32644, // IDC_SIZEWE
             Self::ResizeNE | Self::ResizeSW | Self::ResizeNESW => 32643, // IDC_SIZENESW
             Self::ResizeNW | Self::ResizeSE | Self::ResizeNWSE => 32642, // IDC_SIZENWSE
-            _ => 32512, // fallback to arrow
+            _ => 32512,                                        // fallback to arrow
         }
     }
 
     /// All standard shapes
     pub fn all() -> &'static [Self] {
         &[
-            Self::Default, Self::Pointer, Self::Text, Self::Crosshair,
-            Self::Move, Self::Wait, Self::Progress, Self::Help,
-            Self::NotAllowed, Self::Grab, Self::Grabbing,
-            Self::ResizeN, Self::ResizeS, Self::ResizeE, Self::ResizeW,
-            Self::ResizeNE, Self::ResizeNW, Self::ResizeSE, Self::ResizeSW,
-            Self::ResizeNS, Self::ResizeEW, Self::ResizeNESW, Self::ResizeNWSE,
-            Self::ColResize, Self::RowResize,
-            Self::ZoomIn, Self::ZoomOut, Self::Copy, Self::Alias,
-            Self::ContextMenu, Self::Cell, Self::VerticalText, Self::NoDrop,
+            Self::Default,
+            Self::Pointer,
+            Self::Text,
+            Self::Crosshair,
+            Self::Move,
+            Self::Wait,
+            Self::Progress,
+            Self::Help,
+            Self::NotAllowed,
+            Self::Grab,
+            Self::Grabbing,
+            Self::ResizeN,
+            Self::ResizeS,
+            Self::ResizeE,
+            Self::ResizeW,
+            Self::ResizeNE,
+            Self::ResizeNW,
+            Self::ResizeSE,
+            Self::ResizeSW,
+            Self::ResizeNS,
+            Self::ResizeEW,
+            Self::ResizeNESW,
+            Self::ResizeNWSE,
+            Self::ColResize,
+            Self::RowResize,
+            Self::ZoomIn,
+            Self::ZoomOut,
+            Self::Copy,
+            Self::Alias,
+            Self::ContextMenu,
+            Self::Cell,
+            Self::VerticalText,
+            Self::NoDrop,
             Self::None,
         ]
     }
@@ -162,7 +186,11 @@ pub struct CursorImage {
 impl CursorImage {
     pub fn new(width: u32, height: u32, hotspot_x: u32, hotspot_y: u32, pixels: Vec<u8>) -> Self {
         Self {
-            width, height, hotspot_x, hotspot_y, pixels,
+            width,
+            height,
+            hotspot_x,
+            hotspot_y,
+            pixels,
             nominal_size: width,
         }
     }
@@ -204,7 +232,11 @@ impl AnimatedCursor {
         }
 
         self.elapsed_ms += delta_ms;
-        let delay = self.frame_delays_ms.get(self.current_frame).copied().unwrap_or(100);
+        let delay = self
+            .frame_delays_ms
+            .get(self.current_frame)
+            .copied()
+            .unwrap_or(100);
 
         if self.elapsed_ms >= delay {
             self.elapsed_ms -= delay;

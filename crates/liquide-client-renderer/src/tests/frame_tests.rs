@@ -5,6 +5,7 @@ use liquide_encoder::strategy::CompressionMethod;
 use liquide_encoder::tile::{FrameStats, TileBatch, TileConfig, TileEncoding, TileUpdate};
 
 use crate::frame::FrameAssembler;
+use crate::presenter::{BufferPresenter, Presenter};
 
 fn default_config() -> TileConfig {
     TileConfig {
@@ -41,12 +42,43 @@ fn make_batch(sequence: u64, tiles: Vec<TileUpdate>) -> TileBatch {
     }
 }
 
+struct RejectingPresenter;
+
+impl Presenter for RejectingPresenter {
+    fn present(&mut self, _surface: &crate::surface::RenderSurface) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn supports_format(&self, _format: PixelFormat) -> bool {
+        false
+    }
+}
+
 #[test]
 fn test_new_assembler() {
     let a = FrameAssembler::new(128, 128, PixelFormat::Bgra8, default_config());
     assert_eq!(a.surface().width(), 128);
     assert_eq!(a.surface().height(), 128);
     assert_eq!(a.frame_count(), 0);
+}
+
+#[test]
+fn test_present_hands_surface_to_presenter() {
+    let a = FrameAssembler::new(128, 64, PixelFormat::Bgra8, default_config());
+    let mut presenter = BufferPresenter::new();
+
+    a.present(&mut presenter).unwrap();
+
+    assert_eq!(presenter.width(), 128);
+    assert_eq!(presenter.height(), 64);
+    assert_eq!(presenter.frame_count(), 1);
+}
+
+#[test]
+fn test_present_rejects_unsupported_presenter_formats() {
+    let a = FrameAssembler::new(32, 32, PixelFormat::Bgra8, default_config());
+    let err = a.present(&mut RejectingPresenter).unwrap_err();
+    assert!(format!("{err}").contains(PixelFormat::Bgra8.wire_name()));
 }
 
 #[test]
@@ -57,9 +89,16 @@ fn test_apply_single_full_tile() {
     let compressed = compress_zstd(&raw, 3).unwrap();
 
     let mut a = FrameAssembler::new(8, 8, PixelFormat::Bgra8, config);
-    let batch = make_batch(1, vec![
-        make_update(0, 0, TileEncoding::Full, compressed, CompressionMethod::Zstd { level: 3 }),
-    ]);
+    let batch = make_batch(
+        1,
+        vec![make_update(
+            0,
+            0,
+            TileEncoding::Full,
+            compressed,
+            CompressionMethod::Zstd { level: 3 },
+        )],
+    );
 
     let result = a.apply_batch(&batch).unwrap();
     assert_eq!(result.tiles_decoded, 1);
@@ -78,10 +117,13 @@ fn test_apply_multi_tile_batch() {
     let c2 = compress_lz4(&raw2);
 
     let mut a = FrameAssembler::new(8, 8, PixelFormat::Bgra8, config);
-    let batch = make_batch(1, vec![
-        make_update(0, 0, TileEncoding::Full, c1, CompressionMethod::Lz4),
-        make_update(1, 0, TileEncoding::Full, c2, CompressionMethod::Lz4),
-    ]);
+    let batch = make_batch(
+        1,
+        vec![
+            make_update(0, 0, TileEncoding::Full, c1, CompressionMethod::Lz4),
+            make_update(1, 0, TileEncoding::Full, c2, CompressionMethod::Lz4),
+        ],
+    );
 
     let result = a.apply_batch(&batch).unwrap();
     assert_eq!(result.tiles_decoded, 2);
@@ -93,10 +135,13 @@ fn test_skip_counted() {
     let config = default_config();
     let mut a = FrameAssembler::new(8, 8, PixelFormat::Bgra8, config);
 
-    let batch = make_batch(1, vec![
-        make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4),
-        make_update(1, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4),
-    ]);
+    let batch = make_batch(
+        1,
+        vec![
+            make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4),
+            make_update(1, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4),
+        ],
+    );
 
     let result = a.apply_batch(&batch).unwrap();
     assert_eq!(result.tiles_decoded, 0);
@@ -110,9 +155,16 @@ fn test_frame_count_increments() {
     let mut a = FrameAssembler::new(8, 8, PixelFormat::Bgra8, config);
 
     for i in 0..5 {
-        let batch = make_batch(i, vec![
-            make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4),
-        ]);
+        let batch = make_batch(
+            i,
+            vec![make_update(
+                0,
+                0,
+                TileEncoding::Skip,
+                Vec::new(),
+                CompressionMethod::Lz4,
+            )],
+        );
         a.apply_batch(&batch).unwrap();
     }
 
@@ -127,9 +179,16 @@ fn test_resize_resets() {
     let compressed = compress_lz4(&raw);
 
     let mut a = FrameAssembler::new(8, 8, PixelFormat::Bgra8, config);
-    let batch = make_batch(1, vec![
-        make_update(0, 0, TileEncoding::Full, compressed, CompressionMethod::Lz4),
-    ]);
+    let batch = make_batch(
+        1,
+        vec![make_update(
+            0,
+            0,
+            TileEncoding::Full,
+            compressed,
+            CompressionMethod::Lz4,
+        )],
+    );
     a.apply_batch(&batch).unwrap();
     assert_eq!(a.frame_count(), 1);
 
@@ -144,9 +203,16 @@ fn test_reset() {
     let config = default_config();
     let mut a = FrameAssembler::new(8, 8, PixelFormat::Bgra8, config);
 
-    let batch = make_batch(1, vec![
-        make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4),
-    ]);
+    let batch = make_batch(
+        1,
+        vec![make_update(
+            0,
+            0,
+            TileEncoding::Skip,
+            Vec::new(),
+            CompressionMethod::Lz4,
+        )],
+    );
     a.apply_batch(&batch).unwrap();
     assert_eq!(a.frame_count(), 1);
 
@@ -175,11 +241,20 @@ fn test_mixed_encoding_batch() {
     let solid_color = vec![0xAA, 0xBB, 0xCC, 0xDD];
 
     let mut a = FrameAssembler::new(12, 12, PixelFormat::Bgra8, config);
-    let batch = make_batch(1, vec![
-        make_update(0, 0, TileEncoding::Full, compressed, CompressionMethod::Lz4),
-        make_update(1, 0, TileEncoding::Solid, solid_color, CompressionMethod::Lz4),
-        make_update(2, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4),
-    ]);
+    let batch = make_batch(
+        1,
+        vec![
+            make_update(0, 0, TileEncoding::Full, compressed, CompressionMethod::Lz4),
+            make_update(
+                1,
+                0,
+                TileEncoding::Solid,
+                solid_color,
+                CompressionMethod::Lz4,
+            ),
+            make_update(2, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4),
+        ],
+    );
 
     let result = a.apply_batch(&batch).unwrap();
     assert_eq!(result.tiles_decoded, 2);

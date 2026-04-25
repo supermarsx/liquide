@@ -70,9 +70,7 @@ pub struct SettingDisplay {
 fn json_to_setting_value(v: &serde_json::Value) -> SettingValue {
     match v {
         serde_json::Value::Bool(b) => SettingValue::Bool(*b),
-        serde_json::Value::Number(n) => {
-            SettingValue::Number(n.as_f64().unwrap_or(0.0))
-        }
+        serde_json::Value::Number(n) => SettingValue::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => SettingValue::Text(s.clone()),
         other => SettingValue::Text(other.to_string()),
     }
@@ -82,11 +80,9 @@ fn json_to_setting_value(v: &serde_json::Value) -> SettingValue {
 fn setting_value_to_json(v: &SettingValue) -> serde_json::Value {
     match v {
         SettingValue::Bool(b) => serde_json::Value::Bool(*b),
-        SettingValue::Number(n) => {
-            serde_json::Number::from_f64(*n)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
-        }
+        SettingValue::Number(n) => serde_json::Number::from_f64(*n)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
         SettingValue::Text(s) => serde_json::Value::String(s.clone()),
     }
 }
@@ -107,8 +103,7 @@ impl SettingsRuntime {
     /// Create a new settings runtime with default entries.
     #[must_use]
     pub fn new(config: SettingsConfig) -> Self {
-        let default_cat = Category::from_id(&config.default_category)
-            .unwrap_or(Category::Display);
+        let default_cat = Category::from_id(&config.default_category).unwrap_or(Category::Display);
         let history_limit = config.search_history_limit;
 
         let (pages, entry_list) = page::default_pages();
@@ -133,7 +128,9 @@ impl SettingsRuntime {
 
     /// Get the active category.
     #[must_use]
-    pub fn active_category(&self) -> Category { self.active_category }
+    pub fn active_category(&self) -> Category {
+        self.active_category
+    }
 
     /// Switch to a different category.
     pub fn set_category(&mut self, cat: Category) {
@@ -149,14 +146,22 @@ impl SettingsRuntime {
     /// Get info for all categories.
     #[must_use]
     pub fn category_infos(&self) -> Vec<CategoryInfo> {
-        Category::ALL.iter().map(|&cat| {
-            let entry_count = self.entries.values()
-                .filter(|e| e.category == cat)
-                .count();
-            let has_pending = self.changes.pending().iter()
-                .any(|c| self.entries.get(&c.key).is_some_and(|e| e.category == cat));
-            CategoryInfo { category: cat, entry_count, has_pending_changes: has_pending }
-        }).collect()
+        Category::ALL
+            .iter()
+            .map(|&cat| {
+                let entry_count = self.entries.values().filter(|e| e.category == cat).count();
+                let has_pending = self
+                    .changes
+                    .pending()
+                    .iter()
+                    .any(|c| self.entries.get(&c.key).is_some_and(|e| e.category == cat));
+                CategoryInfo {
+                    category: cat,
+                    entry_count,
+                    has_pending_changes: has_pending,
+                }
+            })
+            .collect()
     }
 
     // ---- Entries ----
@@ -176,7 +181,8 @@ impl SettingsRuntime {
     /// Get all entries for a category.
     #[must_use]
     pub fn entries_for(&self, cat: Category) -> Vec<&SettingEntry> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.category == cat)
             .collect()
     }
@@ -184,7 +190,8 @@ impl SettingsRuntime {
     /// Get all entries for the active category, respecting policy visibility.
     #[must_use]
     pub fn visible_entries(&self) -> Vec<&SettingEntry> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.category == self.active_category)
             .filter(|e| self.policy.is_visible(&e.key))
             .filter(|e| self.config.show_advanced || !e.advanced)
@@ -193,7 +200,9 @@ impl SettingsRuntime {
 
     /// Total number of settings.
     #[must_use]
-    pub fn total_entries(&self) -> usize { self.entries.len() }
+    pub fn total_entries(&self) -> usize {
+        self.entries.len()
+    }
 
     // ---- Value changes ----
 
@@ -203,7 +212,9 @@ impl SettingsRuntime {
             return Err(crate::SettingsError::LockedByPolicy { key: key.into() });
         }
 
-        let entry = self.entries.get(key)
+        let entry = self
+            .entries
+            .get(key)
             .ok_or_else(|| crate::SettingsError::UnknownSetting { key: key.into() })?;
 
         entry.validate(&value)?;
@@ -229,9 +240,12 @@ impl SettingsRuntime {
 
     /// Reset a setting to its default value.
     pub fn reset_to_default(&mut self, key: &str) -> crate::Result<()> {
-        let default = self.entries.get(key)
+        let default = self
+            .entries
+            .get(key)
             .ok_or_else(|| crate::SettingsError::UnknownSetting { key: key.into() })?
-            .default.clone();
+            .default
+            .clone();
         self.set_value(key, default)
     }
 
@@ -243,7 +257,8 @@ impl SettingsRuntime {
         if let Some(entry) = self.entries.get_mut(&reversed.key) {
             entry.value = reversed.new_value.clone();
         }
-        self.notifications.push(&reversed.key, reversed.new_value, 0);
+        self.notifications
+            .push(&reversed.key, reversed.new_value, 0);
         Ok(())
     }
 
@@ -253,16 +268,21 @@ impl SettingsRuntime {
         if let Some(entry) = self.entries.get_mut(&reapplied.key) {
             entry.value = reapplied.new_value.clone();
         }
-        self.notifications.push(&reapplied.key, reapplied.new_value, 0);
+        self.notifications
+            .push(&reapplied.key, reapplied.new_value, 0);
         Ok(())
     }
 
     /// Whether undo is available.
     #[must_use]
-    pub fn can_undo(&self) -> bool { self.changes.can_undo() }
+    pub fn can_undo(&self) -> bool {
+        self.changes.can_undo()
+    }
     /// Whether redo is available.
     #[must_use]
-    pub fn can_redo(&self) -> bool { self.changes.can_redo() }
+    pub fn can_redo(&self) -> bool {
+        self.changes.can_redo()
+    }
 
     // ---- Search ----
 
@@ -287,10 +307,14 @@ impl SettingsRuntime {
 
     /// Get the policy engine.
     #[must_use]
-    pub fn policy(&self) -> &PolicyEngine { &self.policy }
+    pub fn policy(&self) -> &PolicyEngine {
+        &self.policy
+    }
 
     /// Get mutable access to the policy engine.
-    pub fn policy_mut(&mut self) -> &mut PolicyEngine { &mut self.policy }
+    pub fn policy_mut(&mut self) -> &mut PolicyEngine {
+        &mut self.policy
+    }
 
     // ---- Notifications ----
 
@@ -303,7 +327,9 @@ impl SettingsRuntime {
 
     /// Get the current config.
     #[must_use]
-    pub fn config(&self) -> &SettingsConfig { &self.config }
+    pub fn config(&self) -> &SettingsConfig {
+        &self.config
+    }
 
     // ---- Persistence ----
 
@@ -420,7 +446,8 @@ impl SettingsRuntime {
     /// Get renderable settings for a specific category.
     #[must_use]
     pub fn category_settings(&self, category: Category) -> Vec<SettingDisplay> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.category == category)
             .filter(|e| self.policy.is_visible(&e.key))
             .map(|entry| SettingDisplay {

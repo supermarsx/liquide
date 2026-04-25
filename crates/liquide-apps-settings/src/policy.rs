@@ -21,7 +21,9 @@ pub struct PolicyEngine {
 impl PolicyEngine {
     #[must_use]
     pub fn new() -> Self {
-        Self { constraints: HashMap::new() }
+        Self {
+            constraints: HashMap::new(),
+        }
     }
 
     /// Add a constraint for a setting key.
@@ -71,5 +73,7 @@ impl PolicyEngine {
 }
 
 impl Default for PolicyEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
